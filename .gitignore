@@ -1,0 +1,15 @@
+# Ignore output directories and large artifacts
+dp_global/output/
+tests/
+*.log
+*.rds
+*.pdf
+.Rproj.user/
+.Rhistory
+.RData
+
+# OS files
+.DS_Store
+
+# Editor
+.vscode/

@@ -1,0 +1,1447 @@
+# Global Dynamic Programming Stem-ID Reconstruction with Biological Costs
+
+**Date:** 2026-01-16  
+**Author:** José A. Medina-Vega
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Installation & Quickstart](#installation--quickstart)
+3. [Problem Description](#problem-description)
+4. [Algorithm Architecture](#algorithm-architecture)
+5. [Data Requirements](#data-requirements)
+6. [Biological Model & Parameters](#biological-model--parameters)
+7. [Core Algorithm Details](#core-algorithm-details)
+8. [Uncertainty Quantification](#uncertainty-quantification)
+9. [Outputs & Diagnostics](#outputs--diagnostics)
+10. [Parameter Estimation](#parameter-estimation)
+11. [Fallback Mechanisms](#fallback-mechanisms)
+12. [Workflows & Usage Patterns](#workflows--usage-patterns)
+13. [Implementation Reference](#implementation-reference)
+
+---
+
+## Overview
+
+### What This Solves
+
+For each (Tag, species) group in forest census data, this system reconstructs stable stem identities in early censuses by finding the **globally optimal** set of stem identity assignments. The solution is consistent with:
+
+- A biological transition model (growth, recruitment, mortality)
+- Explicit life-cycle constraints (birth→alive→death, no resurrection)
+- Optional exact posterior uncertainty quantification via probabilistic DP
+
+### Why Global DP?
+
+**Problem with stepwise matching:** Local one-step matches can appear optimal but cause identity swaps when considering the full multi-census history.
+
+**DP solution:** Optimizes the *entire multi-census trajectory* simultaneously, using a track-based state space representation where each "track" represents a potential stem identity slot that can be occupied or empty across censuses.
+
+### Key Features
+
+- **Global optimization** across all censuses simultaneously
+- **Biological realism** through parametric growth, mortality, and recruitment models
+- **Measurement error handling** following Chave et al. (2004)
+- **Exact uncertainty quantification** via posterior marginals
+- **Life-cycle constraints** preventing impossible transitions
+- **High-performance C++ acceleration** reducing computation time by 10-50x compared to pure R implementation
+- **Automatic fallback** to stepwise matching when DP becomes intractable
+
+---
+
+## Installation & Quickstart
+
+### Requirements
+
+**Required packages:** `data.table`, `igraph`  
+**Optional:** `ggplot2`, `cowplot`
+
+### Running the Code
+
+**Interactive:**
+```r
+source("dp_global/scripts/main_cpp.R")
+```
+
+**Command line:**
+```bash
+Rscript dp_global/scripts/main_cpp.R
+```
+
+> For running experiments on a single machine, prefer `bin/run_dp_future.R` (concurrent runner). See `RUN_DP_README.md` for the legacy serial runner `bin/run_dp_full_cpp.sh` and historical notes about GNU-parallel usage.
+
+### File Structure
+
+```
+dp_global/
+├── dp_global_biol.R              # Core DP functions
+├── scripts/main_cpp.R                    # Driver script (C++ accelerated)
+├── R/
+│   ├── sensitivity_transition_cost_bio.R
+│   └── realism_calibration.R
+├── src/                          # C++ implementation
+│   ├── transition_cost_rcpp.R
+│   ├── transition_cost_rcpp.cpp
+│   └── test_rcpp_implementation.R
+├── dev/                     # Testing & profiling
+└── output/                       # Generated artifacts
+```
+
+---
+
+## Problem Description
+
+### Context: Forest Census Data
+
+Forest census measurements track multiple stems per tree over time:
+
+- **Tag:** Plot/tree grouping identifier
+- **CensusID:** Temporal sequence (1, 2, 3, ...)
+- **DBH:** Diameter at breast height (may be missing = not observed)
+- **Species:** Taxonomic identity
+- **Anchor Census:** Later census with known `TrueStemID` for each observed stem
+
+### The Challenge
+
+**Goal:** Assign earlier observations to anchor identities such that:
+1. DBH trajectories are biologically plausible
+2. Identity assignments are globally optimal
+3. Life-cycle constraints are respected (no resurrection)
+
+**Why it's hard:**
+- Multiple stems per tag creates combinatorial assignment space
+- Missing observations require handling of recruitment/mortality
+- Measurement error complicates growth assessment
+- Local greedy matching can trap in suboptimal solutions
+
+---
+
+## Algorithm Architecture
+
+### Track-Based State Space
+
+The DP uses **K latent tracks** (identity slots):
+
+- Each observed stem must be assigned to exactly one track (injective mapping)
+- Tracks can be empty (`NA`) in any census
+- Track occupancy implies identity continuity across censuses
+
+**State at census t:** An injective assignment vector of length `n_obs(t)`, where each element indicates which of K tracks that observation occupies.
+
+**Number of states:**
+$$P(K, n_{obs}) = K \times (K-1) \times \cdots \times (K-n_{obs}+1)$$
+
+### Life-Cycle Phase System
+
+Each track maintains a phase variable:
+
+- **Phase 0 (prebirth):** Track not yet occupied, can transition to Phase 1
+- **Phase 1 (alive):** Track occupied, can remain alive or transition to Phase 2
+- **Phase 2 (dead):** Track was occupied but now empty, cannot return to Phase 1
+
+**Enforced constraint:** `OBS → NA → OBS` is forbidden (no resurrection)
+
+### Choosing K (Number of Tracks)
+
+K must accommodate:
+1. Number of unique anchor stem IDs
+2. Maximum observed stems in any census
+3. Births needed to explain stem count increases
+
+```text
+births_needed = Σ max(0, n_obs(t+1) - n_obs(t))
+K_base = max(#anchor_IDs, max_obs, n_obs(1) + births_needed)
+K_final = K_base + slack_tracks
+```
+
+**Slack tracks:** Extra tracks allowing simultaneous death+birth in constant-count intervals
+
+### DP Objective
+
+Minimize total cost across all transitions:
+
+$$\text{TotalCost} = \sum_{t=1}^{\text{anchor}-1} \text{TransitionCost}(t \to t+1)$$
+
+Subject to:
+- Injective assignments at each census
+- Valid phase transitions per track
+- Fixed assignments at anchor census (from `TrueStemID`)
+
+---
+
+## Data Requirements
+
+### Input Columns (Required)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `Tag` | integer/character | Plot/tree grouping identifier |
+| `CensusID` | integer | Census sequence (1, 2, 3, ...) |
+| `DBH` | numeric | Diameter in cm (`NA` = not observed) |
+| `species` | character | Species identifier |
+| `TrueStemID` | integer | Known stem ID at anchor census |
+
+### Biological Parameter Columns (Required)
+
+All parameters must be present in the dataset before running DP. These are typically added by calling `estimate_bio_pars()` and joining results:
+
+#### Growth Parameters
+- `Bio_Mu_Growth` ($\mu_{\text{const}}$): Intercept of mean annual growth (cm/year)
+- `Bio_Gamma_Growth` ($\mu_{\gamma}$): Log-DBH slope in mean growth model (cm/year)
+- `Bio_Sigma0_Growth` ($\sigma_0$): Baseline growth process SD (cm/year)
+- `Bio_Sigma1_Growth` ($\sigma_1$): Growth SD slope vs DBH ((cm/year)/cm)
+
+#### Shrinkage Penalties
+- `Bio_Max_Shrink` ($\text{max\_shrink}$): Hard lower bound on annual growth (cm/year, negative)
+- `Bio_K_Shrink` ($k_{\text{shrink}}$): Soft shrinkage penalty weight (1/cm²)
+
+#### Extreme Growth Penalties
+- `Bio_Max_Growth` ($\text{max\_growth}$): Hard upper bound on annual growth (cm/year)
+- `Bio_K_Growth` ($k_{\text{growth}}$): Soft extreme growth penalty weight (1/cm²)
+
+#### Mortality Parameters
+- `Bio_H0_Mortality` ($h_0$): Baseline hazard parameter
+- `Bio_Beta_Mortality` ($\beta$): Size effect on mortality hazard
+
+#### Recruitment Parameters
+- `Bio_Recruit_Meanlog`: LogNormal meanlog for recruit size
+- `Bio_Recruit_Sdlog`: LogNormal sdlog for recruit size
+- `Bio_Recruit_MaxDBH_unit`: Maximum plausible recruit DBH (cm)
+- `Bio_Recruitment_lambda`: Recruitment Poisson rate (1/year)
+
+### Output Columns (Added by Solver)
+
+| Column | Description |
+|--------|-------------|
+| `ReconstructedStemID` | Assigned stem identity |
+| `ReconstructionMethod` | `"given"`, `"dp"`, or `"igraph"` |
+| `ConstraintViolation` | Post-hoc diagnostic flag |
+| `DP_KUsed` | Number of tracks used |
+| `DP_MaxStatesPerCensus` | Largest state space encountered |
+| `DP_MaxStatesCensusID` | Census with largest state space |
+
+### Posterior Uncertainty Columns (Optional)
+
+When running `match_stems_dp_global_backward_marginals()`:
+
+- `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`
+- `DP_PosteriorTop2ID`, `DP_PosteriorTop2Prob`
+- `DP_PosteriorEntropy`
+- `DP_PosteriorReconstructedProb`
+- `DP_PosteriorUnlinkedProb`
+- `DP_PosteriorBin` (if using `add_dp_posterior_bins()`)
+
+---
+
+## Biological Model & Parameters
+
+### Growth Model
+
+**Mean growth** (size-dependent):
+$\mu(D) = \alpha + \gamma \log(D)$
+
+Where:
+- $\alpha$ = `Bio_Mu_Growth` (intercept, cm/year)
+- $\gamma$ = `Bio_Gamma_Growth` (slope on log-DBH, cm/year)
+- If $\gamma = 0$, reduces to constant mean growth
+
+**Process variability** (heteroskedastic):
+$\sigma(D) = \sigma_0 + \sigma_1 D$
+
+Where:
+- $\sigma_0$ = `Bio_Sigma0_Growth` (baseline SD, cm/year)
+- $\sigma_1$ = `Bio_Sigma1_Growth` (SD slope vs DBH, (cm/year)/cm)
+
+### Mortality Model
+
+**Hazard function:**
+$\text{hazard}(D) = h_0 \exp(\beta D)$
+
+**Death probability over interval:**
+$P_{\text{death}}(D, \Delta t) = 1 - \exp(-\text{hazard}(D) \cdot \Delta t)$
+
+Where:
+- $h_0$ = `Bio_H0_Mortality` (baseline hazard)
+- $\beta$ = `Bio_Beta_Mortality` (size effect parameter)
+- Probability clamped to $[10^{-12}, 1-10^{-12}]$ for numerical stability
+
+### Recruitment Model
+
+**Size distribution:**
+$D_{\text{recruit}} \sim \text{LogNormal}(\text{meanlog}, \text{sdlog})$
+
+**Rate per empty track:**
+$P_{\text{recruit}}(\Delta t) = 1 - \exp(-\lambda_{\text{recruit}} \cdot \Delta t)$
+
+Where:
+- `Bio_Recruit_Meanlog`, `Bio_Recruit_Sdlog`: LogNormal parameters
+- $\lambda_{\text{recruit}}$ = `Bio_Recruitment_lambda` (rate per year)
+- Probability clamped to $[10^{-12}, 1-10^{-12}]$ for numerical stability
+
+### Measurement Error Model (Chave et al. 2004)
+
+When enabled (`use_measurement_error = TRUE`), DBH observations include remeasurement noise:
+
+$$D_{\text{obs}} = D_{\text{true}} + \varepsilon$$
+
+**Error distribution** (2-component mixture):
+$$\varepsilon \sim (1-p)\,\mathcal{N}(0, \text{SD1}(D)^2) + p\,\mathcal{N}(0, \text{SD2}^2)$$
+
+where:
+$$\text{SD1}(D) = a \cdot D + b$$
+
+**Parameters:**
+- `meas_sd1_a`: Small-error slope (a)
+- `meas_sd1_b`: Small-error intercept (b)
+- `meas_sd2`: Large-error SD (constant)
+- `meas_p_big`: Probability of large error (p)
+
+**Effect on likelihood:** For DBH→DBH transitions, observed growth becomes a **4-component mixture** (combining measurement errors at t₀ and t₁), evaluated via log-sum-exp.
+
+---
+
+## Core Algorithm Details
+
+### Transition Cost Function
+
+`transition_cost_tracks_bio()` computes the negative log-likelihood for transitioning from census t to t+1 by summing per-track costs across four mutually exclusive cases.
+
+**Key principle:** Each track contributes independently to the total cost. The function processes all K tracks sequentially.
+
+**Inputs:**
+- `track_dbh_t`: length-K numeric vector (DBH per track at census t, NA if unoccupied)
+- `track_dbh_tp1`: length-K numeric vector (DBH per track at census t+1, NA if unoccupied)
+- `interval_years`: $\Delta t$ between censuses
+- Biological parameters (growth, mortality, recruitment, shrinkage)
+- `eps_tiebreak`: deterministic tie-break weight (default $10^{-6}$)
+
+**Output:** Single scalar cost (sum across all tracks + tie-break term)
+
+### Recruitment Probability
+
+Computed once per transition (shared across all tracks):
+
+$P_{\text{recruit}}(\Delta t) = 1 - \exp(-\lambda_{\text{recruit}} \cdot \Delta t)$
+
+Clamped to $[10^{-12}, 1-10^{-12}]$ for numerical stability.
+
+### Per-Track Transition Cases
+
+#### Case A: NA → NA (No recruitment)
+
+Track remains empty throughout interval.
+
+$\text{cost} += -\log(1 - P_{\text{recruit}})$
+
+**Interpretation:** Penalizes leaving track empty based on recruitment probability. Higher recruitment rates make long empty histories more costly.
+
+#### Case B: NA → DBH (Recruitment)
+
+Track transitions from empty to occupied.
+
+**Hard constraint:** If $D_1 > \text{recruit\_max\_dbh}$:
+$\text{cost} += 10^6$
+
+**Otherwise (valid recruit):**
+$\text{cost} += -\log(P_{\text{recruit}}) - \log f_{\text{LogNormal}}(D_1; \text{meanlog}, \text{sdlog})$
+
+where:
+$f_{\text{LogNormal}}(x) = \frac{1}{x \cdot \text{sdlog} \cdot \sqrt{2\pi}} \exp\left(-\frac{(\log x - \text{meanlog})^2}{2 \cdot \text{sdlog}^2}\right)$
+
+Implementation: `dlnorm(d1, meanlog, sdlog, log=TRUE)`
+
+#### Case C: DBH → NA (Mortality)
+
+Track transitions from occupied to empty (disappearance/death).
+
+**Mortality probability:**
+$P_{\text{death}}(D_0, \Delta t) = 1 - \exp(-h_0 \exp(\beta D_0) \cdot \Delta t)$
+
+Clamped to $[10^{-12}, 1-10^{-12}]$.
+
+$\text{cost} += -\log(P_{\text{death}})$
+
+**Interpretation:** Disappearance is "cheap" only when mortality probability is high. Low mortality at size $D_0$ makes DBH→NA costly.
+
+#### Case D: DBH → DBH (Growth)
+
+Track remains occupied; DBH changes from $D_0$ to $D_1$.
+
+**Annualized growth:**
+$g = \frac{D_1 - D_0}{\Delta t}$
+
+**D1. Hard shrinkage constraint:**
+$\text{if } g < \text{max\_shrink}: \quad \text{cost} += 10^6, \text{ skip to next track}$
+
+**D2. Hard extreme growth constraint:**
+$\text{if } g > \text{max\_growth}: \quad \text{cost} += 10^6, \text{ skip to next track}$
+
+**D3. Heteroskedastic growth variance:**
+$\sigma(D_0) = \max(\sigma_0 + \sigma_1 D_0, \, 10^{-6})$
+
+**D4. Mean growth (size-dependent):**
+$\mu(D_0) = \begin{cases}
+\mu_{\text{const}} + \mu_{\gamma} \log(D_0) & \text{if } \mu_{\gamma} \neq 0 \text{ and } D_0 > 0\\
+\mu_{\text{const}} & \text{otherwise}
+\end{cases}$
+
+**D5. Growth likelihood:**
+
+**Without measurement error:**
+$\text{cost} += \frac{(g - \mu(D_0))^2}{2\sigma(D_0)^2} + \log \sigma(D_0) + \frac{1}{2}\log(2\pi)$
+
+**With measurement error (Chave et al. 2004):**
+
+Four-component Normal mixture for observed growth:
+
+Component parameters:
+$\text{SD}_{\text{meas},i} = \frac{\sqrt{\text{SD}_a^2 + \text{SD}_b^2}}{\Delta t}$
+
+where $({\text{SD}_a, \text{SD}_b})$ from:
+1. Small-small: (SD1($D_0$), SD1($D_1$))
+2. Small-big: (SD1($D_0$), SD2)
+3. Big-small: (SD2, SD1($D_1$))
+4. Big-big: (SD2, SD2)
+
+Component weights:
+$w_i \in \{(1-p)^2, (1-p)p, p(1-p), p^2\}$
+
+Total SD per component:
+$\text{SD}_{\text{tot},i} = \sqrt{\sigma(D_0)^2 + \text{SD}_{\text{meas},i}^2}$
+
+Log-likelihood:
+$\ell_i = \log w_i + \log \phi(g; \mu(D_0), \text{SD}_{\text{tot},i})$
+
+where $\phi$ is Normal PDF.
+
+Stable log-sum-exp:
+$m = \max(\ell_1, \ell_2, \ell_3, \ell_4)$
+$\text{cost} += -\left(m + \log\sum_{i=1}^4 \exp(\ell_i - m)\right)$
+
+**D6. Soft shrinkage penalty:**
+$\text{if } D_1 < D_0: \quad \text{cost} += k_{\text{shrink}} (D_0 - D_1)^2$
+
+**Units:** $(D_0 - D_1)$ in cm, $k_{\text{shrink}}$ in 1/cm²
+
+**D7. Soft extreme growth penalty:**
+$d_{1,\text{cap}} = D_0 + \text{max\_growth\_soft} \cdot \Delta t$
+$\text{if } D_1 > d_{1,\text{cap}}: \quad \text{cost} += k_{\text{growth}} (D_1 - d_{1,\text{cap}})^2$
+
+**Units:** Excess in cm, $k_{\text{growth}}$ in 1/cm²
+
+**D8. Deterministic tie-break (non-biological):**
+
+After summing all track costs:
+
+$r_0 = \text{rank}(\text{track\_dbh}_t, \text{ties.method="first"})$
+$r_1 = \text{rank}(\text{track\_dbh}_{t+1}, \text{ties.method="first"})$
+$\text{both\_obs} = \{\text{tracks where both } t \text{ and } t+1 \text{ observed}\}$
+$\text{cost} += \varepsilon_{\text{tiebreak}} \sum_{k \in \text{both\_obs}} |r_0[k] - r_1[k]|$
+
+Default: $\varepsilon_{\text{tiebreak}} = 10^{-6}$
+
+**Purpose:** Discourages unnecessary rank crossings when biological costs are tied.
+
+### Backward DP Recursion
+
+**Initialization:** Anchor census assignments fixed by `TrueStemID`
+
+**Backward loop:** For each census from anchor-1 down to 1:
+1. Enumerate all valid injective states at current census
+2. For each state, iterate over valid next states (from census t+1)
+3. Derive valid phase transitions (enforce life-cycle constraints)
+4. Compute transition cost + future cost from DP table
+5. Keep minimum cost and store backpointer
+
+**Path decoding:** Follow backpointers from best start state through to anchor
+
+**Complexity:** Managed via `max_states` parameter; falls back if exceeded
+
+---
+
+## Uncertainty Quantification
+
+### Posterior Distribution
+
+The probabilistic solver defines a Gibbs-like posterior:
+
+$$P(\text{path}) \propto \exp\left(-\frac{\text{TotalCost}(\text{path})}{\tau}\right)$$
+
+where $\tau$ is the temperature parameter:
+- $\tau < 1$: Sharper posterior (more confident, concentrates on near-MAP paths)
+- $\tau > 1$: Flatter posterior (less confident, spreads mass across alternatives)
+
+### Marginal Computation
+
+`match_stems_dp_global_backward_marginals()` computes exact marginals via:
+1. **Backward pass:** Log-sum-exp recursion computing log partition function
+2. **Forward pass:** Normalization to obtain marginal probabilities
+3. **Per-observation summaries:** Probability of assignment to each anchor ID
+
+### Posterior Summary Statistics
+
+- **Top1/Top2 IDs and probabilities:** Most likely assignments
+- **Entropy:** $H = -\sum_i p_i \log p_i$ (higher = more uncertain)
+- **Reconstructed probability:** Posterior mass on chosen `ReconstructedStemID`
+- **Unlinked probability:** Posterior mass on not matching any anchor ID
+
+### Posterior Binning
+
+`add_dp_posterior_bins()` creates categorical labels:
+- **confident:** High probability on single ID
+- **ambiguous:** Probability split across multiple IDs
+- **unlinked-likely:** High probability of being unlinked
+
+---
+
+## Outputs & Diagnostics
+
+### Primary Outputs
+
+1. **ReconstructedStemID:** Assigned identity for each observation
+2. **ReconstructionMethod:**
+   - `"given"`: From input `TrueStemID`
+   - `"dp"`: Assigned by DP solver
+   - `"igraph"`: Assigned by fallback method
+
+### Diagnostic Outputs
+
+- **ConstraintViolation:** Post-hoc flag for growth violations
+- **DP_KUsed:** Actual number of tracks used
+- **DP_MaxStatesPerCensus:** Worst-case state space size
+- **DP_MaxStatesCensusID:** Census achieving maximum states
+
+### Visualization
+
+**Plot reconstructed trajectories:**
+```r
+plot_tag_to_pdf(
+  out, 
+  pdf_file = "output/trajectories.pdf",
+  include_reference = TRUE
+)
+```
+
+**Sensitivity analysis:**
+```r
+source("dp_global/R/sensitivity_transition_cost_bio.R")
+# Run parameter sweeps
+```
+
+**Realism calibration:**
+```r
+source("dp_global/R/realism_calibration.R")
+# Analyze reconstruction quality
+```
+
+---
+
+## Parameter Estimation
+
+### Overview
+
+`estimate_bio_pars()` derives biological parameters from known `TrueStemID` data. Supports two modes:
+- **data mode:** Estimates from empirical observations
+- **fixed mode:** Uses user-specified constants
+
+### Growth Parameter Estimation
+
+**Data filtering:** Keep rows with non-NA `DBH > 0` and non-NA `TrueStemID`
+
+**Wide format conversion:**
+```r
+dw <- dcast(Tag + TrueStemID + species ~ CensusID, value.var = "DBH")
+```
+
+**Annual growth increments:**
+For each adjacent census pair $(t_0, t_1)$:
+$g = \frac{D_1 - D_0}{\Delta t}$
+
+**Mean model fitting:**
+$\mu(D) = \alpha + \gamma \log(D)$
+
+Fits `lm(g ~ log(d0))` when:
+- At least 10 valid observations exist
+- Variance of `log(d0)` > 0
+
+Otherwise falls back to constant mean: $\alpha = \bar{g}$, $\gamma = 0$
+
+**Predicted mean for each observation:**
+$\mu_{\text{pred}}(i) = \begin{cases}
+\alpha + \gamma \log(D_{0,i}) & \text{if fit successful and } D_{0,i} > 0\\
+\alpha & \text{otherwise}
+\end{cases}$
+
+**Process SD estimation:**
+
+Uses robust SD proxy from absolute residuals:
+$\text{residual}_i = |g_i - \mu_{\text{pred}}(i)|$
+
+For Normal$(0, \sigma^2)$: $\mathbb{E}[|X|] = \sigma\sqrt{2/\pi}$, therefore:
+$\hat{\sigma}_{\text{total},i} = \text{residual}_i \times \sqrt{\pi/2}$
+
+**Measurement error correction (if enabled):**
+
+Expected measurement variance for annualized increment:
+$\text{Var}_{\text{meas}}(g_i) = \frac{\text{Var}(\varepsilon | D_{0,i}) + \text{Var}(\varepsilon | D_{1,i})}{\Delta t^2}$
+
+where mixture variance at diameter $D$:
+$\text{Var}(\varepsilon | D) = (1-p)\text{SD1}(D)^2 + p \cdot \text{SD2}^2$
+$\text{SD1}(D) = \max(a \cdot D + b, 10^{-6})$
+
+Process SD in quadrature:
+$\hat{\sigma}_{\text{proc},i} = \sqrt{\max(\hat{\sigma}_{\text{total},i}^2 - \text{Var}_{\text{meas}}(g_i), 10^{-8})}$
+
+**Without measurement error:**
+$\hat{\sigma}_{\text{proc},i} = \max(\hat{\sigma}_{\text{total},i}, 10^{-6})$
+
+**Linear model for heteroskedasticity:**
+Fits `lm(sd_proc_hat ~ d0_all)` with constraints:
+- $\sigma_0 \geq 10^{-4}$
+- $\sigma_1 \geq 0$
+
+Final model:
+$\sigma(D_0) = \sigma_0 + \sigma_1 D_0$
+
+### Penalty Parameter Estimation
+
+#### Soft Shrinkage Penalty ($k_{\text{shrink}}$)
+
+**Data mode with measurement error:**
+
+Typical measurement SD for raw DBH difference:
+$s_{\text{typ}} = \text{median}\left(\sqrt{\text{Var}(\varepsilon|D_0) + \text{Var}(\varepsilon|D_1)}\right)$
+
+Penalty weight:
+$k_{\text{shrink}} = \frac{1}{2 s_{\text{typ}}^2}$
+
+Clamped to $[10^{-6}, 10^6]$ for numerical stability.
+
+**Data mode without measurement error:**
+
+Uses variance of observed shrinkage increments (in cm):
+$\Delta D_{\text{shrink}} = D_0 - D_1 \quad \text{for pairs where } D_1 < D_0$
+
+If at least 5 shrinkage events exist:
+$k_{\text{shrink}} = \frac{1}{2 \cdot \text{Var}(\Delta D_{\text{shrink}})}$
+
+Otherwise defaults to 50.
+
+**Fixed mode:**
+```r
+k_shrink_source = "fixed"
+k_shrink_fixed = 50  # or 0 to disable
+```
+
+**Interpretation:** To make shrinkage of $s$ cm cost ≈1 unit:
+$k \approx \frac{1}{2s^2}$
+
+Example: K=50 corresponds to $s \approx \sqrt{1/(2 \times 50)} = 0.1$ cm
+
+**Application in cost function:**
+$\text{cost} += k_{\text{shrink}} (D_0 - D_1)^2 \quad \text{when } D_1 < D_0$
+
+#### Hard Shrinkage Guardrail ($\text{max\_shrink}$)
+
+**Data mode:**
+
+Empirical lower quantile (default 0.1%):
+$\text{max\_shrink\_data} = Q_{0.001}(g_{\text{all}})$
+
+**Measurement-only lower quantile (if measurement error enabled):**
+
+Four-component mixture for $(e_1 - e_0)/\Delta t$:
+
+Component SDs:
+$\text{SD}_{\text{meas},i} = \frac{\sqrt{\text{SD}_a^2 + \text{SD}_b^2}}{\Delta t}$
+
+where $({\text{SD}_a, \text{SD}_b})$ ∈ {(SD1($D_0$), SD1($D_1$)), (SD1($D_0$), SD2), (SD2, SD1($D_1$)), (SD2, SD2)}
+
+Component weights: $\{(1-p)^2, (1-p)p, p(1-p), p^2\}$
+
+Solve for quantile $q = 10^{-4}$ via:
+$\text{CDF}(x) = \sum_{i=1}^4 w_i \Phi(x; 0, \text{SD}_{\text{meas},i})$
+
+using typical diameter $D_{\text{typ}} = \text{median}(D_0)$
+
+**Final value:**
+- With measurement error: $\text{max\_shrink} = \min(\text{max\_shrink\_data}, \text{max\_shrink\_meas})$
+- Without: $\text{max\_shrink} = \text{max\_shrink\_data}$
+
+**Fixed mode:**
+```r
+max_shrink_source = "fixed"
+max_shrink_fixed = -0.5  # cm/year, must be negative
+```
+
+**Application in cost function:**
+$\text{if } g < \text{max\_shrink}: \quad \text{cost} += 10^6$
+
+#### Soft Extreme Growth Penalty ($k_{\text{growth}}$)
+
+**Data mode:** Same calibration as $k_{\text{shrink}}$:
+$k_{\text{growth}} = \frac{1}{2 s_{\text{typ}}^2}$
+
+Clamped to $[10^{-6}, 10^6]$.
+
+**Data mode without measurement error:**
+
+Uses variance of observed positive increments (in cm):
+$\Delta D_{\text{pos}} = D_1 - D_0 \quad \text{for pairs where } D_1 > D_0$
+
+If at least 5 positive events exist:
+$k_{\text{growth}} = \frac{1}{2 \cdot \text{Var}(\Delta D_{\text{pos}})}$
+
+Otherwise defaults to 50.
+
+**Fixed mode:**
+```r
+k_growth_source = "fixed"
+k_growth_fixed = 50  # or 0 to disable
+```
+
+**Interpretation:** Same rule as shrinkage: $k \approx 1/(2s^2)$
+
+**Application in cost function:**
+$d_{1,\text{cap}} = D_0 + \text{max\_growth\_soft} \cdot \Delta t$
+$\text{if } D_1 > d_{1,\text{cap}}: \quad \text{cost} += k_{\text{growth}} (D_1 - d_{1,\text{cap}})^2$
+
+#### Hard Extreme Growth Guardrail ($\text{max\_growth}$)
+
+**Data mode:**
+
+Empirical upper quantile (default 99.9%):
+$\text{max\_growth\_data} = Q_{0.999}(g_{\text{all}})$
+
+**Measurement-only upper quantile (if measurement error enabled):**
+
+Uses same four-component mixture as shrinkage, solving for upper quantile $q = 1 - 10^{-4}$ (99.99th percentile).
+
+**Final value:**
+- With measurement error: $\text{max\_growth} = \max(\text{max\_growth\_data}, \text{max\_growth\_meas})$
+- Without: $\text{max\_growth} = \text{max\_growth\_data}$
+
+**Soft growth cap:**
+$\text{max\_growth\_soft} = \min(\text{max\_growth}, Q_{0.99}(g_{\text{all}}))$
+
+**Fixed mode:**
+```r
+max_growth_source = "fixed"
+max_growth_fixed = 7.5  # cm/year
+```
+
+**Application in cost function:**
+$\text{if } g > \text{max\_growth}: \quad \text{cost} += 10^6$
+
+### Mortality Parameter Estimation
+
+**Data preparation:**
+For each adjacent census pair $(t_0, t_1)$:
+- At-risk stems: observed at census $t_0$ (non-NA DBH)
+- Died indicator: 1 if NA at $t_1$, 0 if still observed
+
+**Model:**
+$\text{hazard}(D) = h_0 \exp(\beta D)$
+$P_{\text{death}}(D, \Delta t) = 1 - \exp(-\text{hazard}(D) \cdot \Delta t)$
+
+Probability clamped to $[10^{-12}, 1-10^{-12}]$ for numerical stability.
+
+**Estimation:** Maximum likelihood via `optim()`:
+
+Negative log-likelihood:
+$-\sum_i \left[\text{died}_i \cdot \log P_{\text{death}}(D_{0,i}) + (1-\text{died}_i) \cdot \log(1-P_{\text{death}}(D_{0,i}))\right]$
+
+Optimization on unconstrained scale:
+- Parameter vector: $[\log(h_0), \beta]$
+- Starting values: `mortality_start = c(log(0.01), 0)`
+- Method: BFGS
+
+**Output:** $h_0 = \exp(\text{par}[1])$, $\beta = \text{par}[2]$
+
+### Recruitment Parameter Estimation
+
+**Identifying recruitment events:**
+For each adjacent census pair:
+- At-risk tracks: NA at $t_0$
+- Recruited: NA at $t_0$ AND observed positive DBH at $t_1$
+
+**Size distribution:**
+
+Fit LogNormal to recruited DBH values using `MASS::fitdistr`:
+$D_{\text{recruit}} \sim \text{LogNormal}(\text{meanlog}, \text{sdlog})$
+
+Fallback (if < 2 recruits): meanlog = log(2), sdlog = 0.5
+
+**Maximum recruit DBH:**
+Upper quantile guardrail (default 99.9%):
+$\text{recruit\_max\_dbh} = Q_{0.999}(D_{\text{recruited}})$
+
+Fallback: 5 cm
+
+**Recruitment rate:**
+
+Poisson rate per empty slot per year:
+$\lambda_{\text{recruit}} = \frac{n_{\text{recruits}}}{n_{\text{at-risk}} \cdot \sum_{\text{intervals}} \Delta t}$
+
+where:
+- $n_{\text{recruits}}$: total recruitment events across all intervals
+- $n_{\text{at-risk}}$: total empty-slot census-years
+
+Fallback: 0
+
+### Quantile Selection
+
+| Parameter | Default Quantile | Purpose |
+|-----------|------------------|---------|
+| `max_shrink_data` | 0.1% (0.001) | Lower tail for hard shrink constraint |
+| `max_growth_data` | 99.9% (0.999) | Upper tail for hard growth constraint |
+| `max_growth_soft` | 99% (0.99) | Upper tail for soft growth penalty |
+| `recruit_max_dbh` | 99.9% (0.999) | Maximum plausible recruit size |
+
+All quantiles are configurable via `estimate_bio_pars()` arguments.
+
+---
+
+## Fallback Mechanisms
+
+### When Fallback Occurs
+
+The DP solver automatically falls back to `match_stems_optimal_backward()` when:
+
+1. Anchor census missing or has no observed stems
+2. Any census has too many injective states ($P(K, n_{obs}) > \text{max\_states}$)
+3. K insufficient ($K < \max$ observed stems)
+4. DP recursion yields no feasible keys
+
+### Fallback Method: `match_stems_optimal_backward()`
+
+**Algorithm:**
+1. Works backward one census at a time
+2. Uses `igraph::max_bipartite_match()` with deterministic edge weights
+3. Edges allowed only when growth ∈ [min_growth, max_growth]
+4. If more stems at t+1 than t, smallest future stems treated as recruits
+5. Unmatched stems receive new IDs
+
+**Marking:** Rows assigned by fallback have `ReconstructionMethod="igraph"`
+
+**Important:** `min_growth` and `max_growth` constraints affect **only** the fallback method and post-hoc diagnostics, not the DP objective.
+
+---
+
+## Experimental Design & Configuration
+
+### Overview
+
+(Legacy) The `bin/run_dp_full.sh` script historically tested how different parameter estimation strategies affect reconstruction quality by varying:
+1. **Hard constraints** (MAX_GROWTH/MAX_SHRINK): Fixed vs data-driven bounds
+2. **Soft penalties** (K_SHRINK/K_GROWTH): Fixed vs data-driven quadratic penalties
+3. **Penalty strength**: None (K=0) vs moderate (K=25) vs strong (K=50)
+
+### Fixed Parameters Across All Experiments
+
+These settings remain constant across all configurations to ensure fair comparison:
+
+```bash
+# Input data
+input_file="../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv"
+FORCE_ONE_SPECIES_PARAMETERS=FALSE
+
+# Census configuration
+which_tag=1
+anchor_start_census=7
+census_interval_years=5
+
+# Processing settings
+RUN_ALL_TAGS=TRUE
+MC_CORES=5
+RUN_DP_MARGINALS=TRUE
+USE_MEASUREMENT_ERROR=TRUE  # Always enabled
+
+# Output settings
+WRITE_DP_CSV=TRUE
+WRITE_DP_PDF=TRUE
+DP_PDF_INCLUDE_REFERENCE=TRUE
+PLOT_PDF_ONE_TAG_ONLY=FALSE
+
+# Analysis settings
+RUN_SENSITIVITY=TRUE
+RUN_K_SWEEP_DEMO=TRUE
+RUN_REALISM_REPORT=TRUE
+```
+
+### Experimental Configurations
+
+The script runs 8 configurations in a 2×4 factorial-like design:
+
+| Config | Hard Constraints | Soft Penalties | K Value | Description |
+|--------|-----------------|----------------|---------|-------------|
+| `fixed` | fixed | fixed | 0 | Pure fixed-parameter baseline (no soft penalties) |
+| `data_hard` | **data** | fixed | 0 | Data-driven hard bounds only |
+| `data_hard_soft` | **data** | **data** | — | Fully data-driven (K from data) |
+| `data_soft` | fixed | **data** | — | Fixed hard bounds + data-driven soft |
+| `fixed_k50` | fixed | fixed | **50** | Fixed baseline + strong penalties |
+| `fixed_k25` | fixed | fixed | **25** | Fixed baseline + moderate penalties |
+| `data_hard_k50` | **data** | fixed | **50** | Data hard bounds + strong penalties |
+| `data_hard_k25` | **data** | fixed | **25** | Data hard bounds + moderate penalties |
+
+### Parameter Variation Details
+
+#### Hard Constraint Sources
+
+**MAX_GROWTH_HARD_SOURCE** and **MAX_SHRINK_HARD_SOURCE** control how absolute growth/shrinkage limits are determined:
+
+**Fixed mode:**
+```bash
+MAX_GROWTH_HARD_SOURCE=fixed
+MAX_GROWTH_FIXED=7.5        # cm/year upper bound
+MAX_SHRINK_HARD_SOURCE=fixed
+MAX_SHRINK_FIXED=-0.5       # cm/year lower bound (negative)
+```
+- Uses literature-derived or expert-specified values
+- Consistent across all species/groups
+- Good when data is sparse or unreliable
+
+**Data mode:**
+```bash
+MAX_GROWTH_HARD_SOURCE=data
+MAX_SHRINK_HARD_SOURCE=data
+# MAX_GROWTH_FIXED and MAX_SHRINK_FIXED serve as fallbacks only
+```
+- **Shrinkage:** Calculates from lower quantile (default 0.1%) of observed annual increments
+  - With measurement error: $\text{max\_shrink} = \min(\text{max\_shrink\_data}, \text{max\_shrink\_meas})$
+  - Without: uses only empirical quantile
+- **Growth:** Calculates from upper quantile (default 99.9%) of observed annual increments
+  - With measurement error: $\text{max\_growth} = \max(\text{max\_growth\_data}, \text{max\_growth\_meas})$
+  - Without: uses only empirical quantile
+- Adapts to species-specific growth patterns
+
+#### Soft Penalty Sources
+
+**K_SHRINK_SOURCE** and **K_GROWTH_SOURCE** control quadratic penalty weights:
+
+**Fixed mode with K=0 (no soft penalties):**
+```bash
+K_SHRINK_SOURCE=fixed
+K_SHRINK_FIXED=0
+K_GROWTH_SOURCE=fixed
+K_GROWTH_FIXED=0
+```
+- Disables soft penalties entirely
+- Relies purely on hard constraints and growth likelihood
+- Most permissive configuration
+
+**Fixed mode with K>0:**
+```bash
+K_SHRINK_SOURCE=fixed
+K_SHRINK_FIXED=50          # 1/cm² penalty weight
+K_GROWTH_SOURCE=fixed
+K_GROWTH_FIXED=50
+```
+- Applies user-specified penalty strength
+- K=50: strong discouragement (~0.1 cm excess costs 1 unit, since $0.1^2 \times 50 = 0.5$)
+- K=25: moderate discouragement (~0.14 cm excess costs 1 unit)
+- Rule of thumb: To make $s$ cm excess cost ≈1 unit, use $K \approx 1/(2s^2)$
+
+**Data mode:**
+```bash
+K_SHRINK_SOURCE=data
+K_GROWTH_SOURCE=data
+# K_SHRINK_FIXED and K_GROWTH_FIXED are ignored
+```
+- Calibrates from typical measurement SD: $K = 1/(2s_{\text{typ}}^2)$
+- With measurement error: uses median measurement SD across pairs
+- Without measurement error: uses variance of observed increments
+- Automatically scales with data variability
+- Estimated values clamped to $[10^{-6}, 10^6]$ for numerical stability
+
+### Experimental Questions & Comparisons
+
+#### 1. Effect of Data-Driven Hard Constraints
+
+**Compare:** `fixed` vs `data_hard`
+- Both have K=0 (no soft penalties)
+- Only hard constraint source differs
+- **Question:** Do data-driven bounds improve reconstruction accuracy?
+
+#### 2. Effect of Soft Penalties on Fixed Baseline
+
+**Compare:** `fixed` vs `fixed_k25` vs `fixed_k50`
+- All use fixed hard constraints
+- Soft penalty strength varies (0, 25, 50)
+- **Question:** How much do soft penalties reduce biologically implausible transitions?
+
+#### 3. Effect of Soft Penalties on Data-Driven Hard Constraints
+
+**Compare:** `data_hard` vs `data_hard_k25` vs `data_hard_k50`
+- All use data-driven hard constraints
+- Soft penalty strength varies (0, 25, 50)
+- **Question:** Are soft penalties still beneficial with adaptive hard bounds?
+
+#### 4. Full Data-Driven vs Hybrid Approaches
+
+**Compare:** `data_hard_soft` vs `data_hard` vs `data_soft` vs `fixed`
+- Tests all combinations of data/fixed for hard/soft
+- **Question:** Which parameter estimation strategy gives best results?
+
+#### 5. Interaction Between Hard and Soft Sources
+
+**Compare:** `fixed_k50` vs `data_hard_k50` vs `data_hard_soft`
+- Same soft penalty strength (50 or data-derived)
+- Hard constraint source varies
+- **Question:** Do data-driven hard constraints reduce need for strong soft penalties?
+
+### Running Experiments
+
+**Run all configurations sequentially (serial runner):**
+```bash
+bin/run_dp_full.sh
+```
+
+**Note about parallel runs:**
+Parallel GNU parallel support was removed from this repository. For concurrent execution and better logging use `bin/run_dp_future.R`. If you prefer to run serially, you can still run `bin/run_dp_full.sh --config=<name>` manually and coordinate `BATCH_TS` if needed.
+
+**Run single configuration:**
+```bash
+bin/run_dp_full.sh --config=data_hard_soft
+```
+
+**Override specific parameters:**
+```bash
+bin/run_dp_full.sh --which_tag=2 --MC_CORES=8
+```
+
+### Output Organization
+
+Each configuration writes to a separate directory:
+```
+output/
+├── config_fixed/
+│   ├── dp_reconstruction.csv
+│   ├── realism_report.pdf
+│   ├── sensitivity_analysis.pdf
+│   └── trajectories/
+├── config_data_hard/
+├── config_data_hard_soft/
+└── ...
+```
+
+### Comparing Results
+
+**Key metrics to compare across configurations:**
+
+1. **Reconstruction accuracy** (from realism reports):
+   - Identity match rate vs ground truth
+   - Growth constraint violations
+   - Trajectory smoothness
+
+2. **Computational efficiency:**
+   - Runtime per configuration
+   - Fallback frequency (igraph usage)
+   - State space sizes
+
+3. **Biological realism:**
+   - Growth rate distributions
+   - Mortality patterns consistency
+   - Recruitment size distributions
+
+4. **Posterior uncertainty** (from marginal runs):
+   - Mean entropy across observations
+   - Proportion confident/ambiguous/unlinked
+   - Uncertainty reduction with data-driven vs fixed
+
+### Expected Patterns
+
+**Hypothesis 1:** Data-driven hard constraints will show:
+- Better species-specific adaptation
+- Fewer constraint violations
+- Higher computational cost (wider feasible region)
+
+**Hypothesis 2:** Soft penalties (K>0) will show:
+- Smoother trajectories
+- Fewer extreme growth events
+- Trade-off between flexibility and realism
+
+**Hypothesis 3:** Full data-driven (data_hard_soft) will show:
+- Best match to true IDs (if simulation is realistic)
+- Most computational resources required
+- Highest sensitivity to data quality
+
+---
+
+## Workflows & Usage Patterns
+
+### Single-Tag Debug
+
+```r
+# In scripts/main.R:
+RUN_ALL_TAGS <- FALSE
+which_tag <- 123456
+
+WRITE_DP_PDF <- TRUE
+PLOT_PDF_ONE_TAG_ONLY <- TRUE
+```
+
+### Single-Tag with Posterior Uncertainty
+
+```r
+RUN_DP_MARGINALS <- TRUE
+DP_POSTERIOR_TEMPERATURE <- 0.5
+
+ADD_DP_POSTERIOR_BINS <- TRUE
+```
+
+### Full Parallel Run
+
+```r
+RUN_ALL_TAGS <- TRUE
+MC_CORES <- 8
+
+# Adjust if needed:
+dp_max_states <- 1e5
+dp_max_tracks <- 50
+```
+
+### Sensitivity Analysis Only
+
+```r
+source("dp_global/R/dp_global_biol.R")
+source("dp_global/R/sensitivity_transition_cost_bio.R")
+# Run parameter sweeps on costs
+```
+
+### Realism Report Only
+
+```r
+source("dp_global/R/realism_calibration.R")
+# Analyze reconstruction quality metrics
+```
+
+### Parameter Estimation Workflow
+
+```r
+# 1. Estimate parameters per species
+bio_pars_list <- list()
+for (sp in unique(xraw$species)) {
+  sp_data <- xraw[species == sp]
+  bio_pars_list[[sp]] <- estimate_bio_pars(
+    sp_data,
+    interval_years = census_interval_years,
+    use_measurement_error = USE_MEASUREMENT_ERROR,
+    # Hard constraint sources
+    max_shrink_source = "data",  # or "fixed"
+    max_shrink_fixed = -0.5,
+    max_growth_source = "data",  # or "fixed"
+    max_growth_fixed = 7.5,
+    # Soft penalty sources
+    k_shrink_source = "data",    # or "fixed"
+    k_shrink_fixed = 50,
+    k_growth_source = "data",    # or "fixed"
+    k_growth_fixed = 50,
+    # Quantile configuration (optional)
+    shrink_data_quantile = 0.001,
+    shrink_hard_prob = 1e-4,
+    growth_data_quantile = 0.999,
+    growth_hard_prob = 1e-4,
+    growth_soft_quantile = 0.99,
+    recruit_max_quantile = 0.999
+  )
+}
+
+# 2. Attach as columns to tree_data
+xraw[, Bio_Mu_Growth := bio_pars_list[[species]]$growth$alpha, by = species]
+xraw[, Bio_Gamma_Growth := bio_pars_list[[species]]$growth$gamma, by = species]
+xraw[, Bio_Sigma0_Growth := bio_pars_list[[species]]$growth$sigma0, by = species]
+xraw[, Bio_Sigma1_Growth := bio_pars_list[[species]]$growth$sigma1, by = species]
+xraw[, Bio_Max_Shrink := bio_pars_list[[species]]$shrinkage$max_shrink, by = species]
+xraw[, Bio_K_Shrink := bio_pars_list[[species]]$shrinkage$k_shrink, by = species]
+xraw[, Bio_Max_Growth := bio_pars_list[[species]]$growth$max_growth, by = species]
+xraw[, Bio_Max_Growth_Soft := bio_pars_list[[species]]$growth$max_growth_soft, by = species]
+xraw[, Bio_K_Growth := bio_pars_list[[species]]$growth$k_growth, by = species]
+xraw[, Bio_H0_Mortality := bio_pars_list[[species]]$mortality$h0, by = species]
+xraw[, Bio_Beta_Mortality := bio_pars_list[[species]]$mortality$beta, by = species]
+xraw[, Bio_Recruit_Meanlog := bio_pars_list[[species]]$recruitment$meanlog, by = species]
+xraw[, Bio_Recruit_Sdlog := bio_pars_list[[species]]$recruitment$sdlog, by = species]
+xraw[, Bio_Recruit_MaxDBH_unit := bio_pars_list[[species]]$recruitment$recruit_max_dbh, by = species]
+xraw[, Bio_Recruitment_lambda := bio_pars_list[[species]]$recruitment$lambda, by = species]
+
+# 3. Run DP solver
+out <- xraw[, match_stems_dp_global_backward(
+  .SD,
+  min_growth = -2,           # Used by fallback and diagnostics only
+  max_growth = 10,           # Used by fallback and diagnostics only
+  interval_years = census_interval_years,
+  anchor_start = 7,
+  max_tracks = 30,
+  max_states = 50000,
+  slack_tracks = 1,
+  use_measurement_error = USE_MEASUREMENT_ERROR,
+  verbose = TRUE
+), by = .(Tag, species)]
+
+# 4. Optional: Run posterior marginals
+out_marginal <- xraw[, match_stems_dp_global_backward_marginals(
+  .SD,
+  min_growth = -2,
+  max_growth = 10,
+  interval_years = census_interval_years,
+  anchor_start = 7,
+  max_tracks = 30,
+  max_states = 50000,
+  slack_tracks = 1,
+  temperature = 0.5,
+  posterior_top_k = 2,
+  use_measurement_error = USE_MEASUREMENT_ERROR,
+  verbose = TRUE
+), by = .(Tag, species)]
+
+# 5. Add posterior bins (if using marginals)
+out_marginal <- add_dp_posterior_bins(
+  out_marginal,
+  confident_prob = 0.95,
+  unlinked_prob = 0.50,
+  use_reconstructed_prob = TRUE
+)
+```
+
+**Important workflow notes:**
+
+1. **min_growth/max_growth in DP calls:** These parameters are **NOT used** by the DP objective function. They only affect:
+   - The fallback `match_stems_optimal_backward()` (stepwise igraph matcher)
+   - Post-hoc `ConstraintViolation` diagnostics
+
+2. **Actual constraints used by DP:** Come from Bio_* columns:
+   - Hard shrinkage: `Bio_Max_Shrink`
+   - Hard growth: `Bio_Max_Growth`
+   - Soft shrinkage: `Bio_K_Shrink`
+   - Soft growth: `Bio_K_Growth` and `Bio_Max_Growth_Soft`
+
+3. **Measurement error:** Must be set consistently between `estimate_bio_pars()` and DP solver calls.
+
+4. **Parameter sources:** Each parameter's source (data/fixed) and estimated value are stored in the returned list structure for provenance tracking.
+
+---
+
+## Implementation Reference
+
+### Function Map
+
+| Task | Primary Function | Location |
+|------|------------------|----------|
+| State enumeration | `enumerate_states_injective()` | `dp_global_biol.R` |
+| Track DBH vectors | `state_to_track_dbh()` | `dp_global_biol.R` |
+| Transition costs | `transition_cost_tracks_bio()` | `dp_global_biol.R` |
+| Cost breakdown (debug) | `transition_cost_tracks_bio_components()` | `dp_global_biol.R` |
+| MAP/Viterbi DP | `match_stems_dp_global_backward()` | `dp_global_biol.R` |
+| Posterior marginals | `match_stems_dp_global_backward_marginals()` | `dp_global_biol.R` |
+| Posterior binning | `add_dp_posterior_bins()` | `dp_global_biol.R` |
+| Fallback matcher | `match_stems_optimal_backward()` | `dp_global_biol.R` |
+| Parameter estimation | `estimate_bio_pars()` | `dp_global_biol.R` |
+| Plotting | `plot_tag_to_pdf()` | `dp_global_biol.R` |
+| Driver/wiring | `scripts/main.R` | `scripts/main.R` |
+
+### Key Implementation Details
+
+**NA interpretation:** `NA` means "not observed," not "alive but missed"
+
+**Large penalties:** `1e6` encodes hard constraints (impossible transitions)
+
+**Measurement error:** Controlled by `use_measurement_error` flag, affects:
+- Likelihood computation (4-component mixture)
+- Parameter estimation (variance subtraction, quantile selection)
+
+**Phase variables:** Extended DP key format: `"<assignment>|<phase0,phase1,...,phaseK>"`
+
+**Anchor initialization:** Non-anchor tracks start in phase 2 (dead), allowing reconstruction of earlier deaths
+
+### Debugging Tools
+
+**Transition cost breakdown:**
+```r
+components <- transition_cost_tracks_bio_components(
+  track_dbh_t, track_dbh_tp1, interval_years, ...
+)
+# Returns per-track: growth_ll, shrink_soft, growth_soft, mortality, recruit
+```
+
+**Posterior analysis:**
+```r
+# After running marginal solver:
+high_uncertainty <- out[DP_PosteriorEntropy > 1.5]
+ambiguous <- out[DP_PosteriorBin == "ambiguous"]
+```
+
+### Complexity Estimation
+
+The DP algorithm's computational complexity depends on the number of observations per census and the resulting state space size. Use the complexity estimator to identify which tags will take the longest to process before running the full workflow.
+
+**Load the complexity estimation functions:**
+```r
+source("R/estimate_dp_complexity_function.R")
+```
+
+**Estimate complexity for all tags:**
+```r
+complexity <- estimate_dp_complexity("../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv")
+print(complexity)
+```
+
+**Get detailed analysis for a specific tag:**
+```r
+details <- get_tag_complexity_details("../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv", tag = 11)
+print(details$observations_per_census)  # Observations per census
+print(details$states_per_census)        # States per census
+cat("Total transition computations:", format(details$transition_computations, big.mark = ","), "\n")
+```
+
+**Output columns:**
+- `Tag`: The tag identifier
+- `Species`: Species name  
+- `MaxObs`: Maximum number of observations in any single census
+- `K`: Number of tracks used by the DP algorithm
+- `TotalStates`: Total number of states across all censuses
+- `MaxStatesPerCensus`: Maximum states in any single census
+- `TransitionComputations`: Estimated number of transition cost calculations (proxy for runtime)
+
+**How it works:**
+1. **Number of tracks (K)**: Determined by the maximum observations per census plus slack tracks
+2. **States per census**: P(K, n_obs) = K! / (K - n_obs)! where n_obs is observations in that census
+3. **Transitions**: For each pair of consecutive censuses, all pairs of states must be evaluated
+
+Tags are sorted by `TransitionComputations` in descending order, so the slowest tags appear first.
+
+**Example output for your dataset:**
+Tag 11 requires ~89 million transition computations, while most other tags require <1 million.
+
+---
+
+## Notes & Common Issues
+
+### Interpretation Notes
+
+1. **DBH → NA is mortality**, not missing measurement
+2. **K selection** is critical: too small fails, too large is inefficient
+3. **Slack tracks** enable realistic death+birth dynamics in constant-count transitions
+4. **Temperature** in posterior controls confidence (not a physical parameter)
+5. **NA means "not observed"**, not "alive but missed"
+
+### Parameter Roles Summary Table
+
+| Parameter Type | Parameter Name | Used By | Purpose | Typical Value |
+|----------------|---------------|---------|---------|---------------|
+| **Hard Constraint (DP)** | `Bio_Max_Shrink` | DP cost function | Hard lower bound on $g$ | -0.5 to -1.0 cm/year |
+| **Hard Constraint (DP)** | `Bio_Max_Growth` | DP cost function | Hard upper bound on $g$ | 5 to 10 cm/year |
+| **Soft Penalty (DP)** | `Bio_K_Shrink` | DP cost function | Quadratic shrinkage weight | 0 to 50 (1/cm²) |
+| **Soft Penalty (DP)** | `Bio_K_Growth` | DP cost function | Quadratic growth excess weight | 0 to 50 (1/cm²) |
+| **Soft Threshold (DP)** | `Bio_Max_Growth_Soft` | DP cost function | Growth excess threshold | 95% of `Bio_Max_Growth` |
+| **Fallback Only** | `min_growth` | Fallback matcher | Edge constraint for stepwise | -2 cm/year |
+| **Fallback Only** | `max_growth` | Fallback matcher | Edge constraint for stepwise | 10 cm/year |
+| **Diagnostic Only** | `min_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as fallback |
+| **Diagnostic Only** | `max_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as fallback |
+
+### Quantile Configuration Reference
+
+Complete table of all quantiles used in parameter estimation:
+
+| Quantile Parameter | Default Value | Tail | What It Computes | Used For | Configurable |
+|-------------------|---------------|------|------------------|----------|--------------|
+| `shrink_data_quantile` | 0.001 (0.1%) | Lower | Empirical $g$ lower bound | `max_shrink_data` | Yes, via `estimate_bio_pars()` |
+| `shrink_hard_prob` | $10^{-4}$ (0.01%) | Lower | Measurement-only $g$ lower bound | `max_shrink_meas` | Yes, via `estimate_bio_pars()` |
+| `growth_data_quantile` | 0.999 (99.9%) | Upper | Empirical $g$ upper bound | `max_growth_data` | Yes, via `estimate_bio_pars()` |
+| `growth_hard_prob` | $10^{-4}$ (0.01% tail) | Upper | Measurement-only $g$ upper bound (99.99%) | `max_growth_meas` | Yes, via `estimate_bio_pars()` |
+| `growth_soft_quantile` | 0.99 (99%) | Upper | Empirical $g$ soft threshold | `max_growth_soft_data` | Yes, via `estimate_bio_pars()` |
+| `recruit_max_quantile` | 0.999 (99.9%) | Upper | Maximum recruit DBH | `recruit_max_dbh` | Yes, via `estimate_bio_pars()` |
+
+**Key distinctions:**
+
+1. **Empirical quantiles** (data_quantile): Computed from observed $g_{\text{all}}$ values
+2. **Measurement-only quantiles** (hard_prob): Computed from 4-component mixture at typical diameter
+3. **Combination logic:**
+   - Shrinkage: `min()` = more conservative (less negative = more restrictive)
+   - Growth: `max()` = more permissive (larger = less restrictive)
+
+### Common Confusions
+
+1. **"Why huge penalties?"** 
+   - $10^6$ encodes hard biological impossibilities
+   - Makes infeasible transitions effectively infinite cost
+   - DP will never choose these paths unless no alternative exists
+
+2. **"Why track-based?"** 
+   - Allows global optimization over entire history
+   - Prevents local greedy decisions from causing global ID swaps
+   - Enables exact life-cycle constraint enforcement
+
+3. **"Data vs fixed mode?"** 
+   - **Data mode:** Use when you have reliable known IDs for parameter estimation
+   - **Fixed mode:** Use for literature values or when data is too sparse
+   - Can mix (e.g., data hard, fixed soft)
+
+4. **"Measurement error impact?"** 
+   - Makes penalties more conservative (won't over-penalize measurement noise)
+   - Adds 4-component mixture to growth likelihood (more robust)
+   - Separates process from measurement variance in estimation
+
+5. **"min_growth vs Bio_Max_Shrink?"**
+   - `Bio_Max_Shrink`: Used in DP cost (primary reconstruction constraint)
+   - `min_growth`: Used in fallback and diagnostics only
+   - They can have different values (usually min_growth is more permissive)
+
+6. **"Why do soft penalties exist if hard constraints are enforced?"**
+   - Hard: Binary (allowed/forbidden), creates discrete cost landscape
+   - Soft: Continuous discouragement, helps DP choose among many feasible paths
+   - Together: Hard prevents absurdity, soft guides toward realism
+
+### Performance Considerations
+
+- State space grows factorially: $O(K^{n_{obs}})$
+- Set `dp_max_states` based on memory availability (default 50,000)
+- Parallel processing via `MC_CORES` for multiple tags
+- Consider fallback threshold adjustment for large datasets
+- Batch cost computation (`match_stems_dp_global_backward_marginals_batch`) is faster for posterior inference
+
+### Numerical Stability Details
+
+| Operation | Stability Mechanism | Value |
+|-----------|-------------------|-------|
+| Growth SD | Floor clamp | $\sigma(D) \geq 10^{-6}$ |
+| Measurement SD1 | Floor clamp | $\text{SD1}(D) \geq 10^{-6}$ |
+| Mortality probability | Range clamp | $[10^{-12}, 1-10^{-12}]$ |
+| Recruitment probability | Range clamp | $[10^{-12}, 1-10^{-12}]$ |
+| Log-sum-exp mixture | Subtract max before exp | Prevents overflow/underflow |
+| K estimation (data mode) | Range clamp | $k \in [10^{-6}, 10^6]$ |
+| Rank tie-breaking | Deterministic first index | `ties.method="first"` |
+
+---
+
+## References
+
+**Measurement error model:**
+Chave, J., Condit, R., Aguilar, S., Hernandez, A., Lao, S., & Perez, R. (2004). Error propagation and scaling for tropical forest biomass estimates. *Philosophical Transactions of the Royal Society of London. Series B: Biological Sciences*, 359(1443), 409-420.
+
+**Additional documentation:**
+- Sensitivity analysis: `dp_global/R/sensitivity_transition_cost_bio.R`
+- Realism calibration: `dp_global/R/realism_calibration.R`
+- API documentation: See function headers in `dp_global_biol.R`
+
+---
+
+## Building This Documentation
+
+**Fully offline HTML (recommended):**
+```bash
+pandoc README.md --standalone --mathml \
+  --embed-resources -o README.html
+```
+
+**MathJax HTML (requires internet):**
+```bash
+pandoc README.md --standalone --mathjax \
+  --embed-resources -o README.html
+```
+
+**Automated build:**
+```bash
+bash dev/build_readme_html.sh
+```
