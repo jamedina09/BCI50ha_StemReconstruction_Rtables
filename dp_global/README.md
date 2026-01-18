@@ -201,11 +201,11 @@ All parameters must be present in the dataset before running DP. These are typic
 - `Bio_Sigma1_Growth` ($\sigma_1$): Growth SD slope vs DBH ((cm/year)/cm)
 
 #### Shrinkage Penalties
-- `Bio_Max_Shrink` ($\text{max\_shrink}$): Hard lower bound on annual growth (cm/year, negative)
+- `Bio_Max_Shrink` (`max_shrink`): Hard lower bound on annual growth (cm/year, negative)
 - `Bio_K_Shrink` ($k_{\text{shrink}}$): Soft shrinkage penalty weight (1/cm²)
 
 #### Extreme Growth Penalties
-- `Bio_Max_Growth` ($\text{max\_growth}$): Hard upper bound on annual growth (cm/year)
+- `Bio_Max_Growth` (`max_growth`): Hard upper bound on annual growth (cm/year)
 - `Bio_K_Growth` ($k_{\text{growth}}$): Soft extreme growth penalty weight (1/cm²)
 
 #### Mortality Parameters
@@ -348,8 +348,8 @@ $\text{cost} += -\log(1 - P_{\text{recruit}})$
 
 Track transitions from empty to occupied.
 
-**Hard constraint:** If $D_1 > \text{recruit\_max\_dbh}$:
-$\text{cost} += 10^6$
+**Hard constraint:** If D_1 > `recruit_max_dbh`:
+`cost += 10^6`
 
 **Otherwise (valid recruit):**
 $\text{cost} += -\log(P_{\text{recruit}}) - \log f_{\text{LogNormal}}(D_1; \text{meanlog}, \text{sdlog})$
@@ -379,11 +379,9 @@ Track remains occupied; DBH changes from $D_0$ to $D_1$.
 **Annualized growth:**
 $g = \frac{D_1 - D_0}{\Delta t}$
 
-**D1. Hard shrinkage constraint:**
-$\text{if } g < \text{max\_shrink}: \quad \text{cost} += 10^6, \text{ skip to next track}$
+**D1. Hard shrinkage constraint:** If g < `max_shrink`: `cost += 10^6`, skip to next track
 
-**D2. Hard extreme growth constraint:**
-$\text{if } g > \text{max\_growth}: \quad \text{cost} += 10^6, \text{ skip to next track}$
+**D2. Hard extreme growth constraint:** If g > `max_growth`: `cost += 10^6`, skip to next track
 
 **D3. Heteroskedastic growth variance:**
 $\sigma(D_0) = \max(\sigma_0 + \sigma_1 D_0, \, 10^{-6})$
@@ -433,8 +431,8 @@ $\text{if } D_1 < D_0: \quad \text{cost} += k_{\text{shrink}} (D_0 - D_1)^2$
 **Units:** $(D_0 - D_1)$ in cm, $k_{\text{shrink}}$ in 1/cm²
 
 **D7. Soft extreme growth penalty:**
-$d_{1,\text{cap}} = D_0 + \text{max\_growth\_soft} \cdot \Delta t$
-$\text{if } D_1 > d_{1,\text{cap}}: \quad \text{cost} += k_{\text{growth}} (D_1 - d_{1,\text{cap}})^2$
+d_{1,cap} = D_0 + `max_growth_soft` * Δt  
+If D_1 > d_{1,cap}: `cost += k_growth * (D_1 - d_{1,cap})^2`
 
 **Units:** Excess in cm, $k_{\text{growth}}$ in 1/cm²
 
@@ -442,10 +440,10 @@ $\text{if } D_1 > d_{1,\text{cap}}: \quad \text{cost} += k_{\text{growth}} (D_1 
 
 After summing all track costs:
 
-$r_0 = \text{rank}(\text{track\_dbh}_t, \text{ties.method="first"})$
-$r_1 = \text{rank}(\text{track\_dbh}_{t+1}, \text{ties.method="first"})$
-$\text{both\_obs} = \{\text{tracks where both } t \text{ and } t+1 \text{ observed}\}$
-$\text{cost} += \varepsilon_{\text{tiebreak}} \sum_{k \in \text{both\_obs}} |r_0[k] - r_1[k]|$
+`r_0` = rank(`track_dbh_t`, ties.method="first")
+`r_1` = rank(`track_dbh_{t+1}`, ties.method="first")
+`both_obs` = {tracks where both t and t+1 observed}
+`cost` += `epsilon_tiebreak` * sum_{k in `both_obs`} |r_0[k] - r_1[k]|
 
 Default: $\varepsilon_{\text{tiebreak}} = 10^{-6}$
 
@@ -650,33 +648,32 @@ Example: K=50 corresponds to $s \approx \sqrt{1/(2 \times 50)} = 0.1$ cm
 **Application in cost function:**
 $\text{cost} += k_{\text{shrink}} (D_0 - D_1)^2 \quad \text{when } D_1 < D_0$
 
-#### Hard Shrinkage Guardrail ($\text{max\_shrink}$)
+#### Hard Shrinkage Guardrail (`max_shrink`) 
 
 **Data mode:**
 
 Empirical lower quantile (default 0.1%):
-$\text{max\_shrink\_data} = Q_{0.001}(g_{\text{all}})$
+`max_shrink_data` = Q_{0.001}(g_all)
 
 **Measurement-only lower quantile (if measurement error enabled):**
 
 Four-component mixture for $(e_1 - e_0)/\Delta t$:
 
 Component SDs:
-$\text{SD}_{\text{meas},i} = \frac{\sqrt{\text{SD}_a^2 + \text{SD}_b^2}}{\Delta t}$
+`SD_meas_i` = sqrt(SD_a^2 + SD_b^2) / Delta_t
 
-where $({\text{SD}_a, \text{SD}_b})$ ∈ {(SD1($D_0$), SD1($D_1$)), (SD1($D_0$), SD2), (SD2, SD1($D_1$)), (SD2, SD2)}
+where (SD_a, SD_b) ∈ {(SD1(D_0), SD1(D_1)), (SD1(D_0), SD2), (SD2, SD1(D_1)), (SD2, SD2)}
 
-Component weights: $\{(1-p)^2, (1-p)p, p(1-p), p^2\}$
+Component weights: {(1-p)^2, (1-p)p, p(1-p), p^2}
 
-Solve for quantile $q = 10^{-4}$ via:
-$\text{CDF}(x) = \sum_{i=1}^4 w_i \Phi(x; 0, \text{SD}_{\text{meas},i})$
+Solve for quantile q = 10^{-4} via:
+CDF(x) = sum_{i=1}^4 w_i Phi(x; 0, SD_meas_i)
 
-using typical diameter $D_{\text{typ}} = \text{median}(D_0)$
+using typical diameter D_typ = median(D_0)
 
 **Final value:**
-- With measurement error: $\text{max\_shrink} = \min(\text{max\_shrink\_data}, \text{max\_shrink\_meas})$
-- Without: $\text{max\_shrink} = \text{max\_shrink\_data}$
-
+- With measurement error: `max_shrink` = min(`max_shrink_data`, `max_shrink_meas`)
+- Without: `max_shrink` = `max_shrink_data`
 **Fixed mode:**
 ```r
 max_shrink_source = "fixed"
@@ -684,7 +681,7 @@ max_shrink_fixed = -0.5  # cm/year, must be negative
 ```
 
 **Application in cost function:**
-$\text{if } g < \text{max\_shrink}: \quad \text{cost} += 10^6$
+If g < `max_shrink`: `cost += 10^6`
 
 #### Soft Extreme Growth Penalty ($k_{\text{growth}}$)
 
@@ -712,26 +709,26 @@ k_growth_fixed = 50  # or 0 to disable
 **Interpretation:** Same rule as shrinkage: $k \approx 1/(2s^2)$
 
 **Application in cost function:**
-$d_{1,\text{cap}} = D_0 + \text{max\_growth\_soft} \cdot \Delta t$
-$\text{if } D_1 > d_{1,\text{cap}}: \quad \text{cost} += k_{\text{growth}} (D_1 - d_{1,\text{cap}})^2$
+d_{1,cap} = D_0 + `max_growth_soft` * Δt
+If D_1 > d_{1,cap}: `cost += k_growth * (D_1 - d_{1,cap})^2`
 
-#### Hard Extreme Growth Guardrail ($\text{max\_growth}$)
+#### Hard Extreme Growth Guardrail (`max_growth`)
 
 **Data mode:**
 
 Empirical upper quantile (default 99.9%):
-$\text{max\_growth\_data} = Q_{0.999}(g_{\text{all}})$
+`max_growth_data` = Q_{0.999}(g_all)
 
 **Measurement-only upper quantile (if measurement error enabled):**
 
 Uses same four-component mixture as shrinkage, solving for upper quantile $q = 1 - 10^{-4}$ (99.99th percentile).
 
 **Final value:**
-- With measurement error: $\text{max\_growth} = \max(\text{max\_growth\_data}, \text{max\_growth\_meas})$
-- Without: $\text{max\_growth} = \text{max\_growth\_data}$
+- With measurement error: `max_growth` = max(`max_growth_data`, `max_growth_meas`)
+- Without: `max_growth` = `max_growth_data`
 
 **Soft growth cap:**
-$\text{max\_growth\_soft} = \min(\text{max\_growth}, Q_{0.99}(g_{\text{all}}))$
+`max_growth_soft` = min(`max_growth`, Q_{0.99}(g_all))
 
 **Fixed mode:**
 ```r
@@ -740,7 +737,7 @@ max_growth_fixed = 7.5  # cm/year
 ```
 
 **Application in cost function:**
-$\text{if } g > \text{max\_growth}: \quad \text{cost} += 10^6$
+If g > `max_growth`: `cost += 10^6`
 
 ### Mortality Parameter Estimation
 
@@ -783,7 +780,7 @@ Fallback (if < 2 recruits): meanlog = log(2), sdlog = 0.5
 
 **Maximum recruit DBH:**
 Upper quantile guardrail (default 99.9%):
-$\text{recruit\_max\_dbh} = Q_{0.999}(D_{\text{recruited}})$
+`recruit_max_dbh` = Q_{0.999}(D_recruited)
 
 Fallback: 5 cm
 
@@ -818,7 +815,7 @@ All quantiles are configurable via `estimate_bio_pars()` arguments.
 The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 
 1. Anchor census missing or has no observed stems
-2. Any census has too many injective states ($P(K, n_{obs}) > \text{max\_states}$)
+2. Any census has too many injective states (P(K, n_obs) > `max_states`)
 3. K insufficient ($K < \max$ observed stems)
 4. DP recursion yields no feasible keys
 
@@ -917,10 +914,10 @@ MAX_SHRINK_HARD_SOURCE=data
 # MAX_GROWTH_FIXED and MAX_SHRINK_FIXED serve as fallbacks only
 ```
 - **Shrinkage:** Calculates from lower quantile (default 0.1%) of observed annual increments
-  - With measurement error: $\text{max\_shrink} = \min(\text{max\_shrink\_data}, \text{max\_shrink\_meas})$
+  - With measurement error: `max_shrink` = min(`max_shrink_data`, `max_shrink_meas`)
   - Without: uses only empirical quantile
 - **Growth:** Calculates from upper quantile (default 99.9%) of observed annual increments
-  - With measurement error: $\text{max\_growth} = \max(\text{max\_growth\_data}, \text{max\_growth\_meas})$
+  - With measurement error: `max_growth` = max(`max_growth_data`, `max_growth_meas`)
   - Without: uses only empirical quantile
 - Adapts to species-specific growth patterns
 
