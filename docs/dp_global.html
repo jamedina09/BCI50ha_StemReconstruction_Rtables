@@ -1,246 +1,239 @@
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<html xmlns="http://www.w3.org/1999/xhtml" lang xml:lang>
 <head>
   <meta charset="utf-8" />
   <meta name="generator" content="pandoc" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
   <title>README</title>
   <style>
-    /* Default styles provided by pandoc.
-    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
-    */
-    html {
-      color: #1a1a1a;
-      background-color: #fdfdfd;
-    }
-    body {
-      margin: 0 auto;
-      max-width: 36em;
-      padding-left: 50px;
-      padding-right: 50px;
-      padding-top: 50px;
-      padding-bottom: 50px;
-      hyphens: auto;
-      overflow-wrap: break-word;
-      text-rendering: optimizeLegibility;
-      font-kerning: normal;
-    }
-    @media (max-width: 600px) {
-      body {
-        font-size: 0.9em;
-        padding: 12px;
-      }
-      h1 {
-        font-size: 1.8em;
-      }
-    }
-    @media print {
-      html {
-        background-color: white;
-      }
-      body {
-        background-color: transparent;
-        color: black;
-        font-size: 12pt;
-      }
-      p, h2, h3 {
-        orphans: 3;
-        widows: 3;
-      }
-      h2, h3, h4 {
-        page-break-after: avoid;
-      }
-    }
-    p {
-      margin: 1em 0;
-    }
-    a {
-      color: #1a1a1a;
-    }
-    a:visited {
-      color: #1a1a1a;
-    }
-    img {
-      max-width: 100%;
-    }
-    svg {
-      height: auto;
-      max-width: 100%;
-    }
-    h1, h2, h3, h4, h5, h6 {
-      margin-top: 1.4em;
-    }
-    h5, h6 {
-      font-size: 1em;
-      font-style: italic;
-    }
-    h6 {
-      font-weight: normal;
-    }
-    ol, ul {
-      padding-left: 1.7em;
-      margin-top: 1em;
-    }
-    li > ol, li > ul {
-      margin-top: 0;
-    }
-    blockquote {
-      margin: 1em 0 1em 1.7em;
-      padding-left: 1em;
-      border-left: 2px solid #e6e6e6;
-      color: #606060;
-    }
-    code {
-      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
-      font-size: 85%;
-      margin: 0;
-      hyphens: manual;
-    }
-    pre {
-      margin: 1em 0;
-      overflow: auto;
-    }
-    pre code {
-      padding: 0;
-      overflow: visible;
-      overflow-wrap: normal;
-    }
-    .sourceCode {
-     background-color: transparent;
-     overflow: visible;
-    }
-    hr {
-      border: none;
-      border-top: 1px solid #1a1a1a;
-      height: 1px;
-      margin: 1em 0;
-    }
-    table {
-      margin: 1em 0;
-      border-collapse: collapse;
-      width: 100%;
-      overflow-x: auto;
-      display: block;
-      font-variant-numeric: lining-nums tabular-nums;
-    }
-    table caption {
-      margin-bottom: 0.75em;
-    }
-    tbody {
-      margin-top: 0.5em;
-      border-top: 1px solid #1a1a1a;
-      border-bottom: 1px solid #1a1a1a;
-    }
-    th {
-      border-top: 1px solid #1a1a1a;
-      padding: 0.25em 0.5em 0.25em 0.5em;
-    }
-    td {
-      padding: 0.125em 0.5em 0.25em 0.5em;
-    }
-    header {
-      margin-bottom: 4em;
-      text-align: center;
-    }
-    #TOC li {
-      list-style: none;
-    }
-    #TOC ul {
-      padding-left: 1.3em;
-    }
-    #TOC > ul {
-      padding-left: 0;
-    }
-    #TOC a:not(:hover) {
-      text-decoration: none;
-    }
-    code{white-space: pre-wrap;}
-    span.smallcaps{font-variant: small-caps;}
-    div.columns{display: flex; gap: min(4vw, 1.5em);}
-    div.column{flex: auto; overflow-x: auto;}
-    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
-    /* The extra [class] is a hack that increases specificity enough to
-       override a similar rule in reveal.js */
-    ul.task-list[class]{list-style: none;}
-    ul.task-list li input[type="checkbox"] {
-      font-size: inherit;
-      width: 0.8em;
-      margin: 0 0.8em 0.2em -1.6em;
-      vertical-align: middle;
-    }
-    /* CSS for syntax highlighting */
-    html { -webkit-text-size-adjust: 100%; }
-    pre > code.sourceCode { white-space: pre; position: relative; }
-    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
-    pre > code.sourceCode > span:empty { height: 1.2em; }
-    .sourceCode { overflow: visible; }
-    code.sourceCode > span { color: inherit; text-decoration: inherit; }
-    div.sourceCode { margin: 1em 0; }
-    pre.sourceCode { margin: 0; }
-    @media screen {
-    div.sourceCode { overflow: auto; }
-    }
-    @media print {
-    pre > code.sourceCode { white-space: pre-wrap; }
-    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
-    }
-    pre.numberSource code
-      { counter-reset: source-line 0; }
-    pre.numberSource code > span
-      { position: relative; left: -4em; counter-increment: source-line; }
-    pre.numberSource code > span > a:first-child::before
-      { content: counter(source-line);
-        position: relative; left: -1em; text-align: right; vertical-align: baseline;
-        border: none; display: inline-block;
-        -webkit-touch-callout: none; -webkit-user-select: none;
-        -khtml-user-select: none; -moz-user-select: none;
-        -ms-user-select: none; user-select: none;
-        padding: 0 4px; width: 4em;
-        color: #aaaaaa;
-      }
-    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
-    div.sourceCode
-      {   }
-    @media screen {
-    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
-    }
-    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
-    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
-    code span.at { color: #7d9029; } /* Attribute */
-    code span.bn { color: #40a070; } /* BaseN */
-    code span.bu { color: #008000; } /* BuiltIn */
-    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
-    code span.ch { color: #4070a0; } /* Char */
-    code span.cn { color: #880000; } /* Constant */
-    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
-    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
-    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
-    code span.dt { color: #902000; } /* DataType */
-    code span.dv { color: #40a070; } /* DecVal */
-    code span.er { color: #ff0000; font-weight: bold; } /* Error */
-    code span.ex { } /* Extension */
-    code span.fl { color: #40a070; } /* Float */
-    code span.fu { color: #06287e; } /* Function */
-    code span.im { color: #008000; font-weight: bold; } /* Import */
-    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
-    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
-    code span.op { color: #666666; } /* Operator */
-    code span.ot { color: #007020; } /* Other */
-    code span.pp { color: #bc7a00; } /* Preprocessor */
-    code span.sc { color: #4070a0; } /* SpecialChar */
-    code span.ss { color: #bb6688; } /* SpecialString */
-    code span.st { color: #4070a0; } /* String */
-    code span.va { color: #19177c; } /* Variable */
-    code span.vs { color: #4070a0; } /* VerbatimString */
-    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
-  </style>
-  <script
-  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"
-  type="text/javascript"></script>
+
+html {
+color: #1a1a1a;
+background-color: #fdfdfd;
+}
+body {
+margin: 0 auto;
+max-width: 36em;
+padding-left: 50px;
+padding-right: 50px;
+padding-top: 50px;
+padding-bottom: 50px;
+hyphens: auto;
+overflow-wrap: break-word;
+text-rendering: optimizeLegibility;
+font-kerning: normal;
+}
+@media (max-width: 600px) {
+body {
+font-size: 0.9em;
+padding: 12px;
+}
+h1 {
+font-size: 1.8em;
+}
+}
+@media print {
+html {
+background-color: white;
+}
+body {
+background-color: transparent;
+color: black;
+font-size: 12pt;
+}
+p, h2, h3 {
+orphans: 3;
+widows: 3;
+}
+h2, h3, h4 {
+page-break-after: avoid;
+}
+}
+p {
+margin: 1em 0;
+}
+a {
+color: #1a1a1a;
+}
+a:visited {
+color: #1a1a1a;
+}
+img {
+max-width: 100%;
+}
+svg {
+height: auto;
+max-width: 100%;
+}
+h1, h2, h3, h4, h5, h6 {
+margin-top: 1.4em;
+}
+h5, h6 {
+font-size: 1em;
+font-style: italic;
+}
+h6 {
+font-weight: normal;
+}
+ol, ul {
+padding-left: 1.7em;
+margin-top: 1em;
+}
+li > ol, li > ul {
+margin-top: 0;
+}
+blockquote {
+margin: 1em 0 1em 1.7em;
+padding-left: 1em;
+border-left: 2px solid #e6e6e6;
+color: #606060;
+}
+code {
+font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+font-size: 85%;
+margin: 0;
+hyphens: manual;
+}
+pre {
+margin: 1em 0;
+overflow: auto;
+}
+pre code {
+padding: 0;
+overflow: visible;
+overflow-wrap: normal;
+}
+.sourceCode {
+background-color: transparent;
+overflow: visible;
+}
+hr {
+border: none;
+border-top: 1px solid #1a1a1a;
+height: 1px;
+margin: 1em 0;
+}
+table {
+margin: 1em 0;
+border-collapse: collapse;
+width: 100%;
+overflow-x: auto;
+display: block;
+font-variant-numeric: lining-nums tabular-nums;
+}
+table caption {
+margin-bottom: 0.75em;
+}
+tbody {
+margin-top: 0.5em;
+border-top: 1px solid #1a1a1a;
+border-bottom: 1px solid #1a1a1a;
+}
+th {
+border-top: 1px solid #1a1a1a;
+padding: 0.25em 0.5em 0.25em 0.5em;
+}
+td {
+padding: 0.125em 0.5em 0.25em 0.5em;
+}
+header {
+margin-bottom: 4em;
+text-align: center;
+}
+#TOC li {
+list-style: none;
+}
+#TOC ul {
+padding-left: 1.3em;
+}
+#TOC > ul {
+padding-left: 0;
+}
+#TOC a:not(:hover) {
+text-decoration: none;
+}
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
 </head>
 <body>
-<h1
-id="global-dynamic-programming-stem-id-reconstruction-with-biological-costs">Global
+<h1 id="global-dynamic-programming-stem-id-reconstruction-with-biological-costs">Global
 Dynamic Programming Stem-ID Reconstruction with Biological Costs</h1>
 <p><strong>Date:</strong> 2026-01-16<br />
 <strong>Author:</strong> José A. Medina-Vega</p>
@@ -316,8 +309,7 @@ becomes intractable</li>
 <p><strong>Interactive:</strong></p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">source</span>(<span class="st">&quot;dp_global/scripts/main_cpp.R&quot;</span>)</span></code></pre></div>
 <p><strong>Command line:</strong></p>
-<div class="sourceCode" id="cb2"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">Rscript</span> dp_global/scripts/main_cpp.R</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">Rscript</span> dp_global/scripts/main_cpp.R</span></code></pre></div>
 <blockquote>
 <p>For running experiments on a single machine, prefer
 <code>bin/run_dp_future.R</code> (concurrent runner). See
@@ -361,6 +353,11 @@ respected (no resurrection)</p>
 combinatorial assignment space - Missing observations require handling
 of recruitment/mortality - Measurement error complicates growth
 assessment - Local greedy matching can trap in suboptimal solutions</p>
+<h3 id="todo">TODO:</h3>
+<p>The code assumes that HOM (height of measurement) is the same for all
+stems. Include HOM column, and for those that are not the same (e.g.,
+HOM != 1.3), predict the DBH at the common HOM (1.3 m) and proceed.</p>
+<p>Now, the user needs to include DBH measurements at 1.3m.</p>
 <hr />
 <h2 id="algorithm-architecture">Algorithm Architecture</h2>
 <h3 id="track-based-state-space">Track-Based State Space</h3>
@@ -374,9 +371,8 @@ mapping)</li>
 <p><strong>State at census t:</strong> An injective assignment vector of
 length <code>n_obs(t)</code>, where each element indicates which of K
 tracks that observation occupies.</p>
-<p><strong>Number of states:</strong> <span class="math display">\[P(K,
-n_{obs}) = K \times (K-1) \times \cdots \times
-(K-n_{obs}+1)\]</span></p>
+<p><strong>Number of states:</strong>
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mo stretchy="false" form="prefix">(</mo><mi>K</mi><mo>,</mo><msub><mi>n</mi><mrow><mi>o</mi><mi>b</mi><mi>s</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>K</mi><mo>×</mo><mo stretchy="false" form="prefix">(</mo><mi>K</mi><mo>−</mo><mn>1</mn><mo stretchy="false" form="postfix">)</mo><mo>×</mo><mi>⋯</mi><mo>×</mo><mo stretchy="false" form="prefix">(</mo><mi>K</mi><mo>−</mo><msub><mi>n</mi><mrow><mi>o</mi><mi>b</mi><mi>s</mi></mrow></msub><mo>+</mo><mn>1</mn><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">P(K, n_{obs}) = K \times (K-1) \times \cdots \times (K-n_{obs}+1)</annotation></semantics></math></p>
 <h3 id="life-cycle-phase-system">Life-Cycle Phase System</h3>
 <p>Each track maintains a phase variable:</p>
 <ul>
@@ -400,9 +396,7 @@ K_final = K_base + slack_tracks</code></pre>
 death+birth in constant-count intervals</p>
 <h3 id="dp-objective">DP Objective</h3>
 <p>Minimize total cost across all transitions:</p>
-<p><span class="math display">\[\text{TotalCost} =
-\sum_{t=1}^{\text{anchor}-1} \text{TransitionCost}(t \to
-t+1)\]</span></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">TotalCost</mtext><mo>=</mo><munderover><mo>∑</mo><mrow><mi>t</mi><mo>=</mo><mn>1</mn></mrow><mrow><mtext mathvariant="normal">anchor</mtext><mo>−</mo><mn>1</mn></mrow></munderover><mtext mathvariant="normal">TransitionCost</mtext><mo stretchy="false" form="prefix">(</mo><mi>t</mi><mo>→</mo><mi>t</mi><mo>+</mo><mn>1</mn><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{TotalCost} = \sum_{t=1}^{\text{anchor}-1} \text{TransitionCost}(t \to t+1)</annotation></semantics></math></p>
 <p>Subject to: - Injective assignments at each census - Valid phase
 transitions per track - Fixed assignments at anchor census (from
 <code>TrueStemID</code>)</p>
@@ -452,44 +446,43 @@ These are typically added by calling <code>estimate_bio_pars()</code>
 and joining results:</p>
 <h4 id="growth-parameters">Growth Parameters</h4>
 <ul>
-<li><code>Bio_Mu_Growth</code> (<span
-class="math inline">\(\mu_{\text{const}}\)</span>): Intercept of mean
-annual growth (cm/year)</li>
-<li><code>Bio_Gamma_Growth</code> (<span
-class="math inline">\(\mu_{\gamma}\)</span>): Log-DBH slope in mean
-growth model (cm/year)</li>
-<li><code>Bio_Sigma0_Growth</code> (<span
-class="math inline">\(\sigma_0\)</span>): Baseline growth process SD
-(cm/year)</li>
-<li><code>Bio_Sigma1_Growth</code> (<span
-class="math inline">\(\sigma_1\)</span>): Growth SD slope vs DBH
-((cm/year)/cm)</li>
+<li><code>Bio_Mu_Growth</code>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>μ</mi><mtext mathvariant="normal">const</mtext></msub><annotation encoding="application/x-tex">\mu_{\text{const}}</annotation></semantics></math>):
+Intercept of mean annual growth (cm/year)</li>
+<li><code>Bio_Gamma_Growth</code>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>μ</mi><mi>γ</mi></msub><annotation encoding="application/x-tex">\mu_{\gamma}</annotation></semantics></math>):
+Log-DBH slope in mean growth model (cm/year)</li>
+<li><code>Bio_Sigma0_Growth</code>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>σ</mi><mn>0</mn></msub><annotation encoding="application/x-tex">\sigma_0</annotation></semantics></math>):
+Baseline growth process SD (cm/year)</li>
+<li><code>Bio_Sigma1_Growth</code>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>σ</mi><mn>1</mn></msub><annotation encoding="application/x-tex">\sigma_1</annotation></semantics></math>):
+Growth SD slope vs DBH ((cm/year)/cm)</li>
 </ul>
 <h4 id="shrinkage-penalties">Shrinkage Penalties</h4>
 <ul>
-<li><code>Bio_Max_Shrink</code> (<span
-class="math inline">\(\text{max\_shrink}\)</span>): Hard lower bound on
-annual growth (cm/year, negative)</li>
-<li><code>Bio_K_Shrink</code> (<span
-class="math inline">\(k_{\text{shrink}}\)</span>): Soft shrinkage
-penalty weight (1/cm²)</li>
+<li><code>Bio_Max_Shrink</code> (<code>max_shrink</code>): Hard lower
+bound on annual growth (cm/year, negative)</li>
+<li><code>Bio_K_Shrink</code>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>k</mi><mtext mathvariant="normal">shrink</mtext></msub><annotation encoding="application/x-tex">k_{\text{shrink}}</annotation></semantics></math>):
+Soft shrinkage penalty weight (1/cm²)</li>
 </ul>
 <h4 id="extreme-growth-penalties">Extreme Growth Penalties</h4>
 <ul>
-<li><code>Bio_Max_Growth</code> (<span
-class="math inline">\(\text{max\_growth}\)</span>): Hard upper bound on
-annual growth (cm/year)</li>
-<li><code>Bio_K_Growth</code> (<span
-class="math inline">\(k_{\text{growth}}\)</span>): Soft extreme growth
-penalty weight (1/cm²)</li>
+<li><code>Bio_Max_Growth</code> (<code>max_growth</code>): Hard upper
+bound on annual growth (cm/year)</li>
+<li><code>Bio_K_Growth</code>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>k</mi><mtext mathvariant="normal">growth</mtext></msub><annotation encoding="application/x-tex">k_{\text{growth}}</annotation></semantics></math>):
+Soft extreme growth penalty weight (1/cm²)</li>
 </ul>
 <h4 id="mortality-parameters">Mortality Parameters</h4>
 <ul>
-<li><code>Bio_H0_Mortality</code> (<span
-class="math inline">\(h_0\)</span>): Baseline hazard parameter</li>
-<li><code>Bio_Beta_Mortality</code> (<span
-class="math inline">\(\beta\)</span>): Size effect on mortality
-hazard</li>
+<li><code>Bio_H0_Mortality</code>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>h</mi><mn>0</mn></msub><annotation encoding="application/x-tex">h_0</annotation></semantics></math>):
+Baseline hazard parameter</li>
+<li><code>Bio_Beta_Mortality</code>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>β</mi><annotation encoding="application/x-tex">\beta</annotation></semantics></math>):
+Size effect on mortality hazard</li>
 </ul>
 <h4 id="recruitment-parameters">Recruitment Parameters</h4>
 <ul>
@@ -518,8 +511,8 @@ Solver)</h3>
 </tr>
 <tr>
 <td><code>ReconstructionMethod</code></td>
-<td><code>"given"</code>, <code>"dp"</code>, or
-<code>"igraph"</code></td>
+<td><code>&quot;given&quot;</code>, <code>&quot;dp&quot;</code>, or
+<code>&quot;igraph&quot;</code></td>
 </tr>
 <tr>
 <td><code>ConstraintViolation</code></td>
@@ -558,55 +551,56 @@ Columns (Optional)</h3>
 <h2 id="biological-model-parameters">Biological Model &amp;
 Parameters</h2>
 <h3 id="growth-model">Growth Model</h3>
-<p><strong>Mean growth</strong> (size-dependent): <span
-class="math inline">\(\mu(D) = \alpha + \gamma \log(D)\)</span></p>
-<p>Where: - <span class="math inline">\(\alpha\)</span> =
-<code>Bio_Mu_Growth</code> (intercept, cm/year) - <span
-class="math inline">\(\gamma\)</span> = <code>Bio_Gamma_Growth</code>
-(slope on log-DBH, cm/year) - If <span class="math inline">\(\gamma =
-0\)</span>, reduces to constant mean growth</p>
-<p><strong>Process variability</strong> (heteroskedastic): <span
-class="math inline">\(\sigma(D) = \sigma_0 + \sigma_1 D\)</span></p>
-<p>Where: - <span class="math inline">\(\sigma_0\)</span> =
-<code>Bio_Sigma0_Growth</code> (baseline SD, cm/year) - <span
-class="math inline">\(\sigma_1\)</span> = <code>Bio_Sigma1_Growth</code>
-(SD slope vs DBH, (cm/year)/cm)</p>
+<p><strong>Mean growth</strong> (size-dependent):
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>μ</mi><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>α</mi><mo>+</mo><mi>γ</mi><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\mu(D) = \alpha + \gamma \log(D)</annotation></semantics></math></p>
+<p>Where: -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>α</mi><annotation encoding="application/x-tex">\alpha</annotation></semantics></math>
+= <code>Bio_Mu_Growth</code> (intercept, cm/year) -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>γ</mi><annotation encoding="application/x-tex">\gamma</annotation></semantics></math>
+= <code>Bio_Gamma_Growth</code> (slope on log-DBH, cm/year) - If
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\gamma = 0</annotation></semantics></math>,
+reduces to constant mean growth</p>
+<p><strong>Process variability</strong> (heteroskedastic):
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>σ</mi><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><msub><mi>σ</mi><mn>0</mn></msub><mo>+</mo><msub><mi>σ</mi><mn>1</mn></msub><mi>D</mi></mrow><annotation encoding="application/x-tex">\sigma(D) = \sigma_0 + \sigma_1 D</annotation></semantics></math></p>
+<p>Where: -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>σ</mi><mn>0</mn></msub><annotation encoding="application/x-tex">\sigma_0</annotation></semantics></math>
+= <code>Bio_Sigma0_Growth</code> (baseline SD, cm/year) -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>σ</mi><mn>1</mn></msub><annotation encoding="application/x-tex">\sigma_1</annotation></semantics></math>
+= <code>Bio_Sigma1_Growth</code> (SD slope vs DBH, (cm/year)/cm)</p>
 <h3 id="mortality-model">Mortality Model</h3>
-<p><strong>Hazard function:</strong> <span
-class="math inline">\(\text{hazard}(D) = h_0 \exp(\beta D)\)</span></p>
-<p><strong>Death probability over interval:</strong> <span
-class="math inline">\(P_{\text{death}}(D, \Delta t) = 1 -
-\exp(-\text{hazard}(D) \cdot \Delta t)\)</span></p>
-<p>Where: - <span class="math inline">\(h_0\)</span> =
-<code>Bio_H0_Mortality</code> (baseline hazard) - <span
-class="math inline">\(\beta\)</span> = <code>Bio_Beta_Mortality</code>
-(size effect parameter) - Probability clamped to <span
-class="math inline">\([10^{-12}, 1-10^{-12}]\)</span> for numerical
-stability</p>
+<p><strong>Hazard function:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">hazard</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><msub><mi>h</mi><mn>0</mn></msub><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>β</mi><mi>D</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{hazard}(D) = h_0 \exp(\beta D)</annotation></semantics></math></p>
+<p><strong>Death probability over interval:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>P</mi><mtext mathvariant="normal">death</mtext></msub><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo>,</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mn>1</mn><mo>−</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>−</mi><mtext mathvariant="normal">hazard</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>⋅</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">P_{\text{death}}(D, \Delta t) = 1 - \exp(-\text{hazard}(D) \cdot \Delta t)</annotation></semantics></math></p>
+<p>Where: -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>h</mi><mn>0</mn></msub><annotation encoding="application/x-tex">h_0</annotation></semantics></math>
+= <code>Bio_H0_Mortality</code> (baseline hazard) -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>β</mi><annotation encoding="application/x-tex">\beta</annotation></semantics></math>
+= <code>Bio_Beta_Mortality</code> (size effect parameter) - Probability
+clamped to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo>,</mo><mn>1</mn><mo>−</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-12}, 1-10^{-12}]</annotation></semantics></math>
+for numerical stability</p>
 <h3 id="recruitment-model">Recruitment Model</h3>
-<p><strong>Size distribution:</strong> <span
-class="math inline">\(D_{\text{recruit}} \sim
-\text{LogNormal}(\text{meanlog}, \text{sdlog})\)</span></p>
-<p><strong>Rate per empty track:</strong> <span
-class="math inline">\(P_{\text{recruit}}(\Delta t) = 1 -
-\exp(-\lambda_{\text{recruit}} \cdot \Delta t)\)</span></p>
+<p><strong>Size distribution:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>D</mi><mtext mathvariant="normal">recruit</mtext></msub><mo>∼</mo><mtext mathvariant="normal">LogNormal</mtext><mo stretchy="false" form="prefix">(</mo><mtext mathvariant="normal">meanlog</mtext><mo>,</mo><mtext mathvariant="normal">sdlog</mtext><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">D_{\text{recruit}} \sim \text{LogNormal}(\text{meanlog}, \text{sdlog})</annotation></semantics></math></p>
+<p><strong>Rate per empty track:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>P</mi><mtext mathvariant="normal">recruit</mtext></msub><mo stretchy="false" form="prefix">(</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mn>1</mn><mo>−</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>−</mi><msub><mi>λ</mi><mtext mathvariant="normal">recruit</mtext></msub><mo>⋅</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">P_{\text{recruit}}(\Delta t) = 1 - \exp(-\lambda_{\text{recruit}} \cdot \Delta t)</annotation></semantics></math></p>
 <p>Where: - <code>Bio_Recruit_Meanlog</code>,
-<code>Bio_Recruit_Sdlog</code>: LogNormal parameters - <span
-class="math inline">\(\lambda_{\text{recruit}}\)</span> =
-<code>Bio_Recruitment_lambda</code> (rate per year) - Probability
-clamped to <span class="math inline">\([10^{-12}, 1-10^{-12}]\)</span>
+<code>Bio_Recruit_Sdlog</code>: LogNormal parameters -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>λ</mi><mtext mathvariant="normal">recruit</mtext></msub><annotation encoding="application/x-tex">\lambda_{\text{recruit}}</annotation></semantics></math>
+= <code>Bio_Recruitment_lambda</code> (rate per year) - Probability
+clamped to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo>,</mo><mn>1</mn><mo>−</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-12}, 1-10^{-12}]</annotation></semantics></math>
 for numerical stability</p>
 <h3 id="measurement-error-model-chave-et-al.-2004">Measurement Error
 Model (Chave et al. 2004)</h3>
 <p>When enabled (<code>use_measurement_error = TRUE</code>), DBH
 observations include remeasurement noise:</p>
-<p><span class="math display">\[D_{\text{obs}} = D_{\text{true}} +
-\varepsilon\]</span></p>
-<p><strong>Error distribution</strong> (2-component mixture): <span
-class="math display">\[\varepsilon \sim (1-p)\,\mathcal{N}(0,
-\text{SD1}(D)^2) + p\,\mathcal{N}(0, \text{SD2}^2)\]</span></p>
-<p>where: <span class="math display">\[\text{SD1}(D) = a \cdot D +
-b\]</span></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>D</mi><mtext mathvariant="normal">obs</mtext></msub><mo>=</mo><msub><mi>D</mi><mtext mathvariant="normal">true</mtext></msub><mo>+</mo><mi>ε</mi></mrow><annotation encoding="application/x-tex">D_{\text{obs}} = D_{\text{true}} + \varepsilon</annotation></semantics></math></p>
+<p><strong>Error distribution</strong> (2-component mixture):
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>ε</mi><mo>∼</mo><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><mo stretchy="false" form="postfix">)</mo><mspace width="0.167em"></mspace><mi>𝒩</mi><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><mtext mathvariant="normal">SD1</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup><mo stretchy="false" form="postfix">)</mo><mo>+</mo><mi>p</mi><mspace width="0.167em"></mspace><mi>𝒩</mi><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><msup><mtext mathvariant="normal">SD2</mtext><mn>2</mn></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\varepsilon \sim (1-p)\,\mathcal{N}(0, \text{SD1}(D)^2) + p\,\mathcal{N}(0, \text{SD2}^2)</annotation></semantics></math></p>
+<p>where:
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">SD1</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>a</mi><mo>⋅</mo><mi>D</mi><mo>+</mo><mi>b</mi></mrow><annotation encoding="application/x-tex">\text{SD1}(D) = a \cdot D + b</annotation></semantics></math></p>
 <p><strong>Parameters:</strong> - <code>meas_sd1_a</code>: Small-error
 slope (a) - <code>meas_sd1_b</code>: Small-error intercept (b) -
 <code>meas_sd2</code>: Large-error SD (constant) -
@@ -626,125 +620,121 @@ to the total cost. The function processes all K tracks sequentially.</p>
 <p><strong>Inputs:</strong> - <code>track_dbh_t</code>: length-K numeric
 vector (DBH per track at census t, NA if unoccupied) -
 <code>track_dbh_tp1</code>: length-K numeric vector (DBH per track at
-census t+1, NA if unoccupied) - <code>interval_years</code>: <span
-class="math inline">\(\Delta t\)</span> between censuses - Biological
-parameters (growth, mortality, recruitment, shrinkage) -
-<code>eps_tiebreak</code>: deterministic tie-break weight (default <span
-class="math inline">\(10^{-6}\)</span>)</p>
+census t+1, NA if unoccupied) - <code>interval_years</code>:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow><annotation encoding="application/x-tex">\Delta t</annotation></semantics></math>
+between censuses - Biological parameters (growth, mortality,
+recruitment, shrinkage) - <code>eps_tiebreak</code>: deterministic
+tie-break weight (default
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup><annotation encoding="application/x-tex">10^{-6}</annotation></semantics></math>)</p>
 <p><strong>Output:</strong> Single scalar cost (sum across all tracks +
 tie-break term)</p>
 <h3 id="recruitment-probability">Recruitment Probability</h3>
 <p>Computed once per transition (shared across all tracks):</p>
-<p><span class="math inline">\(P_{\text{recruit}}(\Delta t) = 1 -
-\exp(-\lambda_{\text{recruit}} \cdot \Delta t)\)</span></p>
-<p>Clamped to <span class="math inline">\([10^{-12},
-1-10^{-12}]\)</span> for numerical stability.</p>
+<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>P</mi><mtext mathvariant="normal">recruit</mtext></msub><mo stretchy="false" form="prefix">(</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mn>1</mn><mo>−</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>−</mi><msub><mi>λ</mi><mtext mathvariant="normal">recruit</mtext></msub><mo>⋅</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">P_{\text{recruit}}(\Delta t) = 1 - \exp(-\lambda_{\text{recruit}} \cdot \Delta t)</annotation></semantics></math></p>
+<p>Clamped to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo>,</mo><mn>1</mn><mo>−</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-12}, 1-10^{-12}]</annotation></semantics></math>
+for numerical stability.</p>
 <h3 id="per-track-transition-cases">Per-Track Transition Cases</h3>
 <h4 id="case-a-na-na-no-recruitment">Case A: NA → NA (No
 recruitment)</h4>
 <p>Track remains empty throughout interval.</p>
-<p><span class="math inline">\(\text{cost} += -\log(1 -
-P_{\text{recruit}})\)</span></p>
+<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">cost</mtext><mi>+</mi><mo>=</mo><mi>−</mi><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><msub><mi>P</mi><mtext mathvariant="normal">recruit</mtext></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{cost} += -\log(1 - P_{\text{recruit}})</annotation></semantics></math></p>
 <p><strong>Interpretation:</strong> Penalizes leaving track empty based
 on recruitment probability. Higher recruitment rates make long empty
 histories more costly.</p>
 <h4 id="case-b-na-dbh-recruitment">Case B: NA → DBH (Recruitment)</h4>
 <p>Track transitions from empty to occupied.</p>
-<p><strong>Hard constraint:</strong> If <span class="math inline">\(D_1
-&gt; \text{recruit\_max\_dbh}\)</span>: <span
-class="math inline">\(\text{cost} += 10^6\)</span></p>
-<p><strong>Otherwise (valid recruit):</strong> <span
-class="math inline">\(\text{cost} += -\log(P_{\text{recruit}}) - \log
-f_{\text{LogNormal}}(D_1; \text{meanlog}, \text{sdlog})\)</span></p>
-<p>where: <span class="math inline">\(f_{\text{LogNormal}}(x) =
-\frac{1}{x \cdot \text{sdlog} \cdot \sqrt{2\pi}} \exp\left(-\frac{(\log
-x - \text{meanlog})^2}{2 \cdot \text{sdlog}^2}\right)\)</span></p>
+<p><strong>Hard constraint:</strong> If D_1 &gt;
+<code>recruit_max_dbh</code>: <code>cost += 10^6</code></p>
+<p><strong>Otherwise (valid recruit):</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">cost</mtext><mi>+</mi><mo>=</mo><mi>−</mi><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>P</mi><mtext mathvariant="normal">recruit</mtext></msub><mo stretchy="false" form="postfix">)</mo><mo>−</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><msub><mi>f</mi><mtext mathvariant="normal">LogNormal</mtext></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>1</mn></msub><mo>;</mo><mtext mathvariant="normal">meanlog</mtext><mo>,</mo><mtext mathvariant="normal">sdlog</mtext><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{cost} += -\log(P_{\text{recruit}}) - \log f_{\text{LogNormal}}(D_1; \text{meanlog}, \text{sdlog})</annotation></semantics></math></p>
+<p>where:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>f</mi><mtext mathvariant="normal">LogNormal</mtext></msub><mo stretchy="false" form="prefix">(</mo><mi>x</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mfrac><mn>1</mn><mrow><mi>x</mi><mo>⋅</mo><mtext mathvariant="normal">sdlog</mtext><mo>⋅</mo><msqrt><mrow><mn>2</mn><mi>π</mi></mrow></msqrt></mrow></mfrac><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mi>−</mi><mfrac><mrow><mo stretchy="false" form="prefix">(</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mi>x</mi><mo>−</mo><mtext mathvariant="normal">meanlog</mtext><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup></mrow><mrow><mn>2</mn><mo>⋅</mo><msup><mtext mathvariant="normal">sdlog</mtext><mn>2</mn></msup></mrow></mfrac><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">f_{\text{LogNormal}}(x) = \frac{1}{x \cdot \text{sdlog} \cdot \sqrt{2\pi}} \exp\left(-\frac{(\log x - \text{meanlog})^2}{2 \cdot \text{sdlog}^2}\right)</annotation></semantics></math></p>
 <p>Implementation: <code>dlnorm(d1, meanlog, sdlog, log=TRUE)</code></p>
 <h4 id="case-c-dbh-na-mortality">Case C: DBH → NA (Mortality)</h4>
 <p>Track transitions from occupied to empty (disappearance/death).</p>
-<p><strong>Mortality probability:</strong> <span
-class="math inline">\(P_{\text{death}}(D_0, \Delta t) = 1 - \exp(-h_0
-\exp(\beta D_0) \cdot \Delta t)\)</span></p>
-<p>Clamped to <span class="math inline">\([10^{-12},
-1-10^{-12}]\)</span>.</p>
-<p><span class="math inline">\(\text{cost} +=
--\log(P_{\text{death}})\)</span></p>
+<p><strong>Mortality probability:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>P</mi><mtext mathvariant="normal">death</mtext></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo>,</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mn>1</mn><mo>−</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>−</mi><msub><mi>h</mi><mn>0</mn></msub><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>β</mi><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>⋅</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">P_{\text{death}}(D_0, \Delta t) = 1 - \exp(-h_0 \exp(\beta D_0) \cdot \Delta t)</annotation></semantics></math></p>
+<p>Clamped to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo>,</mo><mn>1</mn><mo>−</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-12}, 1-10^{-12}]</annotation></semantics></math>.</p>
+<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">cost</mtext><mi>+</mi><mo>=</mo><mi>−</mi><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>P</mi><mtext mathvariant="normal">death</mtext></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{cost} += -\log(P_{\text{death}})</annotation></semantics></math></p>
 <p><strong>Interpretation:</strong> Disappearance is “cheap” only when
-mortality probability is high. Low mortality at size <span
-class="math inline">\(D_0\)</span> makes DBH→NA costly.</p>
+mortality probability is high. Low mortality at size
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mn>0</mn></msub><annotation encoding="application/x-tex">D_0</annotation></semantics></math>
+makes DBH→NA costly.</p>
 <h4 id="case-d-dbh-dbh-growth">Case D: DBH → DBH (Growth)</h4>
-<p>Track remains occupied; DBH changes from <span
-class="math inline">\(D_0\)</span> to <span
-class="math inline">\(D_1\)</span>.</p>
-<p><strong>Annualized growth:</strong> <span class="math inline">\(g =
-\frac{D_1 - D_0}{\Delta t}\)</span></p>
-<p><strong>D1. Hard shrinkage constraint:</strong> <span
-class="math inline">\(\text{if } g &lt; \text{max\_shrink}: \quad
-\text{cost} += 10^6, \text{ skip to next track}\)</span></p>
-<p><strong>D2. Hard extreme growth constraint:</strong> <span
-class="math inline">\(\text{if } g &gt; \text{max\_growth}: \quad
-\text{cost} += 10^6, \text{ skip to next track}\)</span></p>
-<p><strong>D3. Heteroskedastic growth variance:</strong> <span
-class="math inline">\(\sigma(D_0) = \max(\sigma_0 + \sigma_1 D_0, \,
-10^{-6})\)</span></p>
-<p><strong>D4. Mean growth (size-dependent):</strong> <span
-class="math inline">\(\mu(D_0) = \begin{cases}
-\mu_{\text{const}} + \mu_{\gamma} \log(D_0) &amp; \text{if }
-\mu_{\gamma} \neq 0 \text{ and } D_0 &gt; 0\\
+<p>Track remains occupied; DBH changes from
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mn>0</mn></msub><annotation encoding="application/x-tex">D_0</annotation></semantics></math>
+to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mn>1</mn></msub><annotation encoding="application/x-tex">D_1</annotation></semantics></math>.</p>
+<p><strong>Annualized growth:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi><mo>=</mo><mfrac><mrow><msub><mi>D</mi><mn>1</mn></msub><mo>−</mo><msub><mi>D</mi><mn>0</mn></msub></mrow><mrow><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">g = \frac{D_1 - D_0}{\Delta t}</annotation></semantics></math></p>
+<p><strong>D1. Hard shrinkage constraint:</strong> If g &lt;
+<code>max_shrink</code>: <code>cost += 10^6</code>, skip to next
+track</p>
+<p><strong>D2. Hard extreme growth constraint:</strong> If g &gt;
+<code>max_growth</code>: <code>cost += 10^6</code>, skip to next
+track</p>
+<p><strong>D3. Heteroskedastic growth variance:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>σ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>σ</mi><mn>0</mn></msub><mo>+</mo><msub><mi>σ</mi><mn>1</mn></msub><msub><mi>D</mi><mn>0</mn></msub><mo>,</mo><mspace width="0.167em"></mspace><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\sigma(D_0) = \max(\sigma_0 + \sigma_1 D_0, \, 10^{-6})</annotation></semantics></math></p>
+<p><strong>D4. Mean growth (size-dependent):</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>μ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><msub><mi>μ</mi><mtext mathvariant="normal">const</mtext></msub><mo>+</mo><msub><mi>μ</mi><mi>γ</mi></msub><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo></mtd><mtd columnalign="left" style="text-align: left"><mrow><mtext mathvariant="normal">if </mtext><mspace width="0.333em"></mspace></mrow><msub><mi>μ</mi><mi>γ</mi></msub><mo>≠</mo><mn>0</mn><mrow><mspace width="0.333em"></mspace><mtext mathvariant="normal"> and </mtext><mspace width="0.333em"></mspace></mrow><msub><mi>D</mi><mn>0</mn></msub><mo>&gt;</mo><mn>0</mn></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><msub><mi>μ</mi><mtext mathvariant="normal">const</mtext></msub></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">otherwise</mtext></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">\mu(D_0) = \begin{cases}
+\mu_{\text{const}} + \mu_{\gamma} \log(D_0) &amp; \text{if } \mu_{\gamma} \neq 0 \text{ and } D_0 &gt; 0\\
 \mu_{\text{const}} &amp; \text{otherwise}
-\end{cases}\)</span></p>
+\end{cases}</annotation></semantics></math></p>
 <p><strong>D5. Growth likelihood:</strong></p>
-<p><strong>Without measurement error:</strong> <span
-class="math inline">\(\text{cost} += \frac{(g -
-\mu(D_0))^2}{2\sigma(D_0)^2} + \log \sigma(D_0) +
-\frac{1}{2}\log(2\pi)\)</span></p>
+<p><strong>Without measurement error:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">cost</mtext><mi>+</mi><mo>=</mo><mfrac><mrow><mo stretchy="false" form="prefix">(</mo><mi>g</mi><mo>−</mo><mi>μ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup></mrow><mrow><mn>2</mn><mi>σ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup></mrow></mfrac><mo>+</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mi>σ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>+</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mn>2</mn><mi>π</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{cost} += \frac{(g - \mu(D_0))^2}{2\sigma(D_0)^2} + \log \sigma(D_0) + \frac{1}{2}\log(2\pi)</annotation></semantics></math></p>
 <p><strong>With measurement error (Chave et al. 2004):</strong></p>
 <p>Four-component Normal mixture for observed growth:</p>
-<p>Component parameters: <span
-class="math inline">\(\text{SD}_{\text{meas},i} =
-\frac{\sqrt{\text{SD}_a^2 + \text{SD}_b^2}}{\Delta t}\)</span></p>
-<p>where <span class="math inline">\(({\text{SD}_a,
-\text{SD}_b})\)</span> from: 1. Small-small: (SD1(<span
-class="math inline">\(D_0\)</span>), SD1(<span
-class="math inline">\(D_1\)</span>)) 2. Small-big: (SD1(<span
-class="math inline">\(D_0\)</span>), SD2) 3. Big-small: (SD2, SD1(<span
-class="math inline">\(D_1\)</span>)) 4. Big-big: (SD2, SD2)</p>
-<p>Component weights: <span class="math inline">\(w_i \in \{(1-p)^2,
-(1-p)p, p(1-p), p^2\}\)</span></p>
-<p>Total SD per component: <span
-class="math inline">\(\text{SD}_{\text{tot},i} = \sqrt{\sigma(D_0)^2 +
-\text{SD}_{\text{meas},i}^2}\)</span></p>
-<p>Log-likelihood: <span class="math inline">\(\ell_i = \log w_i + \log
-\phi(g; \mu(D_0), \text{SD}_{\text{tot},i})\)</span></p>
-<p>where <span class="math inline">\(\phi\)</span> is Normal PDF.</p>
-<p>Stable log-sum-exp: <span class="math inline">\(m = \max(\ell_1,
-\ell_2, \ell_3, \ell_4)\)</span> <span class="math inline">\(\text{cost}
-+= -\left(m + \log\sum_{i=1}^4 \exp(\ell_i - m)\right)\)</span></p>
-<p><strong>D6. Soft shrinkage penalty:</strong> <span
-class="math inline">\(\text{if } D_1 &lt; D_0: \quad \text{cost} +=
-k_{\text{shrink}} (D_0 - D_1)^2\)</span></p>
-<p><strong>Units:</strong> <span class="math inline">\((D_0 -
-D_1)\)</span> in cm, <span
-class="math inline">\(k_{\text{shrink}}\)</span> in 1/cm²</p>
-<p><strong>D7. Soft extreme growth penalty:</strong> <span
-class="math inline">\(d_{1,\text{cap}} = D_0 + \text{max\_growth\_soft}
-\cdot \Delta t\)</span> <span class="math inline">\(\text{if } D_1 &gt;
-d_{1,\text{cap}}: \quad \text{cost} += k_{\text{growth}} (D_1 -
-d_{1,\text{cap}})^2\)</span></p>
-<p><strong>Units:</strong> Excess in cm, <span
-class="math inline">\(k_{\text{growth}}\)</span> in 1/cm²</p>
+<p>Component parameters:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mtext mathvariant="normal">SD</mtext><mrow><mtext mathvariant="normal">meas</mtext><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><mfrac><msqrt><mrow><msubsup><mtext mathvariant="normal">SD</mtext><mi>a</mi><mn>2</mn></msubsup><mo>+</mo><msubsup><mtext mathvariant="normal">SD</mtext><mi>b</mi><mn>2</mn></msubsup></mrow></msqrt><mrow><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">\text{SD}_{\text{meas},i} = \frac{\sqrt{\text{SD}_a^2 + \text{SD}_b^2}}{\Delta t}</annotation></semantics></math></p>
+<p>where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mrow><msub><mtext mathvariant="normal">SD</mtext><mi>a</mi></msub><mo>,</mo><msub><mtext mathvariant="normal">SD</mtext><mi>b</mi></msub></mrow><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">({\text{SD}_a, \text{SD}_b})</annotation></semantics></math>
+from: 1. Small-small:
+(SD1(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mn>0</mn></msub><annotation encoding="application/x-tex">D_0</annotation></semantics></math>),
+SD1(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mn>1</mn></msub><annotation encoding="application/x-tex">D_1</annotation></semantics></math>))
+2. Small-big:
+(SD1(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mn>0</mn></msub><annotation encoding="application/x-tex">D_0</annotation></semantics></math>),
+SD2) 3. Big-small: (SD2,
+SD1(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mn>1</mn></msub><annotation encoding="application/x-tex">D_1</annotation></semantics></math>))
+4. Big-big: (SD2, SD2)</p>
+<p>Component weights:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>w</mi><mi>i</mi></msub><mo>∈</mo><mo stretchy="false" form="prefix">{</mo><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup><mo>,</mo><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><mo stretchy="false" form="postfix">)</mo><mi>p</mi><mo>,</mo><mi>p</mi><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><mo stretchy="false" form="postfix">)</mo><mo>,</mo><msup><mi>p</mi><mn>2</mn></msup><mo stretchy="false" form="postfix">}</mo></mrow><annotation encoding="application/x-tex">w_i \in \{(1-p)^2, (1-p)p, p(1-p), p^2\}</annotation></semantics></math></p>
+<p>Total SD per component:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mtext mathvariant="normal">SD</mtext><mrow><mtext mathvariant="normal">tot</mtext><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><msqrt><mrow><mi>σ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup><mo>+</mo><msubsup><mtext mathvariant="normal">SD</mtext><mrow><mtext mathvariant="normal">meas</mtext><mo>,</mo><mi>i</mi></mrow><mn>2</mn></msubsup></mrow></msqrt></mrow><annotation encoding="application/x-tex">\text{SD}_{\text{tot},i} = \sqrt{\sigma(D_0)^2 + \text{SD}_{\text{meas},i}^2}</annotation></semantics></math></p>
+<p>Log-likelihood:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>ℓ</mi><mi>i</mi></msub><mo>=</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><msub><mi>w</mi><mi>i</mi></msub><mo>+</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mi>ϕ</mi><mo stretchy="false" form="prefix">(</mo><mi>g</mi><mo>;</mo><mi>μ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>,</mo><msub><mtext mathvariant="normal">SD</mtext><mrow><mtext mathvariant="normal">tot</mtext><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\ell_i = \log w_i + \log \phi(g; \mu(D_0), \text{SD}_{\text{tot},i})</annotation></semantics></math></p>
+<p>where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ϕ</mi><annotation encoding="application/x-tex">\phi</annotation></semantics></math>
+is Normal PDF.</p>
+<p>Stable log-sum-exp:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>m</mi><mo>=</mo><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>ℓ</mi><mn>1</mn></msub><mo>,</mo><msub><mi>ℓ</mi><mn>2</mn></msub><mo>,</mo><msub><mi>ℓ</mi><mn>3</mn></msub><mo>,</mo><msub><mi>ℓ</mi><mn>4</mn></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">m = \max(\ell_1, \ell_2, \ell_3, \ell_4)</annotation></semantics></math>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">cost</mtext><mi>+</mi><mo>=</mo><mi>−</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>m</mi><mo>+</mo><mi mathvariant="normal">log</mi><msubsup><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mn>4</mn></msubsup><mi mathvariant="normal">exp</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>ℓ</mi><mi>i</mi></msub><mo>−</mo><mi>m</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\text{cost} += -\left(m + \log\sum_{i=1}^4 \exp(\ell_i - m)\right)</annotation></semantics></math></p>
+<p><strong>D6. Soft shrinkage penalty:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mtext mathvariant="normal">if </mtext><mspace width="0.333em"></mspace></mrow><msub><mi>D</mi><mn>1</mn></msub><mo>&lt;</mo><msub><mi>D</mi><mn>0</mn></msub><mo>:</mo><mspace width="1.0em"></mspace><mtext mathvariant="normal">cost</mtext><mi>+</mi><mo>=</mo><msub><mi>k</mi><mtext mathvariant="normal">shrink</mtext></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo>−</mo><msub><mi>D</mi><mn>1</mn></msub><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">\text{if } D_1 &lt; D_0: \quad \text{cost} += k_{\text{shrink}} (D_0 - D_1)^2</annotation></semantics></math></p>
+<p><strong>Units:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo>−</mo><msub><mi>D</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(D_0 - D_1)</annotation></semantics></math>
+in cm,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>k</mi><mtext mathvariant="normal">shrink</mtext></msub><annotation encoding="application/x-tex">k_{\text{shrink}}</annotation></semantics></math>
+in 1/cm²</p>
+<p><strong>D7. Soft extreme growth penalty:</strong> d_{1,cap} = D_0 +
+<code>max_growth_soft</code> * Δt<br />
+If D_1 &gt; d_{1,cap}:
+<code>cost += k_growth * (D_1 - d_{1,cap})^2</code></p>
+<p><strong>Units:</strong> Excess in cm,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>k</mi><mtext mathvariant="normal">growth</mtext></msub><annotation encoding="application/x-tex">k_{\text{growth}}</annotation></semantics></math>
+in 1/cm²</p>
 <p><strong>D8. Deterministic tie-break (non-biological):</strong></p>
 <p>After summing all track costs:</p>
-<p><span class="math inline">\(r_0 = \text{rank}(\text{track\_dbh}_t,
-\text{ties.method=&quot;first&quot;})\)</span> <span
-class="math inline">\(r_1 = \text{rank}(\text{track\_dbh}_{t+1},
-\text{ties.method=&quot;first&quot;})\)</span> <span
-class="math inline">\(\text{both\_obs} = \{\text{tracks where both } t
-\text{ and } t+1 \text{ observed}\}\)</span> <span
-class="math inline">\(\text{cost} += \varepsilon_{\text{tiebreak}}
-\sum_{k \in \text{both\_obs}} |r_0[k] - r_1[k]|\)</span></p>
-<p>Default: <span class="math inline">\(\varepsilon_{\text{tiebreak}} =
-10^{-6}\)</span></p>
+<p><code>r_0</code> = rank(<code>track_dbh_t</code>,
+ties.method=“first”) <code>r_1</code> =
+rank(<code>track_dbh_{t+1}</code>, ties.method=“first”)
+<code>both_obs</code> = {tracks where both t and t+1 observed}
+<code>cost</code> += <code>epsilon_tiebreak</code> * sum_{k in
+<code>both_obs</code>} |r_0[k] - r_1[k]|</p>
+<p>Default:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>ε</mi><mtext mathvariant="normal">tiebreak</mtext></msub><mo>=</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">\varepsilon_{\text{tiebreak}} = 10^{-6}</annotation></semantics></math></p>
 <p><strong>Purpose:</strong> Discourages unnecessary rank crossings when
 biological costs are tied.</p>
 <h3 id="backward-dp-recursion">Backward DP Recursion</h3>
@@ -764,13 +754,14 @@ parameter; falls back if exceeded</p>
 <h2 id="uncertainty-quantification">Uncertainty Quantification</h2>
 <h3 id="posterior-distribution">Posterior Distribution</h3>
 <p>The probabilistic solver defines a Gibbs-like posterior:</p>
-<p><span class="math display">\[P(\text{path}) \propto
-\exp\left(-\frac{\text{TotalCost}(\text{path})}{\tau}\right)\]</span></p>
-<p>where <span class="math inline">\(\tau\)</span> is the temperature
-parameter: - <span class="math inline">\(\tau &lt; 1\)</span>: Sharper
-posterior (more confident, concentrates on near-MAP paths) - <span
-class="math inline">\(\tau &gt; 1\)</span>: Flatter posterior (less
-confident, spreads mass across alternatives)</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mo stretchy="false" form="prefix">(</mo><mtext mathvariant="normal">path</mtext><mo stretchy="false" form="postfix">)</mo><mo>∝</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mi>−</mi><mfrac><mrow><mtext mathvariant="normal">TotalCost</mtext><mo stretchy="false" form="prefix">(</mo><mtext mathvariant="normal">path</mtext><mo stretchy="false" form="postfix">)</mo></mrow><mi>τ</mi></mfrac><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">P(\text{path}) \propto \exp\left(-\frac{\text{TotalCost}(\text{path})}{\tau}\right)</annotation></semantics></math></p>
+<p>where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>τ</mi><annotation encoding="application/x-tex">\tau</annotation></semantics></math>
+is the temperature parameter: -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi><mo>&lt;</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\tau &lt; 1</annotation></semantics></math>:
+Sharper posterior (more confident, concentrates on near-MAP paths) -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi><mo>&gt;</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\tau &gt; 1</annotation></semantics></math>:
+Flatter posterior (less confident, spreads mass across alternatives)</p>
 <h3 id="marginal-computation">Marginal Computation</h3>
 <p><code>match_stems_dp_global_backward_marginals()</code> computes
 exact marginals via: 1. <strong>Backward pass:</strong> Log-sum-exp
@@ -782,8 +773,9 @@ each anchor ID</p>
 <ul>
 <li><strong>Top1/Top2 IDs and probabilities:</strong> Most likely
 assignments</li>
-<li><strong>Entropy:</strong> <span class="math inline">\(H = -\sum_i
-p_i \log p_i\)</span> (higher = more uncertain)</li>
+<li><strong>Entropy:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>H</mi><mo>=</mo><mi>−</mi><msub><mo>∑</mo><mi>i</mi></msub><msub><mi>p</mi><mi>i</mi></msub><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><msub><mi>p</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">H = -\sum_i p_i \log p_i</annotation></semantics></math>
+(higher = more uncertain)</li>
 <li><strong>Reconstructed probability:</strong> Posterior mass on chosen
 <code>ReconstructedStemID</code></li>
 <li><strong>Unlinked probability:</strong> Posterior mass on not
@@ -802,9 +794,9 @@ matching any anchor ID</li>
 observation</li>
 <li><strong>ReconstructionMethod:</strong>
 <ul>
-<li><code>"given"</code>: From input <code>TrueStemID</code></li>
-<li><code>"dp"</code>: Assigned by DP solver</li>
-<li><code>"igraph"</code>: Assigned by fallback method</li>
+<li><code>&quot;given&quot;</code>: From input <code>TrueStemID</code></li>
+<li><code>&quot;dp&quot;</code>: Assigned by DP solver</li>
+<li><code>&quot;igraph&quot;</code>: Assigned by fallback method</li>
 </ul></li>
 </ol>
 <h3 id="diagnostic-outputs">Diagnostic Outputs</h3>
@@ -843,222 +835,197 @@ mode:</strong> Uses user-specified constants</p>
 <p><strong>Wide format conversion:</strong></p>
 <div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>dw <span class="ot">&lt;-</span> <span class="fu">dcast</span>(Tag <span class="sc">+</span> TrueStemID <span class="sc">+</span> species <span class="sc">~</span> CensusID, <span class="at">value.var =</span> <span class="st">&quot;DBH&quot;</span>)</span></code></pre></div>
 <p><strong>Annual growth increments:</strong> For each adjacent census
-pair <span class="math inline">\((t_0, t_1)\)</span>: <span
-class="math inline">\(g = \frac{D_1 - D_0}{\Delta t}\)</span></p>
-<p><strong>Mean model fitting:</strong> <span
-class="math inline">\(\mu(D) = \alpha + \gamma \log(D)\)</span></p>
+pair
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>t</mi><mn>0</mn></msub><mo>,</mo><msub><mi>t</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(t_0, t_1)</annotation></semantics></math>:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi><mo>=</mo><mfrac><mrow><msub><mi>D</mi><mn>1</mn></msub><mo>−</mo><msub><mi>D</mi><mn>0</mn></msub></mrow><mrow><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">g = \frac{D_1 - D_0}{\Delta t}</annotation></semantics></math></p>
+<p><strong>Mean model fitting:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>μ</mi><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>α</mi><mo>+</mo><mi>γ</mi><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\mu(D) = \alpha + \gamma \log(D)</annotation></semantics></math></p>
 <p>Fits <code>lm(g ~ log(d0))</code> when: - At least 10 valid
 observations exist - Variance of <code>log(d0)</code> &gt; 0</p>
-<p>Otherwise falls back to constant mean: <span
-class="math inline">\(\alpha = \bar{g}\)</span>, <span
-class="math inline">\(\gamma = 0\)</span></p>
-<p><strong>Predicted mean for each observation:</strong> <span
-class="math inline">\(\mu_{\text{pred}}(i) = \begin{cases}
-\alpha + \gamma \log(D_{0,i}) &amp; \text{if fit successful and }
-D_{0,i} &gt; 0\\
+<p>Otherwise falls back to constant mean:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>α</mi><mo>=</mo><mover><mi>g</mi><mo accent="true">‾</mo></mover></mrow><annotation encoding="application/x-tex">\alpha = \bar{g}</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\gamma = 0</annotation></semantics></math></p>
+<p><strong>Predicted mean for each observation:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><mo stretchy="false" form="prefix">(</mo><mi>i</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><mi>α</mi><mo>+</mo><mi>γ</mi><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mrow><mn>0</mn><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mtd><mtd columnalign="left" style="text-align: left"><mrow><mtext mathvariant="normal">if fit successful and </mtext><mspace width="0.333em"></mspace></mrow><msub><mi>D</mi><mrow><mn>0</mn><mo>,</mo><mi>i</mi></mrow></msub><mo>&gt;</mo><mn>0</mn></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mi>α</mi></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">otherwise</mtext></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">\mu_{\text{pred}}(i) = \begin{cases}
+\alpha + \gamma \log(D_{0,i}) &amp; \text{if fit successful and } D_{0,i} &gt; 0\\
 \alpha &amp; \text{otherwise}
-\end{cases}\)</span></p>
+\end{cases}</annotation></semantics></math></p>
 <p><strong>Process SD estimation:</strong></p>
-<p>Uses robust SD proxy from absolute residuals: <span
-class="math inline">\(\text{residual}_i = |g_i -
-\mu_{\text{pred}}(i)|\)</span></p>
-<p>For Normal<span class="math inline">\((0, \sigma^2)\)</span>: <span
-class="math inline">\(\mathbb{E}[|X|] = \sigma\sqrt{2/\pi}\)</span>,
-therefore: <span class="math inline">\(\hat{\sigma}_{\text{total},i} =
-\text{residual}_i \times \sqrt{\pi/2}\)</span></p>
+<p>Uses robust SD proxy from absolute residuals:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mtext mathvariant="normal">residual</mtext><mi>i</mi></msub><mo>=</mo><mo stretchy="false" form="prefix">|</mo><msub><mi>g</mi><mi>i</mi></msub><mo>−</mo><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><mo stretchy="false" form="prefix">(</mo><mi>i</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="prefix">|</mo></mrow><annotation encoding="application/x-tex">\text{residual}_i = |g_i - \mu_{\text{pred}}(i)|</annotation></semantics></math></p>
+<p>For
+Normal<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><msup><mi>σ</mi><mn>2</mn></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(0, \sigma^2)</annotation></semantics></math>:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>𝔼</mi><mo stretchy="false" form="prefix">[</mo><mo stretchy="false" form="prefix">|</mo><mi>X</mi><mo stretchy="false" form="prefix">|</mo><mo stretchy="false" form="postfix">]</mo><mo>=</mo><mi>σ</mi><msqrt><mrow><mn>2</mn><mi>/</mi><mi>π</mi></mrow></msqrt></mrow><annotation encoding="application/x-tex">\mathbb{E}[|X|] = \sigma\sqrt{2/\pi}</annotation></semantics></math>,
+therefore:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>σ</mi><mo accent="true">̂</mo></mover><mrow><mtext mathvariant="normal">total</mtext><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><msub><mtext mathvariant="normal">residual</mtext><mi>i</mi></msub><mo>×</mo><msqrt><mrow><mi>π</mi><mi>/</mi><mn>2</mn></mrow></msqrt></mrow><annotation encoding="application/x-tex">\hat{\sigma}_{\text{total},i} = \text{residual}_i \times \sqrt{\pi/2}</annotation></semantics></math></p>
 <p><strong>Measurement error correction (if enabled):</strong></p>
-<p>Expected measurement variance for annualized increment: <span
-class="math inline">\(\text{Var}_{\text{meas}}(g_i) =
-\frac{\text{Var}(\varepsilon | D_{0,i}) + \text{Var}(\varepsilon |
-D_{1,i})}{\Delta t^2}\)</span></p>
-<p>where mixture variance at diameter <span
-class="math inline">\(D\)</span>: <span
-class="math inline">\(\text{Var}(\varepsilon | D) = (1-p)\text{SD1}(D)^2
-+ p \cdot \text{SD2}^2\)</span> <span
-class="math inline">\(\text{SD1}(D) = \max(a \cdot D + b,
-10^{-6})\)</span></p>
-<p>Process SD in quadrature: <span
-class="math inline">\(\hat{\sigma}_{\text{proc},i} =
-\sqrt{\max(\hat{\sigma}_{\text{total},i}^2 -
-\text{Var}_{\text{meas}}(g_i), 10^{-8})}\)</span></p>
-<p><strong>Without measurement error:</strong> <span
-class="math inline">\(\hat{\sigma}_{\text{proc},i} =
-\max(\hat{\sigma}_{\text{total},i}, 10^{-6})\)</span></p>
+<p>Expected measurement variance for annualized increment:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mtext mathvariant="normal">Var</mtext><mtext mathvariant="normal">meas</mtext></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>g</mi><mi>i</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mfrac><mrow><mtext mathvariant="normal">Var</mtext><mo stretchy="false" form="prefix">(</mo><mi>ε</mi><mo stretchy="false" form="prefix">|</mo><msub><mi>D</mi><mrow><mn>0</mn><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mo>+</mo><mtext mathvariant="normal">Var</mtext><mo stretchy="false" form="prefix">(</mo><mi>ε</mi><mo stretchy="false" form="prefix">|</mo><msub><mi>D</mi><mrow><mn>1</mn><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><mrow><mi mathvariant="normal">Δ</mi><msup><mi>t</mi><mn>2</mn></msup></mrow></mfrac></mrow><annotation encoding="application/x-tex">\text{Var}_{\text{meas}}(g_i) = \frac{\text{Var}(\varepsilon | D_{0,i}) + \text{Var}(\varepsilon | D_{1,i})}{\Delta t^2}</annotation></semantics></math></p>
+<p>where mixture variance at diameter
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>D</mi><annotation encoding="application/x-tex">D</annotation></semantics></math>:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">Var</mtext><mo stretchy="false" form="prefix">(</mo><mi>ε</mi><mo stretchy="false" form="prefix">|</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><mo stretchy="false" form="postfix">)</mo><mtext mathvariant="normal">SD1</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup><mo>+</mo><mi>p</mi><mo>⋅</mo><msup><mtext mathvariant="normal">SD2</mtext><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">\text{Var}(\varepsilon | D) = (1-p)\text{SD1}(D)^2 + p \cdot \text{SD2}^2</annotation></semantics></math>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">SD1</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>a</mi><mo>⋅</mo><mi>D</mi><mo>+</mo><mi>b</mi><mo>,</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{SD1}(D) = \max(a \cdot D + b, 10^{-6})</annotation></semantics></math></p>
+<p>Process SD in quadrature:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>σ</mi><mo accent="true">̂</mo></mover><mrow><mtext mathvariant="normal">proc</mtext><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><msqrt><mrow><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msubsup><mover><mi>σ</mi><mo accent="true">̂</mo></mover><mrow><mtext mathvariant="normal">total</mtext><mo>,</mo><mi>i</mi></mrow><mn>2</mn></msubsup><mo>−</mo><msub><mtext mathvariant="normal">Var</mtext><mtext mathvariant="normal">meas</mtext></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>g</mi><mi>i</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>,</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>8</mn></mrow></msup><mo stretchy="false" form="postfix">)</mo></mrow></msqrt></mrow><annotation encoding="application/x-tex">\hat{\sigma}_{\text{proc},i} = \sqrt{\max(\hat{\sigma}_{\text{total},i}^2 - \text{Var}_{\text{meas}}(g_i), 10^{-8})}</annotation></semantics></math></p>
+<p><strong>Without measurement error:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>σ</mi><mo accent="true">̂</mo></mover><mrow><mtext mathvariant="normal">proc</mtext><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mover><mi>σ</mi><mo accent="true">̂</mo></mover><mrow><mtext mathvariant="normal">total</mtext><mo>,</mo><mi>i</mi></mrow></msub><mo>,</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\hat{\sigma}_{\text{proc},i} = \max(\hat{\sigma}_{\text{total},i}, 10^{-6})</annotation></semantics></math></p>
 <p><strong>Linear model for heteroskedasticity:</strong> Fits
-<code>lm(sd_proc_hat ~ d0_all)</code> with constraints: - <span
-class="math inline">\(\sigma_0 \geq 10^{-4}\)</span> - <span
-class="math inline">\(\sigma_1 \geq 0\)</span></p>
-<p>Final model: <span class="math inline">\(\sigma(D_0) = \sigma_0 +
-\sigma_1 D_0\)</span></p>
+<code>lm(sd_proc_hat ~ d0_all)</code> with constraints: -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>σ</mi><mn>0</mn></msub><mo>≥</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>4</mn></mrow></msup></mrow><annotation encoding="application/x-tex">\sigma_0 \geq 10^{-4}</annotation></semantics></math>
+-
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>σ</mi><mn>1</mn></msub><mo>≥</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\sigma_1 \geq 0</annotation></semantics></math></p>
+<p>Final model:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>σ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>=</mo><msub><mi>σ</mi><mn>0</mn></msub><mo>+</mo><msub><mi>σ</mi><mn>1</mn></msub><msub><mi>D</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">\sigma(D_0) = \sigma_0 + \sigma_1 D_0</annotation></semantics></math></p>
 <h3 id="penalty-parameter-estimation">Penalty Parameter Estimation</h3>
 <h4 id="soft-shrinkage-penalty-k_textshrink">Soft Shrinkage Penalty
-(<span class="math inline">\(k_{\text{shrink}}\)</span>)</h4>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>k</mi><mtext mathvariant="normal">shrink</mtext></msub><annotation encoding="application/x-tex">k_{\text{shrink}}</annotation></semantics></math>)</h4>
 <p><strong>Data mode with measurement error:</strong></p>
-<p>Typical measurement SD for raw DBH difference: <span
-class="math inline">\(s_{\text{typ}} =
-\text{median}\left(\sqrt{\text{Var}(\varepsilon|D_0) +
-\text{Var}(\varepsilon|D_1)}\right)\)</span></p>
-<p>Penalty weight: <span class="math inline">\(k_{\text{shrink}} =
-\frac{1}{2 s_{\text{typ}}^2}\)</span></p>
-<p>Clamped to <span class="math inline">\([10^{-6}, 10^6]\)</span> for
-numerical stability.</p>
+<p>Typical measurement SD for raw DBH difference:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>s</mi><mtext mathvariant="normal">typ</mtext></msub><mo>=</mo><mtext mathvariant="normal">median</mtext><mrow><mo stretchy="true" form="prefix">(</mo><msqrt><mrow><mtext mathvariant="normal">Var</mtext><mo stretchy="false" form="prefix">(</mo><mi>ε</mi><mo stretchy="false" form="prefix">|</mo><msub><mi>D</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>+</mo><mtext mathvariant="normal">Var</mtext><mo stretchy="false" form="prefix">(</mo><mi>ε</mi><mo stretchy="false" form="prefix">|</mo><msub><mi>D</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">)</mo></mrow></msqrt><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">s_{\text{typ}} = \text{median}\left(\sqrt{\text{Var}(\varepsilon|D_0) + \text{Var}(\varepsilon|D_1)}\right)</annotation></semantics></math></p>
+<p>Penalty weight:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>k</mi><mtext mathvariant="normal">shrink</mtext></msub><mo>=</mo><mfrac><mn>1</mn><mrow><mn>2</mn><msubsup><mi>s</mi><mtext mathvariant="normal">typ</mtext><mn>2</mn></msubsup></mrow></mfrac></mrow><annotation encoding="application/x-tex">k_{\text{shrink}} = \frac{1}{2 s_{\text{typ}}^2}</annotation></semantics></math></p>
+<p>Clamped to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup><mo>,</mo><msup><mn>10</mn><mn>6</mn></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-6}, 10^6]</annotation></semantics></math>
+for numerical stability.</p>
 <p><strong>Data mode without measurement error:</strong></p>
-<p>Uses variance of observed shrinkage increments (in cm): <span
-class="math inline">\(\Delta D_{\text{shrink}} = D_0 - D_1 \quad
-\text{for pairs where } D_1 &lt; D_0\)</span></p>
-<p>If at least 5 shrinkage events exist: <span
-class="math inline">\(k_{\text{shrink}} = \frac{1}{2 \cdot
-\text{Var}(\Delta D_{\text{shrink}})}\)</span></p>
+<p>Uses variance of observed shrinkage increments (in cm):
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Δ</mi><msub><mi>D</mi><mtext mathvariant="normal">shrink</mtext></msub><mo>=</mo><msub><mi>D</mi><mn>0</mn></msub><mo>−</mo><msub><mi>D</mi><mn>1</mn></msub><mspace width="1.0em"></mspace><mrow><mtext mathvariant="normal">for pairs where </mtext><mspace width="0.333em"></mspace></mrow><msub><mi>D</mi><mn>1</mn></msub><mo>&lt;</mo><msub><mi>D</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">\Delta D_{\text{shrink}} = D_0 - D_1 \quad \text{for pairs where } D_1 &lt; D_0</annotation></semantics></math></p>
+<p>If at least 5 shrinkage events exist:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>k</mi><mtext mathvariant="normal">shrink</mtext></msub><mo>=</mo><mfrac><mn>1</mn><mrow><mn>2</mn><mo>⋅</mo><mtext mathvariant="normal">Var</mtext><mo stretchy="false" form="prefix">(</mo><mi mathvariant="normal">Δ</mi><msub><mi>D</mi><mtext mathvariant="normal">shrink</mtext></msub><mo stretchy="false" form="postfix">)</mo></mrow></mfrac></mrow><annotation encoding="application/x-tex">k_{\text{shrink}} = \frac{1}{2 \cdot \text{Var}(\Delta D_{\text{shrink}})}</annotation></semantics></math></p>
 <p>Otherwise defaults to 50.</p>
 <p><strong>Fixed mode:</strong></p>
 <div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>k_shrink_source <span class="ot">=</span> <span class="st">&quot;fixed&quot;</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>k_shrink_fixed <span class="ot">=</span> <span class="dv">50</span>  <span class="co"># or 0 to disable</span></span></code></pre></div>
-<p><strong>Interpretation:</strong> To make shrinkage of <span
-class="math inline">\(s\)</span> cm cost ≈1 unit: <span
-class="math inline">\(k \approx \frac{1}{2s^2}\)</span></p>
-<p>Example: K=50 corresponds to <span class="math inline">\(s \approx
-\sqrt{1/(2 \times 50)} = 0.1\)</span> cm</p>
-<p><strong>Application in cost function:</strong> <span
-class="math inline">\(\text{cost} += k_{\text{shrink}} (D_0 - D_1)^2
-\quad \text{when } D_1 &lt; D_0\)</span></p>
-<h4 id="hard-shrinkage-guardrail-textmax_shrink">Hard Shrinkage
-Guardrail (<span class="math inline">\(\text{max\_shrink}\)</span>)</h4>
+<p><strong>Interpretation:</strong> To make shrinkage of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>s</mi><annotation encoding="application/x-tex">s</annotation></semantics></math>
+cm cost ≈1 unit:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mo>≈</mo><mfrac><mn>1</mn><mrow><mn>2</mn><msup><mi>s</mi><mn>2</mn></msup></mrow></mfrac></mrow><annotation encoding="application/x-tex">k \approx \frac{1}{2s^2}</annotation></semantics></math></p>
+<p>Example: K=50 corresponds to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>s</mi><mo>≈</mo><msqrt><mrow><mn>1</mn><mi>/</mi><mo stretchy="false" form="prefix">(</mo><mn>2</mn><mo>×</mo><mn>50</mn><mo stretchy="false" form="postfix">)</mo></mrow></msqrt><mo>=</mo><mn>0.1</mn></mrow><annotation encoding="application/x-tex">s \approx \sqrt{1/(2 \times 50)} = 0.1</annotation></semantics></math>
+cm</p>
+<p><strong>Application in cost function:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">cost</mtext><mi>+</mi><mo>=</mo><msub><mi>k</mi><mtext mathvariant="normal">shrink</mtext></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mn>0</mn></msub><mo>−</mo><msub><mi>D</mi><mn>1</mn></msub><msup><mo stretchy="false" form="postfix">)</mo><mn>2</mn></msup><mspace width="1.0em"></mspace><mrow><mtext mathvariant="normal">when </mtext><mspace width="0.333em"></mspace></mrow><msub><mi>D</mi><mn>1</mn></msub><mo>&lt;</mo><msub><mi>D</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">\text{cost} += k_{\text{shrink}} (D_0 - D_1)^2 \quad \text{when } D_1 &lt; D_0</annotation></semantics></math></p>
+<h4 id="hard-shrinkage-guardrail-max_shrink">Hard Shrinkage Guardrail
+(<code>max_shrink</code>)</h4>
 <p><strong>Data mode:</strong></p>
-<p>Empirical lower quantile (default 0.1%): <span
-class="math inline">\(\text{max\_shrink\_data} =
-Q_{0.001}(g_{\text{all}})\)</span></p>
+<p>Empirical lower quantile (default 0.1%): <code>max_shrink_data</code>
+= Q_{0.001}(g_all)</p>
 <p><strong>Measurement-only lower quantile (if measurement error
 enabled):</strong></p>
-<p>Four-component mixture for <span class="math inline">\((e_1 -
-e_0)/\Delta t\)</span>:</p>
-<p>Component SDs: <span class="math inline">\(\text{SD}_{\text{meas},i}
-= \frac{\sqrt{\text{SD}_a^2 + \text{SD}_b^2}}{\Delta t}\)</span></p>
-<p>where <span class="math inline">\(({\text{SD}_a,
-\text{SD}_b})\)</span> ∈ {(SD1(<span
-class="math inline">\(D_0\)</span>), SD1(<span
-class="math inline">\(D_1\)</span>)), (SD1(<span
-class="math inline">\(D_0\)</span>), SD2), (SD2, SD1(<span
-class="math inline">\(D_1\)</span>)), (SD2, SD2)}</p>
-<p>Component weights: <span class="math inline">\(\{(1-p)^2, (1-p)p,
-p(1-p), p^2\}\)</span></p>
-<p>Solve for quantile <span class="math inline">\(q = 10^{-4}\)</span>
-via: <span class="math inline">\(\text{CDF}(x) = \sum_{i=1}^4 w_i
-\Phi(x; 0, \text{SD}_{\text{meas},i})\)</span></p>
-<p>using typical diameter <span class="math inline">\(D_{\text{typ}} =
-\text{median}(D_0)\)</span></p>
-<p><strong>Final value:</strong> - With measurement error: <span
-class="math inline">\(\text{max\_shrink} =
-\min(\text{max\_shrink\_data}, \text{max\_shrink\_meas})\)</span> -
-Without: <span class="math inline">\(\text{max\_shrink} =
-\text{max\_shrink\_data}\)</span></p>
-<p><strong>Fixed mode:</strong></p>
+<p>Four-component mixture for
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>e</mi><mn>1</mn></msub><mo>−</mo><msub><mi>e</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mi>/</mi><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow><annotation encoding="application/x-tex">(e_1 - e_0)/\Delta t</annotation></semantics></math>:</p>
+<p>Component SDs: <code>SD_meas_i</code> = sqrt(SD_a^2 + SD_b^2) /
+Delta_t</p>
+<p>where (SD_a, SD_b) ∈ {(SD1(D_0), SD1(D_1)), (SD1(D_0), SD2), (SD2,
+SD1(D_1)), (SD2, SD2)}</p>
+<p>Component weights: {(1-p)^2, (1-p)p, p(1-p), p^2}</p>
+<p>Solve for quantile q = 10^{-4} via: CDF(x) = sum_{i=1}^4 w_i Phi(x;
+0, SD_meas_i)</p>
+<p>using typical diameter D_typ = median(D_0)</p>
+<p><strong>Final value:</strong> - With measurement error:
+<code>max_shrink</code> = min(<code>max_shrink_data</code>,
+<code>max_shrink_meas</code>) - Without: <code>max_shrink</code> =
+<code>max_shrink_data</code> <strong>Fixed mode:</strong></p>
 <div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>max_shrink_source <span class="ot">=</span> <span class="st">&quot;fixed&quot;</span></span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>max_shrink_fixed <span class="ot">=</span> <span class="sc">-</span><span class="fl">0.5</span>  <span class="co"># cm/year, must be negative</span></span></code></pre></div>
-<p><strong>Application in cost function:</strong> <span
-class="math inline">\(\text{if } g &lt; \text{max\_shrink}: \quad
-\text{cost} += 10^6\)</span></p>
+<p><strong>Application in cost function:</strong> If g &lt;
+<code>max_shrink</code>: <code>cost += 10^6</code></p>
 <h4 id="soft-extreme-growth-penalty-k_textgrowth">Soft Extreme Growth
-Penalty (<span class="math inline">\(k_{\text{growth}}\)</span>)</h4>
-<p><strong>Data mode:</strong> Same calibration as <span
-class="math inline">\(k_{\text{shrink}}\)</span>: <span
-class="math inline">\(k_{\text{growth}} = \frac{1}{2
-s_{\text{typ}}^2}\)</span></p>
-<p>Clamped to <span class="math inline">\([10^{-6}, 10^6]\)</span>.</p>
+Penalty
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>k</mi><mtext mathvariant="normal">growth</mtext></msub><annotation encoding="application/x-tex">k_{\text{growth}}</annotation></semantics></math>)</h4>
+<p><strong>Data mode:</strong> Same calibration as
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>k</mi><mtext mathvariant="normal">shrink</mtext></msub><annotation encoding="application/x-tex">k_{\text{shrink}}</annotation></semantics></math>:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>k</mi><mtext mathvariant="normal">growth</mtext></msub><mo>=</mo><mfrac><mn>1</mn><mrow><mn>2</mn><msubsup><mi>s</mi><mtext mathvariant="normal">typ</mtext><mn>2</mn></msubsup></mrow></mfrac></mrow><annotation encoding="application/x-tex">k_{\text{growth}} = \frac{1}{2 s_{\text{typ}}^2}</annotation></semantics></math></p>
+<p>Clamped to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup><mo>,</mo><msup><mn>10</mn><mn>6</mn></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-6}, 10^6]</annotation></semantics></math>.</p>
 <p><strong>Data mode without measurement error:</strong></p>
-<p>Uses variance of observed positive increments (in cm): <span
-class="math inline">\(\Delta D_{\text{pos}} = D_1 - D_0 \quad \text{for
-pairs where } D_1 &gt; D_0\)</span></p>
-<p>If at least 5 positive events exist: <span
-class="math inline">\(k_{\text{growth}} = \frac{1}{2 \cdot
-\text{Var}(\Delta D_{\text{pos}})}\)</span></p>
+<p>Uses variance of observed positive increments (in cm):
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Δ</mi><msub><mi>D</mi><mtext mathvariant="normal">pos</mtext></msub><mo>=</mo><msub><mi>D</mi><mn>1</mn></msub><mo>−</mo><msub><mi>D</mi><mn>0</mn></msub><mspace width="1.0em"></mspace><mrow><mtext mathvariant="normal">for pairs where </mtext><mspace width="0.333em"></mspace></mrow><msub><mi>D</mi><mn>1</mn></msub><mo>&gt;</mo><msub><mi>D</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">\Delta D_{\text{pos}} = D_1 - D_0 \quad \text{for pairs where } D_1 &gt; D_0</annotation></semantics></math></p>
+<p>If at least 5 positive events exist:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>k</mi><mtext mathvariant="normal">growth</mtext></msub><mo>=</mo><mfrac><mn>1</mn><mrow><mn>2</mn><mo>⋅</mo><mtext mathvariant="normal">Var</mtext><mo stretchy="false" form="prefix">(</mo><mi mathvariant="normal">Δ</mi><msub><mi>D</mi><mtext mathvariant="normal">pos</mtext></msub><mo stretchy="false" form="postfix">)</mo></mrow></mfrac></mrow><annotation encoding="application/x-tex">k_{\text{growth}} = \frac{1}{2 \cdot \text{Var}(\Delta D_{\text{pos}})}</annotation></semantics></math></p>
 <p>Otherwise defaults to 50.</p>
 <p><strong>Fixed mode:</strong></p>
 <div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>k_growth_source <span class="ot">=</span> <span class="st">&quot;fixed&quot;</span></span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>k_growth_fixed <span class="ot">=</span> <span class="dv">50</span>  <span class="co"># or 0 to disable</span></span></code></pre></div>
-<p><strong>Interpretation:</strong> Same rule as shrinkage: <span
-class="math inline">\(k \approx 1/(2s^2)\)</span></p>
-<p><strong>Application in cost function:</strong> <span
-class="math inline">\(d_{1,\text{cap}} = D_0 + \text{max\_growth\_soft}
-\cdot \Delta t\)</span> <span class="math inline">\(\text{if } D_1 &gt;
-d_{1,\text{cap}}: \quad \text{cost} += k_{\text{growth}} (D_1 -
-d_{1,\text{cap}})^2\)</span></p>
-<h4 id="hard-extreme-growth-guardrail-textmax_growth">Hard Extreme
-Growth Guardrail (<span
-class="math inline">\(\text{max\_growth}\)</span>)</h4>
+<p><strong>Interpretation:</strong> Same rule as shrinkage:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mo>≈</mo><mn>1</mn><mi>/</mi><mo stretchy="false" form="prefix">(</mo><mn>2</mn><msup><mi>s</mi><mn>2</mn></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">k \approx 1/(2s^2)</annotation></semantics></math></p>
+<p><strong>Application in cost function:</strong> d_{1,cap} = D_0 +
+<code>max_growth_soft</code> * Δt If D_1 &gt; d_{1,cap}:
+<code>cost += k_growth * (D_1 - d_{1,cap})^2</code></p>
+<h4 id="hard-extreme-growth-guardrail-max_growth">Hard Extreme Growth
+Guardrail (<code>max_growth</code>)</h4>
 <p><strong>Data mode:</strong></p>
-<p>Empirical upper quantile (default 99.9%): <span
-class="math inline">\(\text{max\_growth\_data} =
-Q_{0.999}(g_{\text{all}})\)</span></p>
+<p>Empirical upper quantile (default 99.9%):
+<code>max_growth_data</code> = Q_{0.999}(g_all)</p>
 <p><strong>Measurement-only upper quantile (if measurement error
 enabled):</strong></p>
 <p>Uses same four-component mixture as shrinkage, solving for upper
-quantile <span class="math inline">\(q = 1 - 10^{-4}\)</span> (99.99th
-percentile).</p>
-<p><strong>Final value:</strong> - With measurement error: <span
-class="math inline">\(\text{max\_growth} =
-\max(\text{max\_growth\_data}, \text{max\_growth\_meas})\)</span> -
-Without: <span class="math inline">\(\text{max\_growth} =
-\text{max\_growth\_data}\)</span></p>
-<p><strong>Soft growth cap:</strong> <span
-class="math inline">\(\text{max\_growth\_soft} =
-\min(\text{max\_growth}, Q_{0.99}(g_{\text{all}}))\)</span></p>
+quantile
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>q</mi><mo>=</mo><mn>1</mn><mo>−</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>4</mn></mrow></msup></mrow><annotation encoding="application/x-tex">q = 1 - 10^{-4}</annotation></semantics></math>
+(99.99th percentile).</p>
+<p><strong>Final value:</strong> - With measurement error:
+<code>max_growth</code> = max(<code>max_growth_data</code>,
+<code>max_growth_meas</code>) - Without: <code>max_growth</code> =
+<code>max_growth_data</code></p>
+<p><strong>Soft growth cap:</strong> <code>max_growth_soft</code> =
+min(<code>max_growth</code>, Q_{0.99}(g_all))</p>
 <p><strong>Fixed mode:</strong></p>
 <div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>max_growth_source <span class="ot">=</span> <span class="st">&quot;fixed&quot;</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>max_growth_fixed <span class="ot">=</span> <span class="fl">7.5</span>  <span class="co"># cm/year</span></span></code></pre></div>
-<p><strong>Application in cost function:</strong> <span
-class="math inline">\(\text{if } g &gt; \text{max\_growth}: \quad
-\text{cost} += 10^6\)</span></p>
+<p><strong>Application in cost function:</strong> If g &gt;
+<code>max_growth</code>: <code>cost += 10^6</code></p>
 <h3 id="mortality-parameter-estimation">Mortality Parameter
 Estimation</h3>
 <p><strong>Data preparation:</strong> For each adjacent census pair
-<span class="math inline">\((t_0, t_1)\)</span>: - At-risk stems:
-observed at census <span class="math inline">\(t_0\)</span> (non-NA DBH)
-- Died indicator: 1 if NA at <span class="math inline">\(t_1\)</span>, 0
-if still observed</p>
-<p><strong>Model:</strong> <span class="math inline">\(\text{hazard}(D)
-= h_0 \exp(\beta D)\)</span> <span
-class="math inline">\(P_{\text{death}}(D, \Delta t) = 1 -
-\exp(-\text{hazard}(D) \cdot \Delta t)\)</span></p>
-<p>Probability clamped to <span class="math inline">\([10^{-12},
-1-10^{-12}]\)</span> for numerical stability.</p>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>t</mi><mn>0</mn></msub><mo>,</mo><msub><mi>t</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(t_0, t_1)</annotation></semantics></math>:
+- At-risk stems: observed at census
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mn>0</mn></msub><annotation encoding="application/x-tex">t_0</annotation></semantics></math>
+(non-NA DBH) - Died indicator: 1 if NA at
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mn>1</mn></msub><annotation encoding="application/x-tex">t_1</annotation></semantics></math>,
+0 if still observed</p>
+<p><strong>Model:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">hazard</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><msub><mi>h</mi><mn>0</mn></msub><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>β</mi><mi>D</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{hazard}(D) = h_0 \exp(\beta D)</annotation></semantics></math>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>P</mi><mtext mathvariant="normal">death</mtext></msub><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo>,</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mn>1</mn><mo>−</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>−</mi><mtext mathvariant="normal">hazard</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>⋅</mo><mi mathvariant="normal">Δ</mi><mi>t</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">P_{\text{death}}(D, \Delta t) = 1 - \exp(-\text{hazard}(D) \cdot \Delta t)</annotation></semantics></math></p>
+<p>Probability clamped to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo>,</mo><mn>1</mn><mo>−</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-12}, 1-10^{-12}]</annotation></semantics></math>
+for numerical stability.</p>
 <p><strong>Estimation:</strong> Maximum likelihood via
 <code>optim()</code>:</p>
-<p>Negative log-likelihood: <span class="math inline">\(-\sum_i
-\left[\text{died}_i \cdot \log P_{\text{death}}(D_{0,i}) +
-(1-\text{died}_i) \cdot
-\log(1-P_{\text{death}}(D_{0,i}))\right]\)</span></p>
-<p>Optimization on unconstrained scale: - Parameter vector: <span
-class="math inline">\([\log(h_0), \beta]\)</span> - Starting values:
-<code>mortality_start = c(log(0.01), 0)</code> - Method: BFGS</p>
-<p><strong>Output:</strong> <span class="math inline">\(h_0 =
-\exp(\text{par}[1])\)</span>, <span class="math inline">\(\beta =
-\text{par}[2]\)</span></p>
+<p>Negative log-likelihood:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>−</mi><msub><mo>∑</mo><mi>i</mi></msub><mrow><mo stretchy="true" form="prefix">[</mo><msub><mtext mathvariant="normal">died</mtext><mi>i</mi></msub><mo>⋅</mo><mi mathvariant="normal">log</mi><msub><mi>P</mi><mtext mathvariant="normal">death</mtext></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mrow><mn>0</mn><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mo>+</mo><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><msub><mtext mathvariant="normal">died</mtext><mi>i</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>⋅</mo><mi mathvariant="normal">log</mi><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><msub><mi>P</mi><mtext mathvariant="normal">death</mtext></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>D</mi><mrow><mn>0</mn><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">)</mo><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">-\sum_i \left[\text{died}_i \cdot \log P_{\text{death}}(D_{0,i}) + (1-\text{died}_i) \cdot \log(1-P_{\text{death}}(D_{0,i}))\right]</annotation></semantics></math></p>
+<p>Optimization on unconstrained scale: - Parameter vector:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>h</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>,</mo><mi>β</mi><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[\log(h_0), \beta]</annotation></semantics></math>
+- Starting values: <code>mortality_start = c(log(0.01), 0)</code> -
+Method: BFGS</p>
+<p><strong>Output:</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>h</mi><mn>0</mn></msub><mo>=</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mtext mathvariant="normal">par</mtext><mo stretchy="false" form="prefix">[</mo><mn>1</mn><mo stretchy="false" form="postfix">]</mo><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">h_0 = \exp(\text{par}[1])</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>β</mi><mo>=</mo><mtext mathvariant="normal">par</mtext><mo stretchy="false" form="prefix">[</mo><mn>2</mn><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">\beta = \text{par}[2]</annotation></semantics></math></p>
 <h3 id="recruitment-parameter-estimation">Recruitment Parameter
 Estimation</h3>
 <p><strong>Identifying recruitment events:</strong> For each adjacent
-census pair: - At-risk tracks: NA at <span
-class="math inline">\(t_0\)</span> - Recruited: NA at <span
-class="math inline">\(t_0\)</span> AND observed positive DBH at <span
-class="math inline">\(t_1\)</span></p>
+census pair: - At-risk tracks: NA at
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mn>0</mn></msub><annotation encoding="application/x-tex">t_0</annotation></semantics></math>
+- Recruited: NA at
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mn>0</mn></msub><annotation encoding="application/x-tex">t_0</annotation></semantics></math>
+AND observed positive DBH at
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mn>1</mn></msub><annotation encoding="application/x-tex">t_1</annotation></semantics></math></p>
 <p><strong>Size distribution:</strong></p>
 <p>Fit LogNormal to recruited DBH values using
-<code>MASS::fitdistr</code>: <span
-class="math inline">\(D_{\text{recruit}} \sim
-\text{LogNormal}(\text{meanlog}, \text{sdlog})\)</span></p>
+<code>MASS::fitdistr</code>:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>D</mi><mtext mathvariant="normal">recruit</mtext></msub><mo>∼</mo><mtext mathvariant="normal">LogNormal</mtext><mo stretchy="false" form="prefix">(</mo><mtext mathvariant="normal">meanlog</mtext><mo>,</mo><mtext mathvariant="normal">sdlog</mtext><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">D_{\text{recruit}} \sim \text{LogNormal}(\text{meanlog}, \text{sdlog})</annotation></semantics></math></p>
 <p>Fallback (if &lt; 2 recruits): meanlog = log(2), sdlog = 0.5</p>
 <p><strong>Maximum recruit DBH:</strong> Upper quantile guardrail
-(default 99.9%): <span class="math inline">\(\text{recruit\_max\_dbh} =
-Q_{0.999}(D_{\text{recruited}})\)</span></p>
+(default 99.9%): <code>recruit_max_dbh</code> =
+Q_{0.999}(D_recruited)</p>
 <p>Fallback: 5 cm</p>
 <p><strong>Recruitment rate:</strong></p>
-<p>Poisson rate per empty slot per year: <span
-class="math inline">\(\lambda_{\text{recruit}} =
-\frac{n_{\text{recruits}}}{n_{\text{at-risk}} \cdot
-\sum_{\text{intervals}} \Delta t}\)</span></p>
-<p>where: - <span class="math inline">\(n_{\text{recruits}}\)</span>:
-total recruitment events across all intervals - <span
-class="math inline">\(n_{\text{at-risk}}\)</span>: total empty-slot
-census-years</p>
+<p>Poisson rate per empty slot per year:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>λ</mi><mtext mathvariant="normal">recruit</mtext></msub><mo>=</mo><mfrac><msub><mi>n</mi><mtext mathvariant="normal">recruits</mtext></msub><mrow><msub><mi>n</mi><mtext mathvariant="normal">at-risk</mtext></msub><mo>⋅</mo><msub><mo>∑</mo><mtext mathvariant="normal">intervals</mtext></msub><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">\lambda_{\text{recruit}} = \frac{n_{\text{recruits}}}{n_{\text{at-risk}} \cdot \sum_{\text{intervals}} \Delta t}</annotation></semantics></math></p>
+<p>where: -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>n</mi><mtext mathvariant="normal">recruits</mtext></msub><annotation encoding="application/x-tex">n_{\text{recruits}}</annotation></semantics></math>:
+total recruitment events across all intervals -
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>n</mi><mtext mathvariant="normal">at-risk</mtext></msub><annotation encoding="application/x-tex">n_{\text{at-risk}}</annotation></semantics></math>:
+total empty-slot census-years</p>
 <p>Fallback: 0</p>
 <h3 id="quantile-selection">Quantile Selection</h3>
 <table style="width:100%;">
@@ -1106,10 +1073,10 @@ arguments.</p>
 <code>match_stems_optimal_backward()</code> when:</p>
 <ol type="1">
 <li>Anchor census missing or has no observed stems</li>
-<li>Any census has too many injective states (<span
-class="math inline">\(P(K, n_{obs}) &gt;
-\text{max\_states}\)</span>)</li>
-<li>K insufficient (<span class="math inline">\(K &lt; \max\)</span>
+<li>Any census has too many injective states (P(K, n_obs) &gt;
+<code>max_states</code>)</li>
+<li>K insufficient
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mo>&lt;</mo><mi mathvariant="normal">max</mi></mrow><annotation encoding="application/x-tex">K &lt; \max</annotation></semantics></math>
 observed stems)</li>
 <li>DP recursion yields no feasible keys</li>
 </ol>
@@ -1121,7 +1088,7 @@ weights 3. Edges allowed only when growth ∈ [min_growth, max_growth] 4.
 If more stems at t+1 than t, smallest future stems treated as recruits
 5. Unmatched stems receive new IDs</p>
 <p><strong>Marking:</strong> Rows assigned by fallback have
-<code>ReconstructionMethod="igraph"</code></p>
+<code>ReconstructionMethod=&quot;igraph&quot;</code></p>
 <p><strong>Important:</strong> <code>min_growth</code> and
 <code>max_growth</code> constraints affect <strong>only</strong> the
 fallback method and post-hoc diagnostics, not the DP objective.</p>
@@ -1140,8 +1107,7 @@ penalties 3. <strong>Penalty strength</strong>: None (K=0) vs moderate
 All Experiments</h3>
 <p>These settings remain constant across all configurations to ensure
 fair comparison:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Input data</span></span>
+<div class="sourceCode" id="cb13"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Input data</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="va">input_file</span><span class="op">=</span><span class="st">&quot;../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv&quot;</span></span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="va">FORCE_ONE_SPECIES_PARAMETERS</span><span class="op">=</span>FALSE</span>
 <span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a></span>
@@ -1250,8 +1216,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb13-1"><a href=
 <strong>MAX_SHRINK_HARD_SOURCE</strong> control how absolute
 growth/shrinkage limits are determined:</p>
 <p><strong>Fixed mode:</strong></p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="va">MAX_GROWTH_HARD_SOURCE</span><span class="op">=</span>fixed</span>
+<div class="sourceCode" id="cb14"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="va">MAX_GROWTH_HARD_SOURCE</span><span class="op">=</span>fixed</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="va">MAX_GROWTH_FIXED</span><span class="op">=</span>7.5        <span class="co"># cm/year upper bound</span></span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="va">MAX_SHRINK_HARD_SOURCE</span><span class="op">=</span>fixed</span>
 <span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="va">MAX_SHRINK_FIXED</span><span class="op">=</span>-0.5       <span class="co"># cm/year lower bound (negative)</span></span></code></pre></div>
@@ -1261,25 +1226,22 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb14-1"><a href=
 <li>Good when data is sparse or unreliable</li>
 </ul>
 <p><strong>Data mode:</strong></p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="va">MAX_GROWTH_HARD_SOURCE</span><span class="op">=</span>data</span>
+<div class="sourceCode" id="cb15"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="va">MAX_GROWTH_HARD_SOURCE</span><span class="op">=</span>data</span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="va">MAX_SHRINK_HARD_SOURCE</span><span class="op">=</span>data</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="co"># MAX_GROWTH_FIXED and MAX_SHRINK_FIXED serve as fallbacks only</span></span></code></pre></div>
 <ul>
 <li><strong>Shrinkage:</strong> Calculates from lower quantile (default
 0.1%) of observed annual increments
 <ul>
-<li>With measurement error: <span
-class="math inline">\(\text{max\_shrink} =
-\min(\text{max\_shrink\_data}, \text{max\_shrink\_meas})\)</span></li>
+<li>With measurement error: <code>max_shrink</code> =
+min(<code>max_shrink_data</code>, <code>max_shrink_meas</code>)</li>
 <li>Without: uses only empirical quantile</li>
 </ul></li>
 <li><strong>Growth:</strong> Calculates from upper quantile (default
 99.9%) of observed annual increments
 <ul>
-<li>With measurement error: <span
-class="math inline">\(\text{max\_growth} =
-\max(\text{max\_growth\_data}, \text{max\_growth\_meas})\)</span></li>
+<li>With measurement error: <code>max_growth</code> =
+max(<code>max_growth_data</code>, <code>max_growth_meas</code>)</li>
 <li>Without: uses only empirical quantile</li>
 </ul></li>
 <li>Adapts to species-specific growth patterns</li>
@@ -1288,8 +1250,7 @@ class="math inline">\(\text{max\_growth} =
 <p><strong>K_SHRINK_SOURCE</strong> and <strong>K_GROWTH_SOURCE</strong>
 control quadratic penalty weights:</p>
 <p><strong>Fixed mode with K=0 (no soft penalties):</strong></p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="va">K_SHRINK_SOURCE</span><span class="op">=</span>fixed</span>
+<div class="sourceCode" id="cb16"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="va">K_SHRINK_SOURCE</span><span class="op">=</span>fixed</span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="va">K_SHRINK_FIXED</span><span class="op">=</span>0</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="va">K_GROWTH_SOURCE</span><span class="op">=</span>fixed</span>
 <span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="va">K_GROWTH_FIXED</span><span class="op">=</span>0</span></code></pre></div>
@@ -1299,33 +1260,33 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb16-1"><a href=
 <li>Most permissive configuration</li>
 </ul>
 <p><strong>Fixed mode with K&gt;0:</strong></p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="va">K_SHRINK_SOURCE</span><span class="op">=</span>fixed</span>
+<div class="sourceCode" id="cb17"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="va">K_SHRINK_SOURCE</span><span class="op">=</span>fixed</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="va">K_SHRINK_FIXED</span><span class="op">=</span>50          <span class="co"># 1/cm² penalty weight</span></span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="va">K_GROWTH_SOURCE</span><span class="op">=</span>fixed</span>
 <span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="va">K_GROWTH_FIXED</span><span class="op">=</span>50</span></code></pre></div>
 <ul>
 <li>Applies user-specified penalty strength</li>
 <li>K=50: strong discouragement (~0.1 cm excess costs 1 unit, since
-<span class="math inline">\(0.1^2 \times 50 = 0.5\)</span>)</li>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mn>0.1</mn><mn>2</mn></msup><mo>×</mo><mn>50</mn><mo>=</mo><mn>0.5</mn></mrow><annotation encoding="application/x-tex">0.1^2 \times 50 = 0.5</annotation></semantics></math>)</li>
 <li>K=25: moderate discouragement (~0.14 cm excess costs 1 unit)</li>
-<li>Rule of thumb: To make <span class="math inline">\(s\)</span> cm
-excess cost ≈1 unit, use <span class="math inline">\(K \approx
-1/(2s^2)\)</span></li>
+<li>Rule of thumb: To make
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>s</mi><annotation encoding="application/x-tex">s</annotation></semantics></math>
+cm excess cost ≈1 unit, use
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mo>≈</mo><mn>1</mn><mi>/</mi><mo stretchy="false" form="prefix">(</mo><mn>2</mn><msup><mi>s</mi><mn>2</mn></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">K \approx 1/(2s^2)</annotation></semantics></math></li>
 </ul>
 <p><strong>Data mode:</strong></p>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="va">K_SHRINK_SOURCE</span><span class="op">=</span>data</span>
+<div class="sourceCode" id="cb18"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="va">K_SHRINK_SOURCE</span><span class="op">=</span>data</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="va">K_GROWTH_SOURCE</span><span class="op">=</span>data</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="co"># K_SHRINK_FIXED and K_GROWTH_FIXED are ignored</span></span></code></pre></div>
 <ul>
-<li>Calibrates from typical measurement SD: <span
-class="math inline">\(K = 1/(2s_{\text{typ}}^2)\)</span></li>
+<li>Calibrates from typical measurement SD:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mo>=</mo><mn>1</mn><mi>/</mi><mo stretchy="false" form="prefix">(</mo><mn>2</mn><msubsup><mi>s</mi><mtext mathvariant="normal">typ</mtext><mn>2</mn></msubsup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">K = 1/(2s_{\text{typ}}^2)</annotation></semantics></math></li>
 <li>With measurement error: uses median measurement SD across pairs</li>
 <li>Without measurement error: uses variance of observed increments</li>
 <li>Automatically scales with data variability</li>
-<li>Estimated values clamped to <span class="math inline">\([10^{-6},
-10^6]\)</span> for numerical stability</li>
+<li>Estimated values clamped to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup><mo>,</mo><msup><mn>10</mn><mn>6</mn></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-6}, 10^6]</annotation></semantics></math>
+for numerical stability</li>
 </ul>
 <h3 id="experimental-questions-comparisons">Experimental Questions &amp;
 Comparisons</h3>
@@ -1366,8 +1327,7 @@ for strong soft penalties?</p>
 <h3 id="running-experiments">Running Experiments</h3>
 <p><strong>Run all configurations sequentially (serial
 runner):</strong></p>
-<div class="sourceCode" id="cb19"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">bin/run_dp_full.sh</span></span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">bin/run_dp_full.sh</span></span></code></pre></div>
 <p><strong>Note about parallel runs:</strong> Parallel GNU parallel
 support was removed from this repository. For concurrent execution and
 better logging use <code>bin/run_dp_future.R</code>. If you prefer to
@@ -1375,11 +1335,9 @@ run serially, you can still run
 <code>bin/run_dp_full.sh --config=&lt;name&gt;</code> manually and
 coordinate <code>BATCH_TS</code> if needed.</p>
 <p><strong>Run single configuration:</strong></p>
-<div class="sourceCode" id="cb20"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">bin/run_dp_full.sh</span> <span class="at">--config</span><span class="op">=</span>data_hard_soft</span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">bin/run_dp_full.sh</span> <span class="at">--config</span><span class="op">=</span>data_hard_soft</span></code></pre></div>
 <p><strong>Override specific parameters:</strong></p>
-<div class="sourceCode" id="cb21"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="ex">bin/run_dp_full.sh</span> <span class="at">--which_tag</span><span class="op">=</span>2 <span class="at">--MC_CORES</span><span class="op">=</span>8</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="ex">bin/run_dp_full.sh</span> <span class="at">--which_tag</span><span class="op">=</span>2 <span class="at">--MC_CORES</span><span class="op">=</span>8</span></code></pre></div>
 <h3 id="output-organization">Output Organization</h3>
 <p>Each configuration writes to a separate directory:</p>
 <pre><code>output/
@@ -1652,7 +1610,7 @@ constraints (impossible transitions)</p>
 computation (4-component mixture) - Parameter estimation (variance
 subtraction, quantile selection)</p>
 <p><strong>Phase variables:</strong> Extended DP key format:
-<code>"&lt;assignment&gt;|&lt;phase0,phase1,...,phaseK&gt;"</code></p>
+<code>&quot;&lt;assignment&gt;|&lt;phase0,phase1,...,phaseK&gt;&quot;</code></p>
 <p><strong>Anchor initialization:</strong> Non-anchor tracks start in
 phase 2 (dead), allowing reconstruction of earlier deaths</p>
 <h3 id="debugging-tools">Debugging Tools</h3>
@@ -1737,14 +1695,16 @@ Table</h3>
 <td><strong>Hard Constraint (DP)</strong></td>
 <td><code>Bio_Max_Shrink</code></td>
 <td>DP cost function</td>
-<td>Hard lower bound on <span class="math inline">\(g\)</span></td>
+<td>Hard lower bound on
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math></td>
 <td>-0.5 to -1.0 cm/year</td>
 </tr>
 <tr>
 <td><strong>Hard Constraint (DP)</strong></td>
 <td><code>Bio_Max_Growth</code></td>
 <td>DP cost function</td>
-<td>Hard upper bound on <span class="math inline">\(g\)</span></td>
+<td>Hard upper bound on
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math></td>
 <td>5 to 10 cm/year</td>
 </tr>
 <tr>
@@ -1825,16 +1785,20 @@ Reference</h3>
 <td><code>shrink_data_quantile</code></td>
 <td>0.001 (0.1%)</td>
 <td>Lower</td>
-<td>Empirical <span class="math inline">\(g\)</span> lower bound</td>
+<td>Empirical
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math>
+lower bound</td>
 <td><code>max_shrink_data</code></td>
 <td>Yes, via <code>estimate_bio_pars()</code></td>
 </tr>
 <tr>
 <td><code>shrink_hard_prob</code></td>
-<td><span class="math inline">\(10^{-4}\)</span> (0.01%)</td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mi>−</mi><mn>4</mn></mrow></msup><annotation encoding="application/x-tex">10^{-4}</annotation></semantics></math>
+(0.01%)</td>
 <td>Lower</td>
-<td>Measurement-only <span class="math inline">\(g\)</span> lower
-bound</td>
+<td>Measurement-only
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math>
+lower bound</td>
 <td><code>max_shrink_meas</code></td>
 <td>Yes, via <code>estimate_bio_pars()</code></td>
 </tr>
@@ -1842,16 +1806,20 @@ bound</td>
 <td><code>growth_data_quantile</code></td>
 <td>0.999 (99.9%)</td>
 <td>Upper</td>
-<td>Empirical <span class="math inline">\(g\)</span> upper bound</td>
+<td>Empirical
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math>
+upper bound</td>
 <td><code>max_growth_data</code></td>
 <td>Yes, via <code>estimate_bio_pars()</code></td>
 </tr>
 <tr>
 <td><code>growth_hard_prob</code></td>
-<td><span class="math inline">\(10^{-4}\)</span> (0.01% tail)</td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mi>−</mi><mn>4</mn></mrow></msup><annotation encoding="application/x-tex">10^{-4}</annotation></semantics></math>
+(0.01% tail)</td>
 <td>Upper</td>
-<td>Measurement-only <span class="math inline">\(g\)</span> upper bound
-(99.99%)</td>
+<td>Measurement-only
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math>
+upper bound (99.99%)</td>
 <td><code>max_growth_meas</code></td>
 <td>Yes, via <code>estimate_bio_pars()</code></td>
 </tr>
@@ -1859,7 +1827,9 @@ bound</td>
 <td><code>growth_soft_quantile</code></td>
 <td>0.99 (99%)</td>
 <td>Upper</td>
-<td>Empirical <span class="math inline">\(g\)</span> soft threshold</td>
+<td>Empirical
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math>
+soft threshold</td>
 <td><code>max_growth_soft_data</code></td>
 <td>Yes, via <code>estimate_bio_pars()</code></td>
 </tr>
@@ -1876,7 +1846,9 @@ bound</td>
 <p><strong>Key distinctions:</strong></p>
 <ol type="1">
 <li><strong>Empirical quantiles</strong> (data_quantile): Computed from
-observed <span class="math inline">\(g_{\text{all}}\)</span> values</li>
+observed
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>g</mi><mtext mathvariant="normal">all</mtext></msub><annotation encoding="application/x-tex">g_{\text{all}}</annotation></semantics></math>
+values</li>
 <li><strong>Measurement-only quantiles</strong> (hard_prob): Computed
 from 4-component mixture at typical diameter</li>
 <li><strong>Combination logic:</strong>
@@ -1891,8 +1863,8 @@ restrictive)</li>
 <ol type="1">
 <li><strong>“Why huge penalties?”</strong>
 <ul>
-<li><span class="math inline">\(10^6\)</span> encodes hard biological
-impossibilities</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mn>6</mn></msup><annotation encoding="application/x-tex">10^6</annotation></semantics></math>
+encodes hard biological impossibilities</li>
 <li>Makes infeasible transitions effectively infinite cost</li>
 <li>DP will never choose these paths unless no alternative exists</li>
 </ul></li>
@@ -1937,8 +1909,8 @@ paths</li>
 </ol>
 <h3 id="performance-considerations">Performance Considerations</h3>
 <ul>
-<li>State space grows factorially: <span
-class="math inline">\(O(K^{n_{obs}})\)</span></li>
+<li>State space grows factorially:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mo stretchy="false" form="prefix">(</mo><msup><mi>K</mi><msub><mi>n</mi><mrow><mi>o</mi><mi>b</mi><mi>s</mi></mrow></msub></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">O(K^{n_{obs}})</annotation></semantics></math></li>
 <li>Set <code>dp_max_states</code> based on memory availability (default
 50,000)</li>
 <li>Parallel processing via <code>MC_CORES</code> for multiple tags</li>
@@ -1965,22 +1937,22 @@ for posterior inference</li>
 <tr>
 <td>Growth SD</td>
 <td>Floor clamp</td>
-<td><span class="math inline">\(\sigma(D) \geq 10^{-6}\)</span></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>σ</mi><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>≥</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">\sigma(D) \geq 10^{-6}</annotation></semantics></math></td>
 </tr>
 <tr>
 <td>Measurement SD1</td>
 <td>Floor clamp</td>
-<td><span class="math inline">\(\text{SD1}(D) \geq 10^{-6}\)</span></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">SD1</mtext><mo stretchy="false" form="prefix">(</mo><mi>D</mi><mo stretchy="false" form="postfix">)</mo><mo>≥</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">\text{SD1}(D) \geq 10^{-6}</annotation></semantics></math></td>
 </tr>
 <tr>
 <td>Mortality probability</td>
 <td>Range clamp</td>
-<td><span class="math inline">\([10^{-12}, 1-10^{-12}]\)</span></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo>,</mo><mn>1</mn><mo>−</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-12}, 1-10^{-12}]</annotation></semantics></math></td>
 </tr>
 <tr>
 <td>Recruitment probability</td>
 <td>Range clamp</td>
-<td><span class="math inline">\([10^{-12}, 1-10^{-12}]\)</span></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo>,</mo><mn>1</mn><mo>−</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>12</mn></mrow></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[10^{-12}, 1-10^{-12}]</annotation></semantics></math></td>
 </tr>
 <tr>
 <td>Log-sum-exp mixture</td>
@@ -1990,12 +1962,12 @@ for posterior inference</li>
 <tr>
 <td>K estimation (data mode)</td>
 <td>Range clamp</td>
-<td><span class="math inline">\(k \in [10^{-6}, 10^6]\)</span></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mo>∈</mo><mo stretchy="false" form="prefix">[</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup><mo>,</mo><msup><mn>10</mn><mn>6</mn></msup><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">k \in [10^{-6}, 10^6]</annotation></semantics></math></td>
 </tr>
 <tr>
 <td>Rank tie-breaking</td>
 <td>Deterministic first index</td>
-<td><code>ties.method="first"</code></td>
+<td><code>ties.method=&quot;first&quot;</code></td>
 </tr>
 </tbody>
 </table>
@@ -2013,15 +1985,12 @@ documentation: See function headers in <code>dp_global_biol.R</code></p>
 <hr />
 <h2 id="building-this-documentation">Building This Documentation</h2>
 <p><strong>Fully offline HTML (recommended):</strong></p>
-<div class="sourceCode" id="cb34"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pandoc</span> README.md <span class="at">--standalone</span> <span class="at">--mathml</span> <span class="dt">\</span></span>
+<div class="sourceCode" id="cb34"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pandoc</span> README.md <span class="at">--standalone</span> <span class="at">--mathml</span> <span class="dt">\</span></span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--embed-resources</span> <span class="at">-o</span> README.html</span></code></pre></div>
 <p><strong>MathJax HTML (requires internet):</strong></p>
-<div class="sourceCode" id="cb35"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pandoc</span> README.md <span class="at">--standalone</span> <span class="at">--mathjax</span> <span class="dt">\</span></span>
+<div class="sourceCode" id="cb35"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pandoc</span> README.md <span class="at">--standalone</span> <span class="at">--mathjax</span> <span class="dt">\</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--embed-resources</span> <span class="at">-o</span> README.html</span></code></pre></div>
 <p><strong>Automated build:</strong></p>
-<div class="sourceCode" id="cb36"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> dev/build_readme_html.sh</span></code></pre></div>
+<div class="sourceCode" id="cb36"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> dev/build_readme_html.sh</span></code></pre></div>
 </body>
 </html>
