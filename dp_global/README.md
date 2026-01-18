@@ -116,6 +116,13 @@ Forest census measurements track multiple stems per tree over time:
 - Measurement error complicates growth assessment
 - Local greedy matching can trap in suboptimal solutions
 
+### TODO:
+The code assumes that HOM (height of measurement) is the same for all stems.
+Include HOM column, and for those that are not the same (e.g., HOM != 1.3), 
+predict the DBH at the common HOM (1.3 m) and proceed.
+
+Now, the user needs to include DBH measurements at 1.3m.
+
 ---
 
 ## Algorithm Architecture
