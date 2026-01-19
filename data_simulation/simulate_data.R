@@ -630,11 +630,12 @@ data_filename <- build_file_name("data", scaling_indicator)
 # Export simulation parameters to text file
 params_filename <- here("data_simulation", "data", sprintf("simulation_params_%s.txt", scaling_indicator))
 capture.output(str(params), file = params_filename)
+dt[CensusID < params$mask$anchor_start_census, TrueStemID := NA_integer_]
+dt[is.na(DBH), TrueStemID := NA_integer_]
+dt[, CensusID := as.factor(as.integer(CensusID))]
 fwrite(dt, here("data_simulation", "data", data_filename))
 # Apply stem ID masking to simulate ForestGEO protocol
 # In early censuses, stem identities are not trusted (TrueStemID = NA)
-dt[CensusID < params$mask$anchor_start_census, TrueStemID := NA_integer_]
-dt[is.na(DBH), TrueStemID := NA_integer_]
 ################################################################################
 ### DIAGNOSTIC PLOTS
 ################################################################################
@@ -643,8 +644,6 @@ dt[is.na(DBH), TrueStemID := NA_integer_]
 # Creates two types of PDFs:
 # 1. Species-level: All stems grouped by species
 # 2. Tag-level: Individual stem trajectories for each tree
-
-dt[, CensusID := as.factor(as.integer(CensusID))]
 
 if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)) {
 
