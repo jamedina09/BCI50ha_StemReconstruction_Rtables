@@ -67,6 +67,8 @@ BASE_ARGS=(
   "--DP_VERBOSE=TRUE"
 
   "--RUN_ALL_TAGS=TRUE"
+  # Allow overriding DP enumerator state budget (see dp_max_states in main_cpp.R)
+  "--dp_max_states=40000"
   "--MANUAL_CORES=TRUE"
   "--MANUAL_CORES_VALUE=15"
 

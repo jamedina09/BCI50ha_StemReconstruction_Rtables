@@ -67,6 +67,8 @@ BASE_ARGS=(
   "--DP_VERBOSE=TRUE"
 
   "--RUN_ALL_TAGS=TRUE"
+  # Allow overriding DP enumerator state budget (see dp_max_states in main_cpp.R)
+  "--dp_max_states=40000"
   "--MANUAL_CORES=TRUE"
   "--MANUAL_CORES_VALUE=15"
 
@@ -268,4 +270,4 @@ echo "All configs completed successfully."
 
 # Notes:
 # - This script runs configs serially in a loop and is intended for single-machine use.
-# If you need concurrency, run concurrent invocations manually and ensure you set a shared BATCH_TS and handle resource coordination yourself.
+# - If you need concurrency, run concurrent invocations manually and ensure you set a shared BATCH_TS and handle resource coordination yourself.

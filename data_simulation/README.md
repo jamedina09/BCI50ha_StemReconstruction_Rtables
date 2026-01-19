@@ -10,6 +10,9 @@ The simulation creates biologically plausible multi-species tropical forest dyna
 
 - **Multi-species forests** with species-specific trait variation
 - **Multi-stem trees** with recruitment and mortality processes
+- **Guaranteed single-stem trees**: For every species, the simulation always includes:
+  - One tag (tree) with exactly one stem that survives the entire census period
+  - One tag (tree) with exactly one stem that dies before the anchor census
 - **Realistic growth trajectories** with size-dependent growth and process variability
 - **Measurement error models** matching the DP workflow (diameter-dependent noise + blunders)
 - **Flexible growth scaling** for simulating disturbances (drought, etc.)
@@ -18,7 +21,12 @@ The simulation creates biologically plausible multi-species tropical forest dyna
 
 ## Output Files
 
-The simulation generates several files with self-documenting filenames:
+
+The simulation generates several files with self-documenting filenames. The main dataset always includes:
+
+- All simulated multi-stem trees per species (with random number of stems)
+- For each species, one single-stem tree that survives all censuses
+- For each species, one single-stem tree that dies before the anchor census
 
 - `simulated_data_[config].csv`: Main dataset with all stem measurements
 - `sp_lvl_traj_[config].pdf`: Species-level growth trajectory plots
@@ -186,6 +194,18 @@ Columns:
 - `YearFactor`: Applied growth scaling multiplier
 - `ObsSD`: Measurement error standard deviation
 
+**Special rows:**
+- For each species, there will always be:
+  - One tag with a single stem that never dies (DeathCensus = n_census)
+  - One tag with a single stem that dies before the anchor census (DeathCensus < anchor_start_census)
+- `BirthCensus`: Census when stem was born/recruited
+- `DeathCensus`: Census when stem died (if applicable)
+- `DBH_true`: True DBH (cm, for diagnostics)
+- `DBH`: Observed DBH (cm, with measurement error)
+- `AnnualGrowth`: Annual growth rate (cm/year)
+- `YearFactor`: Applied growth scaling multiplier
+- `ObsSD`: Measurement error standard deviation
+
 ### Diagnostic Plots
 - `sp_lvl_traj_[config].pdf`: Species-level growth trajectories
 - `tg_lvl_traj_[config].pdf`: Tag-level individual stem trajectories
@@ -241,12 +261,13 @@ This simulated data is designed for:
 
 ## Biological Realism
 
-The simulation incorporates key tropical forest dynamics:
-- **Size-dependent processes**: Growth and mortality scale with tree size
-- **Stochastic variability**: Process noise in growth and recruitment
-- **Species differences**: Trait variation creates diverse responses
-- **Measurement challenges**: Realistic observation errors and ID uncertainties
-- **Successional dynamics**: Recruitment balances mortality over time
+- The simulation incorporates key tropical forest dynamics and ensures edge cases for algorithm testing:
+  - **Size-dependent processes**: Growth and mortality scale with tree size
+  - **Stochastic variability**: Process noise in growth and recruitment
+  - **Species differences**: Trait variation creates diverse responses
+  - **Measurement challenges**: Realistic observation errors and ID uncertainties
+  - **Successional dynamics**: Recruitment balances mortality over time
+  - **Single-stem edge cases**: Every species includes both a persistent and an early-dead single-stem tree for robust testing
 
 ## File Organization
 

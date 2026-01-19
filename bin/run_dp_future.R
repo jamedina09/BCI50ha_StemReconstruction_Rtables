@@ -169,6 +169,10 @@ BASE_ARGS <- c(
   "--census_interval_years=5",
   "--DP_VERBOSE=TRUE",
   "--RUN_ALL_TAGS=TRUE",
+  # Allow overriding DP enumerator state budget from the orchestrator
+  # (main_cpp.R defines `dp_max_states` in the DP settings section)
+  # Use 0 to run igraph for all experiments in this script
+  "--dp_max_states=40000", #40000
   "--MANUAL_CORES=TRUE",
   sprintf("--MANUAL_CORES_VALUE=%d", opt$cores_per_job),
   "--WRITE_DP_CSV=TRUE",
@@ -426,3 +430,5 @@ q(status = 0)
 # Rscript bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25" -- --DRY_RUN
 
 # Rscript bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
+
+# Rscript bin/run_dp_future.R --workers 1 --cores-per-job 14 --configs "fixed"
