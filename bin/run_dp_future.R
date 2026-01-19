@@ -171,7 +171,8 @@ BASE_ARGS <- c(
   "--RUN_ALL_TAGS=TRUE",
   # Allow overriding DP enumerator state budget from the orchestrator
   # (main_cpp.R defines `dp_max_states` in the DP settings section)
-  "--dp_max_states=40000",
+  # Use 0 to run igraph for all experiments in this script
+  "--dp_max_states=40000", #40000
   "--MANUAL_CORES=TRUE",
   sprintf("--MANUAL_CORES_VALUE=%d", opt$cores_per_job),
   "--WRITE_DP_CSV=TRUE",
