@@ -797,7 +797,7 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
 
         gg <- ggplot2::ggplot(
             tag_data,
-            ggplot2::aes(x = CensusID, y = DBH, group = interaction(OriginalStemID), color = factor(OriginalStemID))
+            ggplot2::aes(x = as.factor(CensusID), y = DBH, group = interaction(OriginalStemID), color = factor(OriginalStemID))
         ) +
             ggplot2::geom_line(na.rm = TRUE, alpha = 0.8) +
             ggplot2::geom_point(size = 2, na.rm = TRUE, alpha = 0.8) +
