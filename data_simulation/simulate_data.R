@@ -538,10 +538,6 @@ for (i in seq_len(nrow(species_table))) {
 }
 dt <- rbindlist(dt_list)
 
-# Display summary statistics
-cat("Simulation complete. Data summary:\n")
-dt[, .N, by = Species]
-
 ################################################################################
 ### DATA PROCESSING AND OUTPUT
 ################################################################################
@@ -622,19 +618,119 @@ build_file_name <- function(type, scaling_indicator) {
     )
 }
 
+################################################################################
+### ADD A FEW EXTRA TEST CASES
+################################################################################
+
+# Simulate and add one extra tag with exactly one stem for each species
+new_tag_id <- max(dt$Tag) + 1L
+for (sp in c(species_table$Species)) {
+    scale <- species_table[Species == sp, Scale]
+    p_species <- scale_species_params(base_params = params, scale = scale)
+    new_tree <- simulate_one_stem(
+        tag = new_tag_id,
+        original_stem_id = 1L,
+        species = sp,
+        growth_multipliers = growth_multipliers,
+        params = p_species
+    )
+    dt <- rbind(dt, new_tree, fill = TRUE)
+    new_tag_id <- new_tag_id + 1L
+}
+
+# Simulate and add one extra tag with exactly one stem for each species that dies before the anchor census
+anchor_census <- params$mask$anchor_start_census
+new_tag_id <- max(dt$Tag) + 1L
+for (sp in species_table$Species) {
+    scale <- species_table[Species == sp, Scale]
+    p_species <- scale_species_params(base_params = params, scale = scale)
+    # Simulate one stem with death before anchor census
+    n_census <- params$sim$n_census
+    birth_census <- 1L
+    death_census <- sample(2:(anchor_census - 1L), 1L)
+    # Generate DBH trajectory
+    dbh_true <- rep(NA_real_, n_census)
+    annual_growth <- rep(NA_real_, n_census)
+    dbh_true[birth_census] <- rtrunc_lnorm(
+        1,
+        meanlog = params$initial_dbh$census1_meanlog,
+        sdlog = params$initial_dbh$census1_sdlog,
+        min = params$initial_dbh$min_dbh_true,
+        max = params$initial_dbh$max_dbh_true
+    )
+    for (t in birth_census:(death_census - 1L)) {
+        mu <- params$growth$alpha + params$growth$gamma * log(dbh_true[t])
+        census_multiplier <- growth_multipliers[sp, paste0("census_", t)]
+        mu <- mu * census_multiplier
+        sigma <- params$growth$sigma0 + params$growth$sigma1 * dbh_true[t]
+        g_ann <- mu + rnorm(1, 0, sigma)
+        g_ann <- pmax(params$growth$min_annual_growth, pmin(g_ann, params$growth$max_annual_growth))
+        annual_growth[t] <- g_ann
+        dbh_true[t + 1L] <- pmax(params$initial_dbh$min_dbh_true, dbh_true[t] + (g_ann * params$sim$census_interval_years))
+    }
+    dbh_true[(death_census + 1L):n_census] <- NA_real_
+    annual_growth[(death_census + 1L):n_census] <- NA_real_
+    # Generate observed DBH
+    dbh_obs <- rep(NA_real_, n_census)
+    obs_sd <- rep(NA_real_, n_census)
+    threshold <- params$recruitment$threshold_dbh
+    obs_idx <- which(!is.na(dbh_true) & dbh_true >= threshold)
+    if (length(obs_idx) > 0L) {
+        obs_idx <- obs_idx[obs_idx >= birth_census & obs_idx <= death_census]
+        if (isTRUE(params$obs$use_measurement_error)) {
+            sd1 <- pmax(params$obs$meas_sd1_a * dbh_true[obs_idx] + params$obs$meas_sd1_b, 1e-6)
+            sd2 <- params$obs$meas_sd2
+            use_large_error <- runif(length(obs_idx)) < params$obs$meas_p_big
+            obs_sd[obs_idx] <- ifelse(use_large_error, sd2, sd1)
+        } else {
+            obs_sd[obs_idx] <- 0
+        }
+        dbh_obs[obs_idx] <- dbh_true[obs_idx] + rnorm(length(obs_idx), 0, obs_sd[obs_idx])
+        dbh_obs[obs_idx] <- pmax(params$obs$min_dbh_obs, dbh_obs[obs_idx])
+    }
+    new_tree <- data.table(
+        Species = sp,
+        Tag = new_tag_id,
+        OriginalStemID = 1L,
+        TrueStemID = 1L,
+        CensusID = seq_len(n_census),
+        BirthCensus = birth_census,
+        DeathCensus = death_census,
+        DBH_true = dbh_true,
+        DBH = dbh_obs,
+        AnnualGrowth = annual_growth,
+        YearFactor = growth_multipliers[sp, ],
+        ObsSD = obs_sd
+    )
+    dt <- rbind(dt, new_tree, fill = TRUE)
+    new_tag_id <- new_tag_id + 1L
+}
+
+dt[CensusID < params$mask$anchor_start_census, TrueStemID := NA_integer_]
+dt[is.na(DBH), TrueStemID := NA_integer_]
+
+################################################################################
+### EXPORT
+################################################################################
+
+# Display summary statistics
+cat("Simulation complete. Data summary:\n")
+cat(sprintf("Total stems: %d\n", length(unique(dt$Tag))))
+cat(sprintf("Total observations: %d\n", nrow(dt[!is.na(DBH)])))
+cat("Observations per species:\n")
+dt[, .N, by = Species]
+
 # Generate filename indicator and export main dataset
 scaling_indicator <- create_scaling_indicator(params$growth_scaling$events, params$obs$use_measurement_error, params$species$n_species)
-
 data_filename <- build_file_name("data", scaling_indicator)
 
 # Export simulation parameters to text file
 params_filename <- here("data_simulation", "data", sprintf("simulation_params_%s.txt", scaling_indicator))
 capture.output(str(params), file = params_filename)
+
 fwrite(dt, here("data_simulation", "data", data_filename))
 # Apply stem ID masking to simulate ForestGEO protocol
 # In early censuses, stem identities are not trusted (TrueStemID = NA)
-dt[CensusID < params$mask$anchor_start_census, TrueStemID := NA_integer_]
-dt[is.na(DBH), TrueStemID := NA_integer_]
 ################################################################################
 ### DIAGNOSTIC PLOTS
 ################################################################################
@@ -644,11 +740,7 @@ dt[is.na(DBH), TrueStemID := NA_integer_]
 # 1. Species-level: All stems grouped by species
 # 2. Tag-level: Individual stem trajectories for each tree
 
-dt[, CensusID := as.factor(as.integer(CensusID))]
-
 if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)) {
-
-
     # =========================================================================
     # PDF 1: Species-level trajectories (one page per species)
     # =========================================================================
@@ -705,7 +797,7 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
 
         gg <- ggplot2::ggplot(
             tag_data,
-            ggplot2::aes(x = CensusID, y = DBH, group = interaction(OriginalStemID), color = factor(OriginalStemID))
+            ggplot2::aes(x = as.factor(CensusID), y = DBH, group = interaction(OriginalStemID), color = factor(OriginalStemID))
         ) +
             ggplot2::geom_line(na.rm = TRUE, alpha = 0.8) +
             ggplot2::geom_point(size = 2, na.rm = TRUE, alpha = 0.8) +

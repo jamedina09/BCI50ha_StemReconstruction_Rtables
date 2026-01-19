@@ -260,10 +260,8 @@ WRITE_DP_CSV <- TRUE
 WRITE_DP_PDF <- TRUE
 DP_PDF_INCLUDE_REFERENCE <- TRUE
 PLOT_PDF_ONE_TAG_ONLY <- TRUE
-
 # Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
 PROJECT_ROOT <- here::here()
-
 ############################################################
 ### 2.5 Sensitivity analysis settings
 ############################################################
@@ -282,7 +280,7 @@ print_help <- function() {
         "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
         "anchor_start_census", "census_interval_years", "DP_VERBOSE", "RUN_ALL_TAGS",
         "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_PDF",
-        "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
+        "dp_max_states", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
         "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
     )
     for (k in keys) {
@@ -878,7 +876,7 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
     }
 }
 
-source("./dp_global/R/check_functions.r")
+source(here("dp_global","R","check_functions.r"))
 export_bio_pars_report(res$bio_pars,
     species = NULL,
     interval_years = census_interval_years,

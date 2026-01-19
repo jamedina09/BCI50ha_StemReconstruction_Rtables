@@ -32,6 +32,7 @@ Flags & options
 - --config=<name>        : run a single config (e.g., `--config=fixed`)
 - --MANUAL_CORES_VALUE=N : set per-job cores for resource heuristics (default 15)
 - --DRY_RUN              : prints Rscript invocations instead of executing them
+- --dp_max_states=N      : set the DP enumerator maximum states per census (default 40000). Use a larger value for more complex tags, but be mindful of memory; see Notes below for how to estimate a dataset-appropriate value.
 - Any other `--NAME=VALUE` args are passed through to the R driver.
 
 Examples
@@ -49,10 +50,17 @@ Notes & troubleshooting
 - The script still respects an exported `BATCH_TS` (if you want to group outputs by timestamp).
 - If you need parallel execution, run concurrent invocations manually and manage `BATCH_TS` and resource coordination yourself; the project no longer provides the GNU-parallel wrapper.
 - The `make smoke` target now runs the DRY_RUN and also executes `Rscript dp_global/scripts/run_smoke.R` to verify core functions load.
+- Choosing `--dp_max_states`: the appropriate maximum states depends on dataset complexity. Use the estimator script `dp_global/R/test_complexity_estimator.R` to get per-tag complexity summaries and a recommended max-states guidance (it prints ranked tags and exports a CSV summary to `data_simulation/data/`). Run it with:
 
-Concurrent runs with `future` + `progressr` (optional)
+  ```bash
+  Rscript dp_global/R/test_complexity_estimator.R
+  ```
 
-- Purpose: Run multiple `bin/run_dp_full_cpp.sh` configs concurrently in a robust, observable way without GNU parallel.
+  and inspect the exported `report_run_<dataset>.csv` for per-tag `max_states` and other helpful diagnostics.
+
+Concurrent runs with `future` + `progressr` (not working yet)
+
+- Purpose: Run multiple `bin/run_dp_full_cpp.sh` configs concurrently in a robust, observable way.
 - Script: `bin/run_dp_future.R` (R script using `future`, `future.apply` and `progressr`.)
 
 Installation (if needed)
