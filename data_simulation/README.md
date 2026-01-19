@@ -114,7 +114,7 @@ Mixture model matching DP workflow:
 
 ### Simulation Structure
 - `n_census`: Number of census intervals (9)
-- `census_interval_years`: Years between censuses (5)
+- `census_interval_years`: Years between censuses (5). If you need per-pair/per-census intervals, add a per-row column (for example `Bio_IntervalYears`) with the interval in years for that measurement pair — `estimate_bio_pars()` will detect and use per-row intervals when `interval_years = NULL`.
 
 ### Species Configuration
 - `n_species`: Number of species (2)
@@ -190,6 +190,7 @@ Columns:
 - `DeathCensus`: Census when stem died (if applicable)
 - `DBH_true`: True DBH (cm, for diagnostics)
 - `DBH`: Observed DBH (cm, with measurement error)
+- `Bio_IntervalYears`: (optional) Interval in years used for this observation/pair. When present, `estimate_bio_pars()` can use this per-row interval (set `interval_years = NULL`) to compute annualized increments and mortality probabilities.
 - `AnnualGrowth`: Annual growth rate (cm/year)
 - `YearFactor`: Applied growth scaling multiplier
 - `ObsSD`: Measurement error standard deviation
