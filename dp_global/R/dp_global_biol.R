@@ -40,6 +40,39 @@
 # - The example “main” block at the bottom is opt-in so sourcing won’t run IO.
 #
 
+# FIXME
+
+get_script_dir <- function() {
+    cmd <- commandArgs(trailingOnly = FALSE)
+    file_arg <- sub("^--file=", "", cmd[grep("^--file=", cmd)])
+    if (length(file_arg) == 1L && nzchar(file_arg)) {
+        return(dirname(normalizePath(file_arg)))
+    }
+    if (!is.null(sys.frames()[[1L]]$ofile)) {
+        return(dirname(normalizePath(sys.frames()[[1L]]$ofile)))
+    }
+    getwd()
+}
+
+find_project_root <- function(start_dir) {
+    d <- normalizePath(start_dir)
+    for (i in 0:6) {
+        cand <- d
+        if (dir.exists(file.path(cand, "STEM_IDENTIFICATION_TEST"))) {
+            return(cand)
+        }
+        d2 <- dirname(d)
+        if (identical(d2, d)) break
+        d <- d2
+    }
+    stop("Could not find project root containing STEM_IDENTIFICATION_TEST/ starting from: ", start_dir)
+}
+
+script_dir <- get_script_dir()
+root_dir <- find_project_root(script_dir)
+setwd(file.path(root_dir, "STEM_IDENTIFICATION_TEST"))
+
+
 if (!requireNamespace("data.table", quietly = TRUE)) {
     stop("Package 'data.table' is required. Install it with install.packages('data.table')")
 }
