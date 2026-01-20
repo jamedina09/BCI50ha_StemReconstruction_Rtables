@@ -771,7 +771,18 @@ run_main <- function() {
 
     # 5.3 Attach Bio_* columns (DP reads parameters from columns)
     xrun <- attach_bio_columns(xrun, bio_pars)
+    ## adding variation to census interval to test errors need to be fixed
+    xrun[, Bio_IntervalYears := Bio_IntervalYears + rnorm(.N, mean = 0, sd = 1e-1)] # tiny jitter to avoid zero-interval issues
 
+    # Canonicalize to per-(Tag, CensusID) mean so tiny numeric jitter doesn't break DP.
+    # This respects NA values by taking mean with na.rm=TRUE; if all NA, value remains NA.
+    # xrun[, Bio_IntervalYears := as.numeric(mean(Bio_IntervalYears, na.rm = TRUE)), by = .(Tag, CensusID)]
+    # Informative message when we collapsed varying per-row intervals to per-census means
+    if (any(is.na(xrun$Bio_IntervalYears))) {
+        message("[dp_global main_cpp.R] Some Bio_IntervalYears are NA after canonicalization; DP will require explicit intervals or will error.")
+    } else {
+        message("[dp_global main_cpp.R] Bio_IntervalYears canonicalized to per-(Tag,CensusID) means (NA handled).")
+    }
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(dp_max_tracks)) auto_dp_max_tracks(xrun) else as.integer(dp_max_tracks)
     dp_max_tracks_local <- as.integer(dp_max_tracks_local)

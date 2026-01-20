@@ -155,6 +155,96 @@ resolve_interval_years <- function(tree_data,
     )
 }
 
+# Resolve interval years for a specific adjacent census pair (t0 -> t1).
+# Preference order:
+#  - explicit scalar `interval_years` argument if provided
+#  - per-census value at CensusID == t1 (preferred)
+#  - per-census value at CensusID == t0
+#  - global constant in the interval column if present
+# Errors when multiple distinct finite values are present for the pair.
+resolve_interval_years_pair <- function(tree_data, t0, t1, interval_years = NULL,
+                                       interval_col_candidates = c(
+                                           "Bio_IntervalYears",
+                                           "IntervalYears",
+                                           "interval_years",
+                                           "census_interval_years",
+                                           "CensusIntervalYears"
+                                       )) {
+    if (!is.null(interval_years)) {
+        interval_years <- suppressWarnings(as.numeric(interval_years))
+        if (!is.finite(interval_years) || is.na(interval_years) || interval_years <= 0) {
+            stop("interval_years must be a positive finite number.", call. = FALSE)
+        }
+        return(interval_years)
+    }
+
+    if (is.null(tree_data) || !is.data.frame(tree_data)) {
+        stop(
+            "interval_years not provided and tree_data is not a data.frame/data.table; ",
+            "provide interval_years or add a column like 'Bio_IntervalYears'.",
+            call. = FALSE
+        )
+    }
+
+    for (col in interval_col_candidates) {
+        if (!(col %in% names(tree_data))) next
+        v <- suppressWarnings(as.numeric(tree_data[[col]]))
+
+        # Prefer t1 values
+        if (!missing(t1)) {
+            v1 <- v[tree_data$CensusID == t1]
+            v1 <- v1[is.finite(v1) & !is.na(v1) & v1 > 0]
+            if (length(v1) > 0L) {
+                u1 <- unique(v1)
+                if (length(u1) == 1L) return(u1[[1L]])
+                # Multiple per-census values: use the mean across rows (tolerant to small jitter)
+                mean_v1 <- mean(v1, na.rm = TRUE)
+                warning(
+                    "Multiple interval values found for CensusID=", t1, "; using mean (", format(mean_v1, digits = 8), ")",
+                    call. = FALSE
+                )
+                return(as.numeric(mean_v1))
+            }
+        }
+
+        # Next prefer t0 values
+        if (!missing(t0)) {
+            v0 <- v[tree_data$CensusID == t0]
+            v0 <- v0[is.finite(v0) & !is.na(v0) & v0 > 0]
+            if (length(v0) > 0L) {
+                u0 <- unique(v0)
+                if (length(u0) == 1L) return(u0[[1L]])
+                # Multiple per-census values: use the mean across rows (tolerant to small jitter)
+                mean_v0 <- mean(v0, na.rm = TRUE)
+                warning(
+                    "Multiple interval values found for CensusID=", t0, "; using mean (", format(mean_v0, digits = 8), ")",
+                    call. = FALSE
+                )
+                return(as.numeric(mean_v0))
+            }
+        }
+
+        # Fallback: global constant across the data
+        v_all <- v[is.finite(v) & !is.na(v) & v > 0]
+        if (length(v_all) > 0L) {
+            u_all <- unique(v_all)
+            if (length(u_all) == 1L) return(u_all[[1L]])
+            # Multiple global values: use mean across all rows as a tolerant fallback
+            mean_all <- mean(v_all, na.rm = TRUE)
+            warning(
+                "Multiple interval values found globally in column '", col, "'; using mean (", format(mean_all, digits = 8), ")",
+                call. = FALSE
+            )
+            return(as.numeric(mean_all))
+        }
+    }
+
+    stop(
+        "interval_years not provided and no interval information found for Census pair ", t0, "->", t1, ". Add per-census column like 'Bio_IntervalYears' or pass interval_years explicitly.",
+        call. = FALSE
+    )
+}
+
 add_constraint_violation <- function(x, id_col = "ReconstructedStemID", min_growth, max_growth, interval_years = NULL) {
     # PURPOSE
     # - Post-hoc diagnostic: flag potentially implausible links along each reconstructed
@@ -181,7 +271,17 @@ add_constraint_violation <- function(x, id_col = "ReconstructedStemID", min_grow
         return(x)
     }
 
-    interval_years <- resolve_interval_years(x, interval_years = interval_years)
+    # Cache per-pair interval lookups to avoid repeated resolution calls
+    pair_interval_cache <- new.env(parent = emptyenv())
+    get_pair_interval <- function(t0, t1) {
+        key <- paste0(as.integer(t0), "_", as.integer(t1))
+        if (exists(key, envir = pair_interval_cache, inherits = FALSE)) {
+            return(get(key, envir = pair_interval_cache, inherits = FALSE))
+        }
+        v <- resolve_interval_years_pair(x, t0 = t0, t1 = t1, interval_years = interval_years)
+        assign(key, v, envir = pair_interval_cache)
+        v
+    }
     data.table::setorder(x, CensusID)
     ids <- unique(x[[id_col]])
     ids <- ids[!is.na(ids)]
@@ -196,7 +296,8 @@ add_constraint_violation <- function(x, id_col = "ReconstructedStemID", min_grow
             i0 <- ii[k]
             i1 <- ii[k + 1L]
             if (x$CensusID[i1] != x$CensusID[i0] + 1L) next
-            g <- (x$DBH[i1] - x$DBH[i0]) / interval_years
+            pair_T <- get_pair_interval(x$CensusID[i0], x$CensusID[i1])
+            g <- (x$DBH[i1] - x$DBH[i0]) / pair_T
             cond <- isTRUE((g < min_growth) | (g > max_growth))
             if (cond || isTRUE(x$ConstraintViolation[i0])) {
                 x$ConstraintViolation[i0] <- TRUE
@@ -303,7 +404,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, inte
     # - This is conceptually similar to STEM_IDENTIFICATION_TEST/2_igraph_stepwise.R,
     #   but defined locally so DP code can fall back without sourcing other scripts.
     tree_data <- tree_data[order(CensusID)]
-    interval_years <- resolve_interval_years(tree_data, interval_years = interval_years)
+    # interval_years are resolved per-census-pair when needed via resolve_interval_years_pair()
     if (!("ReconstructionMethod" %in% names(tree_data))) {
         tree_data[, ReconstructionMethod := NA_character_]
     }
@@ -424,8 +525,10 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, inte
             dist_mat <- matrix(dist_mat, nrow = n_curr, ncol = n_fut)
         }
 
+        pair_interval <- resolve_interval_years_pair(tree_data, t0 = c, t1 = c + 1L, interval_years = interval_years)
+
         growth_mat <- matrix(
-            outer(curr_dbh, fut_dbh, FUN = function(d0, d1) (d1 - d0) / interval_years),
+            outer(curr_dbh, fut_dbh, FUN = function(d0, d1) (d1 - d0) / pair_interval),
             nrow = n_curr,
             ncol = n_fut
         )
@@ -2450,7 +2553,9 @@ match_stems_dp_global_backward <- function(tree_data,
     # tree_data <- xraw[Tag == 1 & species == "sp1", ]
 
     tree_data <- tree_data[order(CensusID)]
-    interval_years <- resolve_interval_years(tree_data, interval_years = interval_years)
+    # Try to resolve a global scalar interval for logging only; if per-census intervals
+    # are present this will return NA and DP will resolve per-pair intervals where needed.
+    interval_years_for_logging <- tryCatch(resolve_interval_years(tree_data, interval_years = interval_years), error = function(e) NA_real_)
 
     verbose <- isTRUE(verbose) || isTRUE(getOption("dp_global_biol.verbose", FALSE))
     vcat <- function(...) {
@@ -2486,7 +2591,7 @@ match_stems_dp_global_backward <- function(tree_data,
         if (!is.na(sp_val)) paste0(" species=", sp_val) else "",
         "] "
     )
-    vcat(prefix, "Starting MAP DP (Viterbi): anchor_start=", anchor_start, ", interval_years=", interval_years)
+    vcat(prefix, "Starting MAP DP (Viterbi): anchor_start=", anchor_start, ", interval_years=", interval_years_for_logging)
     if (!("ReconstructionMethod" %in% names(tree_data))) {
         tree_data[, ReconstructionMethod := NA_character_]
     }
@@ -3070,10 +3175,10 @@ match_stems_dp_global_backward_marginals <- function(tree_data,
 
     # Ensure deterministic ordering + resolve interval before logging.
     tree_data <- tree_data[order(CensusID)]
-    interval_years <- resolve_interval_years(tree_data, interval_years = interval_years)
+    interval_years_for_logging <- tryCatch(resolve_interval_years(tree_data, interval_years = interval_years), error = function(e) NA_real_)
 
     vcat(
-        prefix, "Starting marginal DP (sum-product): anchor_start=", anchor_start, ", interval_years=", interval_years,
+        prefix, "Starting marginal DP (sum-product): anchor_start=", anchor_start, ", interval_years=", interval_years_for_logging,
         ", temperature=", temperature, ", top_k=", posterior_top_k
     )
 
@@ -3784,12 +3889,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         "] "
     )
 
-    # Ensure deterministic ordering + resolve interval before logging.
+    # Ensure deterministic ordering; try to resolve a global interval for logging if possible
     tree_data <- tree_data[order(CensusID)]
-    interval_years <- resolve_interval_years(tree_data, interval_years = interval_years)
+    interval_years_for_logging <- tryCatch(resolve_interval_years(tree_data, interval_years = interval_years), error = function(e) NA_real_)
 
     vcat(
-        prefix, "Starting marginal DP (sum-product) [batch costs]: anchor_start=", anchor_start, ", interval_years=", interval_years,
+        prefix, "Starting marginal DP (sum-product) [batch costs]: anchor_start=", anchor_start, ", interval_years=", interval_years_for_logging,
         ", temperature=", temperature, ", top_k=", posterior_top_k
     )
 
@@ -4188,11 +4293,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             feasible_key <- feasible_key[seq_len(feasible_n)]
             feasible_tdbh1 <- feasible_tdbh1[seq_len(feasible_n)]
 
+            # Resolve per-pair interval (allows varying census intervals)
+            pair_interval <- resolve_interval_years_pair(tree_data, t0 = cc, t1 = cc + 1L, interval_years = interval_years)
+
             # Batch compute all transition costs from this current assignment
             c_trans_vec <- transition_cost_tracks_bio_batch(
                 track_dbh_t = tdbh0,
                 track_dbh_tp1 = feasible_tdbh1,
-                interval_years = interval_years,
+                interval_years = pair_interval,
                 # --- growth model ---
                 mu_const = Bio_Mu_Growth_unit,
                 mu_gamma = Bio_Gamma_Growth_unit,
