@@ -55,7 +55,7 @@ if (!requireNamespace("Rcpp", quietly = TRUE)) {
 }
 
 source(here::here("dp_global", "src", "transition_cost_rcpp.R"))
-Rcpp::sourceCpp(here("dp_global", "src", "transition_cost_rcpp.cpp"))
+Rcpp::sourceCpp(here::here("dp_global", "src", "transition_cost_rcpp.cpp"))
 message("[dp_global main_cpp.R] C++ acceleration enabled.")
 
 Tag <- CensusID <- DBH <- TrueStemID <- ReconstructedStemID <- ConstraintViolation <- ReconstructionMethod <- NULL
