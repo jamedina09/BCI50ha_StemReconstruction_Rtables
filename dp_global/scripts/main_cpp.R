@@ -109,11 +109,13 @@ K_SHRINK_SOURCE <- "fixed"
 K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
 K_GROWTH_SOURCE <- "fixed"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
+RECRUIT_MAX_SOURCE <- "fixed"
+RECRUIT_MAX_FIXED <- 6
 
 ############################################################
 ### 2.3 DP running settings
 ############################################################
-DP_MODE <- "marginals+bins" # Options: "none", "map", "marginals", "marginals+bins"
+DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
 which_tag <- 1L
 anchor_start_census <- 7L
 census_interval_years <- 5
@@ -172,10 +174,6 @@ encode_num <- function(x) {
     s <- gsub("\\.", "p", s)
     s
 }
-
-# decode_num <- function(s) {
-#     as.numeric(gsub("p", ".", gsub("m", "-", s)))
-# }
 
 flag <- function(cond, yes, no = "") {
     if (isTRUE(cond)) yes else no
@@ -271,53 +269,59 @@ build_out_dir_name <- function() {
 WRITE_DP_CSV <- TRUE
 WRITE_DP_PDF <- TRUE
 DP_PDF_INCLUDE_REFERENCE <- TRUE
-PLOT_PDF_ONE_TAG_ONLY <- TRUE
+
+if (!isTRUE(RUN_ALL_TAGS)) {
+    PLOT_PDF_ONE_TAG_ONLY <- TRUE
+} else {
+    PLOT_PDF_ONE_TAG_ONLY <- FALSE
+}
+
 # Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
 PROJECT_ROOT <- here::here()
 ############################################################
 ### 2.5 Sensitivity analysis settings
 ############################################################
-SENSITIVITY_MODE <- "run+write+pdf" # Options: "none", "run", "run+write", "run+write+pdf"
+SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
 RUN_K_SWEEP_DEMO <- TRUE
 
 ############################################################
 ### 2.6 Realism report settings
 ############################################################
-RUN_REALISM_REPORT <- FALSE
+RUN_REALISM_REPORT <- TRUE
 
-print_help <- function() {
-    cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
-    cat("Common keys and defaults:\n")
-    keys <- c(
-        "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
-        "anchor_start_census", "census_interval_years", "DP_VERBOSE", "RUN_ALL_TAGS",
-        "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_PDF",
-        "dp_max_states", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
-        "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
-    )
-    for (k in keys) {
-        val <- if (exists(k, inherits = FALSE)) get(k) else "<not set>"
-        cat(sprintf("  --%s = %s\n", k, as.character(val)))
-    }
-    cat("\nFlags without =value are treated as boolean TRUE (e.g., --DRY_RUN).\n")
-}
+# print_help <- function() {
+#     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
+#     cat("Common keys and defaults:\n")
+#     keys <- c(
+#         "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
+#         "anchor_start_census", "census_interval_years", "DP_VERBOSE", "RUN_ALL_TAGS",
+#         "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_PDF",
+#         "dp_max_states", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
+#         "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
+#     )
+#     for (k in keys) {
+#         val <- if (exists(k, inherits = FALSE)) get(k) else "<not set>"
+#         cat(sprintf("  --%s = %s\n", k, as.character(val)))
+#     }
+#     cat("\nFlags without =value are treated as boolean TRUE (e.g., --DRY_RUN).\n")
+# }
 
-# If user asked for help, print and exit (do this before applying overrides)
-if (isTRUE(overrides$help) || isTRUE(overrides$h)) {
-    print_help()
-    quit(save = "no", status = 0)
-}
+# # If user asked for help, print and exit (do this before applying overrides)
+# if (isTRUE(overrides$help) || isTRUE(overrides$h)) {
+#     print_help()
+#     quit(save = "no", status = 0)
+# }
 
 # Apply command-line overrides with validation and warnings for unknown keys
-for (name in names(overrides)) {
-    if (name %in% c("help", "h")) next
-    if (!exists(name, inherits = FALSE)) {
-        warning(sprintf("[dp_global main_cpp.R] Unknown override '%s' (ignored).\n", name))
-        next
-    }
-    assign(name, overrides[[name]])
-    message("[dp_global main_cpp.R] Overriding ", name, " = ", overrides[[name]])
-}
+# for (name in names(overrides)) {
+#     if (name %in% c("help", "h")) next
+#     if (!exists(name, inherits = FALSE)) {
+#         warning(sprintf("[dp_global main_cpp.R] Unknown override '%s' (ignored).\n", name))
+#         next
+#     }
+#     assign(name, overrides[[name]])
+#     message("[dp_global main_cpp.R] Overriding ", name, " = ", overrides[[name]])
+# }
 
 # Recompute derived values that depend on overridable inputs so CLI overrides take effect
 # - MC_CORES depends on MANUAL_CORES and MANUAL_CORES_VALUE
@@ -330,6 +334,7 @@ MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) {
 }
 
 # Ensure growth/shrink derived bounds reflect overrides
+# FIXME:
 min_annual_growth <- MAX_SHRINK_FIXED
 max_annual_growth <- MAX_GROWTH_FIXED
 
@@ -358,7 +363,6 @@ if (!file.exists(input_file)) {
 
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
-RUN_DP_MARGINALS <- DP_MODE %in% c("marginals", "marginals+bins")
 ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
 RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
 WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
@@ -370,6 +374,7 @@ message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
 DP_CSV_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.csv")
+DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
 DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
 
 ############################################################
@@ -596,7 +601,6 @@ auto_dp_max_tracks <- function(xrun) {
 }
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
-    if (isTRUE(RUN_DP_MARGINALS)) {
         match_stems_dp_global_backward_marginals_batch(
             tree_data = data.table::copy(dtg),
             min_growth = min_annual_growth,
@@ -610,23 +614,14 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
             verbose = isTRUE(DP_VERBOSE)
         )
-    } else {
-        match_stems_dp_global_backward(
-            tree_data = data.table::copy(dtg),
-            min_growth = min_annual_growth,
-            max_growth = max_annual_growth,
-            anchor_start = anchor_start_census,
-            max_tracks = dp_max_tracks,
-            max_states = dp_max_states,
-            slack_tracks = dp_slack_tracks,
-            use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
-            verbose = isTRUE(DP_VERBOSE)
-        )
-    }
 }
 
+# # xrun[Tag == which_tag, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
+
+# run_dp_one_group(xrun[Tag == which_tag], dp_max_tracks = dp_max_tracks_local)
+
 maybe_add_posterior_bins <- function(out) {
-    if (isTRUE(RUN_DP_MARGINALS) && isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
+    if (isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
         out <- add_dp_posterior_bins(
             out,
             confident_prob = DP_BIN_CONFIDENT_PROB,
