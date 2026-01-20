@@ -23,22 +23,32 @@ This directory contains an optimized C++ implementation of the transition cost c
    install.packages("microbenchmark")
    ```
 
-### Basic Usage
+### Quick Usage & API
+
+Load and call from R (project root):
 
 ```r
-# Load the C++ implementation
-Rcpp::sourceCpp("./dp_global/src/transition_cost_rcpp.cpp")
-source("./dp_global/src/transition_cost_rcpp.R")
+library(Rcpp)
+Rcpp::sourceCpp("dp_global/src/transition_cost_rcpp.cpp")
+source("dp_global/src/transition_cost_rcpp.R")
 
-# Use the function (same interface as the original R version)
-costs <- transition_cost_tracks_bio_batch_rcpp(
-    track_dbh_t = c(10.0, NA, 20.0),
-    mat_tp1 = matrix(c(12.0, 15.0, 18.0, 8.0, NA, 22.0), nrow = 2, byrow = TRUE),
-    interval_years = 5,
-    # ... other parameters with same defaults as original function
-)
+# Minimal example
+defaults <- list(mu_const = 0, mu_gamma = 0, sigma0 = 1, sigma1 = 0,
+                 max_shrink = -Inf, k_shrink = 0, max_growth = Inf,
+                 max_growth_soft = Inf, k_growth = 0, use_measurement_error = FALSE,
+                 meas_sd1_a = 0.0062, meas_sd1_b = 0.0904, meas_sd2 = 4.64,
+                 meas_p_big = 0.05, h0 = 0, beta = 0,
+                 recruit_meanlog = 0, recruit_sdlog = 1, recruit_max_dbh = 200,
+                 recruit_lambda = 0, eps_tiebreak = 1e-6)
+
+track_dbh_t <- c(10.0, NA, 20.0)
+mat_tp1 <- matrix(c(12.0, 15.0, 18.0, 8.0, NA, 22.0), nrow = 2, byrow = TRUE)
+
+costs <- do.call(transition_cost_tracks_bio_batch_rcpp, c(list(track_dbh_t = track_dbh_t, track_dbh_tp1 = mat_tp1, interval_years = 5), defaults))
+print(costs)
 ```
 
+See `R/transition_cost_rcpp.R` for detailed parameter descriptions and expected types.
 ### Integration with Existing Code
 
 To use the C++ version in place of the R version, modify `dp_global_biol.R`:
@@ -66,6 +76,16 @@ Rscript dp_global/dev/test_transition_cost_tracks_bio_batch.R
 ```
 
 The dev tests compare outputs and report discrepancies; use these to validate the C++ implementation after changes.
+
+## Recent changes
+
+- The C++ implementation and the R wrapper were recently updated to improve performance and fix corner-case behavior. If you edit the C++ or wrapper, re-run the dev validation test and the profiler to ensure correctness and to inspect performance.
+
+## Troubleshooting
+
+- If `Rcpp::sourceCpp()` fails on macOS, ensure Xcode command-line tools are installed (`xcode-select --install`) and that your `R` can find clang/clang++.
+- If you encounter small numeric differences versus the R implementation, verify `eps_tiebreak` and floating-point tolerances.
+- For reproducible CI, consider packaging the C++ code into an R package to avoid on-the-fly compilation variability.
 
 ## Implementation Details
 
