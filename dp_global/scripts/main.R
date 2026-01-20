@@ -629,7 +629,9 @@ run_main <- function() {
             # to etimate the growth soft penalty k_growth - its used if it becomes the minimum between max grwoth from measurement error or fixed or data
             growth_soft_quantile = 0.99,
             # Recruitment max DBH (upper bound for recruits dbh at first census)
-            recruit_max_quantile = 0.999
+            recruit_max_quantile = 0.999,
+            recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
+            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = 5))
         )
     }
 

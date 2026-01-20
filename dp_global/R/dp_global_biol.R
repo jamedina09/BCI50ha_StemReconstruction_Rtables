@@ -756,7 +756,10 @@ estimate_bio_pars <- function(
   max_growth_source = c("data", "fixed"),
   max_growth_fixed = 7.5,
   # Recruitment max DBH (upper bound for recruits)
-  recruit_max_quantile = 0.999
+  recruit_max_quantile = 0.999,
+  # Recruit max DBH source and fixed value (allow 'data' or 'fixed')
+  recruit_max_source = c("data", "fixed"),
+  recruit_max_fixed = 5
 ) {
     # =====================================================================
     # estimate_bio_pars()
@@ -1260,8 +1263,10 @@ estimate_bio_pars <- function(
         T_m_vec <- c(T_m_vec, Tm)
         # Bookkeeping: how many mortality rows used and how many were filled/dropped
         pairs_candidate_count <- pairs_candidate_count + length(Tm)
-        pairs_filled_with_scalar_count <- pairs_filled_with_scalar_count + sum(!is.finite(T1m) & is.finite(T0m) & is.finite(Tm))
-        pairs_dropped_count <- pairs_dropped_count + sum(!is.finite(T1m) & !is.finite(T0m) & !is.finite(Tm))
+        if (exists("T1m") && exists("T0m")) {
+            pairs_filled_with_scalar_count <- pairs_filled_with_scalar_count + sum(!is.finite(T1m) & is.finite(T0m) & is.finite(Tm))
+            pairs_dropped_count <- pairs_dropped_count + sum(!is.finite(T1m) & !is.finite(T0m) & !is.finite(Tm))
+        }
     }
 
     negloglik_mort <- function(par, d0, died, Tvec) {
@@ -1339,8 +1344,10 @@ estimate_bio_pars <- function(
             }
             total_time_at_risk <- total_time_at_risk + sum(T_r, na.rm = TRUE)
         # Also track any pair-level fills/drops as part of recruitment accounting
-        pairs_filled_with_scalar_count <- pairs_filled_with_scalar_count + sum(!is.finite(T1r) & is.finite(T0r))
-        pairs_dropped_count <- pairs_dropped_count + sum(!is.finite(T1r) & !is.finite(T0r) & (!(!is.null(interval_years) && is.finite(interval_years) && (interval_years > 0))))
+        if (exists("T1r") && exists("T0r")) {
+            pairs_filled_with_scalar_count <- pairs_filled_with_scalar_count + sum(!is.finite(T1r) & is.finite(T0r))
+            pairs_dropped_count <- pairs_dropped_count + sum(!is.finite(T1r) & !is.finite(T0r) & (!(!is.null(interval_years) && is.finite(interval_years) && (interval_years > 0))))
+        }
         } else {
             if (is.null(interval_years) || !is.finite(interval_years) || interval_years <= 0) {
                 stop("No interval information found: provide 'interval_years' or add an interval column.", call. = FALSE)
@@ -1365,11 +1372,20 @@ estimate_bio_pars <- function(
         sd_r <- 0.5
     }
 
-    # Guardrail: prevent the DP from treating very large stems as recruits.
-    recruit_max_dbh <- if (length(recruit_dbh) > 0) {
-        as.numeric(stats::quantile(recruit_dbh, recruit_max_quantile, na.rm = TRUE))
+    # Guardrail: recruit_max_dbh can come from data or be fixed by the user.
+    recruit_max_source <- match.arg(recruit_max_source)
+    recruit_max_fixed <- as.numeric(recruit_max_fixed)
+    if (identical(recruit_max_source, "fixed")) {
+        if (!is.finite(recruit_max_fixed) || recruit_max_fixed <= 0) {
+            stop("recruit_max_fixed must be a positive finite number when recruit_max_source='fixed'.", call. = FALSE)
+        }
+        recruit_max_dbh <- recruit_max_fixed
     } else {
-        5
+        recruit_max_dbh <- if (length(recruit_dbh) > 0) {
+            as.numeric(stats::quantile(recruit_dbh, recruit_max_quantile, na.rm = TRUE))
+        } else {
+            5
+        }
     }
 
     # Recruitment rate (Poisson)
@@ -1672,6 +1688,8 @@ estimate_bio_pars <- function(
             meanlog = mu_r,
             sdlog = sd_r,
             recruit_max_dbh = recruit_max_dbh,
+            recruit_max_source = recruit_max_source,
+            recruit_max_fixed = recruit_max_fixed,
             lambda = lambda_hat
         ),
         shrinkage = list(
@@ -2903,7 +2921,11 @@ match_stems_dp_global_backward <- function(tree_data,
     Bio_Beta_Mortality <- unique(tree_data$Bio_Beta_Mortality)
     Bio_Recruit_Meanlog_unit <- unique(tree_data$Bio_Recruit_Meanlog)
     Bio_Recruit_Sdlog_unit <- unique(tree_data$Bio_Recruit_Sdlog)
-    Bio_Recruit_MaxDBH_unit <- unique(tree_data$Bio_Recruit_MaxDBH_unit)
+    Bio_Recruit_MaxDBH_unit <- if ("Bio_Recruit_MaxDBH_unit" %in% names(tree_data)) {
+        unique(tree_data$Bio_Recruit_MaxDBH_unit)
+    } else {
+        Inf
+    }
     Bio_Recruitment_lambda <- unique(tree_data$Bio_Recruitment_lambda)
     # eps_tie <- 1e-06
 

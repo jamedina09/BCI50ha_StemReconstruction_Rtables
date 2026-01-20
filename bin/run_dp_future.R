@@ -182,9 +182,11 @@ BASE_ARGS <- c(
   "--SENSITIVITY_MODE=none", #run+write+pdf
   "--RUN_K_SWEEP_DEMO=FALSE",
   "--RUN_REALISM_REPORT=FALSE",
+  "--RECRUIT_MAX_SOURCE=data",
+  "--RECRUIT_MAX_FIXED=5",
   paste0("--PROJECT_ROOT=", here::here()),
   paste0("--BATCH_TS=", BATCH_TS)
-)
+) 
 
 get_config_args <- function(cfg) {
   switch(cfg,
@@ -197,7 +199,9 @@ get_config_args <- function(cfg) {
       "--K_SHRINK_SOURCE=fixed",
       "--K_SHRINK_FIXED=0",
       "--K_GROWTH_SOURCE=fixed",
-      "--K_GROWTH_FIXED=0"
+      "--K_GROWTH_FIXED=0",
+      "--RECRUIT_MAX_SOURCE=fixed",
+      "--RECRUIT_MAX_FIXED=6"
     ),
     data_hard = c(
       "--USE_MEASUREMENT_ERROR=TRUE",
@@ -206,7 +210,8 @@ get_config_args <- function(cfg) {
       "--K_SHRINK_SOURCE=fixed",
       "--K_SHRINK_FIXED=0",
       "--K_GROWTH_SOURCE=fixed",
-      "--K_GROWTH_FIXED=0"
+      "--K_GROWTH_FIXED=0",
+      "--RECRUIT_MAX_SOURCE=data"
     ),
     data_hard_soft = c(
       "--USE_MEASUREMENT_ERROR=TRUE",
