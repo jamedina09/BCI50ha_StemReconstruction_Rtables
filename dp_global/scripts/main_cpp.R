@@ -78,13 +78,6 @@ library(here)
 ############################################################
 ### Manual overrides (uncomment and edit for interactive/manual runs)
 ############################################################
-# Example: override defaults for manual runs
-# DP_MODE <- "map"
-# SENSITIVITY_MODE <- "run+write"
-# which_tag <- 2
-# RUN_ALL_TAGS <- TRUE
-# etc.
-
 ## 2.1 Input data and species handling
 input_file <- here("data_simulation", "data", "simulation_legacy_backup", "simulated_data_one_species.csv")
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE
@@ -175,9 +168,9 @@ encode_num <- function(x) {
     s
 }
 
-flag <- function(cond, yes, no = "") {
-    if (isTRUE(cond)) yes else no
-}
+# flag <- function(cond, yes, no = "") {
+#     if (isTRUE(cond)) yes else no
+# }
 
 build_out_dir_name <- function() {
     # Use explicit OUT_DIR_NAME if set
@@ -267,6 +260,7 @@ build_out_dir_name <- function() {
 }
 
 WRITE_DP_CSV <- TRUE
+WRITE_DP_RDS <- TRUE
 WRITE_DP_PDF <- TRUE
 DP_PDF_INCLUDE_REFERENCE <- TRUE
 
@@ -601,19 +595,19 @@ auto_dp_max_tracks <- function(xrun) {
 }
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
-        match_stems_dp_global_backward_marginals_batch(
-            tree_data = data.table::copy(dtg),
-            min_growth = min_annual_growth,
-            max_growth = max_annual_growth,
-            anchor_start = anchor_start_census,
-            max_tracks = dp_max_tracks,
-            max_states = dp_max_states,
-            slack_tracks = dp_slack_tracks,
-            temperature = DP_POSTERIOR_TEMPERATURE,
-            posterior_top_k = DP_POSTERIOR_TOP_K,
-            use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
-            verbose = isTRUE(DP_VERBOSE)
-        )
+    match_stems_dp_global_backward_marginals_batch(
+        tree_data = data.table::copy(dtg),
+        min_growth = min_annual_growth,
+        max_growth = max_annual_growth,
+        anchor_start = anchor_start_census,
+        max_tracks = dp_max_tracks,
+        max_states = dp_max_states,
+        slack_tracks = dp_slack_tracks,
+        temperature = DP_POSTERIOR_TEMPERATURE,
+        posterior_top_k = DP_POSTERIOR_TOP_K,
+        use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+        verbose = isTRUE(DP_VERBOSE)
+    )
 }
 
 # # xrun[Tag == which_tag, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
@@ -819,6 +813,9 @@ run_main <- function() {
     # 5.6 Optional: write DP outputs
     if (isTRUE(WRITE_DP_CSV) && !is.null(out)) {
         data.table::fwrite(out, file = DP_CSV_FILE)
+    }
+    if (isTRUE(WRITE_DP_RDS) && !is.null(out)) {
+        saveRDS(out, file = DP_RDS_FILE)
     }
     if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
         plot_tag_to_pdf(
