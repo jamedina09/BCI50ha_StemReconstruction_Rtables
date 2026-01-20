@@ -1,7 +1,8 @@
 # Test recruit_max_source/fixed behavior
 library(data.table)
+library(here)
 # Source the function under test (assume repo root is working dir when invoked)
-source("dp_global/R/dp_global_biol.R")
+source("./dp_global/R/dp_global_biol.R")
 
 # Build a dataset with >=5 growth pairs and one recruit
 # Six stems with observed DBH in both censuses (growth pairs)
