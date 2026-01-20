@@ -4,6 +4,14 @@ rm(list = ls())
 ### FOREST CENSUS DATA SIMULATION FOR STEM IDENTIFICATION TESTING
 ################################################################################
 
+# This script simulates forest census data for testing stem identification algorithms.
+# It generates synthetic tree growth trajectories with measurement error, recruitment,
+# growth, and mortality processes.
+
+################################################################################
+### SETUP
+################################################################################
+
 set.seed(1234)
 library(data.table)
 library(here)
@@ -130,8 +138,24 @@ scale_species_params <- function(base_params, scale) {
 ### SIMULATION ENGINE
 ################################################################################
 
+# This section contains the core simulation logic:
+# 1. Species configuration
+# 2. Growth multipliers for scaling effects
+# 3. Individual stem trajectory simulation
+# 4. Tree-level simulation (multiple stems per tree)
+# 5. Species-level simulation (multiple trees per species)
+# 6. Full dataset assembly
+
+# ============================================================================
+# Species Configuration
+# ============================================================================
+
 species_table <- generate_species_table(params)
 growth_multipliers <- make_growth_multipliers(params$sim$n_census, species_table$Species, params$growth_scaling$events)
+
+# ============================================================================
+# Individual Stem Trajectory Simulation
+# ============================================================================
 
 simulate_one_stem <- function(tag, original_stem_id, species, growth_multipliers, params, interval_years) {
     n_census <- params$sim$n_census
@@ -186,6 +210,10 @@ simulate_one_stem <- function(tag, original_stem_id, species, growth_multipliers
     )
 }
 
+# ============================================================================
+# Tree-Level Simulation (Multiple Stems per Tree)
+# ============================================================================
+
 simulate_one_tree <- function(tag, species, growth_multipliers, params) {
     n_census <- params$sim$n_census
     interval_years <- params$sim$census_interval_years + rnorm(n_census - 1, 0, 0.1)
@@ -196,6 +224,10 @@ simulate_one_tree <- function(tag, species, growth_multipliers, params) {
     }))
 }
 
+# ============================================================================
+# Species-Level Simulation (Multiple Trees per Species)
+# ============================================================================
+
 simulate_one_species <- function(species, scale, n_trees, tag_offset, growth_multipliers, base_params) {
     p_species <- scale_species_params(base_params, scale)
     rbindlist(lapply(seq_len(n_trees), function(i) {
@@ -203,6 +235,10 @@ simulate_one_species <- function(species, scale, n_trees, tag_offset, growth_mul
         simulate_one_tree(tag, species, growth_multipliers, p_species)
     }))
 }
+
+# ============================================================================
+# Full Dataset Assembly
+# ============================================================================
 
 # Generate forest dataset
 
@@ -216,17 +252,25 @@ for (i in seq_len(nrow(species_table))) {
 dt <- rbindlist(dt_list)
 
 dt <- dt[,.(Species, Tag, OriginalStemID, TrueStemID, CensusID, DBH_true, CensusInterval, CensusDate)][order(Species, Tag, OriginalStemID, CensusID)]
+dt[, DBH := DBH_true]
+dt[, DBH_true := NULL]
+dt[CensusID < 7, TrueStemID := NA_integer_]
+
+dt
 
 ################################################################################
-### EXPORT
+### DATA PROCESSING AND EXPORT
 ################################################################################
 
 # Display summary statistics
 cat("Simulation complete. Data summary:\n")
 cat(sprintf("Total stems: %d\n", length(unique(dt$Tag))))
-cat(sprintf("Total observations: %d\n", nrow(dt[!is.na(DBH_true)])))
+cat(sprintf("Total observations: %d\n", nrow(dt[!is.na(DBH)])))
 cat("Observations per species:\n")
 dt[, .N, by = Species]
+dt[, ExactDate := as.Date("1980-01-01") + round(CensusDate * 365.25)]
+dt[, CensusDate := NULL]
+dt[, .(Species, Tag, OriginalStemID, TrueStemID, CensusID, ExactDate, DBH)][order(Species, Tag, OriginalStemID, CensusID)]
 
 # Generate filename indicator and export main dataset
 # data_filename <- build_file_name("data", "simulated_data_1")
@@ -235,7 +279,7 @@ dt[, .N, by = Species]
 # params_filename <- here("data_simulation", "data", sprintf("simulation_params_%s.txt", scaling_indicator))
 # capture.output(str(params), file = params_filename)
 
-fwrite(dt, here("data_simulation", "data", "simulated_data_1"))
+fwrite(dt, here("data_simulation", "data", "simulated_data_1.csv"))
 # Apply stem ID masking to simulate ForestGEO protocol
 # In early censuses, stem identities are not trusted (TrueStemID = NA)
 
@@ -266,15 +310,13 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
 
         gg <- ggplot2::ggplot(
             species_data,
-            # ggplot2::aes(x = CensusID, y = DBH, group = interaction(OriginalStemID, Tag), color = factor(Tag))
-            ggplot2::aes(x = CensusID, y = DBH_true, group = interaction(OriginalStemID, Tag))
+            ggplot2::aes(x = CensusID, y = DBH, group = interaction(OriginalStemID, Tag))
         ) +
             ggplot2::geom_line(na.rm = TRUE, alpha = 0.7) +
             ggplot2::geom_point(size = 1.5, na.rm = TRUE, alpha = 0.7) +
             ggplot2::theme_minimal() +
             ggplot2::labs(
                 title = paste("Growth Trajectories -", species_name),
-                # subtitle = sprintf("All tags for this species\n%s", scaling_indicator),
                 x = "Census ID",
                 y = "DBH (cm)"
             ) +
@@ -305,14 +347,13 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
 
         gg <- ggplot2::ggplot(
             tag_data,
-            ggplot2::aes(x = as.factor(CensusID), y = DBH_true, group = interaction(OriginalStemID), color = factor(OriginalStemID))
+            ggplot2::aes(x = as.factor(CensusID), y = DBH, group = interaction(OriginalStemID), color = factor(OriginalStemID))
         ) +
             ggplot2::geom_line(na.rm = TRUE, alpha = 0.8) +
             ggplot2::geom_point(size = 2, na.rm = TRUE, alpha = 0.8) +
             ggplot2::theme_minimal() +
             ggplot2::labs(
                 title = sprintf("Tag %d - %s", tag_id, species_name),
-                # subtitle = sprintf("Individual stem trajectories\n%s", scaling_indicator),
                 x = "Census ID",
                 y = "DBH (cm)",
                 color = "Stem ID"
@@ -333,3 +374,11 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
 # =============================================================================
 # SIMULATION COMPLETE
 # =============================================================================
+
+# The simulation has generated synthetic forest census data with the following features:
+# - Multiple species with different growth rates and scaling
+# - Multi-stem trees with recruitment and mortality
+# - Measurement error in DBH observations
+# - Variable census intervals with random noise
+# - Stem identity masking for early censuses
+# - Diagnostic plots for validation
