@@ -1,14 +1,13 @@
 #!/usr/bin/env Rscript
-# run_dp_future.R — concurrent experiment runner (future + progressr)
+# run_dp_future_single.R — concurrent experiment runner for fixed configuration (future + progressr)
 #
 # Overview
 # -------
-# Runs multiple experimental configurations concurrently on a single machine
-# using the 'future' package (multisession plan). Each experimental config is
+# Runs the 'fixed' experimental configuration concurrently on a single machine
+# using the 'future' package (multisession plan). The experimental config is
 # executed by invoking `Rscript dp_global/scripts/main_cpp.R` with a set of
-# command-line arguments. This script provides experiment definitions (same
-# configs as the serial runner), logging, per-config overrides, and safety
-# checks to avoid CPU oversubscription.
+# command-line arguments. This script provides the fixed config definition,
+# logging, per-config overrides, and safety checks to avoid CPU oversubscription.
 #
 # Design & resource model
 # ----------------------
@@ -35,11 +34,10 @@
 #
 # Overrides & experiment tuning
 # -----------------------------
-# - Global overrides: `--override KEY=VAL` adds KEY=VAL to every config.
-# - Per-config overrides: `--cfg-override cfg:KEY=VAL` adds KEY=VAL only for
-#   that named config (cfg must match a config name like 'fixed').
-# - Extras after `--` are appended to all commands and are passed verbatim to
-#   `main_cpp.R` (same place the serial runner would receive them).
+# - Global overrides: --override KEY=VAL adds KEY=VAL to the config.
+# - Per-config overrides: --cfg-override fixed:KEY=VAL adds KEY=VAL for the fixed config.
+# - Extras after -- are appended to the command and are passed verbatim to
+#   main_cpp.R (same place the serial runner would receive them).
 # - Precedence: BASE_ARGS < config default args < extras < --override < --cfg-override
 #
 # Safety & recommended workflow
@@ -52,21 +50,21 @@
 #
 # Examples
 # --------
-# Dry-run a 4×4 experiment set (4 sessions × 4 cores each = 16 cores):
-#   ./bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25" -- --DRY_RUN
-# Real run (same configs):
-#   ./bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
-# Global override example (set DP_MODE=none for all configs):
-#   ./bin/run_dp_future.R --workers 4 --cores-per-job 4 --override DP_MODE=none --configs "fixed data_hard" -- --DRY_RUN
-# Per-config override example (set K_GROWTH_FIXED=50 only for 'fixed'):
-#   ./bin/run_dp_future.R --workers 4 --cores-per-job 4 --cfg-override fixed:K_GROWTH_FIXED=50 --configs "fixed" -- --DRY_RUN
+# Dry-run the fixed experiment set:
+#   ./bin/run_dp_future_single.R --workers 4 --cores-per-job 4 -- --DRY_RUN
+# Real run:
+#   ./bin/run_dp_future_single.R --workers 4 --cores-per-job 4
+# Global override example (set DP_MODE=none):
+#   ./bin/run_dp_future_single.R --workers 4 --cores-per-job 4 --override DP_MODE=none -- --DRY_RUN
+# Per-config override example (set K_GROWTH_FIXED=50):
+#   ./bin/run_dp_future_single.R --workers 4 --cores-per-job 4 --cfg-override fixed:K_GROWTH_FIXED=50 -- --DRY_RUN
 #
 # Help/usage
 # ----------
 # Run with -h or --help to print a short usage summary and exit.
 
 # Usage examples:
-#   ./bin/run_dp_future.R --workers 3 --cores-per-job 5 --configs "fixed data_hard" -- --DRY_RUN
+#   ./bin/run_dp_future_single.R --workers 3 --cores-per-job 5 -- --DRY_RUN
 
 suppressPackageStartupMessages({
   library(future)
@@ -130,7 +128,7 @@ while (i <= length(args)) {
     }
     i <- i + 2
   } else if (a == "--help" || a == "-h") {
-    cat("Usage: run_dp_future.R [--workers N] [--cores-per-job N] --configs \"c1 c2\" [--joblog file] [--force] [--override KEY=VAL] [--cfg-override cfg:KEY=VAL] -- [extra args passed to main_cpp.R]\n")
+    cat("Usage: run_dp_future_single.R [--workers N] [--cores-per-job N] [--joblog file] [--force] [--override KEY=VAL] [--cfg-override fixed:KEY=VAL] -- [extra args passed to main_cpp.R]\n")
     q(status = 0)
   } else if (a == "--") {
     extras <- args[(i + 1):length(args)]
@@ -142,7 +140,7 @@ while (i <= length(args)) {
 }
 
 if (is.null(opt$configs) || length(opt$configs) == 0L) {
-  opt$configs <- c("fixed", "data_hard", "data_hard_soft", "data_soft", "fixed_k50", "fixed_k25", "data_hard_k50", "data_hard_k25")
+  opt$configs <- c("fixed")
 }
 
 # Safety check: avoid oversubscription
@@ -186,7 +184,7 @@ BASE_ARGS <- c(
   "--RECRUIT_MAX_FIXED=5",
   paste0("--PROJECT_ROOT=", here::here()),
   paste0("--BATCH_TS=", BATCH_TS)
-) 
+)
 
 get_config_args <- function(cfg) {
   switch(cfg,
@@ -202,72 +200,6 @@ get_config_args <- function(cfg) {
       "--K_GROWTH_FIXED=0",
       "--RECRUIT_MAX_SOURCE=fixed",
       "--RECRUIT_MAX_FIXED=6"
-    ),
-    data_hard = c(
-      "--USE_MEASUREMENT_ERROR=TRUE",
-      "--MAX_GROWTH_HARD_SOURCE=data",
-      "--MAX_SHRINK_HARD_SOURCE=data",
-      "--K_SHRINK_SOURCE=fixed",
-      "--K_SHRINK_FIXED=0",
-      "--K_GROWTH_SOURCE=fixed",
-      "--K_GROWTH_FIXED=0",
-      "--RECRUIT_MAX_SOURCE=data"
-    ),
-    data_hard_soft = c(
-      "--USE_MEASUREMENT_ERROR=TRUE",
-      "--MAX_GROWTH_HARD_SOURCE=data",
-      "--MAX_SHRINK_HARD_SOURCE=data",
-      "--K_SHRINK_SOURCE=data",
-      "--K_GROWTH_SOURCE=data"
-    ),
-    data_soft = c(
-      "--USE_MEASUREMENT_ERROR=TRUE",
-      "--MAX_GROWTH_HARD_SOURCE=fixed",
-      "--MAX_GROWTH_FIXED=7.5",
-      "--MAX_SHRINK_HARD_SOURCE=fixed",
-      "--MAX_SHRINK_FIXED=-0.5",
-      "--K_SHRINK_SOURCE=data",
-      "--K_GROWTH_SOURCE=data"
-    ),
-    fixed_k50 = c(
-      "--USE_MEASUREMENT_ERROR=TRUE",
-      "--MAX_GROWTH_HARD_SOURCE=fixed",
-      "--MAX_GROWTH_FIXED=7.5",
-      "--MAX_SHRINK_HARD_SOURCE=fixed",
-      "--MAX_SHRINK_FIXED=-0.5",
-      "--K_SHRINK_SOURCE=fixed",
-      "--K_SHRINK_FIXED=50",
-      "--K_GROWTH_SOURCE=fixed",
-      "--K_GROWTH_FIXED=50"
-    ),
-    fixed_k25 = c(
-      "--USE_MEASUREMENT_ERROR=TRUE",
-      "--MAX_GROWTH_HARD_SOURCE=fixed",
-      "--MAX_GROWTH_FIXED=7.5",
-      "--MAX_SHRINK_HARD_SOURCE=fixed",
-      "--MAX_SHRINK_FIXED=-0.5",
-      "--K_SHRINK_SOURCE=fixed",
-      "--K_SHRINK_FIXED=25",
-      "--K_GROWTH_SOURCE=fixed",
-      "--K_GROWTH_FIXED=25"
-    ),
-    data_hard_k50 = c(
-      "--USE_MEASUREMENT_ERROR=TRUE",
-      "--MAX_GROWTH_HARD_SOURCE=data",
-      "--MAX_SHRINK_HARD_SOURCE=data",
-      "--K_SHRINK_SOURCE=fixed",
-      "--K_SHRINK_FIXED=50",
-      "--K_GROWTH_SOURCE=fixed",
-      "--K_GROWTH_FIXED=50"
-    ),
-    data_hard_k25 = c(
-      "--USE_MEASUREMENT_ERROR=TRUE",
-      "--MAX_GROWTH_HARD_SOURCE=data",
-      "--MAX_SHRINK_HARD_SOURCE=data",
-      "--K_SHRINK_SOURCE=fixed",
-      "--K_SHRINK_FIXED=25",
-      "--K_GROWTH_SOURCE=fixed",
-      "--K_GROWTH_FIXED=25"
     ),
     stop("Unknown config: ", cfg)
   )
@@ -432,8 +364,8 @@ if (failed > 0) {
 
 q(status = 0)
 
-# Rscript bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25" -- --DRY_RUN
+# Rscript bin/run_dp_future_single.R --workers 4 --cores-per-job 4 -- --DRY_RUN
 
-# Rscript bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
+# Rscript bin/run_dp_future_single.R --workers 4 --cores-per-job 4
 
-# Rscript bin/run_dp_future.R --workers 1 --cores-per-job 14 --configs "fixed"
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 14

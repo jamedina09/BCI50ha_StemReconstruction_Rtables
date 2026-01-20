@@ -1181,6 +1181,11 @@ xraw[, Bio_Beta_Mortality := bio_pars_list[[species]]$mortality$beta, by = speci
 xraw[, Bio_Recruit_Meanlog := bio_pars_list[[species]]$recruitment$meanlog, by = species]
 xraw[, Bio_Recruit_Sdlog := bio_pars_list[[species]]$recruitment$sdlog, by = species]
 xraw[, Bio_Recruit_MaxDBH_unit := bio_pars_list[[species]]$recruitment$recruit_max_dbh, by = species]
+# You may also supply a per-row `Bio_Recruit_MaxDBH_unit` column in the input to override the default.
+# Additionally, you can force a fixed recruit max via runtime flags:
+#   RECRUIT_MAX_SOURCE = "fixed"  # or "data"
+#   RECRUIT_MAX_FIXED  = 6.0        # cm when RECRUIT_MAX_SOURCE="fixed"
+# By default RECRUIT_MAX_SOURCE="data" (estimate from observed recruits).
 xraw[, Bio_Recruitment_lambda := bio_pars_list[[species]]$recruitment$lambda, by = species]
 
 # 3. Run DP solver

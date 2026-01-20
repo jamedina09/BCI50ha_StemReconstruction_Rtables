@@ -82,10 +82,13 @@ BASE_ARGS=(
 
   "--RUN_REALISM_REPORT=TRUE"
 
+  "--RECRUIT_MAX_SOURCE=data",
+  "--RECRUIT_MAX_FIXED=5",
+
   "--PROJECT_ROOT=${PROJ_ROOT}"
 
   "--BATCH_TS=${BATCH_TS}" # ensure all R runs share the same timestamp
-)
+) 
 
 # Launch the R driver (use project-root-relative path)
 
@@ -144,6 +147,8 @@ for CONFIG in "${configs[@]}"; do
       "--K_SHRINK_FIXED=0"
       "--K_GROWTH_SOURCE=fixed"
       "--K_GROWTH_FIXED=0"
+      "--RECRUIT_MAX_SOURCE=fixed"
+      "--RECRUIT_MAX_FIXED=6"
     )
     ;;
   data_hard)

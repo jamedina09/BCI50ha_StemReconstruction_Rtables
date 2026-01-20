@@ -196,4 +196,109 @@ if (has_rcpp) {
 
     # Restore original
     transition_cost_tracks_bio_batch <- original_transition_cost_tracks_bio_batch
+
+# ---------- Additional test: per-census-varying interval years ----------
+# Ensure DP accepts different Bio_IntervalYears across censuses (per-pair intervals)
+tree_data_var <- data.table::copy(tree_data)
+# Different interval values per CensusID (CensusID 1->2 uses 3 (preferred from t1), 2->3 uses 7, etc.)
+tree_data_var[, Bio_IntervalYears := c(5, 3, 7)]
+
+out_batch_var <- do.call(
+    match_stems_dp_global_backward_marginals_batch,
+    c(list(tree_data = data.table::copy(tree_data_var)), args)
+)
+cat("OK: batch DP (R) runs with per-census varying Bio_IntervalYears.\n")
+
+# ---------- Additional test: per-census jitter (numeric differences across rows) ----------
+# Simulate realistic data where Bio_IntervalYears differ slightly per row for the same CensusID.
+tree_data_jitter <- data.table::copy(tree_data)
+set.seed(42)
+# assign small jitter around census-specific means: census 1->5, 2->3, 3->7
+means_by_c <- c(5, 3, 7)
+for (ci in unique(tree_data_jitter$CensusID)) {
+    idx <- which(tree_data_jitter$CensusID == ci)
+    base <- means_by_c[as.integer(ci)]
+    # larger jitter than tiny machine noise to simulate realistic upstream rounding differences
+    tree_data_jitter[idx, Bio_IntervalYears := base + rnorm(length(idx), mean = 0, sd = 1e-3)]
+}
+
+out_batch_jitter <- do.call(
+    match_stems_dp_global_backward_marginals_batch,
+    c(list(tree_data = data.table::copy(tree_data_jitter)), args)
+)
+cat("OK: batch DP (R) runs with per-census jittered Bio_IntervalYears (mean per-census used).\n")
+
+if (has_rcpp) {
+    # Redefine transition_cost_tracks_bio_batch to use C++ (same approach as above)
+    original_transition_cost_tracks_bio_batch <- transition_cost_tracks_bio_batch
+    transition_cost_tracks_bio_batch <- function(
+      track_dbh_t,
+      track_dbh_tp1,
+      interval_years,
+      mu_const = Bio_Mu_Growth_unit,
+      mu_gamma = 0,
+      sigma0 = Bio_Sigma0_unit,
+      sigma1 = Bio_Sigma1_unit,
+      max_shrink = Bio_max_shrink_unit,
+      k_shrink = Bio_k_shrink_unit,
+      max_growth = Inf,
+      max_growth_soft = Inf,
+      k_growth = 0,
+      use_measurement_error = FALSE,
+      meas_sd1_a = 0.0062,
+      meas_sd1_b = 0.0904,
+      meas_sd2 = 4.64,
+      meas_p_big = 0.05,
+      h0 = Bio_H0_Mortality,
+      beta = Bio_Beta_Mortality,
+      recruit_meanlog = Bio_Recruit_Meanlog_unit,
+      recruit_sdlog = Bio_Recruit_Sdlog_unit,
+      recruit_max_dbh = Bio_Recruit_MaxDBH_unit,
+      recruit_lambda = Bio_Recruitment_lambda_unit,
+      eps_tiebreak = 1e-6,
+      hard_penalty = 1e6
+    ) {
+        if (is.list(track_dbh_tp1)) {
+            mat_tp1 <- do.call(rbind, track_dbh_tp1)
+        } else {
+            mat_tp1 <- as.matrix(track_dbh_tp1)
+        }
+        result <- transition_cost_tracks_bio_batch_rcpp(
+            track_dbh_t = track_dbh_t,
+            mat_tp1 = mat_tp1,
+            interval_years = interval_years,
+            mu_const = mu_const,
+            mu_gamma = mu_gamma,
+            sigma0 = sigma0,
+            sigma1 = sigma1,
+            max_shrink = max_shrink,
+            k_shrink = k_shrink,
+            max_growth = max_growth,
+            max_growth_soft = max_growth_soft,
+            k_growth = k_growth,
+            use_measurement_error = use_measurement_error,
+            meas_sd1_a = meas_sd1_a,
+            meas_sd1_b = meas_sd1_b,
+            meas_sd2 = meas_sd2,
+            meas_p_big = meas_p_big,
+            h0 = h0,
+            beta = beta,
+            recruit_meanlog = recruit_meanlog,
+            recruit_sdlog = recruit_sdlog,
+            recruit_max_dbh = recruit_max_dbh,
+            recruit_lambda = recruit_lambda,
+            eps_tiebreak = eps_tiebreak,
+            hard_penalty = hard_penalty
+        )
+        return(result)
+    }
+
+    out_batch_var_cpp <- do.call(
+        match_stems_dp_global_backward_marginals_batch,
+        c(list(tree_data = data.table::copy(tree_data_var)), args)
+    )
+    cat("OK: batch DP (C++) runs with per-census varying Bio_IntervalYears.\n")
+
+    transition_cost_tracks_bio_batch <- original_transition_cost_tracks_bio_batch
+}
 }
