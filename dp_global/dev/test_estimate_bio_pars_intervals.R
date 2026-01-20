@@ -1,5 +1,6 @@
 # Tests for estimate_bio_pars interval handling
 # Run this script with Rscript to see assertions and printed outputs
+rm(list = ls())
 
 library(data.table)
 source(file.path("dp_global", "R", "dp_global_biol.R"))
@@ -33,6 +34,7 @@ build_tag <- function(tag, n_cens, start_dbh, inc, interval) {
         Bio_IntervalYears = interval
     )
 }
+
 df1 <- do.call(rbind, list(
     build_tag(1, 5, 10, 1.5, 5),
     build_tag(2, 5, 20, 2.0, 5)
@@ -60,6 +62,7 @@ make_missing_t1 <- function(df) {
     dt[CensusID == 2, Bio_IntervalYears := NA]
     dt
 }
+
 df3 <- do.call(rbind, list(
     build_tag(1, 5, 10, 1.5, 5),
     build_tag(2, 5, 20, 2.0, 4),
@@ -71,7 +74,3 @@ res3 <- run_scenario(as.data.table(df3), col_name = "Bio_IntervalYears", desc = 
 stopifnot(is.finite(res3$interval$inferred_interval_years))
 
 cat("\nAll interval tests passed.\n")
-
-# For convenience, write a small CSV with per-pair intervals from the last run
-write.csv(data.frame(per_pair_intervals = res3$interval$per_pair_intervals), file = "./test_output_per_pair_intervals.csv", row.names = FALSE)
-cat("Wrote ./test_output_per_pair_intervals.csv\n")
