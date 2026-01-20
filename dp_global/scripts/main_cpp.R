@@ -980,9 +980,9 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
     }
 }
 
-source(here("dp_global", "R", "check_functions.r"))
-export_bio_pars_report(res$bio_pars,
-    species = NULL,
-    interval_years = census_interval_years,
-    out_file = file.path(out_dir, "bio_pars_report.pdf")
-)
+# source(here("dp_global", "R", "check_functions.r"))
+# export_bio_pars_report(res$bio_pars,
+#     species = NULL,
+#     interval_years = census_interval_years,
+#     out_file = file.path(out_dir, "bio_pars_report.pdf")
+# )

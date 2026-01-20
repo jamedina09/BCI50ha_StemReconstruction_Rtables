@@ -170,7 +170,7 @@ BASE_ARGS <- c(
   # Allow overriding DP enumerator state budget from the orchestrator
   # (main_cpp.R defines `dp_max_states` in the DP settings section)
   # Use 0 to run igraph for all experiments in this script
-  "--dp_max_states=200", #40000
+  "--dp_max_states=400", #40000
   "--MANUAL_CORES=TRUE",
   sprintf("--MANUAL_CORES_VALUE=%d", opt$cores_per_job),
   "--WRITE_DP_CSV=TRUE",
@@ -180,8 +180,6 @@ BASE_ARGS <- c(
   "--SENSITIVITY_MODE=none", #run+write+pdf
   "--RUN_K_SWEEP_DEMO=FALSE",
   "--RUN_REALISM_REPORT=FALSE",
-  "--RECRUIT_MAX_SOURCE=data",
-  "--RECRUIT_MAX_FIXED=5",
   paste0("--PROJECT_ROOT=", here::here()),
   paste0("--BATCH_TS=", BATCH_TS)
 )
@@ -368,4 +366,4 @@ q(status = 0)
 
 # Rscript bin/run_dp_future_single.R --workers 4 --cores-per-job 4
 
-# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 14
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1
