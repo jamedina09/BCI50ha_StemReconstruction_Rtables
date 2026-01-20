@@ -1752,252 +1752,252 @@ estimate_bio_pars <- function(
 ### BIO TRANSITION COST
 ############################################################
 
-transition_cost_tracks_bio_batch <- function(
-  track_dbh_t,
-  track_dbh_tp1,
-  interval_years,
-  # -----------------------
-  # GROWTH MODEL PARAMETERS
-  # -----------------------
-  mu_const = Bio_Mu_Growth_unit,
-  mu_gamma = 0,
-  sigma0 = Bio_Sigma0_unit,
-  sigma1 = Bio_Sigma1_unit,
-  max_shrink = Bio_max_shrink_unit,
-  k_shrink = Bio_k_shrink_unit,
-  max_growth = Inf,
-  max_growth_soft = Inf,
-  k_growth = 0,
-  # -----------------
-  # MEASUREMENT ERROR (optional)
-  # -----------------
-  use_measurement_error = FALSE,
-  meas_sd1_a = 0.0062,
-  meas_sd1_b = 0.0904,
-  meas_sd2 = 4.64,
-  meas_p_big = 0.05,
-  # -------------------------
-  # MORTALITY MODEL PARAMETERS
-  # -------------------------
-  h0 = Bio_H0_Mortality,
-  beta = Bio_Beta_Mortality,
-  # ----------------------------
-  # RECRUITMENT MODEL PARAMETERS
-  # ----------------------------
-  recruit_meanlog = Bio_Recruit_Meanlog_unit,
-  recruit_sdlog = Bio_Recruit_Sdlog_unit,
-  recruit_max_dbh = Bio_Recruit_MaxDBH_unit,
-  recruit_lambda = Bio_Recruitment_lambda_unit,
-  # -----------------
-  # DETERMINISTIC TIE-BREAK
-  # -----------------
-  eps_tiebreak = 1e-6,
-  hard_penalty = 1e6
-) {
-    # PURPOSE
-    # - Batched version of transition_cost_tracks_bio().
-    # - Computes the transition cost for many candidate next-track DBH vectors
-    #   given a fixed current-track DBH vector.
-    #
-    # INPUTS
-    # - track_dbh_t: numeric vector length K
-    # - track_dbh_tp1: either
-    #     * a numeric matrix with nrow = n_batch and ncol = K (each row is a candidate), OR
-    #     * a list of numeric vectors length K
-    #
-    # OUTPUT
-    # - numeric vector length n_batch
+# transition_cost_tracks_bio_batch <- function(
+#   track_dbh_t,
+#   track_dbh_tp1,
+#   interval_years,
+#   # -----------------------
+#   # GROWTH MODEL PARAMETERS
+#   # -----------------------
+#   mu_const = Bio_Mu_Growth_unit,
+#   mu_gamma = 0,
+#   sigma0 = Bio_Sigma0_unit,
+#   sigma1 = Bio_Sigma1_unit,
+#   max_shrink = Bio_max_shrink_unit,
+#   k_shrink = Bio_k_shrink_unit,
+#   max_growth = Inf,
+#   max_growth_soft = Inf,
+#   k_growth = 0,
+#   # -----------------
+#   # MEASUREMENT ERROR (optional)
+#   # -----------------
+#   use_measurement_error = FALSE,
+#   meas_sd1_a = 0.0062,
+#   meas_sd1_b = 0.0904,
+#   meas_sd2 = 4.64,
+#   meas_p_big = 0.05,
+#   # -------------------------
+#   # MORTALITY MODEL PARAMETERS
+#   # -------------------------
+#   h0 = Bio_H0_Mortality,
+#   beta = Bio_Beta_Mortality,
+#   # ----------------------------
+#   # RECRUITMENT MODEL PARAMETERS
+#   # ----------------------------
+#   recruit_meanlog = Bio_Recruit_Meanlog_unit,
+#   recruit_sdlog = Bio_Recruit_Sdlog_unit,
+#   recruit_max_dbh = Bio_Recruit_MaxDBH_unit,
+#   recruit_lambda = Bio_Recruitment_lambda_unit,
+#   # -----------------
+#   # DETERMINISTIC TIE-BREAK
+#   # -----------------
+#   eps_tiebreak = 1e-6,
+#   hard_penalty = 1e6
+# ) {
+#     # PURPOSE
+#     # - Batched version of transition_cost_tracks_bio().
+#     # - Computes the transition cost for many candidate next-track DBH vectors
+#     #   given a fixed current-track DBH vector.
+#     #
+#     # INPUTS
+#     # - track_dbh_t: numeric vector length K
+#     # - track_dbh_tp1: either
+#     #     * a numeric matrix with nrow = n_batch and ncol = K (each row is a candidate), OR
+#     #     * a list of numeric vectors length K
+#     #
+#     # OUTPUT
+#     # - numeric vector length n_batch
 
-    K <- length(track_dbh_t)
-    interval_years <- as.numeric(interval_years)
-    if (!is.finite(interval_years) || interval_years <= 0) {
-        stop("interval_years must be positive.", call. = FALSE)
-    }
+#     K <- length(track_dbh_t)
+#     interval_years <- as.numeric(interval_years)
+#     if (!is.finite(interval_years) || interval_years <= 0) {
+#         stop("interval_years must be positive.", call. = FALSE)
+#     }
 
-    if (is.list(track_dbh_tp1)) {
-        if (length(track_dbh_tp1) < 1L) {
-            return(numeric(0))
-        }
-        if (any(vapply(track_dbh_tp1, length, integer(1L)) != K)) {
-            stop("All elements of track_dbh_tp1 list must have length K.", call. = FALSE)
-        }
-        mat_tp1 <- do.call(rbind, track_dbh_tp1)
-    } else {
-        mat_tp1 <- as.matrix(track_dbh_tp1)
-    }
+#     if (is.list(track_dbh_tp1)) {
+#         if (length(track_dbh_tp1) < 1L) {
+#             return(numeric(0))
+#         }
+#         if (any(vapply(track_dbh_tp1, length, integer(1L)) != K)) {
+#             stop("All elements of track_dbh_tp1 list must have length K.", call. = FALSE)
+#         }
+#         mat_tp1 <- do.call(rbind, track_dbh_tp1)
+#     } else {
+#         mat_tp1 <- as.matrix(track_dbh_tp1)
+#     }
 
-    if (ncol(mat_tp1) != K) {
-        stop("track_dbh_tp1 must have K columns (same length as track_dbh_t).", call. = FALSE)
-    }
+#     if (ncol(mat_tp1) != K) {
+#         stop("track_dbh_tp1 must have K columns (same length as track_dbh_t).", call. = FALSE)
+#     }
 
-    n_batch <- nrow(mat_tp1)
-    if (n_batch < 1L) {
-        return(numeric(0))
-    }
+#     n_batch <- nrow(mat_tp1)
+#     if (n_batch < 1L) {
+#         return(numeric(0))
+#     }
 
-    cost <- rep(0, n_batch)
+#     cost <- rep(0, n_batch)
 
-    # Recruitment probability over interval
-    p_recruit <- 1 - exp(-recruit_lambda * interval_years)
-    p_recruit <- pmin(pmax(p_recruit, 1e-12), 1 - 1e-12)
+#     # Recruitment probability over interval
+#     p_recruit <- 1 - exp(-recruit_lambda * interval_years)
+#     p_recruit <- pmin(pmax(p_recruit, 1e-12), 1 - 1e-12)
 
-    mu_growth_scalar <- function(d) {
-        if (!is.finite(mu_gamma) || mu_gamma == 0 || !is.finite(d) || d <= 0) {
-            return(mu_const)
-        }
-        mu_const + mu_gamma * log(d)
-    }
+#     mu_growth_scalar <- function(d) {
+#         if (!is.finite(mu_gamma) || mu_gamma == 0 || !is.finite(d) || d <= 0) {
+#             return(mu_const)
+#         }
+#         mu_const + mu_gamma * log(d)
+#     }
 
-    meas_sd1 <- function(d) pmax(meas_sd1_a * d + meas_sd1_b, 1e-6)
+#     meas_sd1 <- function(d) pmax(meas_sd1_a * d + meas_sd1_b, 1e-6)
 
-    # ---------------------------------------------------------------------
-    # Loop over tracks (vectorized across candidates)
-    # ---------------------------------------------------------------------
-    for (k in seq_len(K)) {
-        d0 <- track_dbh_t[[k]]
-        d1 <- mat_tp1[, k]
+#     # ---------------------------------------------------------------------
+#     # Loop over tracks (vectorized across candidates)
+#     # ---------------------------------------------------------------------
+#     for (k in seq_len(K)) {
+#         d0 <- track_dbh_t[[k]]
+#         d1 <- mat_tp1[, k]
 
-        # CASE 1 + 2: NA -> *
-        if (is.na(d0)) {
-            mask_na_na <- is.na(d1)
-            if (any(mask_na_na)) {
-                cost[mask_na_na] <- cost[mask_na_na] - log(1 - p_recruit)
-            }
+#         # CASE 1 + 2: NA -> *
+#         if (is.na(d0)) {
+#             mask_na_na <- is.na(d1)
+#             if (any(mask_na_na)) {
+#                 cost[mask_na_na] <- cost[mask_na_na] - log(1 - p_recruit)
+#             }
 
-            mask_na_dbh <- !mask_na_na
-            if (any(mask_na_dbh)) {
-                d1v <- d1[mask_na_dbh]
-                hard <- (!is.finite(d1v)) | (d1v <= 0) | (d1v > recruit_max_dbh)
-                if (any(hard)) {
-                    cost[which(mask_na_dbh)[hard]] <- cost[which(mask_na_dbh)[hard]] + hard_penalty
-                }
-                ok <- !hard
-                if (any(ok)) {
-                    idx_ok <- which(mask_na_dbh)[ok]
-                    d1_ok <- d1v[ok]
-                    cost[idx_ok] <- cost[idx_ok] - log(p_recruit) - stats::dlnorm(d1_ok, recruit_meanlog, recruit_sdlog, log = TRUE)
-                }
-            }
-            next
-        }
+#             mask_na_dbh <- !mask_na_na
+#             if (any(mask_na_dbh)) {
+#                 d1v <- d1[mask_na_dbh]
+#                 hard <- (!is.finite(d1v)) | (d1v <= 0) | (d1v > recruit_max_dbh)
+#                 if (any(hard)) {
+#                     cost[which(mask_na_dbh)[hard]] <- cost[which(mask_na_dbh)[hard]] + hard_penalty
+#                 }
+#                 ok <- !hard
+#                 if (any(ok)) {
+#                     idx_ok <- which(mask_na_dbh)[ok]
+#                     d1_ok <- d1v[ok]
+#                     cost[idx_ok] <- cost[idx_ok] - log(p_recruit) - stats::dlnorm(d1_ok, recruit_meanlog, recruit_sdlog, log = TRUE)
+#                 }
+#             }
+#             next
+#         }
 
-        # CASE 3: DBH -> NA
-        mask_dbh_na <- is.na(d1)
-        if (any(mask_dbh_na)) {
-            hazard <- h0 * exp(beta * d0)
-            p_death <- 1 - exp(-hazard * interval_years)
-            p_death <- pmin(pmax(p_death, 1e-12), 1 - 1e-12)
-            cost[mask_dbh_na] <- cost[mask_dbh_na] - log(p_death)
-        }
+#         # CASE 3: DBH -> NA
+#         mask_dbh_na <- is.na(d1)
+#         if (any(mask_dbh_na)) {
+#             hazard <- h0 * exp(beta * d0)
+#             p_death <- 1 - exp(-hazard * interval_years)
+#             p_death <- pmin(pmax(p_death, 1e-12), 1 - 1e-12)
+#             cost[mask_dbh_na] <- cost[mask_dbh_na] - log(p_death)
+#         }
 
-        # CASE 4: DBH -> DBH
-        mask_dbh_dbh <- !mask_dbh_na
-        if (!any(mask_dbh_dbh)) next
+#         # CASE 4: DBH -> DBH
+#         mask_dbh_dbh <- !mask_dbh_na
+#         if (!any(mask_dbh_dbh)) next
 
-        idx <- which(mask_dbh_dbh)
-        d1v <- d1[idx]
-        g <- (d1v - d0) / interval_years
+#         idx <- which(mask_dbh_dbh)
+#         d1v <- d1[idx]
+#         g <- (d1v - d0) / interval_years
 
-        hard <- rep(FALSE, length(g))
-        if (is.finite(max_shrink)) {
-            hard <- hard | (g < max_shrink)
-        }
-        if (is.finite(max_growth)) {
-            hard <- hard | (g > max_growth)
-        }
+#         hard <- rep(FALSE, length(g))
+#         if (is.finite(max_shrink)) {
+#             hard <- hard | (g < max_shrink)
+#         }
+#         if (is.finite(max_growth)) {
+#             hard <- hard | (g > max_growth)
+#         }
 
-        if (any(hard)) {
-            cost[idx[hard]] <- cost[idx[hard]] + hard_penalty
-        }
+#         if (any(hard)) {
+#             cost[idx[hard]] <- cost[idx[hard]] + hard_penalty
+#         }
 
-        ok <- !hard
-        if (any(ok)) {
-            idx_ok <- idx[ok]
-            d1_ok <- d1v[ok]
-            g_ok <- g[ok]
+#         ok <- !hard
+#         if (any(ok)) {
+#             idx_ok <- idx[ok]
+#             d1_ok <- d1v[ok]
+#             g_ok <- g[ok]
 
-            sigma_d <- sigma0 + sigma1 * d0
-            sigma_d <- pmax(sigma_d, 1e-6)
-            mu <- mu_growth_scalar(d0)
+#             sigma_d <- sigma0 + sigma1 * d0
+#             sigma_d <- pmax(sigma_d, 1e-6)
+#             mu <- mu_growth_scalar(d0)
 
-            if (isTRUE(use_measurement_error)) {
-                s_small0 <- meas_sd1(d0)
-                s_small1 <- meas_sd1(d1_ok)
-                s_big <- meas_sd2
-                w_small <- 1 - meas_p_big
-                w_big <- meas_p_big
+#             if (isTRUE(use_measurement_error)) {
+#                 s_small0 <- meas_sd1(d0)
+#                 s_small1 <- meas_sd1(d1_ok)
+#                 s_big <- meas_sd2
+#                 w_small <- 1 - meas_p_big
+#                 w_big <- meas_p_big
 
-                # Build m x 4 matrices of component SDs and log-weights
-                sd_meas_1 <- sqrt(s_small0^2 + s_small1^2) / interval_years
-                sd_meas_2 <- sqrt(s_small0^2 + s_big^2) / interval_years
-                sd_meas_3 <- sqrt(s_big^2 + s_small1^2) / interval_years
-                sd_meas_4 <- sqrt(s_big^2 + s_big^2) / interval_years
+#                 # Build m x 4 matrices of component SDs and log-weights
+#                 sd_meas_1 <- sqrt(s_small0^2 + s_small1^2) / interval_years
+#                 sd_meas_2 <- sqrt(s_small0^2 + s_big^2) / interval_years
+#                 sd_meas_3 <- sqrt(s_big^2 + s_small1^2) / interval_years
+#                 sd_meas_4 <- sqrt(s_big^2 + s_big^2) / interval_years
 
-                wt1 <- w_small * w_small
-                wt2 <- w_small * w_big
-                wt3 <- w_big * w_small
-                wt4 <- w_big * w_big
+#                 wt1 <- w_small * w_small
+#                 wt2 <- w_small * w_big
+#                 wt3 <- w_big * w_small
+#                 wt4 <- w_big * w_big
 
-                sd_tot_1 <- sqrt(sigma_d^2 + sd_meas_1^2)
-                sd_tot_2 <- sqrt(sigma_d^2 + sd_meas_2^2)
-                sd_tot_3 <- sqrt(sigma_d^2 + sd_meas_3^2)
-                sd_tot_4 <- sqrt(sigma_d^2 + sd_meas_4^2)
+#                 sd_tot_1 <- sqrt(sigma_d^2 + sd_meas_1^2)
+#                 sd_tot_2 <- sqrt(sigma_d^2 + sd_meas_2^2)
+#                 sd_tot_3 <- sqrt(sigma_d^2 + sd_meas_3^2)
+#                 sd_tot_4 <- sqrt(sigma_d^2 + sd_meas_4^2)
 
-                ll1 <- log(wt1) + stats::dnorm(g_ok, mean = mu, sd = sd_tot_1, log = TRUE)
-                ll2 <- log(wt2) + stats::dnorm(g_ok, mean = mu, sd = sd_tot_2, log = TRUE)
-                ll3 <- log(wt3) + stats::dnorm(g_ok, mean = mu, sd = sd_tot_3, log = TRUE)
-                ll4 <- log(wt4) + stats::dnorm(g_ok, mean = mu, sd = sd_tot_4, log = TRUE)
+#                 ll1 <- log(wt1) + stats::dnorm(g_ok, mean = mu, sd = sd_tot_1, log = TRUE)
+#                 ll2 <- log(wt2) + stats::dnorm(g_ok, mean = mu, sd = sd_tot_2, log = TRUE)
+#                 ll3 <- log(wt3) + stats::dnorm(g_ok, mean = mu, sd = sd_tot_3, log = TRUE)
+#                 ll4 <- log(wt4) + stats::dnorm(g_ok, mean = mu, sd = sd_tot_4, log = TRUE)
 
-                mmax <- pmax(ll1, ll2, ll3, ll4)
-                lse <- mmax + log(exp(ll1 - mmax) + exp(ll2 - mmax) + exp(ll3 - mmax) + exp(ll4 - mmax))
-                cost[idx_ok] <- cost[idx_ok] - lse
-            } else {
-                cost[idx_ok] <- cost[idx_ok] +
-                    (g_ok - mu)^2 / (2 * sigma_d^2) +
-                    log(sigma_d) +
-                    0.5 * log(2 * pi)
-            }
+#                 mmax <- pmax(ll1, ll2, ll3, ll4)
+#                 lse <- mmax + log(exp(ll1 - mmax) + exp(ll2 - mmax) + exp(ll3 - mmax) + exp(ll4 - mmax))
+#                 cost[idx_ok] <- cost[idx_ok] - lse
+#             } else {
+#                 cost[idx_ok] <- cost[idx_ok] +
+#                     (g_ok - mu)^2 / (2 * sigma_d^2) +
+#                     log(sigma_d) +
+#                     0.5 * log(2 * pi)
+#             }
 
-            # Soft penalty for shrinkage
-            if (is.finite(k_shrink) && k_shrink > 0) {
-                shrink <- d1_ok < d0
-                if (any(shrink)) {
-                    dd <- d0 - d1_ok[shrink]
-                    cost[idx_ok[shrink]] <- cost[idx_ok[shrink]] + k_shrink * (dd^2)
-                }
-            }
+#             # Soft penalty for shrinkage
+#             if (is.finite(k_shrink) && k_shrink > 0) {
+#                 shrink <- d1_ok < d0
+#                 if (any(shrink)) {
+#                     dd <- d0 - d1_ok[shrink]
+#                     cost[idx_ok[shrink]] <- cost[idx_ok[shrink]] + k_shrink * (dd^2)
+#                 }
+#             }
 
-            # Soft penalty for extreme positive growth
-            if (is.finite(max_growth_soft) && is.finite(k_growth) && k_growth > 0) {
-                d1_soft_cap <- d0 + max_growth_soft * interval_years
-                if (is.finite(d1_soft_cap)) {
-                    exceed <- d1_ok > d1_soft_cap
-                    if (any(exceed)) {
-                        dd <- d1_ok[exceed] - d1_soft_cap
-                        cost[idx_ok[exceed]] <- cost[idx_ok[exceed]] + k_growth * (dd^2)
-                    }
-                }
-            }
-        }
-    }
+#             # Soft penalty for extreme positive growth
+#             if (is.finite(max_growth_soft) && is.finite(k_growth) && k_growth > 0) {
+#                 d1_soft_cap <- d0 + max_growth_soft * interval_years
+#                 if (is.finite(d1_soft_cap)) {
+#                     exceed <- d1_ok > d1_soft_cap
+#                     if (any(exceed)) {
+#                         dd <- d1_ok[exceed] - d1_soft_cap
+#                         cost[idx_ok[exceed]] <- cost[idx_ok[exceed]] + k_growth * (dd^2)
+#                     }
+#                 }
+#             }
+#         }
+#     }
 
-    # ---------------------------------------------------------------------
-    # Deterministic tie-break (non-biological)
-    # ---------------------------------------------------------------------
-    if (eps_tiebreak > 0) {
-        r0 <- rank(track_dbh_t, ties.method = "first")
-        for (i in seq_len(n_batch)) {
-            row <- mat_tp1[i, ]
-            both_obs <- !is.na(track_dbh_t) & !is.na(row)
-            if (any(both_obs)) {
-                r1 <- rank(row, ties.method = "first")
-                cost[i] <- cost[i] + eps_tiebreak * sum(abs(r0[both_obs] - r1[both_obs]))
-            }
-        }
-    }
+#     # ---------------------------------------------------------------------
+#     # Deterministic tie-break (non-biological)
+#     # ---------------------------------------------------------------------
+#     if (eps_tiebreak > 0) {
+#         r0 <- rank(track_dbh_t, ties.method = "first")
+#         for (i in seq_len(n_batch)) {
+#             row <- mat_tp1[i, ]
+#             both_obs <- !is.na(track_dbh_t) & !is.na(row)
+#             if (any(both_obs)) {
+#                 r1 <- rank(row, ties.method = "first")
+#                 cost[i] <- cost[i] + eps_tiebreak * sum(abs(r0[both_obs] - r1[both_obs]))
+#             }
+#         }
+#     }
 
-    cost
-}
+#     cost
+# }
 
 transition_cost_tracks_bio_components <- function(
   track_dbh_t,
@@ -2210,6 +2210,822 @@ transition_cost_tracks_bio_components <- function(
         p_recruit = p_recruit
     )
 }
+
+# match_stems_dp_global_backward_marginals_batch <- function(tree_data,
+#                                                            min_growth = -Inf,
+#                                                            max_growth = Inf,
+#                                                            interval_years = NULL,
+#                                                            anchor_start,
+#                                                            max_tracks = 30L,
+#                                                            slack_tracks = 1L,
+#                                                            max_states = 50000L,
+#                                                            temperature = 1.0,
+#                                                            posterior_top_k = 2L,
+#                                                            eps_tiebreak = 1e-6,
+#                                                            # --- measurement error (optional) ---
+#                                                            use_measurement_error = FALSE,
+#                                                            meas_sd1_a = 0.0062,
+#                                                            meas_sd1_b = 0.0904,
+#                                                            meas_sd2 = 4.64,
+#                                                            meas_p_big = 0.05,
+#                                                            verbose = FALSE) {
+#     # Safety
+#     posterior_top_k <- as.integer(posterior_top_k)
+#     if (!is.finite(posterior_top_k) || is.na(posterior_top_k) || posterior_top_k < 1L) {
+#         posterior_top_k <- 1L
+#     }
+#     temperature <- suppressWarnings(as.numeric(temperature))
+#     if (!is.finite(temperature) || is.na(temperature) || temperature <= 0) {
+#         stop("temperature must be a positive finite number")
+#     }
+
+#     verbose <- isTRUE(verbose) || isTRUE(getOption("dp_global_biol.verbose", FALSE))
+#     vcat <- function(...) {
+#         if (!isTRUE(verbose)) {
+#             return(invisible(NULL))
+#         }
+#         cat(..., "\n")
+#         flush.console()
+#         invisible(NULL)
+#     }
+#     tic <- function() as.numeric(proc.time()[[3L]])
+#     t_start <- tic()
+
+#     tag_val <- tryCatch(
+#         {
+#             u <- unique(tree_data$Tag)
+#             u <- u[!is.na(u)]
+#             if (length(u) == 1L) u[[1L]] else NA
+#         },
+#         error = function(e) NA
+#     )
+#     sp_val <- tryCatch(
+#         {
+#             u <- unique(tree_data$species)
+#             u <- u[!is.na(u) & nzchar(as.character(u))]
+#             if (length(u) == 1L) as.character(u[[1L]]) else NA_character_
+#         },
+#         error = function(e) NA_character_
+#     )
+#     prefix <- paste0(
+#         "[dp_global_batch",
+#         if (!is.na(tag_val)) paste0(" Tag=", tag_val) else "",
+#         if (!is.na(sp_val)) paste0(" species=", sp_val) else "",
+#         "] "
+#     )
+
+#     # Ensure deterministic ordering; try to resolve a global interval for logging if possible
+#     tree_data <- tree_data[order(CensusID)]
+#     interval_years_for_logging <- tryCatch(resolve_interval_years(tree_data, interval_years = interval_years), error = function(e) NA_real_)
+
+#     vcat(
+#         prefix, "Starting marginal DP (sum-product) [batch costs]: anchor_start=", anchor_start, ", interval_years=", interval_years_for_logging,
+#         ", temperature=", temperature, ", top_k=", posterior_top_k
+#     )
+
+#     # Helpers
+#     log_add_exp <- function(a, b) {
+#         # stable log(exp(a) + exp(b)) for scalars
+#         if (!is.finite(a)) {
+#             return(b)
+#         }
+#         if (!is.finite(b)) {
+#             return(a)
+#         }
+#         m <- max(a, b)
+#         m + log(exp(a - m) + exp(b - m))
+#     }
+#     log_sum_exp <- function(x) {
+#         x <- x[is.finite(x)]
+#         if (length(x) == 0L) {
+#             return(-Inf)
+#         }
+#         m <- max(x)
+#         m + log(sum(exp(x - m)))
+#     }
+
+#     # Ensure columns exist
+#     if (!("ReconstructionMethod" %in% names(tree_data))) {
+#         tree_data[, ReconstructionMethod := NA_character_]
+#     }
+#     if (!("DP_MaxStatesPerCensus" %in% names(tree_data))) {
+#         tree_data[, `:=`(
+#             DP_MaxStatesPerCensus = NA_real_,
+#             DP_MaxStatesCensusID = NA_integer_,
+#             DP_KUsed = NA_integer_
+#         )]
+#     }
+#     # Posterior output columns
+#     post_cols <- c(
+#         "DP_PosteriorTop1ID", "DP_PosteriorTop1Prob",
+#         "DP_PosteriorTop2ID", "DP_PosteriorTop2Prob",
+#         "DP_PosteriorEntropy", "DP_PosteriorReconstructedProb",
+#         "DP_PosteriorUnlinkedProb"
+#     )
+
+#     ensure_posterior_columns <- function(dt) {
+#         # data.table uses the type of the RHS to infer the column type.
+#         # Bare NA creates a logical column, which later triggers warnings when
+#         # assigning integer/numeric posteriors.
+#         if (!("DP_PosteriorTop1ID" %in% names(dt))) dt[, DP_PosteriorTop1ID := NA_integer_]
+#         if (!("DP_PosteriorTop2ID" %in% names(dt))) dt[, DP_PosteriorTop2ID := NA_integer_]
+#         if (!("DP_PosteriorTop1Prob" %in% names(dt))) dt[, DP_PosteriorTop1Prob := NA_real_]
+#         if (!("DP_PosteriorTop2Prob" %in% names(dt))) dt[, DP_PosteriorTop2Prob := NA_real_]
+#         if (!("DP_PosteriorEntropy" %in% names(dt))) dt[, DP_PosteriorEntropy := NA_real_]
+#         if (!("DP_PosteriorReconstructedProb" %in% names(dt))) dt[, DP_PosteriorReconstructedProb := NA_real_]
+#         if (!("DP_PosteriorUnlinkedProb" %in% names(dt))) dt[, DP_PosteriorUnlinkedProb := NA_real_]
+
+#         # If columns already exist but have the wrong type, coerce once.
+#         if (!(is.integer(dt$DP_PosteriorTop1ID))) dt[, DP_PosteriorTop1ID := as.integer(DP_PosteriorTop1ID)]
+#         if (!(is.integer(dt$DP_PosteriorTop2ID))) dt[, DP_PosteriorTop2ID := as.integer(DP_PosteriorTop2ID)]
+
+#         if (!(is.numeric(dt$DP_PosteriorTop1Prob))) dt[, DP_PosteriorTop1Prob := as.numeric(DP_PosteriorTop1Prob)]
+#         if (!(is.numeric(dt$DP_PosteriorTop2Prob))) dt[, DP_PosteriorTop2Prob := as.numeric(DP_PosteriorTop2Prob)]
+#         if (!(is.numeric(dt$DP_PosteriorEntropy))) dt[, DP_PosteriorEntropy := as.numeric(DP_PosteriorEntropy)]
+#         if (!(is.numeric(dt$DP_PosteriorReconstructedProb))) dt[, DP_PosteriorReconstructedProb := as.numeric(DP_PosteriorReconstructedProb)]
+#         if (!(is.numeric(dt$DP_PosteriorUnlinkedProb))) dt[, DP_PosteriorUnlinkedProb := as.numeric(DP_PosteriorUnlinkedProb)]
+
+#         dt
+#     }
+
+#     tree_data <- ensure_posterior_columns(tree_data)
+
+#     # Preserve any provided TrueStemID as hard values in output.
+#     tree_data[!is.na(TrueStemID), `:=`(
+#         ReconstructedStemID = as.integer(TrueStemID),
+#         ReconstructionMethod = "given"
+#     )]
+
+#     # Observed-stem counts up to anchor (for state-space diagnostics)
+#     obs_counts <- vapply(
+#         seq_len(anchor_start),
+#         function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
+#         integer(1L)
+#     )
+#     max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+
+#     # Need a fully-anchored endpoint
+#     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
+#     if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
+#         vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+#         K_used <- as.integer(min(max_obs, max_tracks))
+#         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+#         tree_data[, `:=`(
+#             DP_KUsed = K_used,
+#             DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+#             DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+#         )]
+#         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#         out <- ensure_posterior_columns(out)
+#         return(out)
+#     }
+#     anchor_ids <- sort(unique(anchor_obs$TrueStemID))
+#     anchor_ids <- anchor_ids[!is.na(anchor_ids)]
+#     if (length(anchor_ids) == 0L) {
+#         vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
+#         K_used <- as.integer(min(max_obs, max_tracks))
+#         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+#         tree_data[, `:=`(
+#             DP_KUsed = K_used,
+#             DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+#             DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+#         )]
+#         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#         out <- ensure_posterior_columns(out)
+#         return(out)
+#     }
+
+#     # Choose K (tracks) same logic as the MAP DP
+#     births_needed <- if (length(obs_counts) >= 2L) sum(pmax(0L, diff(obs_counts))) else 0L
+#     K_from_counts <- as.integer(if (length(obs_counts) > 0L) obs_counts[1L] + births_needed else 0L)
+#     K_base <- max(length(anchor_ids), max_obs, K_from_counts)
+
+#     slack_tracks <- suppressWarnings(as.integer(slack_tracks))
+#     if (!is.finite(slack_tracks) || is.na(slack_tracks) || slack_tracks < 0L) {
+#         slack_tracks <- 0L
+#     }
+#     K_target <- K_base
+#     if (slack_tracks > 0L && K_base == max_obs) {
+#         K_target <- K_base + slack_tracks
+#     }
+#     K <- min(K_target, max_tracks)
+
+#     # Report theoretical worst-case state count
+#     n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K, n_obs), numeric(1L))
+#     tree_data[, `:=`(
+#         DP_KUsed = as.integer(K),
+#         DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+#         DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+#     )]
+#     if (K < max(obs_counts)) {
+#         vcat(prefix, "K too small for observed counts (K=", K, ", max_obs=", max(obs_counts), "). Falling back to igraph.")
+#         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#         out <- ensure_posterior_columns(out)
+#         return(out)
+#     }
+
+#     vcat(prefix, "Chosen K=", K, " tracks; max theoretical states=", format(max(n_states_by_census, na.rm = TRUE), scientific = TRUE))
+
+#     n_extra <- K - length(anchor_ids)
+#     current_max <- suppressWarnings(max(tree_data$TrueStemID, na.rm = TRUE))
+#     if (!is.finite(current_max)) current_max <- 0
+#     track_ids <- c(anchor_ids, if (n_extra > 0L) seq.int(from = current_max + 1L, length.out = n_extra) else integer(0))
+
+#     # Pre-enumerate assignment states (injective obs->track) for each census
+#     obs_dbh <- vector("list", anchor_start)
+#     state_mats <- vector("list", anchor_start)
+#     state_keys <- vector("list", anchor_start)
+#     for (cc in seq_len(anchor_start)) {
+#         obs <- tree_data[CensusID == cc & !is.na(DBH)]
+#         obs_dbh[[cc]] <- obs$DBH
+#         n_obs <- length(obs_dbh[[cc]])
+#         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
+#         if (is.null(mat)) {
+#             vcat(prefix, "State enumeration exceeded max_states at CensusID=", cc, " (n_obs=", n_obs, "). Falling back to igraph.")
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+#         state_mats[[cc]] <- mat
+#         state_keys[[cc]] <- apply(mat, 1L, state_key)
+
+#         vcat(prefix, "Enumerated CensusID=", cc, ": n_obs=", n_obs, ", n_states=", nrow(mat))
+#     }
+
+#     # Anchor state assignment (pins endpoint)
+#     anchor_obs_ordered <- tree_data[CensusID == anchor_start & !is.na(DBH)]
+#     anchor_track_idx <- match(anchor_obs_ordered$TrueStemID, track_ids)
+#     if (any(is.na(anchor_track_idx))) {
+#         vcat(prefix, "Anchor TrueStemID not found in track_ids. Falling back to igraph.")
+#         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#         out <- ensure_posterior_columns(out)
+#         return(out)
+#     }
+
+#     # Life-cycle phase constraint helpers (internal representation)
+#     # Phase values are in {0,1,2}. For speed, we encode the phase vector as a compact
+#     # byte-string of digits (e.g., "201102...") instead of comma-separated integers.
+#     encode_phase_key <- function(phase_vec) {
+#         # phase_vec is integer vector with values 0/1/2
+#         rawToChar(as.raw(as.integer(phase_vec) + 48L))
+#     }
+#     decode_phase_key <- function(p) {
+#         if (!nzchar(p)) {
+#             return(integer(0))
+#         }
+#         as.integer(utf8ToInt(p) - 48L)
+#     }
+#     encode_full_key <- function(assign_vec, phase_vec) {
+#         paste0(state_key(assign_vec), "|", encode_phase_key(phase_vec))
+#     }
+#     decode_full_key <- function(k) {
+#         parts <- strsplit(k, "|", fixed = TRUE)[[1L]]
+#         a <- parts[[1L]]
+#         p <- if (length(parts) >= 2L) parts[[2L]] else ""
+#         assign_vec <- if (a == "") integer(0) else as.integer(strsplit(a, ",", fixed = TRUE)[[1L]])
+#         phase_vec <- decode_phase_key(p)
+#         list(assign = assign_vec, phase = phase_vec)
+#     }
+#     derive_phase_prev <- function(phase_tp1, tdbh_t, tdbh_tp1) {
+#         K_loc <- length(tdbh_t)
+#         if (length(phase_tp1) != K_loc) {
+#             return(NULL)
+#         }
+#         alive_t <- !is.na(tdbh_t)
+#         alive_tp1 <- !is.na(tdbh_tp1)
+#         if (any(alive_tp1 & phase_tp1 != 1L)) {
+#             return(NULL)
+#         }
+#         if (any((!alive_tp1) & phase_tp1 == 1L)) {
+#             return(NULL)
+#         }
+
+#         phase_t <- integer(K_loc)
+#         for (k in seq_len(K_loc)) {
+#             if (alive_tp1[k]) {
+#                 phase_t[k] <- if (alive_t[k]) 1L else 0L
+#             } else {
+#                 if (phase_tp1[k] == 0L) {
+#                     if (alive_t[k]) {
+#                         return(NULL)
+#                     }
+#                     phase_t[k] <- 0L
+#                 } else if (phase_tp1[k] == 2L) {
+#                     phase_t[k] <- if (alive_t[k]) 1L else 2L
+#                 } else {
+#                     return(NULL)
+#                 }
+#             }
+#         }
+#         if (any(alive_t & phase_t != 1L)) {
+#             return(NULL)
+#         }
+#         if (any((!alive_t) & phase_t == 1L)) {
+#             return(NULL)
+#         }
+#         phase_t
+#     }
+
+#     # Bio params (same extraction logic as MAP DP)
+#     Bio_Mu_Growth_unit <- unique(tree_data$Bio_Mu_Growth)
+#     Bio_Gamma_Growth_unit <- if ("Bio_Gamma_Growth" %in% names(tree_data)) {
+#         unique(tree_data$Bio_Gamma_Growth)
+#     } else {
+#         0
+#     }
+#     Bio_Sigma0_unit <- unique(tree_data$Bio_Sigma0_Growth)
+#     Bio_Sigma1_unit <- unique(tree_data$Bio_Sigma1_Growth)
+#     Bio_max_shrink_unit <- unique(tree_data$Bio_Max_Shrink)
+#     Bio_k_shrink_unit <- unique(tree_data$Bio_K_Shrink)
+#     Bio_max_growth_unit <- if ("Bio_Max_Growth" %in% names(tree_data)) {
+#         unique(tree_data$Bio_Max_Growth)
+#     } else {
+#         Inf
+#     }
+#     Bio_max_growth_soft_unit <- if ("Bio_Max_Growth_Soft" %in% names(tree_data)) {
+#         unique(tree_data$Bio_Max_Growth_Soft)
+#     } else {
+#         Inf
+#     }
+#     Bio_k_growth_unit <- if ("Bio_K_Growth" %in% names(tree_data)) {
+#         unique(tree_data$Bio_K_Growth)
+#     } else {
+#         0
+#     }
+#     Bio_H0_Mortality <- unique(tree_data$Bio_H0_Mortality)
+#     Bio_Beta_Mortality <- unique(tree_data$Bio_Beta_Mortality)
+#     Bio_Recruit_Meanlog_unit <- unique(tree_data$Bio_Recruit_Meanlog)
+#     Bio_Recruit_Sdlog_unit <- unique(tree_data$Bio_Recruit_Sdlog)
+#     Bio_Recruit_MaxDBH_unit <- unique(tree_data$Bio_Recruit_MaxDBH_unit)
+#     Bio_Recruitment_lambda <- unique(tree_data$Bio_Recruitment_lambda)
+
+#     # Precompute track-wise DBH vectors for each *assignment* state (phase doesn't matter for costs)
+#     track_dbh_by_state <- vector("list", anchor_start)
+#     for (cc in seq_len(anchor_start)) {
+#         mat <- state_mats[[cc]]
+#         n_states <- nrow(mat)
+#         tdbh_list <- vector("list", n_states)
+#         for (i in seq_len(n_states)) {
+#             tdbh_list[[i]] <- state_to_track_dbh(mat[i, ], obs_dbh[[cc]], K)
+#         }
+#         track_dbh_by_state[[cc]] <- tdbh_list
+#     }
+
+#     # Backward tables (sum-product) and Viterbi backpointers
+#     keys_full <- vector("list", anchor_start)
+#     assign_full <- vector("list", anchor_start)
+#     logB <- vector("list", anchor_start)
+#     vit_cost <- vector("list", anchor_start)
+#     vit_ptr <- vector("list", anchor_start)
+#     edges <- vector("list", anchor_start)
+
+#     # Initialize at anchor census: only one allowed full-state
+#     phase_anchor <- rep.int(2L, K)
+#     phase_anchor[anchor_track_idx] <- 1L
+#     anchor_full_key <- encode_full_key(anchor_track_idx, phase_anchor)
+#     keys_full[[anchor_start]] <- anchor_full_key
+#     assign_full[[anchor_start]] <- list(as.integer(anchor_track_idx))
+#     logB[[anchor_start]] <- 0
+#     vit_cost[[anchor_start]] <- 0
+#     vit_ptr[[anchor_start]] <- integer(0)
+#     edges[[anchor_start]] <- NULL
+
+#     # Backward recursion cc = anchor_start-1 .. 1
+#     vcat(prefix, "Backward pass (log-sum-exp + Viterbi) starting ...")
+#     for (cc in seq.int(anchor_start - 1L, 1L, by = -1L)) {
+#         mat_cc <- state_mats[[cc]]
+#         n_states_cc <- nrow(mat_cc)
+
+#         t_cc0 <- tic()
+#         vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[cc + 1L]]))
+
+#         next_keys <- keys_full[[cc + 1L]]
+#         n_next <- length(next_keys)
+#         if (n_next == 0L) {
+#             vcat(prefix, "No reachable next full-states at CensusID=", cc + 1L, ". Falling back to igraph.")
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+#         next_index <- seq_len(n_next)
+#         names(next_index) <- next_keys
+#         logB_next <- as.numeric(logB[[cc + 1L]])
+#         vit_next <- as.numeric(vit_cost[[cc + 1L]])
+
+#         # Fast lookup for next assignment DBHs via assignment key
+#         next_assign_list <- assign_full[[cc + 1L]]
+#         # Build assignment-key -> state index for next census (since phase differs but assignment cost uses assignment)
+#         next_assign_key <- vapply(next_assign_list, state_key, character(1L))
+#         next_assign_row_idx <- match(next_assign_key, state_keys[[cc + 1L]])
+#         if (any(is.na(next_assign_row_idx))) {
+#             # Should not happen; indicates mismatch in state enumeration.
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+
+#         # Pre-decode next phases and next track-DBH vectors (shared across all current states)
+#         phase_tp1_by_next <- vector("list", n_next)
+#         for (j in seq_len(n_next)) {
+#             phase_tp1_by_next[[j]] <- decode_full_key(next_keys[[j]])$phase
+#         }
+#         tdbh1_by_next <- vector("list", n_next)
+#         for (j in seq_len(n_next)) {
+#             tdbh1_by_next[[j]] <- track_dbh_by_state[[cc + 1L]][[next_assign_row_idx[[j]]]]
+#         }
+
+#         # Preallocate edge arrays (worst-case: every (assignment_state, next_full_state) is feasible)
+#         upper_edges <- n_states_cc * n_next
+#         from_idx <- integer(upper_edges)
+#         to_idx <- integer(upper_edges)
+#         logw <- numeric(upper_edges)
+#         used_edges <- 0L
+
+#         # Dynamic creation of current full-states
+#         key_to_idx <- new.env(parent = emptyenv())
+#         curr_keys_list <- list()
+#         curr_assign_list <- list()
+#         curr_logB <- numeric(0)
+#         curr_vit <- numeric(0)
+#         curr_ptr <- integer(0)
+
+#         for (i in seq_len(n_states_cc)) {
+#             tdbh0 <- track_dbh_by_state[[cc]][[i]]
+#             assign0 <- mat_cc[i, ]
+
+#             # Collect all feasible next states (based on phase constraints) for this current assignment
+#             feasible_n <- 0L
+#             feasible_j <- integer(n_next)
+#             feasible_key <- character(n_next)
+#             feasible_tdbh1 <- vector("list", n_next)
+
+#             for (j in seq_len(n_next)) {
+#                 phase_tp1 <- phase_tp1_by_next[[j]]
+#                 if (length(phase_tp1) != K) next
+#                 tdbh1 <- tdbh1_by_next[[j]]
+#                 phase_t <- derive_phase_prev(phase_tp1, tdbh0, tdbh1)
+#                 if (is.null(phase_t)) next
+
+#                 feasible_n <- feasible_n + 1L
+#                 feasible_j[[feasible_n]] <- j
+#                 feasible_key[[feasible_n]] <- encode_full_key(assign0, phase_t)
+#                 feasible_tdbh1[[feasible_n]] <- tdbh1
+#             }
+
+#             if (feasible_n == 0L) next
+
+#             feasible_j <- feasible_j[seq_len(feasible_n)]
+#             feasible_key <- feasible_key[seq_len(feasible_n)]
+#             feasible_tdbh1 <- feasible_tdbh1[seq_len(feasible_n)]
+
+#             # Resolve per-pair interval (allows varying census intervals)
+#             pair_interval <- resolve_interval_years_pair(tree_data, t0 = cc, t1 = cc + 1L, interval_years = interval_years)
+
+#             # Batch compute all transition costs from this current assignment
+#             # FIXME
+#             c_trans_vec <- transition_cost_tracks_bio_batch(
+#                 track_dbh_t = tdbh0,
+#                 track_dbh_tp1 = feasible_tdbh1,
+#                 interval_years = pair_interval,
+#                 # --- growth model ---
+#                 mu_const = Bio_Mu_Growth_unit,
+#                 mu_gamma = Bio_Gamma_Growth_unit,
+#                 sigma0 = Bio_Sigma0_unit,
+#                 sigma1 = Bio_Sigma1_unit,
+#                 max_shrink = Bio_max_shrink_unit,
+#                 k_shrink = Bio_k_shrink_unit,
+#                 max_growth = Bio_max_growth_unit,
+#                 max_growth_soft = Bio_max_growth_soft_unit,
+#                 k_growth = Bio_k_growth_unit,
+#                 # --- measurement error (optional) ---
+#                 use_measurement_error = use_measurement_error,
+#                 meas_sd1_a = meas_sd1_a,
+#                 meas_sd1_b = meas_sd1_b,
+#                 meas_sd2 = meas_sd2,
+#                 meas_p_big = meas_p_big,
+#                 # --- mortality model ---
+#                 h0 = Bio_H0_Mortality,
+#                 beta = Bio_Beta_Mortality,
+#                 # --- recruitment model ---
+#                 recruit_meanlog = Bio_Recruit_Meanlog_unit,
+#                 recruit_sdlog = Bio_Recruit_Sdlog_unit,
+#                 recruit_max_dbh = Bio_Recruit_MaxDBH_unit,
+#                 recruit_lambda = Bio_Recruitment_lambda,
+#                 eps_tiebreak = eps_tiebreak
+#             )
+
+#             for (e in seq_len(feasible_n)) {
+#                 j <- feasible_j[[e]]
+#                 curr_key <- feasible_key[[e]]
+
+#                 idx <- key_to_idx[[curr_key]]
+#                 if (is.null(idx)) {
+#                     idx <- length(curr_keys_list) + 1L
+#                     key_to_idx[[curr_key]] <- idx
+#                     curr_keys_list[[idx]] <- curr_key
+#                     curr_assign_list[[idx]] <- as.integer(assign0)
+#                     curr_logB[idx] <- -Inf
+#                     curr_vit[idx] <- Inf
+#                     curr_ptr[idx] <- NA_integer_
+#                 }
+
+#                 c_trans <- c_trans_vec[[e]]
+
+#                 # Viterbi update (MAP)
+#                 cand_vit <- c_trans + vit_next[[j]]
+#                 if (!is.finite(curr_vit[idx]) || cand_vit < curr_vit[idx]) {
+#                     curr_vit[idx] <- cand_vit
+#                     curr_ptr[idx] <- j
+#                 }
+
+#                 # Backward log-sum-exp update
+#                 cand_log <- (-c_trans / temperature) + logB_next[[j]]
+#                 curr_logB[idx] <- log_add_exp(curr_logB[idx], cand_log)
+
+#                 # Store edge for forward pass
+#                 used_edges <- used_edges + 1L
+#                 from_idx[[used_edges]] <- idx
+#                 to_idx[[used_edges]] <- j
+#                 logw[[used_edges]] <- (-c_trans / temperature)
+#             }
+#         }
+
+#         if (length(curr_keys_list) == 0L) {
+#             vcat(prefix, "DP produced no states at CensusID=", cc, ". Falling back to igraph.")
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+
+#         keys_full[[cc]] <- unlist(curr_keys_list, use.names = FALSE)
+#         assign_full[[cc]] <- curr_assign_list
+#         logB[[cc]] <- curr_logB
+#         vit_cost[[cc]] <- curr_vit
+#         vit_ptr[[cc]] <- curr_ptr
+
+#         if (used_edges == 0L) {
+#             vcat(prefix, "No feasible edges at CensusID=", cc, ". Falling back to igraph.")
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+#         edges[[cc]] <- data.table::data.table(
+#             from_idx = from_idx[seq_len(used_edges)],
+#             to_idx = to_idx[seq_len(used_edges)],
+#             logw = logw[seq_len(used_edges)]
+#         )
+
+#         vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[cc]]), ", edges=", used_edges, ", dt=", sprintf("%.2fs", tic() - t_cc0))
+#     }
+
+#     # -----------------
+#     # Decode MAP path
+#     # -----------------
+#     vcat(prefix, "Decoding MAP path and writing ReconstructedStemID ...")
+#     start_idx <- which.min(vit_cost[[1L]])
+#     if (length(start_idx) == 0L || !is.finite(vit_cost[[1L]][start_idx])) {
+#         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#         out <- ensure_posterior_columns(out)
+#         return(out)
+#     }
+#     map_idx <- integer(anchor_start)
+#     map_idx[1L] <- start_idx
+#     for (cc in seq_len(anchor_start - 1L)) {
+#         nxt <- vit_ptr[[cc]][map_idx[cc]]
+#         if (!is.finite(nxt) || is.na(nxt) || nxt < 1L) {
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+#         map_idx[cc + 1L] <- nxt
+#     }
+
+#     for (cc in seq_len(anchor_start)) {
+#         obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+#         if (length(obs_idx) == 0L) next
+#         sv <- assign_full[[cc]][[map_idx[cc]]]
+#         if (length(sv) != length(obs_idx)) {
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+#         tree_data[obs_idx, ReconstructedStemID := track_ids[sv]]
+#         obs_to_mark <- obs_idx[is.na(tree_data$TrueStemID[obs_idx])]
+#         if (length(obs_to_mark) > 0L) {
+#             tree_data[obs_to_mark, ReconstructionMethod := "dp"]
+#         }
+#     }
+
+#     # -----------------
+#     # Forward pass for marginals
+#     # -----------------
+#     vcat(prefix, "Forward pass starting ...")
+#     # Start distribution: uniform over all reachable states at census 1.
+#     logalpha <- vector("list", anchor_start)
+#     logalpha[[1L]] <- rep.int(0, length(keys_full[[1L]]))
+
+#     for (cc in seq_len(anchor_start - 1L)) {
+#         ed <- edges[[cc]]
+#         if (is.null(ed) || nrow(ed) == 0L) {
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+#         la_from <- logalpha[[cc]][ed$from_idx]
+#         vals <- la_from + ed$logw
+#         dt <- data.table::data.table(to_idx = ed$to_idx, v = vals)
+#         dt <- dt[is.finite(v)]
+#         if (nrow(dt) == 0L) {
+#             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+#             out <- ensure_posterior_columns(out)
+#             return(out)
+#         }
+#         la_next_dt <- dt[, .(logalpha = log_sum_exp(v)), by = to_idx]
+#         la_next <- rep.int(-Inf, length(keys_full[[cc + 1L]]))
+#         la_next[la_next_dt$to_idx] <- la_next_dt$logalpha
+#         logalpha[[cc + 1L]] <- la_next
+
+#         vcat(prefix, "Forward step CensusID=", cc + 1L, ": reached ", sum(is.finite(la_next)), " / ", length(la_next), " states")
+#     }
+
+#     # Partition function Z = total weight of all paths ending at the fixed anchor state.
+#     # At anchor_start there is exactly one state.
+#     logZ <- logalpha[[anchor_start]][1L]
+#     if (!is.finite(logZ)) {
+#         # Fallback: compute from backward at census 1.
+#         logZ <- log_sum_exp(logB[[1L]])
+#     }
+
+#     vcat(prefix, "Computed logZ=", sprintf("%.3f", logZ))
+
+#     # -----------------
+#     # Observation-level marginals
+#     # -----------------
+#     anchor_set <- anchor_ids
+#     is_anchor_track <- track_ids %in% anchor_set
+
+#     for (cc in seq_len(anchor_start)) {
+#         obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+#         if (length(obs_idx) == 0L) next
+
+#         # State posterior weights at this census
+#         lg <- logalpha[[cc]] + logB[[cc]] - logZ
+#         # Normalize defensively
+#         lg <- lg - log_sum_exp(lg)
+#         w <- exp(lg)
+
+#         n_obs <- length(obs_idx)
+#         prob_mat <- matrix(0, nrow = n_obs, ncol = K)
+#         st_assign <- assign_full[[cc]]
+#         for (s in seq_along(st_assign)) {
+#             ww <- w[s]
+#             if (!is.finite(ww) || ww <= 0) next
+#             a <- st_assign[[s]]
+#             # a is length n_obs, entries in 1..K
+#             for (j in seq_len(n_obs)) {
+#                 prob_mat[j, a[j]] <- prob_mat[j, a[j]] + ww
+#             }
+#         }
+#         # Re-normalize each row (floating error)
+#         row_sums <- rowSums(prob_mat)
+#         for (j in seq_len(n_obs)) {
+#             if (row_sums[j] > 0) {
+#                 prob_mat[j, ] <- prob_mat[j, ] / row_sums[j]
+#             }
+#         }
+
+#         # MAP assignment for DP_PosteriorReconstructedProb
+#         map_assign <- assign_full[[cc]][[map_idx[cc]]]
+
+#         top1_id <- integer(n_obs)
+#         top2_id <- integer(n_obs)
+#         top1_p <- numeric(n_obs)
+#         top2_p <- numeric(n_obs)
+#         entropy <- numeric(n_obs)
+#         p_map <- numeric(n_obs)
+#         p_unlinked <- numeric(n_obs)
+
+#         for (j in seq_len(n_obs)) {
+#             p <- prob_mat[j, ]
+#             # numeric stability
+#             p[p < 0] <- 0
+#             sp <- sum(p)
+#             if (sp > 0) p <- p / sp
+#             ord <- order(p, decreasing = TRUE)
+#             i1 <- ord[1L]
+#             top1_id[j] <- track_ids[i1]
+#             top1_p[j] <- p[i1]
+#             if (posterior_top_k >= 2L && length(ord) >= 2L) {
+#                 i2 <- ord[2L]
+#                 top2_id[j] <- track_ids[i2]
+#                 top2_p[j] <- p[i2]
+#             } else {
+#                 top2_id[j] <- NA_integer_
+#                 top2_p[j] <- NA_real_
+#             }
+#             entropy[j] <- -sum(ifelse(p > 0, p * log(p), 0))
+#             p_map[j] <- p[map_assign[j]]
+#             p_unlinked[j] <- sum(p[!is_anchor_track])
+#         }
+
+#         tree_data[obs_idx, `:=`(
+#             DP_PosteriorTop1ID = top1_id,
+#             DP_PosteriorTop1Prob = top1_p,
+#             DP_PosteriorTop2ID = top2_id,
+#             DP_PosteriorTop2Prob = top2_p,
+#             DP_PosteriorEntropy = entropy,
+#             DP_PosteriorReconstructedProb = p_map,
+#             DP_PosteriorUnlinkedProb = p_unlinked
+#         )]
+#     }
+
+#     tree_data <- add_constraint_violation(
+#         tree_data,
+#         id_col = "ReconstructedStemID",
+#         min_growth = min_growth,
+#         max_growth = max_growth,
+#         interval_years = interval_years
+#     )
+
+#     vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
+#     return(tree_data)
+# }
+
+# Load C++ implementation
+if (!requireNamespace("Rcpp", quietly = TRUE)) {
+    stop("Rcpp package is required for C++ acceleration.")
+}
+library(Rcpp)
+# FIXME: REMOVE HERE
+library(here)
+source(here("dp_global", "src", "transition_cost_rcpp.R"))
+Rcpp::sourceCpp(here("dp_global", "src", "transition_cost_rcpp.cpp"))
+message("[dp_global main_cpp.R] C++ acceleration enabled.")
+
+# here im replacing the base function with the Rcpp version
+transition_cost_tracks_bio_batch <- function(
+  track_dbh_t,
+  track_dbh_tp1,
+  interval_years,
+  mu_const,
+  mu_gamma,
+  sigma0,
+  sigma1,
+  max_shrink,
+  k_shrink,
+  max_growth,
+  max_growth_soft,
+  k_growth,
+  use_measurement_error,
+  meas_sd1_a,
+  meas_sd1_b,
+  meas_sd2,
+  meas_p_big,
+  h0,
+  beta,
+  recruit_meanlog,
+  recruit_sdlog,
+  recruit_max_dbh,
+  recruit_lambda,
+  eps_tiebreak,
+  hard_penalty = 1e6
+) {
+    # cat("C++ version called\n")
+    if (is.list(track_dbh_tp1)) {
+        mat_tp1 <- do.call(rbind, track_dbh_tp1)
+    } else {
+        mat_tp1 <- as.matrix(track_dbh_tp1)
+    }
+    result <- transition_cost_tracks_bio_batch_rcpp(
+        track_dbh_t = track_dbh_t,
+        mat_tp1 = mat_tp1,
+        interval_years = interval_years,
+        mu_const = mu_const,
+        mu_gamma = mu_gamma,
+        sigma0 = sigma0,
+        sigma1 = sigma1,
+        max_shrink = max_shrink,
+        k_shrink = k_shrink,
+        max_growth = max_growth,
+        max_growth_soft = max_growth_soft,
+        k_growth = k_growth,
+        use_measurement_error = use_measurement_error,
+        meas_sd1_a = meas_sd1_a,
+        meas_sd1_b = meas_sd1_b,
+        meas_sd2 = meas_sd2,
+        meas_p_big = meas_p_big,
+        h0 = h0,
+        beta = beta,
+        recruit_meanlog = recruit_meanlog,
+        recruit_sdlog = recruit_sdlog,
+        recruit_max_dbh = recruit_max_dbh,
+        recruit_lambda = recruit_lambda,
+        eps_tiebreak = eps_tiebreak,
+        hard_penalty = hard_penalty
+    )
+    return(result)
+}
+message("[dp_global main_cpp.R] C++ acceleration enabled for DP computation.")
 
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            min_growth = -Inf,
@@ -2682,6 +3498,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             pair_interval <- resolve_interval_years_pair(tree_data, t0 = cc, t1 = cc + 1L, interval_years = interval_years)
 
             # Batch compute all transition costs from this current assignment
+            # FIXME
             c_trans_vec <- transition_cost_tracks_bio_batch(
                 track_dbh_t = tdbh0,
                 track_dbh_tp1 = feasible_tdbh1,
@@ -2949,6 +3766,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
     return(tree_data)
 }
+
 
 # ----------------------------
 # Plotting: one PDF page per Tag
