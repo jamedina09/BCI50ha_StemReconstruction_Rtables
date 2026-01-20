@@ -40,38 +40,6 @@
 # - The example “main” block at the bottom is opt-in so sourcing won’t run IO.
 #
 
-# FIXME
-
-get_script_dir <- function() {
-    cmd <- commandArgs(trailingOnly = FALSE)
-    file_arg <- sub("^--file=", "", cmd[grep("^--file=", cmd)])
-    if (length(file_arg) == 1L && nzchar(file_arg)) {
-        return(dirname(normalizePath(file_arg)))
-    }
-    if (!is.null(sys.frames()[[1L]]$ofile)) {
-        return(dirname(normalizePath(sys.frames()[[1L]]$ofile)))
-    }
-    getwd()
-}
-
-find_project_root <- function(start_dir) {
-    d <- normalizePath(start_dir)
-    for (i in 0:6) {
-        cand <- d
-        if (dir.exists(file.path(cand, "STEM_IDENTIFICATION_TEST"))) {
-            return(cand)
-        }
-        d2 <- dirname(d)
-        if (identical(d2, d)) break
-        d <- d2
-    }
-    stop("Could not find project root containing STEM_IDENTIFICATION_TEST/ starting from: ", start_dir)
-}
-
-script_dir <- get_script_dir()
-root_dir <- find_project_root(script_dir)
-setwd(file.path(root_dir, "STEM_IDENTIFICATION_TEST"))
-
 
 if (!requireNamespace("data.table", quietly = TRUE)) {
     stop("Package 'data.table' is required. Install it with install.packages('data.table')")
@@ -2006,71 +1974,6 @@ transition_cost_tracks_bio_components <- function(
     )
 }
 
-# here im replacing the base function with the Rcpp version
-transition_cost_tracks_bio_batch <- function(
-  track_dbh_t,
-  track_dbh_tp1,
-  interval_years,
-  mu_const,
-  mu_gamma,
-  sigma0,
-  sigma1,
-  max_shrink,
-  k_shrink,
-  max_growth,
-  max_growth_soft,
-  k_growth,
-  use_measurement_error,
-  meas_sd1_a,
-  meas_sd1_b,
-  meas_sd2,
-  meas_p_big,
-  h0,
-  beta,
-  recruit_meanlog,
-  recruit_sdlog,
-  recruit_max_dbh,
-  recruit_lambda,
-  eps_tiebreak,
-  hard_penalty = 1e6
-) {
-    # cat("C++ version called\n")
-    if (is.list(track_dbh_tp1)) {
-        mat_tp1 <- do.call(rbind, track_dbh_tp1)
-    } else {
-        mat_tp1 <- as.matrix(track_dbh_tp1)
-    }
-    result <- transition_cost_tracks_bio_batch_rcpp(
-        track_dbh_t = track_dbh_t,
-        mat_tp1 = mat_tp1,
-        interval_years = interval_years,
-        mu_const = mu_const,
-        mu_gamma = mu_gamma,
-        sigma0 = sigma0,
-        sigma1 = sigma1,
-        max_shrink = max_shrink,
-        k_shrink = k_shrink,
-        max_growth = max_growth,
-        max_growth_soft = max_growth_soft,
-        k_growth = k_growth,
-        use_measurement_error = use_measurement_error,
-        meas_sd1_a = meas_sd1_a,
-        meas_sd1_b = meas_sd1_b,
-        meas_sd2 = meas_sd2,
-        meas_p_big = meas_p_big,
-        h0 = h0,
-        beta = beta,
-        recruit_meanlog = recruit_meanlog,
-        recruit_sdlog = recruit_sdlog,
-        recruit_max_dbh = recruit_max_dbh,
-        recruit_lambda = recruit_lambda,
-        eps_tiebreak = eps_tiebreak,
-        hard_penalty = hard_penalty
-    )
-    return(result)
-}
-message("[dp_global main_cpp.R] C++ acceleration enabled for DP computation.")
-
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            min_growth = -Inf,
                                                            max_growth = Inf,
@@ -2542,7 +2445,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             pair_interval <- resolve_interval_years_pair(tree_data, t0 = cc, t1 = cc + 1L, interval_years = interval_years)
 
             # Batch compute all transition costs from this current assignment
-            c_trans_vec <- transition_cost_tracks_bio_batch(
+            c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
                 track_dbh_t = tdbh0,
                 track_dbh_tp1 = feasible_tdbh1,
                 interval_years = pair_interval,

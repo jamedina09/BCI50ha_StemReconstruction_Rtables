@@ -27,55 +27,38 @@
 #' @param hard_penalty Hard constraint penalty
 #' @return Numeric vector of transition costs (one per candidate)
 transition_cost_tracks_bio_batch_rcpp <- function(
-    track_dbh_t,
-    mat_tp1,
-    interval_years,
-    mu_const,
-    mu_gamma,
-    sigma0,
-    sigma1,
-    max_shrink,
-    k_shrink,
-    max_growth,
-    max_growth_soft,
-    k_growth,
-    use_measurement_error,
-    meas_sd1_a,
-    meas_sd1_b,
-    meas_sd2,
-    meas_p_big,
-    h0,
-    beta,
-    recruit_meanlog,
-    recruit_sdlog,
-    recruit_max_dbh,
-    recruit_lambda,
-    eps_tiebreak,
-    hard_penalty
+  track_dbh_t,
+  track_dbh_tp1,
+  interval_years,
+  mu_const,
+  mu_gamma,
+  sigma0,
+  sigma1,
+  max_shrink,
+  k_shrink,
+  max_growth,
+  max_growth_soft,
+  k_growth,
+  use_measurement_error,
+  meas_sd1_a,
+  meas_sd1_b,
+  meas_sd2,
+  meas_p_big,
+  h0,
+  beta,
+  recruit_meanlog,
+  recruit_sdlog,
+  recruit_max_dbh,
+  recruit_lambda,
+  eps_tiebreak,
+  hard_penalty = 1e6
 ) {
-    # Load the C++ function if not already loaded
-    if (!exists("transition_cost_tracks_bio_batch_rcpp_cpp", mode = "function")) {
-        if (!requireNamespace("Rcpp", quietly = TRUE)) {
-            stop("Rcpp package is required for this function")
-        }
-        # Source the C++ file. Prefer packaged installation, fall back to repository path.
-        cpp_file <- system.file("src", "transition_cost_rcpp.cpp", package = "your_package_name")
-        if (cpp_file == "") {
-            # Prefer an explicit project-local path using 'here' when available
-            if (requireNamespace("here", quietly = TRUE)) {
-                cpp_file <- here::here("dp_global", "src", "transition_cost_rcpp.cpp")
-            } else {
-                # Fallback to relative repo path (best-effort)
-                cpp_file <- file.path("dp_global", "src", "transition_cost_rcpp.cpp")
-            }
-        }
-        if (!file.exists(cpp_file)) {
-            stop("C++ source file not found: ", cpp_file)
-        }
-        Rcpp::sourceCpp(cpp_file)
+    # cat("C++ version called\n")
+    if (is.list(track_dbh_tp1)) {
+        mat_tp1 <- do.call(rbind, track_dbh_tp1)
+    } else {
+        mat_tp1 <- as.matrix(track_dbh_tp1)
     }
-
-    # Call the C++ function
     result <- transition_cost_tracks_bio_batch_rcpp_cpp(
         track_dbh_t = track_dbh_t,
         mat_tp1 = mat_tp1,
@@ -103,6 +86,5 @@ transition_cost_tracks_bio_batch_rcpp <- function(
         eps_tiebreak = eps_tiebreak,
         hard_penalty = hard_penalty
     )
-
     return(result)
 }
