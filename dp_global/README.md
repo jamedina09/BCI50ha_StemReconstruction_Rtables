@@ -551,6 +551,17 @@ source("dp_global/R/realism_calibration.R")
 - **data mode:** Estimates from empirical observations
 - **fixed mode:** Uses user-specified constants
 
+**Interval years handling:** `interval_years` may be a scalar (e.g., `5`) applied to all census pairs, or set to `NULL` to enable per-row (per-pair) interval detection from the input table. When `NULL`, the function searches for interval columns (default candidates: `"Bio_IntervalYears"`, `"IntervalYears"`, `"interval_years"`, `"census_interval_years"`, `"CensusIntervalYears"`) and uses per-pair intervals when available. Missing per-pair values are coalesced (prefer `t1`, then `t0`, then scalar); if a scalar is not provided the function may infer a representative scalar (median) from available pairs. Diagnostic information is returned in `res$interval` (see below).
+
+### Per-row interval support
+
+When per-census intervals vary across tags or measurement pairs you can enable per-pair interval inference by calling `estimate_bio_pars()` with `interval_years = NULL` (or by passing an explicit `interval_col_candidates` vector). Behavior summary:
+
+- Searches the original input for interval columns (default candidates listed above) and builds a wide per-pair interval table aligned with the DBH wide table.
+- For each pair, uses the interval value from the later census (`t1`) when present, otherwise falls back to `t0`, then to a supplied scalar `interval_years` if provided.
+- If no scalar is provided and some pairs are missing intervals, the function infers a representative scalar (median of available per-pair intervals) and records whether rows were filled or dropped.
+- Diagnostics returned in `res$interval`: `inferred_interval_years`, `per_pair_intervals` (numeric vector), `pairs_candidate_count`, `pairs_filled_with_scalar_count`, `pairs_dropped_count`.
+
 ### Growth Parameter Estimation
 
 **Data filtering:** Keep rows with non-NA `DBH > 0` and non-NA `TrueStemID`
@@ -562,7 +573,7 @@ dw <- dcast(Tag + TrueStemID + species ~ CensusID, value.var = "DBH")
 
 **Annual growth increments:**
 For each adjacent census pair $(t_0, t_1)$:
-$g = \frac{D_1 - D_0}{\Delta t}$
+$g = \frac{D_1 - D_0}{T_i}$ where $T_i$ is the interval (years) for that specific pair. $T_i$ may be a constant scalar (`interval_years`) or vary per pair when a per-row interval column (e.g., `Bio_IntervalYears`) is present. When per-row intervals are used, `estimate_bio_pars()` coalesces per-pair `t1` → `t0` → scalar and returns diagnostics in `res$interval`.
 
 **Mean model fitting:**
 $\mu(D) = \alpha + \gamma \log(D)$
@@ -1129,6 +1140,8 @@ source("dp_global/R/realism_calibration.R")
 bio_pars_list <- list()
 for (sp in unique(xraw$species)) {
   sp_data <- xraw[species == sp]
+  # To use per-row/per-pair interval years from the dataset, set `interval_years = NULL` and
+  # ensure an interval column exists (e.g., `Bio_IntervalYears`). Example: `interval_col_candidates = "Bio_IntervalYears"`.
   bio_pars_list[[sp]] <- estimate_bio_pars(
     sp_data,
     interval_years = census_interval_years,
@@ -1224,6 +1237,8 @@ out_marginal <- add_dp_posterior_bins(
 3. **Measurement error:** Must be set consistently between `estimate_bio_pars()` and DP solver calls.
 
 4. **Parameter sources:** Each parameter's source (data/fixed) and estimated value are stored in the returned list structure for provenance tracking.
+
+5. **Per-row intervals:** You can enable per-pair intervals for parameter estimation by providing a per-row interval column (e.g., `Bio_IntervalYears`) and calling `estimate_bio_pars()` with `interval_years = NULL` (or setting `interval_col_candidates` explicitly). The function will prefer per-pair `t1` values, fall back to `t0`, then to a scalar if provided, and will report diagnostic counters in `res$interval`.
 
 ---
 

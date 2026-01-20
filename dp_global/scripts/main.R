@@ -576,13 +576,18 @@ run_main <- function() {
     xraw <- data.table::fread(input_file)
     xraw <- ensure_species_column(xraw)
     xrun <- data.table::copy(xraw)
-
+    # By default we add `Bio_IntervalYears` as a constant (from `census_interval_years`),
+    # but users may supply a per-row interval column (e.g., `Bio_IntervalYears`) in the
+    # input dataset and `estimate_bio_pars()` will detect and use it when called with
+    # `interval_years = NULL` or with `interval_col_candidates = "Bio_IntervalYears"`.
+    xrun[, Bio_IntervalYears := as.numeric(census_interval_years)]
     # 5.2 Estimate bio parameters (per species)
     bio_pars <- list()
     for (sp in unique(xrun$species)) {
         bio_pars[[sp]] <- estimate_bio_pars(
             xrun[species == sp],
-            interval_years = census_interval_years,
+            # interval_years = census_interval_years,
+            interval_col_candidates = "Bio_IntervalYears",
             use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
             # Hard shrink guardrail (max_shrink)
             # - "data": estimated from observed shrink tail (with measurement-error support)

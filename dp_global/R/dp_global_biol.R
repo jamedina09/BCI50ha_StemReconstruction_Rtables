@@ -593,7 +593,8 @@ state_to_track_dbh <- function(state_vec, obs_dbh, K) {
 ############################################################
 estimate_bio_pars <- function(
   x,
-  interval_years,
+  interval_years = NULL,
+  interval_col_candidates = c("Bio_IntervalYears", "IntervalYears", "interval_years", "census_interval_years", "CensusIntervalYears"),
   census_ids = NULL,
   mortality_start = c(log(0.01), 0),
   # -----------------------------------------------------------------
@@ -723,7 +724,12 @@ estimate_bio_pars <- function(
     #     - species    : species code (optional; if missing, caller should add)
     #
     # interval_years
-    #   Numeric; time between adjacent censuses used for annualization.
+    #   Numeric scalar; time between adjacent censuses used for annualization.
+    #   If NULL (default), the function will try to read interval information from
+    #   the input data.table via one of the candidate column names
+    #   ("Bio_IntervalYears", "IntervalYears", "interval_years", "census_interval_years", "CensusIntervalYears").
+    #   When a per-census/row interval column is present, per-pair intervals are
+    #   used to annualize increments and to compute mortality/recruitment exposure.
     #   Example: if censuses are 5 years apart, interval_years=5.
     #
     # census_ids
@@ -767,9 +773,24 @@ estimate_bio_pars <- function(
     library(data.table)
     library(MASS)
 
-    interval_years <- as.numeric(interval_years)
-    if (!is.finite(interval_years) || interval_years <= 0) {
-        stop("interval_years must be positive.", call. = FALSE)
+    # Interval handling
+    # - If `interval_years` (scalar) is provided it will be used as the default.
+    # - If `interval_years` is NULL, we will look for an interval column in the
+    #   input data (one of `interval_col_candidates`). If present we will use
+    #   per-pair / per-row interval values when computing annualized increments,
+    #   mortality exposure and recruitment exposure. If no interval info is
+    #   available, the function will error.
+    interval_years_provided <- !is.null(interval_years)
+    if (interval_years_provided) {
+        interval_years <- as.numeric(interval_years)
+        if (!is.finite(interval_years) || interval_years <= 0) {
+            stop("interval_years must be positive.", call. = FALSE)
+        }
+    } else {
+        # Defer discovery of an interval column until after input cleaning / casting so
+        # we can align any candidate interval column with the wide DBH table.
+        # (See later where `iw` is constructed.)
+        interval_years <- NULL
     }
 
     # ---------------------------------------------------------------------
@@ -783,16 +804,24 @@ estimate_bio_pars <- function(
     # This is a key point: estimate_bio_pars() uses TrueStemID to assemble
     # empirical growth/mortality/recruitment signals. If TrueStemID is missing
     # or unreliable, you should not trust the resulting parameters.
-    dt <- as.data.table(x)[
-        !is.na(DBH) & DBH > 0 & !is.na(TrueStemID),
-        .(
-            Tag,
-            TrueStemID = as.integer(TrueStemID),
-            CensusID   = as.integer(CensusID),
-            DBH        = as.numeric(DBH),
-            species    = as.character(species)
-        )
-    ]
+    x_dt <- as.data.table(x)
+    x_dt <- x_dt[!is.na(DBH) & DBH > 0 & !is.na(TrueStemID)]
+
+    # Ensure a `species` column exists for consistent downstream handling
+    if (!("species" %in% names(x_dt))) {
+        x_dt[, species := NA_character_]
+    } else {
+        x_dt[, species := as.character(species)]
+    }
+
+    dt <- x_dt[, .(
+        Tag,
+        TrueStemID = as.integer(TrueStemID),
+        CensusID = as.integer(CensusID),
+        DBH = as.numeric(DBH),
+        species = species
+    )]
+
 
     if (nrow(dt) == 0) {
         stop("No usable rows after filtering.", call. = FALSE)
@@ -824,28 +853,22 @@ estimate_bio_pars <- function(
     # For each adjacent census pair (t0, t1):
     #   d0 = DBH at t0 (cm)
     #   d1 = DBH at t1 (cm)
-    #   g  = (d1 - d0) / interval_years  (cm/year)
+    #   g  = (d1 - d0) / T  (cm/year)  where T may be a scalar or vary per pair
     #
     # We collect:
     #   g_all           : all observed annualized increments
     #   d0_all, d1_all  : the corresponding DBHs for regression/diagnostics
     #   var_meas_g_all  : expected measurement-variance contribution to g
-    #
-    # Measurement error model (mixture)
-    #   We treat per-census DBH measurement error epsilon as:
-    #     epsilon ~ (1-p) Normal(0, SD1(DBH)^2) + p Normal(0, SD2^2)
-    #   where SD1(DBH) is linear in DBH.
-    #
-    #   For annualized increments g = (d1 - d0)/T, if we assume independent
-    #   measurement errors at t0 and t1, then the variance of the annualized
-    #   measurement difference is approximately:
-    #     Var( (e1 - e0)/T ) = (Var(e1) + Var(e0)) / T^2
-    #   where Var(e) for the mixture is:
-    #     Var(e) = (1-p)*SD1^2 + p*SD2^2
+    #   T_all           : corresponding interval (years) used for each g
     g_all <- c()
     d0_all <- c()
     d1_all <- c()
     var_meas_g_all <- c()
+    T_all <- c()
+    # Diagnostic counters for interval handling (useful for testing)
+    pairs_candidate_count <- 0L
+    pairs_filled_with_scalar_count <- 0L
+    pairs_dropped_count <- 0L
 
     sd1 <- function(d) {
         d <- as.numeric(d)
@@ -858,6 +881,32 @@ estimate_bio_pars <- function(
         (1 - meas_p_big) * (s1^2) + meas_p_big * (meas_sd2^2)
     }
 
+    # If an interval column exists in the input data (one of `interval_col_candidates`),
+    # cast it wide to align with `dw` so we can compute per-pair intervals. Use the
+    # original input `x` (not `dt`) for this cast so we don't drop additional
+    # columns during the DBH-filtering above.
+    iw <- NULL
+    iw_col <- NULL
+    candidates_present <- intersect(interval_col_candidates, names(x))
+    if (length(candidates_present) > 0L) {
+        iw_col <- candidates_present[[1L]]
+        # Build interval-wide table from the original `x` (not `dt`) so we
+        # retain any interval columns the user provided. Filter rows to the
+        # same set used to build `dw` (i.e., DBH observed & TrueStemID present).
+        if (iw_col %in% names(x_dt)) {
+            ix <- x_dt[, .(
+                Tag,
+                TrueStemID = as.integer(TrueStemID),
+                species = species,
+                CensusID = as.integer(CensusID),
+                interval = as.numeric(get(iw_col))
+            )]
+            if (nrow(ix) > 0L) {
+                iw <- dcast(ix, Tag + TrueStemID + species ~ CensusID, value.var = "interval")
+            }
+        }
+    }
+
     for (i in seq_len(length(census_ids) - 1)) {
         t0 <- as.character(census_ids[i])
         t1 <- as.character(census_ids[i + 1])
@@ -865,21 +914,84 @@ estimate_bio_pars <- function(
         if (!all(c(t0, t1) %in% names(dw))) next
 
         ok <- !is.na(dw[[t0]]) & !is.na(dw[[t1]])
+        if (!any(ok)) next
 
         d0 <- dw[[t0]][ok]
         d1 <- dw[[t1]][ok]
-        g <- (d1 - d0) / interval_years
 
-        v_meas_g <- (meas_var_eps(d0) + meas_var_eps(d1)) / (interval_years^2)
+        # Determine interval(s) for this pair. Prefer per-row values from iw (t1 then t0),
+        # else fall back to provided scalar `interval_years`.
+        if (!is.null(iw) && (t1 %in% names(iw) || t0 %in% names(iw))) {
+            n_ok <- sum(ok)
+            T1 <- if (t1 %in% names(iw)) iw[[t1]][ok] else rep(NA_real_, n_ok)
+            T0 <- if (t0 %in% names(iw)) iw[[t0]][ok] else rep(NA_real_, n_ok)
+            # Per-row coalesce: prefer T1, fall back to T0 when T1 is missing
+            Tvec <- T1
+            missing_idx <- !is.finite(Tvec) | (Tvec <= 0)
+            if (any(missing_idx)) {
+                Tvec[missing_idx] <- T0[missing_idx]
+            }
+            # Fill remaining missing/invalid with scalar if provided; otherwise drop those rows
+            bad <- !is.finite(Tvec) | (Tvec <= 0)
+            if (any(bad)) {
+                if (!is.null(interval_years) && is.finite(interval_years) && (interval_years > 0)) {
+                    # Fill missing per-row intervals with scalar
+                    n_fill <- sum(bad)
+                    Tvec[bad] <- as.numeric(interval_years)
+                    pairs_filled_with_scalar_count <- pairs_filled_with_scalar_count + n_fill
+                } else {
+                    # No scalar yet; drop rows with missing/invalid T for now so they
+                    # don't prevent inferring a representative interval from other pairs.
+                    drop_idx <- which(bad)
+                    keep_idx <- which(!bad)
+                    if (length(keep_idx) == 0L) {
+                        # Nothing to use for this pair; skip
+                        pairs_dropped_count <- pairs_dropped_count + length(drop_idx)
+                        next
+                    }
+                    pairs_dropped_count <- pairs_dropped_count + length(drop_idx)
+                    d0 <- d0[keep_idx]
+                    d1 <- d1[keep_idx]
+                    Tvec <- Tvec[keep_idx]
+                }
+            }
+
+            g <- (d1 - d0) / Tvec
+            v_meas_g <- (meas_var_eps(d0) + meas_var_eps(d1)) / (Tvec^2)
+            T_all <- c(T_all, Tvec)
+        } else {
+            if (is.null(interval_years) || !is.finite(interval_years) || interval_years <= 0) {
+                stop("No interval information found: provide 'interval_years' or add a per-census interval column (e.g., 'Bio_IntervalYears').", call. = FALSE)
+            }
+            T <- as.numeric(interval_years)
+            g <- (d1 - d0) / T
+            v_meas_g <- (meas_var_eps(d0) + meas_var_eps(d1)) / (T^2)
+            T_all <- c(T_all, rep(T, length(g)))
+        }
 
         g_all <- c(g_all, g)
         d0_all <- c(d0_all, d0)
         d1_all <- c(d1_all, d1)
         var_meas_g_all <- c(var_meas_g_all, v_meas_g)
+        pairs_candidate_count <- pairs_candidate_count + length(g)
     }
 
     if (length(g_all) < 5) {
         stop("Not enough growth observations.", call. = FALSE)
+    }
+
+    # If interval_years was not provided as a scalar, infer a representative
+    # interval from the collected per-pair intervals (median) and use that for
+    # measurement-noise quantile calculations below.
+    if (!interval_years_provided) {
+        if (length(T_all) == 0 || !is.finite(median(T_all, na.rm = TRUE))) {
+            stop("Unable to infer interval_years from data; provide 'interval_years' or add an interval column.", call. = FALSE)
+        }
+        interval_years <- as.numeric(median(T_all, na.rm = TRUE))
+        if (!is.finite(interval_years) || interval_years <= 0) {
+            stop("Inferred interval_years is not a positive finite number.", call. = FALSE)
+        }
+        message("[estimate_bio_pars] Inferred interval_years = ", interval_years, " from data intervals.")
     }
 
     # ---------------------------------------------------------------------
@@ -1004,6 +1116,7 @@ estimate_bio_pars <- function(
     #   par[1] = log(h0), par[2] = beta
     d0_m <- c()
     died <- c()
+    T_m_vec <- c()
 
     for (i in seq_len(length(census_ids) - 1)) {
         t0 <- as.character(census_ids[i])
@@ -1012,17 +1125,48 @@ estimate_bio_pars <- function(
         if (!all(c(t0, t1) %in% names(dw))) next
 
         at_risk <- !is.na(dw[[t0]])
+        if (!any(at_risk)) next
+
+        # Determine intervals for these at-risk rows, prefer per-row iw values (t1 then t0), else scalar
+        if (!is.null(iw) && (t1 %in% names(iw) || t0 %in% names(iw))) {
+            n_at <- sum(at_risk)
+            T1m <- if (t1 %in% names(iw)) iw[[t1]][at_risk] else rep(NA_real_, n_at)
+            T0m <- if (t0 %in% names(iw)) iw[[t0]][at_risk] else rep(NA_real_, n_at)
+            Tm <- T1m
+            missing_idx_m <- !is.finite(Tm) | (Tm <= 0)
+            if (any(missing_idx_m)) {
+                Tm[missing_idx_m] <- T0m[missing_idx_m]
+            }
+            bad <- !is.finite(Tm) | (Tm <= 0)
+            if (any(bad)) {
+                if (!is.null(interval_years) && is.finite(interval_years) && (interval_years > 0)) {
+                    Tm[bad] <- as.numeric(interval_years)
+                } else {
+                    stop("Missing or invalid interval values for mortality rows and no scalar 'interval_years' provided.", call. = FALSE)
+                }
+            }
+        } else {
+            if (is.null(interval_years) || !is.finite(interval_years) || interval_years <= 0) {
+                stop("No interval information found: provide 'interval_years' or add an interval column.", call. = FALSE)
+            }
+            Tm <- rep(as.numeric(interval_years), sum(at_risk))
+        }
 
         d0_m <- c(d0_m, dw[[t0]][at_risk])
         died <- c(died, as.integer(is.na(dw[[t1]][at_risk])))
+        T_m_vec <- c(T_m_vec, Tm)
+        # Bookkeeping: how many mortality rows used and how many were filled/dropped
+        pairs_candidate_count <- pairs_candidate_count + length(Tm)
+        pairs_filled_with_scalar_count <- pairs_filled_with_scalar_count + sum(!is.finite(T1m) & is.finite(T0m) & is.finite(Tm))
+        pairs_dropped_count <- pairs_dropped_count + sum(!is.finite(T1m) & !is.finite(T0m) & !is.finite(Tm))
     }
 
-    negloglik_mort <- function(par, d0, died) {
+    negloglik_mort <- function(par, d0, died, Tvec) {
         h0 <- exp(par[1])
         beta <- par[2]
 
         hazard <- h0 * exp(beta * d0)
-        p <- 1 - exp(-hazard * interval_years)
+        p <- 1 - exp(-hazard * Tvec)
         p <- pmin(pmax(p, 1e-12), 1 - 1e-12)
 
         -sum(died * log(p) + (1 - died) * log(1 - p))
@@ -1033,6 +1177,7 @@ estimate_bio_pars <- function(
         negloglik_mort,
         d0 = d0_m,
         died = died,
+        Tvec = T_m_vec,
         method = "BFGS"
     )
 
@@ -1052,6 +1197,7 @@ estimate_bio_pars <- function(
     recruit_dbh <- c()
     n_risk <- 0
     n_rec <- 0
+    total_time_at_risk <- 0
 
     for (i in seq_len(length(census_ids) - 1)) {
         t0 <- as.character(census_ids[i])
@@ -1060,6 +1206,8 @@ estimate_bio_pars <- function(
         if (!all(c(t0, t1) %in% names(dw))) next
 
         at_risk <- is.na(dw[[t0]])
+        if (!any(at_risk)) next
+
         d1_at_risk <- dw[[t1]][at_risk]
         # Recruits must have a positive observed size. Non-positive values will
         # break the lognormal fit and are not meaningful DBH measurements.
@@ -1068,11 +1216,42 @@ estimate_bio_pars <- function(
 
         recruit_dbh <- c(recruit_dbh, dw[[t1]][rec])
 
+        # Count risk-years using per-row intervals if available (prefer t1 then t0 per-row), else scalar
+        if (!is.null(iw) && (t1 %in% names(iw) || t0 %in% names(iw))) {
+            n_at <- sum(at_risk)
+            T1r <- if (t1 %in% names(iw)) iw[[t1]][at_risk] else rep(NA_real_, n_at)
+            T0r <- if (t0 %in% names(iw)) iw[[t0]][at_risk] else rep(NA_real_, n_at)
+            T_r <- T1r
+            missing_idx_r <- !is.finite(T_r) | (T_r <= 0)
+            if (any(missing_idx_r)) {
+                T_r[missing_idx_r] <- T0r[missing_idx_r]
+            }
+            bad <- !is.finite(T_r) | (T_r <= 0)
+            if (any(bad)) {
+                if (!is.null(interval_years) && is.finite(interval_years) && (interval_years > 0)) {
+                    T_r[bad] <- as.numeric(interval_years)
+                } else {
+                    stop("Missing or invalid interval values for recruitment rows and no scalar 'interval_years' provided.", call. = FALSE)
+                }
+            }
+            total_time_at_risk <- total_time_at_risk + sum(T_r, na.rm = TRUE)
+        # Also track any pair-level fills/drops as part of recruitment accounting
+        pairs_filled_with_scalar_count <- pairs_filled_with_scalar_count + sum(!is.finite(T1r) & is.finite(T0r))
+        pairs_dropped_count <- pairs_dropped_count + sum(!is.finite(T1r) & !is.finite(T0r) & (!(!is.null(interval_years) && is.finite(interval_years) && (interval_years > 0))))
+        } else {
+            if (is.null(interval_years) || !is.finite(interval_years) || interval_years <= 0) {
+                stop("No interval information found: provide 'interval_years' or add an interval column.", call. = FALSE)
+            }
+            total_time_at_risk <- total_time_at_risk + sum(rep(as.numeric(interval_years), sum(at_risk)))
+        }
+
         n_risk <- n_risk + sum(at_risk)
         n_rec <- n_rec + sum(rec)
     }
 
     recruit_dbh <- recruit_dbh[is.finite(recruit_dbh) & recruit_dbh > 0]
+    # Bookkeeping for recruitment missing intervals
+    # (we tracked contributions to total_time_at_risk above)
 
     if (length(recruit_dbh) >= 2) {
         fit_r <- fitdistr(recruit_dbh, "lognormal")
@@ -1091,8 +1270,8 @@ estimate_bio_pars <- function(
     }
 
     # Recruitment rate (Poisson)
-    lambda_hat <- if (n_risk > 0) {
-        n_rec / (n_risk * interval_years)
+    lambda_hat <- if (total_time_at_risk > 0) {
+        n_rec / total_time_at_risk
     } else {
         0
     }
@@ -1442,6 +1621,13 @@ estimate_bio_pars <- function(
         ),
         settings = list(
             use_measurement_error = use_measurement_error
+        ),
+        interval = list(
+            inferred_interval_years = interval_years,
+            per_pair_intervals = T_all,
+            pairs_candidate_count = as.integer(pairs_candidate_count),
+            pairs_filled_with_scalar_count = as.integer(pairs_filled_with_scalar_count),
+            pairs_dropped_count = as.integer(pairs_dropped_count)
         )
     )
 }

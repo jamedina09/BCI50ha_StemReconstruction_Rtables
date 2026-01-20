@@ -646,23 +646,31 @@ run_main <- function() {
 
     # Write a small startup marker so parallel runs can be observed immediately
     # (helps verify jobs start concurrently before heavy computation)
-    tryCatch({
-        writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
-    }, error = function(e) {
-        message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
-    })
+    tryCatch(
+        {
+            writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
+        },
+        error = function(e) {
+            message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
+        }
+    )
 
     # 5.1 Load data
     xraw <- data.table::fread(input_file)
     xraw <- ensure_species_column(xraw)
     xrun <- data.table::copy(xraw)
-
+    # By default we add `Bio_IntervalYears` as a constant (from `census_interval_years`),
+    # but users may supply a per-row interval column (e.g., `Bio_IntervalYears`) in the
+    # input dataset and `estimate_bio_pars()` will detect and use it when called with
+    # `interval_years = NULL` or with `interval_col_candidates = "Bio_IntervalYears"`.
+    xrun[, Bio_IntervalYears := as.numeric(census_interval_years)]
     # 5.2 Estimate bio parameters (per species)
     bio_pars <- list()
     for (sp in unique(xrun$species)) {
         bio_pars[[sp]] <- estimate_bio_pars(
             xrun[species == sp],
-            interval_years = census_interval_years,
+            # interval_years = census_interval_years,
+            interval_col_candidates = "Bio_IntervalYears",
             use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
             # Hard shrink guardrail (max_shrink)
             # - "data": estimated from observed shrink tail (with measurement-error support)
@@ -888,11 +896,14 @@ run_main <- function() {
     }
 
     # Write a small finished marker so users and wrappers can detect job completion
-    tryCatch({
-        writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt"))
-    }, error = function(e) {
-        message("[dp_global main_cpp.R] Warning writing run_finished marker: ", conditionMessage(e))
-    })
+    tryCatch(
+        {
+            writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt"))
+        },
+        error = function(e) {
+            message("[dp_global main_cpp.R] Warning writing run_finished marker: ", conditionMessage(e))
+        }
+    )
 
     invisible(list(out = out, xrun = xrun, bio_pars = bio_pars))
 }
@@ -956,7 +967,7 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
     }
 }
 
-source(here("dp_global","R","check_functions.r"))
+source(here("dp_global", "R", "check_functions.r"))
 export_bio_pars_report(res$bio_pars,
     species = NULL,
     interval_years = census_interval_years,
