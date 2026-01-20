@@ -40,7 +40,7 @@ mortality_params_df <- function(bio_pars) {
 }
 
 # Bar plot for h0 and beta across species
-plot_mortality_params_bars <- function(bio_pars, species = NULL, show = TRUE) {
+plot_mortality_params_bars <- function(bio_pars, species = NULL, show = TRUE, show_legend = TRUE) {
     df <- mortality_params_df(bio_pars)
     if (!is.null(species)) {
         df <- df[df$species %in% species, , drop = FALSE]
@@ -66,6 +66,8 @@ plot_mortality_params_bars <- function(bio_pars, species = NULL, show = TRUE) {
             ggtitle("Mortality parameters by species") +
             theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+        if (!show_legend) p <- p + theme(legend.position = "none")
+
         if (isTRUE(show)) print(p)
         invisible(p)
     }
@@ -73,7 +75,7 @@ plot_mortality_params_bars <- function(bio_pars, species = NULL, show = TRUE) {
 
 # Plot hazard curve (hazard(DBH) = h0 * exp(beta * DBH)).
 # Optionally show the interval mortality probability p = 1 - exp(-hazard * interval_years).
-plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(1, 100), n = 200, interval_years = NULL, log_y = FALSE, show = TRUE) {
+plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(1, 100), n = 200, interval_years = NULL, log_y = FALSE, show = TRUE, show_legend = TRUE) {
     df <- mortality_params_df(bio_pars)
     if (!is.null(species)) df <- df[df$species %in% species, , drop = FALSE]
     if (nrow(df) == 0L) stop("No species selected or species not found in bio_pars")
@@ -109,7 +111,7 @@ plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(
                 dsub <- out[out$species == sp, ]
                 lines(dsub$dbh, dsub$hazard, col = colors[i], lwd = 2)
             }
-            legend("topright", legend = species_list, col = colors, lwd = 2)
+            if (show_legend) legend("topright", legend = species_list, col = colors, lwd = 2)
         } else {
             par(mfrow = c(2, 1), mar = c(4, 4, 2, 2))
             # hazard
@@ -119,7 +121,7 @@ plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(
                 dsub <- out[out$species == sp, ]
                 lines(dsub$dbh, dsub$hazard, col = colors[i], lwd = 2)
             }
-            legend("topright", legend = species_list, col = colors, lwd = 2)
+            if (show_legend) legend("topright", legend = species_list, col = colors, lwd = 2)
             # interval probability
             plot(NULL, xlim = range(out$dbh), ylim = range(out$prob), xlab = "DBH", ylab = paste0("Probability over ", interval_years, " yr"), main = paste0(interval_years, "-year death probability"))
             for (i in seq_along(species_list)) {
@@ -127,7 +129,7 @@ plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(
                 dsub <- out[out$species == sp, ]
                 lines(dsub$dbh, dsub$prob, col = colors[i], lwd = 2)
             }
-            legend("topright", legend = species_list, col = colors, lwd = 2)
+            if (show_legend) legend("topright", legend = species_list, col = colors, lwd = 2)
         }
 
         invisible(out)
@@ -135,12 +137,13 @@ plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(
         library(ggplot2)
         if (is.null(interval_years)) {
             p <- ggplot(out, aes(x = dbh, y = hazard, color = species)) +
-                geom_line(linewidth = 1) +
+                geom_line(linewidth = 0.2) +
                 theme_minimal() +
                 xlab("DBH") +
                 ylab("Mortality hazard (annual)") +
                 ggtitle("Mortality hazard vs DBH")
 
+            if (!show_legend) p <- p + theme(legend.position = "none")
             if (isTRUE(log_y)) p <- p + scale_y_log10()
 
             if (isTRUE(show)) print(p)
@@ -150,7 +153,7 @@ plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(
             outm <- reshape2::melt(out, id.vars = c("species", "dbh"), measure.vars = c("hazard", "prob"), variable.name = "metric", value.name = "value")
             outm$metric_label <- ifelse(outm$metric == "hazard", "Hazard (annual)", paste0("Probability over ", interval_years, " yr"))
             p <- ggplot(outm, aes(x = dbh, y = value, color = species)) +
-                geom_line(linewidth = 1) +
+                geom_line(linewidth = 0.2) +
                 facet_wrap(~metric_label, scales = "free_y", ncol = 1) +
                 theme_minimal() +
                 xlab("DBH") +
@@ -158,6 +161,7 @@ plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(
                 ggtitle(paste0("Mortality hazard and ", interval_years, "-year mortality probability")) +
                 theme(strip.text = element_text(size = 11), legend.position = "right")
 
+            if (!show_legend) p <- p + theme(legend.position = "none")
             if (isTRUE(log_y)) p <- p + scale_y_log10()
 
             if (isTRUE(show)) print(p)
@@ -200,7 +204,7 @@ growth_params_df <- function(bio_pars) {
     df
 }
 
-plot_growth_params_bars <- function(bio_pars, species = NULL, show = TRUE) {
+plot_growth_params_bars <- function(bio_pars, species = NULL, show = TRUE, show_legend = TRUE) {
     df <- growth_params_df(bio_pars)
     if (!is.null(species)) {
         df <- df[df$species %in% species, , drop = FALSE]
@@ -230,13 +234,15 @@ plot_growth_params_bars <- function(bio_pars, species = NULL, show = TRUE) {
             ggtitle("Growth parameters by species") +
             theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+        if (!show_legend) p <- p + theme(legend.position = "none")
+
         if (isTRUE(show)) print(p)
         invisible(p)
     }
 }
 
 # Plot growth mean curve and growth SD: mu(DBH) = alpha + gamma * log(DBH), sigma(DBH) = sigma0 + sigma1 * DBH
-plot_growth_mean_curve <- function(bio_pars, species = NULL, dbh_range = c(1, 100), n = 200, show = TRUE) {
+plot_growth_mean_curve <- function(bio_pars, species = NULL, dbh_range = c(1, 100), n = 200, show = TRUE, show_legend = TRUE) {
     df <- growth_params_df(bio_pars)
     if (!is.null(species)) df <- df[df$species %in% species, , drop = FALSE]
     if (nrow(df) == 0L) stop("No species selected or species not found in bio_pars")
@@ -278,7 +284,7 @@ plot_growth_mean_curve <- function(bio_pars, species = NULL, dbh_range = c(1, 10
             dsub <- out[out$species == sp & out$metric == "mu", ]
             lines(dsub$dbh, dsub$value, col = colors[i], lwd = 2)
         }
-        legend("topright", legend = species_list, col = colors, lwd = 2)
+        if (show_legend) legend("topright", legend = species_list, col = colors, lwd = 2)
         # sigma
         plot(NULL, xlim = range(out$dbh), ylim = range(out$value[out$metric == "sigma"]), xlab = "DBH", ylab = "SD of growth (cm)", main = "Growth SD vs DBH")
         for (i in seq_along(species_list)) {
@@ -286,18 +292,20 @@ plot_growth_mean_curve <- function(bio_pars, species = NULL, dbh_range = c(1, 10
             dsub <- out[out$species == sp & out$metric == "sigma", ]
             lines(dsub$dbh, dsub$value, col = colors[i], lwd = 2)
         }
-        legend("topright", legend = species_list, col = colors, lwd = 2)
+        if (show_legend) legend("topright", legend = species_list, col = colors, lwd = 2)
         invisible(out)
     } else {
         library(ggplot2)
         p <- ggplot(out, aes(x = dbh, y = value, color = species)) +
-            geom_line(linewidth = 1) +
+            geom_line(linewidth = 0.2) +
             facet_wrap(~metric, scales = "free_y", ncol = 1, labeller = as_labeller(c(mu = "Mean growth (mu)", sigma = "Growth SD (sigma)"))) +
             theme_minimal() +
             xlab("DBH") +
             ylab(NULL) +
             ggtitle("Growth mean and SD vs DBH") +
             theme(strip.text = element_text(size = 11), legend.position = "right")
+
+        if (!show_legend) p <- p + theme(legend.position = "none")
 
         if (isTRUE(show)) print(p)
         invisible(p)
@@ -332,7 +340,7 @@ recruitment_params_df <- function(bio_pars) {
     df
 }
 
-plot_recruitment_params_bars <- function(bio_pars, species = NULL, show = TRUE) {
+plot_recruitment_params_bars <- function(bio_pars, species = NULL, show = TRUE, show_legend = TRUE) {
     df <- recruitment_params_df(bio_pars)
     if (!is.null(species)) {
         df <- df[df$species %in% species, , drop = FALSE]
@@ -359,13 +367,15 @@ plot_recruitment_params_bars <- function(bio_pars, species = NULL, show = TRUE) 
             ggtitle("Recruitment parameters by species") +
             theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+        if (!show_legend) p <- p + theme(legend.position = "none")
+
         if (isTRUE(show)) print(p)
         invisible(p)
     }
 }
 
 # Plot recruit DBH PDF: lognormal with meanlog/sdlog
-plot_recruitment_pdf_curve <- function(bio_pars, species = NULL, dbh_range = c(0.1, 50), n = 200, show = TRUE) {
+plot_recruitment_pdf_curve <- function(bio_pars, species = NULL, dbh_range = c(0.1, 50), n = 200, show = TRUE, show_legend = TRUE) {
     df <- recruitment_params_df(bio_pars)
     if (!is.null(species)) df <- df[df$species %in% species, , drop = FALSE]
     if (nrow(df) == 0L) stop("No species selected or species not found in bio_pars")
@@ -398,17 +408,17 @@ plot_recruitment_pdf_curve <- function(bio_pars, species = NULL, dbh_range = c(0
             rm <- unique(dsub$recruit_max_dbh)
             if (!is.na(rm)) abline(v = rm, col = colors[i], lty = 2)
         }
-        legend("topright", legend = species_list, col = colors, lwd = 2)
+        if (show_legend) legend("topright", legend = species_list, col = colors, lwd = 2)
         invisible(out)
     } else {
         library(ggplot2)
         p <- ggplot(out, aes(x = dbh, y = density, color = species)) +
-            geom_line(linewidth = 1) +
+            geom_line(linewidth = 0.2) +
             theme_minimal() +
             xlab("DBH") +
             ylab("Density") +
             ggtitle("Recruit DBH density (lognormal)") +
-            geom_vline(aes(xintercept = recruit_max_dbh, color = species), linetype = "dashed") +
+            geom_vline(aes(xintercept = recruit_max_dbh, color = species), linetype = "dashed", size = 0.1) +
             labs(subtitle = "dashed line = recruit_max_dbh; lambda (recruit rate) printed in legend")
 
         # Add lambda to legend by modifying species labels
@@ -418,13 +428,15 @@ plot_recruitment_pdf_curve <- function(bio_pars, species = NULL, dbh_range = c(0
             p <- p + scale_color_discrete(labels = labs_df$label)
         }
 
+        if (!show_legend) p <- p + theme(legend.position = "none")
+
         if (isTRUE(show)) print(p)
         invisible(p)
     }
 }
 
 # Plot hazard and corresponding interval mortality probability together
-plot_mortality_with_interval_prob <- function(bio_pars, species = NULL, dbh_range = c(1, 100), n = 200, interval_years = 5, log_y = FALSE, show = TRUE) {
+plot_mortality_with_interval_prob <- function(bio_pars, species = NULL, dbh_range = c(1, 100), n = 200, interval_years = 5, log_y = FALSE, show = TRUE, show_legend = TRUE) {
     df <- mortality_params_df(bio_pars)
     if (!is.null(species)) df <- df[df$species %in% species, , drop = FALSE]
     if (nrow(df) == 0L) stop("No species selected or species not found in bio_pars")
@@ -456,7 +468,7 @@ plot_mortality_with_interval_prob <- function(bio_pars, species = NULL, dbh_rang
             dsub <- out[out$species == sp, ]
             lines(dsub$dbh, dsub$hazard, col = colors[i], lwd = 2)
         }
-        legend("topright", legend = species_list, col = colors, lwd = 2)
+        if (show_legend) legend("topright", legend = species_list, col = colors, lwd = 2)
 
         plot(NULL, xlim = range(out$dbh), ylim = range(out$prob), xlab = "DBH", ylab = paste0("Probability over ", interval_years, " yr"), main = paste0(interval_years, "-year death probability"))
         for (i in seq_along(species_list)) {
@@ -464,7 +476,7 @@ plot_mortality_with_interval_prob <- function(bio_pars, species = NULL, dbh_rang
             dsub <- out[out$species == sp, ]
             lines(dsub$dbh, dsub$prob, col = colors[i], lwd = 2)
         }
-        legend("topright", legend = species_list, col = colors, lwd = 2)
+        if (show_legend) legend("topright", legend = species_list, col = colors, lwd = 2)
 
         invisible(out)
     } else {
@@ -475,7 +487,7 @@ plot_mortality_with_interval_prob <- function(bio_pars, species = NULL, dbh_rang
         outm$metric_label <- ifelse(outm$metric == "hazard", "Hazard (annual)", paste0("Probability over ", interval_years, " yr"))
 
         p <- ggplot(outm, aes(x = dbh, y = value, color = species)) +
-            geom_line(linewidth = 1) +
+            geom_line(linewidth = 0.2) +
             facet_wrap(~metric_label, scales = "free_y", ncol = 1) +
             theme_minimal() +
             xlab("DBH") +
@@ -483,6 +495,7 @@ plot_mortality_with_interval_prob <- function(bio_pars, species = NULL, dbh_rang
             ggtitle(paste0("Mortality hazard and ", interval_years, "-year mortality probability")) +
             theme(strip.text = element_text(size = 11), legend.position = "right")
 
+        if (!show_legend) p <- p + theme(legend.position = "none")
         if (isTRUE(log_y)) p <- p + scale_y_log10()
 
         if (isTRUE(show)) print(p)
@@ -508,7 +521,8 @@ export_bio_pars_report <- function(
   include_individual_pages = FALSE,
   width = 9,
   height = 5,
-  open = FALSE
+  open = FALSE,
+  show_legend = TRUE
 ) {
     if (!is.list(bio_pars) || length(bio_pars) == 0L) stop("bio_pars must be a non-empty list")
 
@@ -533,9 +547,9 @@ export_bio_pars_report <- function(
 
     # Summary pages (one page per summary figure)
     if (isTRUE(include_param_summary)) {
-        try(plot_mortality_params_bars(bio_pars, species = NULL, show = TRUE), silent = TRUE)
-        try(plot_growth_params_bars(bio_pars, species = NULL, show = TRUE), silent = TRUE)
-        try(plot_recruitment_params_bars(bio_pars, species = NULL, show = TRUE), silent = TRUE)
+        try(plot_mortality_params_bars(bio_pars, species = NULL, show = TRUE, show_legend = show_legend), silent = TRUE)
+        try(plot_growth_params_bars(bio_pars, species = NULL, show = TRUE, show_legend = show_legend), silent = TRUE)
+        try(plot_recruitment_params_bars(bio_pars, species = NULL, show = TRUE, show_legend = show_legend), silent = TRUE)
     }
 
     # Combined curves: one page per type showing all requested species together
@@ -543,9 +557,9 @@ export_bio_pars_report <- function(
         {
             # Mortality combined: hazard + interval probability (if interval provided)
             if (!is.null(interval_years)) {
-                plot_mortality_with_interval_prob(bio_pars, species = species, dbh_range = dbh_ranges$mortality, interval_years = interval_years, show = TRUE)
+                plot_mortality_with_interval_prob(bio_pars, species = species, dbh_range = dbh_ranges$mortality, interval_years = interval_years, show = TRUE, show_legend = show_legend)
             } else {
-                plot_mortality_hazard_curve(bio_pars, species = species, dbh_range = dbh_ranges$mortality, show = TRUE)
+                plot_mortality_hazard_curve(bio_pars, species = species, dbh_range = dbh_ranges$mortality, show = TRUE, show_legend = show_legend)
             }
         },
         silent = TRUE
@@ -554,7 +568,7 @@ export_bio_pars_report <- function(
     try(
         {
             # Growth combined: mu and sigma panels
-            plot_growth_mean_curve(bio_pars, species = species, dbh_range = dbh_ranges$growth, show = TRUE)
+            plot_growth_mean_curve(bio_pars, species = species, dbh_range = dbh_ranges$growth, show = TRUE, show_legend = show_legend)
         },
         silent = TRUE
     )
@@ -562,7 +576,7 @@ export_bio_pars_report <- function(
     try(
         {
             # Recruitment combined: lognormal densities with recruit_max_dbh annotated
-            plot_recruitment_pdf_curve(bio_pars, species = species, dbh_range = dbh_ranges$recruit, show = TRUE)
+            plot_recruitment_pdf_curve(bio_pars, species = species, dbh_range = dbh_ranges$recruit, show = TRUE, show_legend = show_legend)
         },
         silent = TRUE
     )
@@ -570,9 +584,9 @@ export_bio_pars_report <- function(
     # Optional: include individual per-species pages (one species per trio of plots)
     if (isTRUE(include_individual_pages)) {
         for (sp in species) {
-            try(plot_mortality_with_interval_prob(bio_pars, species = sp, dbh_range = dbh_ranges$mortality, interval_years = interval_years, show = TRUE), silent = TRUE)
-            try(plot_growth_mean_curve(bio_pars, species = sp, dbh_range = dbh_ranges$growth, show = TRUE), silent = TRUE)
-            try(plot_recruitment_pdf_curve(bio_pars, species = sp, dbh_range = dbh_ranges$recruit, show = TRUE), silent = TRUE)
+            try(plot_mortality_with_interval_prob(bio_pars, species = sp, dbh_range = dbh_ranges$mortality, interval_years = interval_years, show = TRUE, show_legend = show_legend), silent = TRUE)
+            try(plot_growth_mean_curve(bio_pars, species = sp, dbh_range = dbh_ranges$growth, show = TRUE, show_legend = show_legend), silent = TRUE)
+            try(plot_recruitment_pdf_curve(bio_pars, species = sp, dbh_range = dbh_ranges$recruit, show = TRUE, show_legend = show_legend), silent = TRUE)
         }
     }
 
