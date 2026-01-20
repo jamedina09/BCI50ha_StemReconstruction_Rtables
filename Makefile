@@ -7,8 +7,8 @@ smoke:
 	@Rscript dp_global/scripts/run_smoke.R
 
 profile:
-	@echo "Profiling (cpp variant)..."
-	@PROFILE_VARIANT=cpp Rscript dp_global/dev/profiling_code.R
+	@echo "Profiling (cpp-only)..."
+	@Rscript --vanilla dp_global/dev/profiling_code.R
 
 docs:
 	@echo "Building docs (requires pandoc + MathJax)..."
