@@ -79,7 +79,7 @@ library(here)
 ### Manual overrides (uncomment and edit for interactive/manual runs)
 ############################################################
 ## 2.1 Input data and species handling
-input_file <- here("data_simulation", "data", "simulation_legacy_backup", "simulated_data_one_species.csv")
+input_file <- here("data_simulation", "data", "simulated_data_1.csv")
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
     FORCED_SPECIES_LABEL <- "all"
