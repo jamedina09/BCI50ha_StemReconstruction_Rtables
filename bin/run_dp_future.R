@@ -172,16 +172,16 @@ BASE_ARGS <- c(
   # Allow overriding DP enumerator state budget from the orchestrator
   # (main_cpp.R defines `dp_max_states` in the DP settings section)
   # Use 0 to run igraph for all experiments in this script
-  "--dp_max_states=40000", #40000
+  "--dp_max_states=200", #40000
   "--MANUAL_CORES=TRUE",
   sprintf("--MANUAL_CORES_VALUE=%d", opt$cores_per_job),
   "--WRITE_DP_CSV=TRUE",
   "--WRITE_DP_PDF=TRUE", # true to generate PDFs - set false if many Tags to save time/disk
   "--DP_PDF_INCLUDE_REFERENCE=TRUE",
   "--PLOT_PDF_ONE_TAG_ONLY=FALSE",
-  "--SENSITIVITY_MODE=run+write+pdf",
-  "--RUN_K_SWEEP_DEMO=TRUE",
-  "--RUN_REALISM_REPORT=TRUE",
+  "--SENSITIVITY_MODE=none", #run+write+pdf
+  "--RUN_K_SWEEP_DEMO=FALSE",
+  "--RUN_REALISM_REPORT=FALSE",
   paste0("--PROJECT_ROOT=", here::here()),
   paste0("--BATCH_TS=", BATCH_TS)
 )
