@@ -330,7 +330,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
         list(g = g, n_curr = n_curr, n_fut = n_fut)
     }
 
-    resolve_interval_years_pair_test <- function(tree_data) {
+    resolve_interval_years_pair <- function(tree_data) {
         dt <- tree_data[, .(CensusID, ExactDate)]
         ## get mean exactdate per census
         dt_mean <- dt[, .(MeanDate = mean(ExactDate, na.rm = TRUE)), by = CensusID]
@@ -343,7 +343,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
         return(dt_wide)
     }
 
-    pair_interval <- resolve_interval_years_pair_test(tree_data)
+    pair_interval <- resolve_interval_years_pair(tree_data)
 
     for (c in seq.int(from = anchor_start - 1L, to = 1L, by = -1L)) {
         # Work backward one census at a time (c <- c+1).
