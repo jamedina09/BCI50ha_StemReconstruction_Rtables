@@ -1,11 +1,5 @@
-############################################################
-### BIO PARAMETER ESTIMATION (WHOLE DATASET)
-############################################################
-estimate_bio_pars_test <- function(
+estimate_bio_pars_test_v2 <- function(
   x,
-  #### interval_years = NULL,
-  #### interval_col_candidates = c("Bio_IntervalYears", "IntervalYears", "interval_years", "census_interval_years", "CensusIntervalYears"),
-  #### census_ids = NULL,
   mortality_start = c(log(0.01), 0),
   # -----------------------------------------------------------------
   # Measurement error model (DBH remeasurement)
@@ -66,70 +60,26 @@ estimate_bio_pars_test <- function(
   k_shrink_source = c("data", "fixed"),
   k_shrink_fixed = 50,
   # Recruitment max DBH (upper bound for recruits)
-  recruit_max_quantile = 0.999#,
-
+  recruit_max_quantile = 0.999 # ,
 ) {
-
-
-
-
-
     # =====================================================================
     # estimate_bio_pars()
     # =====================================================================
-    # Goal
-    #   Estimate a set of "biologically plausible" parameters that make the
-    #   DP stem-tracking likelihood behave sensibly on a given dataset.
+    # Estimate biologically plausible parameters (growth, mortality, recruitment)
+    # from tracked stems (requires TrueStemID). Returns a nested list with:
+    #  - growth: alpha, gamma, sigma0, sigma1, guardrails, penalties
+    #  - mortality: h0, beta
+    #  - recruitment: lognormal size params and rate lambda
+    #  - shrinkage and measurement_error settings
     #
-    # What this function returns
-    #   A nested list with:
-    #   - growth:
-    #       mu     : mean annual diameter increment (cm / year)
-    #       sigma0 : baseline SD of annual increment (cm / year)
-    #       sigma1 : slope for SD vs DBH (cm / year per cm DBH)
-    #   - mortality:
-    #       h0, beta : parameters of a hazard model for DBH -> NA transitions
-    #   - recruitment:
-    #       meanlog, sdlog : lognormal parameters for recruit DBH (cm)
-    #       recruit_max_dbh: hard-ish upper guardrail for recruit DBH (cm)
-    #       lambda         : recruit rate per available slot per year
-    #   - shrinkage:
-    #       k_shrink  : soft penalty weight for shrinkage (1/cm^2)
-    #       max_shrink: conservative lower bound on annual growth (cm / year)
-    #   - measurement_error:
-    #       echo of SD1/SD2/p_big settings used
-    #   - settings:
-    #       echo of use_measurement_error
-    #
-    # How these parameters are used later
-    #   They are passed into transition_cost_tracks_bio(), which scores a single
-    #   transition between two adjacent censuses. The DP solver then finds the
-    #   lowest-cost set of trajectories consistent with an anchor census.
-    #
-    # Key modeling assumptions
-    #   1) Growth increments (annualized) are approximately Normal with
-    #      heteroskedastic SD and a DBH-dependent mean:
-    #        g = (DBH_{t+1} - DBH_t) / T
-    #        g | DBH_t ~ Normal(mu(DBH_t), sigma(DBH_t)^2)
-    #        mu(DBH)    = alpha + gamma * log(DBH)
-    #        sigma(DBH) = sigma0 + sigma1 * DBH
-    #   2) DBH measurement has nontrivial noise. If enabled, we treat measured
-    #      DBH as:
-    #        DBH_obs = DBH_true + epsilon
-    #      where epsilon is a mixture of a "small" Normal error and a "large"
-    #      Normal error (blunders). The small SD increases with DBH.
-    #   3) Mortality is modeled as a hazard over the census interval:
-    #        hazard(DBH) = h0 * exp(beta * DBH)
-    #        P(death over interval T) = 1 - exp(-hazard(DBH) * T)
-    #   4) Recruitment is modeled as NA -> DBH with:
-    #        - recruit sizes ~ LogNormal(meanlog, sdlog)
-    #        - recruit rate lambda per available NA slot per year
-    #
-    # Practical intent
-    #   This is NOT meant to be a perfect ecological model. It is meant to:
-    #   - make the cost function realistic enough that the DP doesn't "cheat"
-    #     by preferring ID swaps / forced deaths / forced recruits.
-    #   - provide reasonable defaults for sensitivity analysis.
+    # Brief models:
+    #  - mu(DBH) = alpha + gamma * log(DBH)
+    #  - sigma(DBH) = sigma0 + sigma1 * DBH
+    #  - measurement error: small/large Normal mixture (SD1(D)=a*D+b)
+    #  - mortality hazard: h0 * exp(beta * DBH)
+    # Notes:
+    #  - This function supplies reasonable defaults and guardrails for DP.
+    #  - It is not intended as a full ecological analysis.
 
     # ---------------------------------------------------------------------
     # Inputs / arguments (detailed)
@@ -189,36 +139,13 @@ estimate_bio_pars_test <- function(
     #   Upper quantile of observed recruits used as a guardrail for recruit size.
     #   Larger values make recruit_max_dbh more permissive.
 
+    ### SETUP & LIBRARIES
     library(data.table)
     library(MASS)
 
-    # Interval handling
-    # - If `interval_years` (scalar) is provided it will be used as the default.
-    # - If `interval_years` is NULL, we will look for an interval column in the
-    #   input data (one of `interval_col_candidates`). If present we will use
-    #   per-pair / per-row interval values when computing annualized increments,
-    #   mortality exposure and recruitment exposure. If no interval info is
-    #   available, the function will error.
-
-# x <- xrun
-
-# FIXME: REMOVE interval column - we gonna estimate it
-    # interval_years_provided <- !is.null(interval_years)
-    # if (interval_years_provided) {
-    #     interval_years <- as.numeric(interval_years)
-    #     if (!is.finite(interval_years) || interval_years <= 0) {
-    #         stop("interval_years must be positive.", call. = FALSE)
-    #     }
-    # } else {
-    #     # Defer discovery of an interval column until after input cleaning / casting so
-    #     # we can align any candidate interval column with the wide DBH table.
-    #     # (See later where `iw` is constructed.)
-    #     interval_years <- NULL
-    # }
-
-    # ---------------------------------------------------------------------
-    # 1) Clean input
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 1. INPUT CLEANING & VALIDATION
+    # =========================================================================
     # We only use rows where:
     # - DBH is observed and positive
     # - TrueStemID is present (this function is estimating parameters from
@@ -228,9 +155,7 @@ estimate_bio_pars_test <- function(
     # empirical growth/mortality/recruitment signals. If TrueStemID is missing
     # or unreliable, you should not trust the resulting parameters.
     x_dt <- as.data.table(x)
-    # FIXME: do i need to make sure all tags and census are present?
     x_dt <- x_dt[!is.na(DBH) & DBH > 0 & !is.na(TrueStemID)]
-    # x_dt <- x_dt[!is.na(TrueStemID)]
     # Ensure a `species` column exists for consistent downstream handling
     if (!("species" %in% names(x_dt))) {
         x_dt[, species := NA_character_]
@@ -238,16 +163,18 @@ estimate_bio_pars_test <- function(
         x_dt[, species := as.character(species)]
     }
 
-x_dt[, Tag := as.character(Tag)]
-x_dt[, OriginalStemID := as.character(OriginalStemID)]
-x_dt[, TrueStemID := as.character(TrueStemID)]
-x_dt[, CensusID := as.integer(CensusID)]
-x_dt[, DBH := as.numeric(DBH)]
-x_dt[, ExactDate := as.IDate(ExactDate)]
+    x_dt[, Tag := as.character(Tag)]
+    x_dt[, OriginalStemID := as.character(OriginalStemID)]
+    x_dt[, TrueStemID := as.character(TrueStemID)]
+    x_dt[, CensusID := as.integer(CensusID)]
+    x_dt[, DBH := as.numeric(DBH)]
+    x_dt[, ExactDate := as.IDate(ExactDate)]
 
     x_dt[, Tag_TrueStemID := paste(Tag, TrueStemID, sep = "_")]
 
-## ---- Mean dates --------------------------------------------------------
+    # =========================================================================
+    # 2. DATE PROCESSING & COMPLETE-GRID CREATION
+    # =========================================================================
     # mean date per Tag x Census
     mean_date_tag_census <- x_dt[
         , .(MeanExactDate = as.IDate(mean(as.numeric(ExactDate)))),
@@ -279,7 +206,6 @@ x_dt[, ExactDate := as.IDate(ExactDate)]
         full_anchor_data,
         on = .(CensusID)
     ]
-# inspectdf::inspect_na(full_anchor_data)
     # fill missing dates
     full_anchor_data[
         is.na(MeanExactDate),
@@ -292,7 +218,7 @@ x_dt[, ExactDate := as.IDate(ExactDate)]
         TrueStemID,
         CensusID,
         DBH,
-        species, 
+        species,
         ExactDate
     )]
 
@@ -300,20 +226,16 @@ x_dt[, ExactDate := as.IDate(ExactDate)]
         stop("No usable rows after filtering.", call. = FALSE)
     }
 
-    # anchor_data_slim <- dt[, .(Tag, TrueStemID, CensusID, DBH, species, ExactDate)]
-
     anchor_data_complete <- dt[
         full_anchor_data,
         on = .(Tag, TrueStemID, CensusID)
     ]
 
-anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
-    is.na(ExactDate),
-    MeanExactDate,
-    ExactDate
-)][, MeanExactDate := NULL]
-
-# inspectdf::inspect_na(anchor_data_complete)
+    anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
+        is.na(ExactDate),
+        MeanExactDate,
+        ExactDate
+    )][, MeanExactDate := NULL]
 
     ## ---- Add mnemonic (single join) ---------------------------------------
     tag_mnemonic <- unique(dt[, .(Tag, species)])
@@ -324,21 +246,16 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
     ]
     anchor_data_complete[, i.species := NULL]
 
-# inspectdf::inspect_na(anchor_data_complete)
-
-# FIXME: Remove census id columns
-    # if (is.null(census_ids)) {
-        census_ids <- sort(unique(dt$CensusID))
-    # }
+    census_ids <- sort(unique(dt$CensusID))
 
     census_ids <- census_ids[is.finite(census_ids)]
     if (length(census_ids) < 2) {
         stop("Need at least two censuses.", call. = FALSE)
     }
 
-    # ---------------------------------------------------------------------
-    # 2) Wide format
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 3. WIDE-FORMAT CONVERSION
+    # =========================================================================
     # Convert to one row per (Tag, TrueStemID, species) with one column per census.
     # This makes it easy to compute adjacent-census transitions.
     dw <- dcast(
@@ -354,9 +271,9 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
     )
 
 
-    # ---------------------------------------------------------------------
-    # 3) Growth increments
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 4. GROWTH INCREMENT COLLECTION & DIAGNOSTICS
+    # =========================================================================
     # For each adjacent census pair (t0, t1):
     #   d0 = DBH at t0 (cm)
     #   d1 = DBH at t1 (cm)
@@ -388,34 +305,7 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
         (1 - meas_p_big) * (s1^2) + meas_p_big * (meas_sd2^2)
     }
 
-    # If an interval column exists in the input data (one of `interval_col_candidates`),
-    # cast it wide to align with `dw` so we can compute per-pair intervals. Use the
-    # original input `x` (not `dt`) for this cast so we don't drop additional
-    # columns during the DBH-filtering above.
-    # iw <- NULL
-    # iw_col <- NULL
-    # candidates_present <- intersect(interval_col_candidates, names(x))
-    # if (length(candidates_present) > 0L) {
-    #     iw_col <- candidates_present[[1L]]
-    #     # Build interval-wide table from the original `x` (not `dt`) so we
-    #     # retain any interval columns the user provided. Filter rows to the
-    #     # same set used to build `dw` (i.e., DBH observed & TrueStemID present).
-    #     if (iw_col %in% names(x_dt)) {
-    #         ix <- x_dt[, .(
-    #             Tag,
-    #             TrueStemID = as.integer(TrueStemID),
-    #             species = species,
-    #             CensusID = as.integer(CensusID),
-    #             interval = as.numeric(get(iw_col))
-    #         )]
-    #         if (nrow(ix) > 0L) {
-    #             iw <- dcast(ix, Tag + TrueStemID + species ~ CensusID, value.var = "interval")
-    #         }
-    #     }
-    # }
-
     for (i in seq_len(length(census_ids) - 1)) {
-        # i <- 1
         t0 <- as.character(census_ids[i])
         t1 <- as.character(census_ids[i + 1])
 
@@ -428,14 +318,14 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
         d1 <- dw[[t1]][ok]
 
 
-            n_ok <- sum(ok)
-            T1 <- if (t1 %in% names(iw)) iw[[t1]][ok] else rep(NA_real_, n_ok)
-            T0 <- if (t0 %in% names(iw)) iw[[t0]][ok] else rep(NA_real_, n_ok)
-            # Per-row coalesce: prefer T1, fall back to T0 when T1 is missing
-            Tvec <- as.numeric(T1 - T0) / 365.25
-            g <- (d1 - d0) / Tvec
-            v_meas_g <- (meas_var_eps(d0) + meas_var_eps(d1)) / (Tvec^2)
-            T_all <- c(T_all, Tvec)
+        n_ok <- sum(ok)
+        T1 <- if (t1 %in% names(iw)) iw[[t1]][ok] else rep(NA_real_, n_ok)
+        T0 <- if (t0 %in% names(iw)) iw[[t0]][ok] else rep(NA_real_, n_ok)
+        # Per-row coalesce: prefer T1, fall back to T0 when T1 is missing
+        Tvec <- as.numeric(T1 - T0) / 365.25
+        g <- (d1 - d0) / Tvec
+        v_meas_g <- (meas_var_eps(d0) + meas_var_eps(d1)) / (Tvec^2)
+        T_all <- c(T_all, Tvec)
 
         g_all <- c(g_all, g)
         d0_all <- c(d0_all, d0)
@@ -448,23 +338,9 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
         stop("Not enough growth observations.", call. = FALSE)
     }
 
-    # # If interval_years was not provided as a scalar, infer a representative
-    # # interval from the collected per-pair intervals (median) and use that for
-    # # measurement-noise quantile calculations below.
-    # if (!interval_years_provided) {
-    #     if (length(T_all) == 0 || !is.finite(median(T_all, na.rm = TRUE))) {
-    #         stop("Unable to infer interval_years from data; provide 'interval_years' or add an interval column.", call. = FALSE)
-    #     }
-    #     interval_years <- as.numeric(median(T_all, na.rm = TRUE))
-    #     if (!is.finite(interval_years) || interval_years <= 0) {
-    #         stop("Inferred interval_years is not a positive finite number.", call. = FALSE)
-    #     }
-    #     message("[estimate_bio_pars] Inferred interval_years = ", interval_years, " from data intervals.")
-    # }
-
-    # ---------------------------------------------------------------------
-    # 3a) Estimate mean growth: mu(DBH) = alpha + gamma*log(DBH)
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 5. GROWTH MODEL ESTIMATION — MEAN
+    # =========================================================================
     # We fit a simple size-dependent mean model using the starting DBH (d0).
     # For robustness on small datasets, we fall back to a constant mean.
     mu_hat <- mean(g_all)
@@ -484,9 +360,9 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
     mu_pred <- rep(alpha_hat, length(g_all))
     mu_pred[ok_mu] <- alpha_hat + gamma_hat * log(d0_all[ok_mu])
 
-    # ---------------------------------------------------------------------
-    # 3b) Estimate growth variance (sigma0, sigma1)
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 6. GROWTH MODEL ESTIMATION — VARIANCE
+    # =========================================================================
     # We want the *process* SD of annual increments, not the observed SD which
     # includes measurement error.
     #
@@ -520,9 +396,9 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
     sigma0_hat <- max(coef(fit_sd)[1], 1e-4)
     sigma1_hat <- max(coef(fit_sd)[2], 0)
 
-    # ---------------------------------------------------------------------
-    # 4) Shrinkage penalty (k_shrink)
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 7. SHRINKAGE PENALTY ESTIMATION (k_shrink)
+    # =========================================================================
     # Shrinkage here means d1 < d0 (negative increment), which can occur due to:
     # - real biological shrinkage (limited)
     # - measurement error (common)
@@ -570,9 +446,9 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
         k_shrink_hat <- k_shrink_hat_est
     }
 
-    # ---------------------------------------------------------------------
-    # 5) Mortality model
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 8. MORTALITY MODEL ESTIMATION
+    # =========================================================================
     # Mortality is inferred from TrueStemID tracks as:
     #   alive at t0 (DBH observed) and missing at t1 (DBH NA)
     #
@@ -595,36 +471,10 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
         at_risk <- !is.na(dw[[t0]])
         if (!any(at_risk)) next
 
-        # Determine intervals for these at-risk rows, prefer per-row iw values (t1 then t0), else scalar
-        # if (!is.null(iw) && (t1 %in% names(iw) || t0 %in% names(iw))) {
-                    # n_at <- sum(at_risk)
-            # T1 <- if (t1 %in% names(iw)) iw[[t1]][ok] else rep(NA_real_, n_ok)
-            # T0 <- if (t0 %in% names(iw)) iw[[t0]][ok] else rep(NA_real_, n_ok)
-            # Per-row coalesce: prefer T1, fall back to T0 when T1 is missing
-            # Tvec <- as.numeric(T1 - T0) / 365.25
-
-            n_at <- sum(at_risk)
-            T1m <- if (t1 %in% names(iw)) iw[[t1]][at_risk] else rep(NA_real_, n_at)
-            T0m <- if (t0 %in% names(iw)) iw[[t0]][at_risk] else rep(NA_real_, n_at)
-            Tm <- as.numeric(T1m - T0m) / 365.25
-            # missing_idx_m <- !is.finite(Tm) | (Tm <= 0)
-            # if (any(missing_idx_m)) {
-            #     Tm[missing_idx_m] <- T0m[missing_idx_m]
-            # }
-            # bad <- !is.finite(Tm) | (Tm <= 0)
-            # if (any(bad)) {
-            #     if (!is.null(interval_years) && is.finite(interval_years) && (interval_years > 0)) {
-            #         Tm[bad] <- as.numeric(interval_years)
-            #     } else {
-            #         stop("Missing or invalid interval values for mortality rows and no scalar 'interval_years' provided.", call. = FALSE)
-            #     }
-            # }
-        # } else {
-        #     if (is.null(interval_years) || !is.finite(interval_years) || interval_years <= 0) {
-        #         stop("No interval information found: provide 'interval_years' or add an interval column.", call. = FALSE)
-        #     }
-        #     Tm <- rep(as.numeric(interval_years), sum(at_risk))
-        # }
+        n_at <- sum(at_risk)
+        T1m <- if (t1 %in% names(iw)) iw[[t1]][at_risk] else rep(NA_real_, n_at)
+        T0m <- if (t0 %in% names(iw)) iw[[t0]][at_risk] else rep(NA_real_, n_at)
+        Tm <- as.numeric(T1m - T0m) / 365.25
 
         d0_m <- c(d0_m, dw[[t0]][at_risk])
         died <- c(died, as.integer(is.na(dw[[t1]][at_risk])))
@@ -660,9 +510,9 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
     h0_hat <- exp(fit_m$par[1])
     beta_hat <- fit_m$par[2]
 
-    # ---------------------------------------------------------------------
-    # 6) Recruitment model
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 9. RECRUITMENT MODEL ESTIMATION
+    # =========================================================================
     # We identify "recruitment events" from TrueStemID tracks as:
     #   missing at t0 (DBH NA) and observed at t1 (DBH > 0)
     #
@@ -677,7 +527,6 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
 
 
     for (i in seq_len(length(census_ids) - 1)) {
-        # i <- 2
         t0 <- as.character(census_ids[i])
         t1 <- as.character(census_ids[i + 1])
 
@@ -694,51 +543,25 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
 
         recruit_dbh <- c(recruit_dbh, dw[[t1]][rec])
 
-        # Count risk-years using per-row intervals if available (prefer t1 then t0 per-row), else scalar
-        # if (!is.null(iw) && (t1 %in% names(iw) || t0 %in% names(iw))) {
-            #         n_at <- sum(at_risk)
-            # T1m <- if (t1 %in% names(iw)) iw[[t1]][at_risk] else rep(NA_real_, n_at)
-            # T0m <- if (t0 %in% names(iw)) iw[[t0]][at_risk] else rep(NA_real_, n_at)
-            # Tm <- as.numeric(T1m - T0m) / 365.25
+        n_at <- sum(at_risk)
+        T1r <- if (t1 %in% names(iw)) iw[[t1]][at_risk] else rep(NA_real_, n_at)
+        T0r <- if (t0 %in% names(iw)) iw[[t0]][at_risk] else rep(NA_real_, n_at)
+        T_r <- as.numeric(T1r - T0r) / 365.25
 
-            n_at <- sum(at_risk)
-            T1r <- if (t1 %in% names(iw)) iw[[t1]][at_risk] else rep(NA_real_, n_at)
-            T0r <- if (t0 %in% names(iw)) iw[[t0]][at_risk] else rep(NA_real_, n_at)
-            T_r <- as.numeric(T1r - T0r) / 365.25
-            # missing_idx_r <- !is.finite(T_r) | (T_r <= 0)
-            # if (any(missing_idx_r)) {
-            #     T_r[missing_idx_r] <- T0r[missing_idx_r]
-            # }
-            # bad <- !is.finite(T_r) | (T_r <= 0)
-            # if (any(bad)) {
-            #     if (!is.null(interval_years) && is.finite(interval_years) && (interval_years > 0)) {
-            #         T_r[bad] <- as.numeric(interval_years)
-            #     } else {
-            #         stop("Missing or invalid interval values for recruitment rows and no scalar 'interval_years' provided.", call. = FALSE)
-            #     }
-            # }
-            total_time_at_risk <- total_time_at_risk + sum(T_r, na.rm = TRUE)
+        total_time_at_risk <- total_time_at_risk + sum(T_r, na.rm = TRUE)
         # Also track any pair-level fills/drops as part of recruitment accounting
         if (exists("T1r") && exists("T0r")) {
             pairs_filled_with_scalar_count <- pairs_filled_with_scalar_count + sum(!is.finite(T1r) & is.finite(T0r))
             pairs_dropped_count <- pairs_dropped_count + sum(!is.finite(T1r) & !is.finite(T0r))
         }
-        # } else {
-        #     if (is.null(interval_years) || !is.finite(interval_years) || interval_years <= 0) {
-        #         stop("No interval information found: provide 'interval_years' or add an interval column.", call. = FALSE)
-        #     }
-        #     total_time_at_risk <- total_time_at_risk + sum(rep(as.numeric(interval_years), sum(at_risk)))
-        # }
 
         n_risk <- n_risk + sum(at_risk)
         n_rec <- n_rec + sum(rec)
     }
-# FIXME: does this need to be longer? be above?
     recruit_dbh <- recruit_dbh[is.finite(recruit_dbh) & recruit_dbh > 0]
     # Bookkeeping for recruitment missing intervals
     # (we tracked contributions to total_time_at_risk above)
 
-# FIXME: Do i need to control here for maximum recruitment allowed?
     if (length(recruit_dbh) >= 2) {
         fit_r <- fitdistr(recruit_dbh, "lognormal")
         mu_r <- fit_r$estimate["meanlog"]
@@ -772,9 +595,9 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
         0
     }
 
-    # ---------------------------------------------------------------------
-    # 7) Shrink hard bound (max_shrink) from measurement + data
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 10. GUARDRAILS: SHRINKAGE (max_shrink)
+    # =========================================================================
     # max_shrink is a conservative lower bound on annual growth (cm/year).
     # It is used as a guardrail to reject *absurd* shrinkage that is very
     # unlikely to be real or due to measurement error.
@@ -798,16 +621,15 @@ anchor_data_complete <- anchor_data_complete[, ExactDate := fifelse(
     long_time_interval <- c()
 
     for (i in seq_len(length(census_ids) - 1)) {
-        # i <- 1
         t0 <- as.character(census_ids[i])
         t1 <- as.character(census_ids[i + 1])
         if (!all(c(t0, t1) %in% names(dw))) next
-            T1mt <- iw[[t1]]
-            T0mt <- iw[[t0]]
-            long_time_interval <- as.numeric(T1mt - T0mt) / 365.25
+        T1mt <- iw[[t1]]
+        T0mt <- iw[[t0]]
+        long_time_interval <- as.numeric(T1mt - T0mt) / 365.25
     }
 
-time_interval_median <- median(long_time_interval, na.rm = TRUE)
+    time_interval_median <- median(long_time_interval, na.rm = TRUE)
 
     meas_lower_quantile_g <- function(p, d_typ, median_time_interval = time_interval_median) {
         p <- as.numeric(p)
@@ -879,9 +701,9 @@ time_interval_median <- median(long_time_interval, na.rm = TRUE)
         max_shrink_hat <- max_shrink_hat_est
     }
 
-    # ---------------------------------------------------------------------
-    # 7b) Extreme-growth guardrails (upper tail)
-    # ---------------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # GUARDRAILS: EXTREME GROWTH (upper tail)
+    # -------------------------------------------------------------------------
     # We treat very large positive increments as a likely sign of an incorrect
     # match (ID swap, mis-measurement, etc.). To avoid the DP taking such edges,
     # we set a conservative (permissive) hard upper bound, and also provide a
@@ -1010,9 +832,9 @@ time_interval_median <- median(long_time_interval, na.rm = TRUE)
         k_growth_hat <- k_growth_hat_est
     }
 
-    # ---------------------------------------------------------------------
-    # 8) Return parameters
-    # ---------------------------------------------------------------------
+    # =========================================================================
+    # 11. RETURN PARAMETERS (structured list)
+    # =========================================================================
     # The returned structure is intentionally aligned with:
     # - bio_pars_to_transition_args()
     # - transition_cost_tracks_bio()
