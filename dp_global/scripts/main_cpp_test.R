@@ -360,7 +360,7 @@ DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
 ############################################################
 ### 3) Source project code
 ############################################################
-source(here("dp_global", "R", "dp_global_biol.R"))
+source(here("dp_global", "R", "dp_global_main.R"))
 source(here("dp_global", "R", "sensitivity_transition_cost_bio.R"))
 source(here("dp_global", "R", "realism_calibration.R"))
 source(here("dp_global", "R", "k_tuning_viz.R"))
