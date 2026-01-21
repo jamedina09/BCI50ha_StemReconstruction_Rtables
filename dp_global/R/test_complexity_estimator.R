@@ -12,7 +12,7 @@ source(here("dp_global", "R", "estimate_dp_complexity_function.R"))
 # Filenames
 list.files(here("data_simulation", "data"), pattern = "^simulated.*\\.csv$")
 
-filename <- "simulated_data_merr_3sp_inc1_c2c5c8_p1p7_dec1_c2c5c8_p0p1.csv"
+filename <- "simulated_data_1.csv"
 data_path <- here("data_simulation", "data", filename)
 
 cat("Estimating DP computational complexity for all tags...\n\n")
