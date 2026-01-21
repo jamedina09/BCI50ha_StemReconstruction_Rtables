@@ -3,7 +3,6 @@
 # Core dynamic programming (MAP and marginal DP functions)
 ############################################################
 
-# match_stems_dp_global_backward_marginals_batch_test <- function(tree_data,
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                                 min_growth = -Inf,
                                                                 max_growth = Inf,
@@ -154,35 +153,35 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Need a fully-anchored endpoint
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     # FIXME: match_stems_optimal_backward uses time too
-    #* if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
-    #*     vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
-    #*     K_used <- as.integer(min(max_obs, max_tracks))
-    #*     n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
-    #*     tree_data[, `:=`(
-    #*         DP_KUsed = K_used,
-    #*         DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-    #*         DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
-    #*     )]
-    #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-    #*     out <- ensure_posterior_columns(out)
-    #*     return(out)
-    #* }
+     if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
+         vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+         K_used <- as.integer(min(max_obs, max_tracks))
+         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+         tree_data[, `:=`(
+             DP_KUsed = K_used,
+             DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+             DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+         )]
+         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+         out <- ensure_posterior_columns(out)
+         return(out)
+     }
     anchor_ids <- sort(unique(anchor_obs$TrueStemID))
     anchor_ids <- anchor_ids[!is.na(anchor_ids)]
     # FIXME: match_stems_optimal_backward uses time too
-    #* if (length(anchor_ids) == 0L) {
-    #*     vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
-    #*     K_used <- as.integer(min(max_obs, max_tracks))
-    #*     n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
-    #*     tree_data[, `:=`(
-    #*         DP_KUsed = K_used,
-    #*         DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-    #*         DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
-    #*     )]
-    #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-    #*     out <- ensure_posterior_columns(out)
-    #*     return(out)
-    #* }
+     if (length(anchor_ids) == 0L) {
+         vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
+         K_used <- as.integer(min(max_obs, max_tracks))
+         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+         tree_data[, `:=`(
+             DP_KUsed = K_used,
+             DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+             DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+         )]
+         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+         out <- ensure_posterior_columns(out)
+         return(out)
+     }
 
     # Choose K (tracks) same logic as the MAP DP
     births_needed <- if (length(obs_counts) >= 2L) sum(pmax(0L, diff(obs_counts))) else 0L
@@ -207,12 +206,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
     )]
     # FIXME: match_stems_optimal_backward uses time too
-    #* if (K < max(obs_counts)) {
-    #*     vcat(prefix, "K too small for observed counts (K=", K, ", max_obs=", max(obs_counts), "). Falling back to igraph.")
-    #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-    #*     out <- ensure_posterior_columns(out)
-    #*     return(out)
-    #* }
+    if (K < max(obs_counts)) {
+        vcat(prefix, "K too small for observed counts (K=", K, ", max_obs=", max(obs_counts), "). Falling back to igraph.")
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        return(out)
+    }
 
     vcat(prefix, "Chosen K=", K, " tracks; max theoretical states=", format(max(n_states_by_census, na.rm = TRUE), scientific = TRUE))
 
@@ -231,12 +230,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         n_obs <- length(obs_dbh[[cc]])
         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
         # FIXME: match_stems_optimal_backward uses time too
-        #* if (is.null(mat)) {
-        #*     vcat(prefix, "State enumeration exceeded max_states at CensusID=", cc, " (n_obs=", n_obs, "). Falling back to igraph.")
-        #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-        #*     out <- ensure_posterior_columns(out)
-        #*     return(out)
-        #* }
+        if (is.null(mat)) {
+            vcat(prefix, "State enumeration exceeded max_states at CensusID=", cc, " (n_obs=", n_obs, "). Falling back to igraph.")
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            return(out)
+        }
         state_mats[[cc]] <- mat
         state_keys[[cc]] <- apply(mat, 1L, state_key)
 
@@ -247,12 +246,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     anchor_obs_ordered <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     anchor_track_idx <- match(anchor_obs_ordered$TrueStemID, track_ids)
     # FIXME: match_stems_optimal_backward uses time too
-    #* if (any(is.na(anchor_track_idx))) {
-    #*     vcat(prefix, "Anchor TrueStemID not found in track_ids. Falling back to igraph.")
-    #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-    #*     out <- ensure_posterior_columns(out)
-    #*     return(out)
-    #* }
+    if (any(is.na(anchor_track_idx))) {
+        vcat(prefix, "Anchor TrueStemID not found in track_ids. Falling back to igraph.")
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        return(out)
+    }
 
     # Life-cycle phase constraint helpers (internal representation)
     # Phase values are in {0,1,2}. For speed, we encode the phase vector as a compact
@@ -394,12 +393,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         next_keys <- keys_full[[cc + 1L]]
         n_next <- length(next_keys)
-        #* if (n_next == 0L) {
-        #*     vcat(prefix, "No reachable next full-states at CensusID=", cc + 1L, ". Falling back to igraph.")
-        #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-        #*     out <- ensure_posterior_columns(out)
-        #*     return(out)
-        #* }
+        if (n_next == 0L) {
+            vcat(prefix, "No reachable next full-states at CensusID=", cc + 1L, ". Falling back to igraph.")
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            return(out)
+        }
         next_index <- seq_len(n_next)
         names(next_index) <- next_keys
         logB_next <- as.numeric(logB[[cc + 1L]])
@@ -410,12 +409,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # Build assignment-key -> state index for next census (since phase differs but assignment cost uses assignment)
         next_assign_key <- vapply(next_assign_list, state_key, character(1L))
         next_assign_row_idx <- match(next_assign_key, state_keys[[cc + 1L]])
-        #* if (any(is.na(next_assign_row_idx))) {
-        #*     # Should not happen; indicates mismatch in state enumeration.
-        #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-        #*     out <- ensure_posterior_columns(out)
-        #*     return(out)
-        #* }
+        if (any(is.na(next_assign_row_idx))) {
+            # Should not happen; indicates mismatch in state enumeration.
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            return(out)
+        }
 
         # Pre-decode next phases and next track-DBH vectors (shared across all current states)
         phase_tp1_by_next <- vector("list", n_next)
@@ -451,11 +450,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             ## dcast to wide format
             dt_wide <- dcast(dt_mean, 1 ~ CensusID, value.var = "MeanDate")
             ## compute interval between t0 and t1
-            # interval_val <- (as.numeric(dt_wide[[as.character(t1)]]) - as.numeric(dt_wide[[as.character(t0)]])) / 365.25
             return(dt_wide)
         }
 
-        # pair_interval <- resolve_interval_years_pair(tree_data, t0 = cc, t1 = cc + 1L, interval_years = interval_years)
         pair_interval <- resolve_interval_years_pair_test(tree_data)
 
         for (i in seq_len(n_states_cc)) {
@@ -558,12 +555,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             }
         }
 
-        #* if (length(curr_keys_list) == 0L) {
-        #*     vcat(prefix, "DP produced no states at CensusID=", cc, ". Falling back to igraph.")
-        #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-        #*     out <- ensure_posterior_columns(out)
-        #*     return(out)
-        #* }
+        if (length(curr_keys_list) == 0L) {
+            vcat(prefix, "DP produced no states at CensusID=", cc, ". Falling back to igraph.")
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            return(out)
+        }
 
         keys_full[[cc]] <- unlist(curr_keys_list, use.names = FALSE)
         assign_full[[cc]] <- curr_assign_list
@@ -571,12 +568,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         vit_cost[[cc]] <- curr_vit
         vit_ptr[[cc]] <- curr_ptr
 
-        #* if (used_edges == 0L) {
-        #*     vcat(prefix, "No feasible edges at CensusID=", cc, ". Falling back to igraph.")
-        #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-        #*     out <- ensure_posterior_columns(out)
-        #*     return(out)
-        #* }
+        if (used_edges == 0L) {
+            vcat(prefix, "No feasible edges at CensusID=", cc, ". Falling back to igraph.")
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            return(out)
+        }
         edges[[cc]] <- data.table::data.table(
             from_idx = from_idx[seq_len(used_edges)],
             to_idx = to_idx[seq_len(used_edges)],
@@ -592,7 +589,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     vcat(prefix, "Decoding MAP path and writing ReconstructedStemID ...")
     start_idx <- which.min(vit_cost[[1L]])
     if (length(start_idx) == 0L || !is.finite(vit_cost[[1L]][start_idx])) {
-        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
         return(out)
     }
@@ -601,7 +598,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     for (cc in seq_len(anchor_start - 1L)) {
         nxt <- vit_ptr[[cc]][map_idx[cc]]
         if (!is.finite(nxt) || is.na(nxt) || nxt < 1L) {
-            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             return(out)
         }
@@ -613,7 +610,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (length(obs_idx) == 0L) next
         sv <- assign_full[[cc]][[map_idx[cc]]]
         if (length(sv) != length(obs_idx)) {
-            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             return(out)
         }
@@ -634,20 +631,20 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     for (cc in seq_len(anchor_start - 1L)) {
         ed <- edges[[cc]]
-        #* if (is.null(ed) || nrow(ed) == 0L) {
-        #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-        #*     out <- ensure_posterior_columns(out)
-        #*     return(out)
-        #* }
+        if (is.null(ed) || nrow(ed) == 0L) {
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            return(out)
+        }
         la_from <- logalpha[[cc]][ed$from_idx]
         vals <- la_from + ed$logw
         dt <- data.table::data.table(to_idx = ed$to_idx, v = vals)
         dt <- dt[is.finite(v)]
-        #* if (nrow(dt) == 0L) {
-        #*     out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, interval_years, anchor_start)
-        #*     out <- ensure_posterior_columns(out)
-        #*     return(out)
-        #* }
+        if (nrow(dt) == 0L) {
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            return(out)
+        }
         la_next_dt <- dt[, .(logalpha = log_sum_exp(v)), by = to_idx]
         la_next <- rep.int(-Inf, length(keys_full[[cc + 1L]]))
         la_next[la_next_dt$to_idx] <- la_next_dt$logalpha
