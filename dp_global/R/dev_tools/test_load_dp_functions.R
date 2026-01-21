@@ -12,7 +12,7 @@ tryCatch({
   quit(status = 1)
 })
 
-rdata_file <- here::here("dp_global", "R", "dp_functions.rdata")
+rdata_file <- here::here("dp_global", "R", "dev_tools", "dp_functions.rdata")
 if (!file.exists(rdata_file)) {
   cat("[dev/test] ERROR: rdata file not found:", rdata_file, "\n")
   quit(status = 1)

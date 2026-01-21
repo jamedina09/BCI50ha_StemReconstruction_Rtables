@@ -24,7 +24,7 @@ load_dp_functions <- function(project_root = here::here(),
                                   "dp_global_diag.R"
                               ),
                               try_compile_cpp = TRUE,
-                              out_file = file.path("dp_global", "R", "dp_functions.rdata"),
+                              out_file = file.path("dp_global", "R", "dev_tools", "dp_functions.rdata"),
                               env_parent = baseenv()) {
     if (!requireNamespace("here", quietly = TRUE)) stop("Please install the 'here' package")
 
@@ -133,7 +133,7 @@ load_dp_functions_rdata <- function(file, compile_cpp = TRUE, cleanup = TRUE) {
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 # Helper: load .rdata and attach functions into an environment (optionally compile C++ source)
-attach_dp_functions_from_rdata <- function(file = file.path("dp_global", "R", "dp_functions.rdata"),
+attach_dp_functions_from_rdata <- function(file = file.path("dp_global", "R", "dev_tools", "dp_functions.rdata"),
                                            envir = .GlobalEnv,
                                            compile_cpp = TRUE,
                                            cleanup = TRUE) {
