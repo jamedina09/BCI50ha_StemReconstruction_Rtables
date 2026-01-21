@@ -441,7 +441,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         curr_vit <- numeric(0)
         curr_ptr <- integer(0)
 
-        resolve_interval_years_pair_test <- function(tree_data) {
+        resolve_interval_years_pair <- function(tree_data) {
             dt <- tree_data[, .(CensusID, ExactDate)]
             ## get mean exactdate per census
             dt_mean <- dt[, .(MeanDate = mean(ExactDate, na.rm = TRUE)), by = CensusID]
@@ -453,7 +453,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             return(dt_wide)
         }
 
-        pair_interval <- resolve_interval_years_pair_test(tree_data)
+        pair_interval <- resolve_interval_years_pair(tree_data)
 
         for (i in seq_len(n_states_cc)) {
             # i <- 1L # For testing only
@@ -745,7 +745,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         tree_data[obs_idx, (names(assign_list)) := assign_list]
     }
 
-    tree_data <- add_constraint_violation_test(
+    tree_data <- add_constraint_violation(
         tree_data,
         id_col = "ReconstructedStemID",
         min_growth = min_growth,

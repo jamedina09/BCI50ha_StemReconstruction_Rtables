@@ -3,69 +3,7 @@
 # Diagnostics, posterior bins and plotting helpers
 ############################################################
 
-add_constraint_violation <- function(x, id_col = "ReconstructedStemID", min_growth, max_growth, interval_years = NULL) {
-    # PURPOSE
-    # - Post-hoc diagnostic: flag potentially implausible links along each reconstructed
-    #   track when the *implied* per-year growth between adjacent censuses falls outside
-    #   [min_growth, max_growth].
-    #
-    # INPUTS
-    # - x: data.table with at least id_col, DBH, CensusID.
-    # - id_col: which ID column defines a track (defaults to ReconstructedStemID).
-    # - min_growth/max_growth: allowable annual growth bounds (cm/year).
-    # - interval_years: years between consecutive censuses (assumed constant here).
-    #
-    # OUTPUT
-    # - `x` with/updated `ConstraintViolation` logical column (TRUE for flagged rows).
-    #
-    # NOTES
-    # - Only evaluates consecutive censuses (CensusID increases by 1).
-    # - Flags the earlier observation in the violating pair (so the “bad link” is easy
-    #   to see in time series plots).
-    if (!("ConstraintViolation" %in% names(x))) {
-        x[, ConstraintViolation := NA]
-    }
-    if (!all(c(id_col, "DBH", "CensusID") %in% names(x))) {
-        return(x)
-    }
-
-    # Cache per-pair interval lookups to avoid repeated resolution calls
-    pair_interval_cache <- new.env(parent = emptyenv())
-    get_pair_interval <- function(t0, t1) {
-        key <- paste0(as.integer(t0), "_", as.integer(t1))
-        if (exists(key, envir = pair_interval_cache, inherits = FALSE)) {
-            return(get(key, envir = pair_interval_cache, inherits = FALSE))
-        }
-        v <- resolve_interval_years_pair(x, t0 = t0, t1 = t1, interval_years = interval_years)
-        assign(key, v, envir = pair_interval_cache)
-        v
-    }
-    data.table::setorder(x, CensusID)
-    ids <- unique(x[[id_col]])
-    ids <- ids[!is.na(ids)]
-    if (length(ids) == 0L) {
-        return(x)
-    }
-    for (sid in ids) {
-        ii <- which(x[[id_col]] == sid & !is.na(x$DBH))
-        if (length(ii) < 2L) next
-        ii <- ii[order(x$CensusID[ii])]
-        for (k in seq_len(length(ii) - 1L)) {
-            i0 <- ii[k]
-            i1 <- ii[k + 1L]
-            if (x$CensusID[i1] != x$CensusID[i0] + 1L) next
-            pair_T <- get_pair_interval(x$CensusID[i0], x$CensusID[i1])
-            g <- (x$DBH[i1] - x$DBH[i0]) / pair_T
-            cond <- isTRUE((g < min_growth) | (g > max_growth))
-            if (cond || isTRUE(x$ConstraintViolation[i0])) {
-                x$ConstraintViolation[i0] <- TRUE
-            }
-        }
-    }
-    x
-}
-
-add_constraint_violation_test <- function(x, id_col = "ReconstructedStemID", min_growth, max_growth, pair_interval) {
+add_constraint_violation <- function(x, id_col = "ReconstructedStemID", min_growth, max_growth, pair_interval) {
     # PURPOSE
     # - Post-hoc diagnostic: flag potentially implausible links along each reconstructed
     #   track when the *implied* per-year growth between adjacent censuses falls outside
