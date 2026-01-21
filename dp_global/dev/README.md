@@ -2,6 +2,10 @@
 
 This folder contains development tools for the dp_global stem-matching algorithm, including regression tests, benchmarks, profiling scripts, and output files. dp_global is a dynamic programming-based approach for matching tree stems across multiple censuses in forest ecology datasets, accounting for biological processes like growth, mortality, and recruitment.
 
+**Recent changes (2026-01-21):**
+- The `--census_interval_years` flag has been removed from runners. Tests and examples now prefer `interval_years = NULL` (detects per-row `Bio_IntervalYears`/`interval_years` columns) or passing a scalar `interval_years` explicitly.
+- Output now supports `--WRITE_DP_RDS=TRUE` to produce binary `.rds` artifacts alongside CSV/PDF outputs; update tests that inspect outputs accordingly.
+
 ## Prerequisites
 
 - R environment with required packages: `data.table`, `Rcpp` (optional for C++ acceleration)

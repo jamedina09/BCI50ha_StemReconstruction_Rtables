@@ -77,6 +77,10 @@ Rscript dp_global/dev/test_transition_cost_tracks_bio_batch.R
 
 The dev tests compare outputs and report discrepancies; use these to validate the C++ implementation after changes.
 
+**Notes:**
+- The legacy `test_rcpp_implementation.R` was removed; use the `dp_global/dev/` test suite to validate the C++ implementation and to exercise end-to-end behavior through `main_cpp.R` when needed.
+- When running end-to-end checks, pass `--WRITE_DP_RDS=TRUE` to the run command to ensure `.rds` outputs are produced and inspected by R-based tests (preferred over parsing CSVs for validation).
+
 ## Recent changes
 
 - The C++ implementation and the R wrapper were recently updated to improve performance and fix corner-case behavior. If you edit the C++ or wrapper, re-run the dev validation test and the profiler to ensure correctness and to inspect performance.
