@@ -167,15 +167,38 @@ events = list(
 ## Output Files
 
 ### Main Dataset: `simulated_data_1.csv`
-Columns:
-- `Species`: Species name
-- `Tag`: Tree identifier (unique tree ID)
-- `OriginalStemID`: True stem ID within tree (1, 2, 3, etc.)
-- `TrueStemID`: Observed stem ID (NA for censuses before anchor census to simulate unreliable early IDs)
-- `CensusID`: Census number (1-9)
-- `ExactDate`: Date of census (YYYY-MM-DD format, starting from 1980-01-01)
-- `DBH`: Observed DBH (cm, with measurement error applied)
-- `CensusInterval`: Years between this census and the previous one (variable around 5 years)
+This CSV contains the longitudinal stem-level measurements simulated by `simulate_data.R`. Each row is a single (Tag, OriginalStemID, CensusID) observation. Below are the columns, types, units, and NA semantics to help you load and use the dataset:
+
+| Column | Type | Units / format | Description & NA semantics |
+|--------|------|----------------|----------------------------|
+| `Species` | character | N/A | Species code/name for the tree. |
+| `Tag` | integer / character | N/A | Unique tree identifier (grouping for stems). Use together with `OriginalStemID` to refer to a physical stem. |
+| `OriginalStemID` | integer | N/A | The true stem index within the tree (1,2,3,...). Identifies a specific stem across censuses. |
+| `TrueStemID` | integer or NA | N/A | Observed/masked stem ID used to emulate field-recorded IDs. For censuses before `anchor_start_census` this column is intentionally set to `NA` to simulate unreliable early IDs; values become available (non-NA) at and after the anchor census. |
+| `CensusID` | integer | N/A | Census ordinal (1 = first census, 2 = second, ...). Used for ordering and grouping observations. |
+| `CensusInterval` | numeric or NA | years | Interval (years) between this census and the previous census. `NA` for the first census or if interval is unknown. Use `interval_years = NULL` in downstream DP functions to prefer per-row intervals when present. |
+| `DBH` | numeric or NA | cm | Observed DBH value after applying measurement error. Missing (`NA`) means unobserved (stem not recorded in that census). |
+| `ExactDate` | character (YYYY-MM-DD) | date | Exact calendar date of the census for this row. Useful to compute intervals directly if `CensusInterval` is missing or to verify time continuity. |
+
+Notes & usage tips:
+- Rows with `DBH = NA` indicate the stem was not observed at that census (true absence or below detection threshold); downstream routines should handle missing DBH appropriately.
+- `TrueStemID` is the field-style ID used to emulate realistic matching challenges. The simulation sets `TrueStemID = NA` before the configured `anchor_start_census` to simulate masked early IDs.
+- `CensusInterval` is provided per-row but you can compute intervals from `ExactDate` if preferred (e.g., for irregular sampling). When running the DP/marginal inference, set `interval_years = NULL` to allow functions to detect per-pair intervals automatically from the data (see `dp_global/R/dp_global_utils.R::resolve_interval_years`).
+
+Quick R example (validate file & anchor census):
+
+```r
+library(data.table)
+dt <- fread("data/simulated_data_1.csv")
+# basic summary
+str(dt)
+# identify anchor census(es) (where TrueStemID becomes available)
+sort(unique(dt[!is.na(TrueStemID), CensusID]))
+# check first few rows for a Tag
+dt[Tag == 1L, .SD[1:12]]
+```
+
+This detailed schema should help you connect simulation outputs to the DP workflow and tests. If you want, I can also add a short example that joins `simulated_data_1.csv` with estimated bio-parameters to produce `Bio_*` columns used by `dp_global` functions.
 
 ### Diagnostic Plots
 - `simulated_data_1.pdf`: Species-level growth trajectories (one page per species)

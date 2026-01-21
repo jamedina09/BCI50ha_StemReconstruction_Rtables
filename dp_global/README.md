@@ -70,7 +70,12 @@ source("dp_global/scripts/main_cpp.R")
 Rscript dp_global/scripts/main_cpp.R
 ```
 
-> For running experiments on a single machine, prefer `bin/run_dp_future.R` (concurrent runner). See `RUN_DP_README.md` for the legacy serial runner `bin/run_dp_full_cpp.sh` and historical notes about GNU-parallel usage.
+> For running experiments on a single machine, prefer `bin/run_dp_future.R` (concurrent runner) or `bin/run_dp_future_single.R` (fixed-config helper). See `bin/README.md` for runner usage and notes.
+
+**Recent changes (2026-01-21):**
+- `--census_interval_years` flag removed; prefer `interval_years` (scalar) or provide per-pair columns (e.g., `Bio_IntervalYears`) and use `interval_years = NULL` to detect intervals from the data. See `dp_global/R/dp_global_utils.R::resolve_interval_years()`.
+- Added `--WRITE_DP_RDS=TRUE` to request `.rds` output (recommended alongside CSV).
+- Runner scripts: `bin/run_dp_future.R` and `bin/run_dp_future_single.R` are the recommended entrypoints; legacy `.sh` wrappers have been removed.
 
 ### File Structure
 
@@ -541,6 +546,20 @@ source("dp_global/R/realism_calibration.R")
 # Analyze reconstruction quality
 ```
 
+### Files written by `main_cpp.R`
+
+When you run `dp_global/scripts/main_cpp.R` (or via `bin/run_dp_future.R`), outputs are written to a run-specific directory under `dp_global/output/` (the driver prints `out_dir` on startup). Common files written by the run include:
+
+- `run_started.txt`, `run_finished.txt` — simple markers indicating job start/finish timestamps
+- `run_parameters_full.txt` — full parameter dump and command-line overrides for reproducibility
+- `stem_reconstruction_dp_global_rcpp.csv` — main reconstruction CSV (also written as RDS when `--WRITE_DP_RDS=TRUE`)
+- `stem_reconstruction_dp_global_rcpp.rds` — binary R object of the reconstruction (written when `--WRITE_DP_RDS=TRUE`)
+- `stem_reconstruction_dp_global_rcpp.pdf` — per-tag reconstruction plots (if enabled)
+- `tag_<which_tag>_realism_summary_rcpp.csv`, `tag_<which_tag>_realism_by_tag_rcpp.csv`, `tag_<which_tag>_realism_tuning_suggestions_rcpp.csv` — realism report tables when `--RUN_REALISM_REPORT=TRUE`
+- `simulated_all_transition_cost_sweeps_rcpp.rds`, `simulated_all_transition_cost_jumps_rcpp.csv`, `simulated_all_transition_cost_jumps_rcpp.rds` — sensitivity sweep outputs when `--SENSITIVITY_MODE` enables write
+
+Note: enabling `--WRITE_DP_RDS=TRUE` is recommended when you plan to post-process reconstructions in R (it preserves types and attributes without re-parsing CSVs). If you need a different output location, set `--PROJECT_ROOT` and `--BATCH_TS` or supply `OUT_DIR_NAME` via an override to control the output directory naming.
+
 ---
 
 ## Parameter Estimation
@@ -866,7 +885,7 @@ FORCE_ONE_SPECIES_PARAMETERS=FALSE
 # Census configuration
 which_tag=1
 anchor_start_census=7
-census_interval_years=5
+interval_years=5  # scalar interval; set to NULL to detect per-pair values from data (e.g., via Bio_IntervalYears), or pass --interval_years=5
 
 # Processing settings
 RUN_ALL_TAGS=TRUE
@@ -876,6 +895,7 @@ USE_MEASUREMENT_ERROR=TRUE  # Always enabled
 
 # Output settings
 WRITE_DP_CSV=TRUE
+WRITE_DP_RDS=TRUE
 WRITE_DP_PDF=TRUE
 DP_PDF_INCLUDE_REFERENCE=TRUE
 PLOT_PDF_ONE_TAG_ONLY=FALSE
@@ -1144,7 +1164,7 @@ for (sp in unique(xraw$species)) {
   # ensure an interval column exists (e.g., `Bio_IntervalYears`). Example: `interval_col_candidates = "Bio_IntervalYears"`.
   bio_pars_list[[sp]] <- estimate_bio_pars(
     sp_data,
-    interval_years = census_interval_years,
+    interval_years = NULL, # prefer per-row/per-pair interval columns (e.g., Bio_IntervalYears); set scalar like 5 to force a constant interval
     use_measurement_error = USE_MEASUREMENT_ERROR,
     # Hard constraint sources
     max_shrink_source = "data",  # or "fixed"
@@ -1193,7 +1213,7 @@ out <- xraw[, match_stems_dp_global_backward(
   .SD,
   min_growth = -2,           # Used by fallback and diagnostics only
   max_growth = 10,           # Used by fallback and diagnostics only
-  interval_years = census_interval_years,
+  interval_years = NULL,     # set to NULL to prefer per-row interval column (e.g., Bio_IntervalYears) or pass a scalar like 5
   anchor_start = 7,
   max_tracks = 30,
   max_states = 50000,
@@ -1207,7 +1227,7 @@ out_marginal <- xraw[, match_stems_dp_global_backward_marginals(
   .SD,
   min_growth = -2,
   max_growth = 10,
-  interval_years = census_interval_years,
+  interval_years = NULL,    # set to NULL to prefer per-row interval column (e.g., Bio_IntervalYears) or pass a scalar like 5
   anchor_start = 7,
   max_tracks = 30,
   max_states = 50000,
