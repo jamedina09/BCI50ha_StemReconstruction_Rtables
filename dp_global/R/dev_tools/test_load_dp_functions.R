@@ -5,7 +5,7 @@ options(error = function() { quit(status = 1) })
 cat("[dev/test] starting\n")
 
 tryCatch({
-  source(here::here("dp_global", "R", "load_dp_functions.R"))
+  source(here::here("dp_global", "R", "dev_tools", "load_dp_functions.R"))
   cat("[dev/test] sourced loader script OK\n")
 }, error = function(e) {
   cat("[dev/test] ERROR sourcing loader script:\n", e$message, "\n")
