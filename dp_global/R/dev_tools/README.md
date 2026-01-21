@@ -16,7 +16,7 @@ Quick usage
 
 ```r
 # Load the saved objects and compile the embedded C++ into the session
-source("dp_global/R/load_dp_functions.R")  # provides helpers
+source("dp_global/R/dev_tools/load_dp_functions.R")  # provides helpers
 res <- load_dp_functions_rdata("dp_global/R/dev_tools/dp_functions.rdata", compile_cpp = TRUE)
 # Attach functions into your current session
 list2env(res$functions, envir = .GlobalEnv)
