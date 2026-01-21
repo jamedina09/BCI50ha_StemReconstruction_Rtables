@@ -24,7 +24,9 @@ check_pkg("here")
 
 ## ---- 2) C++ acceleration (optional, non-fatal) --------------------------
 # Source helper R wrappers (keeps the uncompiled fallback short-circuitable)
-source(here::here("dp_global", "src", "transition_cost_rcpp.R"))
+# Ensure the R wrapper is defined in the top-level environment so callers can
+# access the wrapper regardless of how this loader is invoked.
+sys.source(here::here("dp_global", "src", "transition_cost_rcpp.R"), envir = globalenv())
 tryCatch({
   Rcpp::sourceCpp(here::here("dp_global", "src", "transition_cost_rcpp.cpp"))
   message("[dp_global_main.R] C++ acceleration enabled.")
@@ -78,7 +80,7 @@ for (f in r_files) {
 
   message(sprintf("[dp_global_main.R] sourcing: %s", f))
   tryCatch(
-    source(fp),
+    sys.source(fp, envir = globalenv()),
     error = function(e) stop(sprintf("Error sourcing %s: %s", f, e$message), call. = FALSE)
   )
 }
