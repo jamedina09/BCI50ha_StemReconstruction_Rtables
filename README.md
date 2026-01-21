@@ -3,8 +3,8 @@
 Quick pointers:
 
 - See `dp_global/README.md` for details on the DP implementation and R driver. 🔧
-- Run `bin/run_dp_future.R` to execute experiments on a single machine (this is the recommended entrypoint). Avoid using the legacy `.sh` runners unless you specifically need a single-config serial invocation.
-- See `RUN_DP_README.md` for the quick reference to the serial runner and notes on previous parallel usage. ✅
+- Run `bin/run_dp_future.R` to execute experiments on a single machine (this is the recommended entrypoint). For single-config runs, use `bin/run_dp_future_single.R` or run `run_dp_future.R` with `--workers 1`. Please consult `bin/README.md` for examples and options.
+- See `bin/README.md` for a quick reference to the runners and usage notes.
 
 Quickstart
 ---------
@@ -28,7 +28,7 @@ Quickstart
 Notes
 -----
 - Output directories are written under `dp_global/output/` by default. If you're using OneDrive or similar sync services, consider excluding this directory from sync to avoid I/O delays and accidental commits. ⚠️
-- See `RUN_DP_README.md` for a quick reference to the serial runner and notes on previous parallel usage.
+- See `bin/README.md` for a quick reference to the runners and usage notes.
 
 Conventions
 -----------

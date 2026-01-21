@@ -14,7 +14,7 @@ Purpose
 - Recommended entrypoints for running experiments on a single machine:
   - `bin/run_dp_future.R` — concurrent runner using `future` + `progressr` (preferred for multi-config runs).
   - `bin/run_dp_future_single.R` — helper to run a fixed configuration set with the same concurrent/future orchestration semantics (useful for testing or single-config experiments).
-- Legacy serial wrappers (previously `run_dp_full_cpp.sh`) have been removed in favor of the R-based runners above.
+- For single-config serial execution, use `bin/run_dp_future_single.R` or run `run_dp_future.R` with `--workers 1` for equivalent behavior and consistent logging.
 
 Quick start
 
@@ -60,7 +60,7 @@ Notes & troubleshooting
   Rscript dp_global/R/test_complexity_estimator.R
   ```
 
-- `--census_interval_years` has been removed. Prefer passing `interval_years` explicitly to the DP or including a per-row interval column such as `Bio_IntervalYears` in your input.
+- Prefer passing `interval_years` explicitly to the DP or including a per-row interval column such as `Bio_IntervalYears` in your input. To enable automatic per-pair interval detection in DP functions set `interval_years = NULL` (functions will search for candidate columns when `NULL`).
 
 Concurrent runs with `future` + `progressr` (working)
 

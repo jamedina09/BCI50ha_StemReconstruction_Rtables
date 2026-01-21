@@ -72,10 +72,10 @@ Rscript dp_global/scripts/main_cpp.R
 
 > For running experiments on a single machine, prefer `bin/run_dp_future.R` (concurrent runner) or `bin/run_dp_future_single.R` (fixed-config helper). See `bin/README.md` for runner usage and notes.
 
-**Recent changes (2026-01-21):**
-- `--census_interval_years` flag removed; prefer `interval_years` (scalar) or provide per-pair columns (e.g., `Bio_IntervalYears`) and use `interval_years = NULL` to detect intervals from the data. See `dp_global/R/dp_global_utils.R::resolve_interval_years()`.
-- Added `--WRITE_DP_RDS=TRUE` to request `.rds` output (recommended alongside CSV).
-- Runner scripts: `bin/run_dp_future.R` and `bin/run_dp_future_single.R` are the recommended entrypoints; legacy `.sh` wrappers have been removed.
+Notes:
+- To specify census timing, pass `interval_years` (scalar) or ensure a per-row interval column (e.g., `Bio_IntervalYears`) is present and set `interval_years = NULL` to enable automatic per-pair interval detection (see `dp_global/R/dp_global_utils.R::resolve_interval_years()`).
+- You can request `.rds` outputs in addition to CSV/PDF by passing `--WRITE_DP_RDS=TRUE` to `main_cpp.R` or via orchestrator arguments.
+- Recommended runner scripts: `bin/run_dp_future.R` and `bin/run_dp_future_single.R`.
 
 ### File Structure
 
@@ -868,7 +868,7 @@ The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 
 ### Overview
 
-(Legacy) The `bin/run_dp_full.sh` script historically tested how different parameter estimation strategies affect reconstruction quality by varying:
+The experimental configuration explores how parameter estimation strategies affect reconstruction quality by varying:
 1. **Hard constraints** (MAX_GROWTH/MAX_SHRINK): Fixed vs data-driven bounds
 2. **Soft penalties** (K_SHRINK/K_GROWTH): Fixed vs data-driven quadratic penalties
 3. **Penalty strength**: None (K=0) vs moderate (K=25) vs strong (K=50)
@@ -879,7 +879,7 @@ These settings remain constant across all configurations to ensure fair comparis
 
 ```bash
 # Input data
-input_file="../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv"
+input_file="../data_simulation/data/simulated_data_1.csv"
 FORCE_ONE_SPECIES_PARAMETERS=FALSE
 
 # Census configuration
@@ -1035,7 +1035,7 @@ bin/run_dp_full.sh
 ```
 
 **Note about parallel runs:**
-Parallel GNU parallel support was removed from this repository. For concurrent execution and better logging use `bin/run_dp_future.R`. If you prefer to run serially, you can still run `bin/run_dp_full.sh --config=<name>` manually and coordinate `BATCH_TS` if needed.
+For concurrent execution and improved logging use `bin/run_dp_future.R`. If you prefer a simple serial invocation for a single config, `bin/run_dp_full.sh --config=<name>` can be executed directly; coordinate `BATCH_TS` if you need grouped outputs.
 
 **Run single configuration:**
 ```bash
@@ -1327,13 +1327,13 @@ source("R/estimate_dp_complexity_function.R")
 
 **Estimate complexity for all tags:**
 ```r
-complexity <- estimate_dp_complexity("../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv")
+complexity <- estimate_dp_complexity("../data_simulation/data/simulated_data_1.csv")
 print(complexity)
 ```
 
 **Get detailed analysis for a specific tag:**
 ```r
-details <- get_tag_complexity_details("../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv", tag = 11)
+details <- get_tag_complexity_details("../data_simulation/data/simulated_data_1.csv", tag = 11)
 print(details$observations_per_census)  # Observations per census
 print(details$states_per_census)        # States per census
 cat("Total transition computations:", format(details$transition_computations, big.mark = ","), "\n")

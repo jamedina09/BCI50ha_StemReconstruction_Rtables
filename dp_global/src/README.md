@@ -7,7 +7,7 @@ This directory contains an optimized C++ implementation of the transition cost c
 - `src/transition_cost_rcpp.cpp`: C++ implementation of transition cost computation
 - `R/transition_cost_rcpp.R`: R wrapper function for the C++ code
 
-> Note: The separate `test_rcpp_implementation.R` script was removed. Validation is performed via the test suite in `dp_global/dev/` (see below).
+> Note: Validation of the C++ implementation is performed via the test suite in `dp_global/dev/` (see below).
 
 ## Usage
 
@@ -78,7 +78,7 @@ Rscript dp_global/dev/test_transition_cost_tracks_bio_batch.R
 The dev tests compare outputs and report discrepancies; use these to validate the C++ implementation after changes.
 
 **Notes:**
-- The legacy `test_rcpp_implementation.R` was removed; use the `dp_global/dev/` test suite to validate the C++ implementation and to exercise end-to-end behavior through `main_cpp.R` when needed.
+- Use the `dp_global/dev/` test suite to validate the C++ implementation and to exercise end-to-end behavior through `main_cpp.R` when needed.
 - When running end-to-end checks, pass `--WRITE_DP_RDS=TRUE` to the run command to ensure `.rds` outputs are produced and inspected by R-based tests (preferred over parsing CSVs for validation).
 
 ## Recent changes
