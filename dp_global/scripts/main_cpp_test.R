@@ -744,25 +744,61 @@ run_main <- function() {
     # 5.3 Attach Bio_* columns (DP reads parameters from columns)
 # FIXME: Need to include census interval per row
     xrun <- attach_bio_columns(xrun, bio_pars)
-    xrun[, Bio_IntervalYears := 5]
+    # xrun[, Bio_IntervalYears := 5]
     ## adding variation to census interval to test errors need to be fixed
-    xrun[, Bio_IntervalYears := Bio_IntervalYears + rnorm(.N, mean = 0, sd = 1e-1)] # tiny jitter to avoid zero-interval issues
+    # xrun[, Bio_IntervalYears := Bio_IntervalYears + rnorm(.N, mean = 0, sd = 1e-1)] # tiny jitter to avoid zero-interval issues
 
     # Canonicalize to per-(Tag, CensusID) mean so tiny numeric jitter doesn't break DP.
     # This respects NA values by taking mean with na.rm=TRUE; if all NA, value remains NA.
     # xrun[, Bio_IntervalYears := as.numeric(mean(Bio_IntervalYears, na.rm = TRUE)), by = .(Tag, CensusID)]
     # Informative message when we collapsed varying per-row intervals to per-census means
-    if (any(is.na(xrun$Bio_IntervalYears))) {
-        message("[dp_global main_cpp.R] Some Bio_IntervalYears are NA after canonicalization; DP will require explicit intervals or will error.")
-    } else {
-        message("[dp_global main_cpp.R] Bio_IntervalYears canonicalized to per-(Tag,CensusID) means (NA handled).")
-    }
+    # if (any(is.na(xrun$Bio_IntervalYears))) {
+    #     message("[dp_global main_cpp.R] Some Bio_IntervalYears are NA after canonicalization; DP will require explicit intervals or will error.")
+    # } else {
+    #     message("[dp_global main_cpp.R] Bio_IntervalYears canonicalized to per-(Tag,CensusID) means (NA handled).")
+    # }
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(dp_max_tracks)) auto_dp_max_tracks(xrun) else as.integer(dp_max_tracks)
     dp_max_tracks_local <- as.integer(dp_max_tracks_local)
 
     # 5.5 DP reconstruction
     # FIXME: Intervals work - continue with checking dp implementation
+
+
+# run_dp_one_group <- function(dtg, dp_max_tracks) {
+#     match_stems_dp_global_backward_marginals_batch(
+#         tree_data = data.table::copy(dtg),
+#         min_growth = MAX_SHRINK_FIXED,
+#         max_growth = MAX_GROWTH_FIXED,
+#         anchor_start = anchor_start_census,
+#         max_tracks = dp_max_tracks,
+#         max_states = dp_max_states,
+#         slack_tracks = dp_slack_tracks,
+#         temperature = 1,
+#         posterior_top_k = DP_POSTERIOR_TOP_K,
+#         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+#         verbose = isTRUE(DP_VERBOSE)
+#     )
+# }
+
+out <- xrun[Tag == which_tag, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
+
+
+match_stems_dp_global_backward_marginals_batch(
+    # tree_data = data.table::copy(xrun[Tag == which_tag, Bio_IntervalYears := 5]),
+    tree_data = data.table::copy(xrun[Tag == which_tag]),
+    min_growth = MAX_SHRINK_FIXED,
+    max_growth = MAX_GROWTH_FIXED,
+    anchor_start = anchor_start_census,
+    max_tracks = dp_max_tracks_local, #dp_max_tracks,
+    max_states = dp_max_states,
+    slack_tracks = dp_slack_tracks,
+    temperature = 1,
+    posterior_top_k = DP_POSTERIOR_TOP_K,
+    use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+    verbose = isTRUE(DP_VERBOSE)
+)
+
     out <- NULL
     if (isTRUE(RUN_DP)) {
         if (!isTRUE(RUN_ALL_TAGS)) {
