@@ -80,7 +80,7 @@ library(here)
 ############################################################
 ## 2.1 Input data and species handling
 input_file <- here("data_simulation", "data", "simulated_data_1.csv")
-FORCE_ONE_SPECIES_PARAMETERS <- FALSE
+FORCE_ONE_SPECIES_PARAMETERS <- TRUE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
     FORCED_SPECIES_LABEL <- "all"
     message("[dp_global main.R] FORCE_ONE_SPECIES_PARAMETERS=TRUE: using single species label '", FORCED_SPECIES_LABEL, "' for all trees.")
@@ -111,12 +111,10 @@ RECRUIT_MAX_FIXED <- 6
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
 which_tag <- 1L
 anchor_start_census <- 7L
-census_interval_years <- 5
-DP_BIN_CONFIDENT_PROB <- 0.95
-DP_BIN_UNLINKED_PROB <- 0.50
+# census_interval_years <- 5
 DP_VERBOSE <- TRUE
-DP_POSTERIOR_TEMPERATURE <- 1.0
-DP_POSTERIOR_TOP_K <- 2L
+# DP_POSTERIOR_TEMPERATURE <- 1.0
+# DP_POSTERIOR_TOP_K <- 2L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
 dp_slack_tracks <- 1L
@@ -131,14 +129,6 @@ MANUAL_CORES_VALUE <- 1L # Number of cores to use if MANUAL_CORES=TRUE
 ############################################################
 ### 2.5 CPP
 ############################################################
-# Load C++ implementation
-if (!requireNamespace("Rcpp", quietly = TRUE)) {
-    stop("Rcpp package is required for C++ acceleration.")
-}
-library(Rcpp)
-source(here("dp_global", "src", "transition_cost_rcpp.R"))
-Rcpp::sourceCpp(here("dp_global", "src", "transition_cost_rcpp.cpp"))
-message("[dp_global main_cpp.R] C++ acceleration enabled.")
 
 ## create output directory within project
 # Base output directory
@@ -150,7 +140,7 @@ message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 
 # Optional: explicitly set a subdirectory name for outputs.
 # If NULL, an automatic name based on timestamp + key config flags is used.
-OUT_DIR_NAME <- NULL
+# OUT_DIR_NAME <- NULL
 # CONFIG_NAME is set by the orchestrator (e.g., run_dp_future) to identify the
 # experimental configuration; default to NULL so override parsing treats it as
 # a valid, known variable rather than an unknown override.
@@ -168,15 +158,11 @@ encode_num <- function(x) {
     s
 }
 
-# flag <- function(cond, yes, no = "") {
-#     if (isTRUE(cond)) yes else no
-# }
-
 build_out_dir_name <- function() {
-    # Use explicit OUT_DIR_NAME if set
-    if (!is.null(OUT_DIR_NAME) && nzchar(OUT_DIR_NAME)) {
-        return(OUT_DIR_NAME)
-    }
+    # # Use explicit OUT_DIR_NAME if set
+    # if (!is.null(OUT_DIR_NAME) && nzchar(OUT_DIR_NAME)) {
+    #     return(OUT_DIR_NAME)
+    # }
 
     # Timestamp: use BATCH_TS if provided; else fallback to current date+time
     ts <- if (exists("BATCH_TS") && nzchar(BATCH_TS)) BATCH_TS else format(Sys.time(), "%Y%m%d_%H%M%S")
@@ -329,8 +315,8 @@ MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) {
 
 # Ensure growth/shrink derived bounds reflect overrides
 # FIXME:
-min_annual_growth <- MAX_SHRINK_FIXED
-max_annual_growth <- MAX_GROWTH_FIXED
+# min_annual_growth <- MAX_SHRINK_FIXED
+# max_annual_growth <- MAX_GROWTH_FIXED
 
 # Optional override: explicitly set project root (useful when running under different working dirs or job launchers)
 # Usage: --PROJECT_ROOT=/absolute/path/to/project
@@ -398,19 +384,21 @@ source(here("dp_global", "R", "k_tuning_viz.R"))
 # Helper: compute the *actual* soft-penalty cost for a given k and delta.
 # - delta_cm is in cm over the interval (NOT cm/year).
 # - temperature is the marginal-DP temperature; weight multiplier is exp(-soft_cost / temperature).
-soft_cost_from_k <- function(delta_cm, k, temperature = 1) {
-    delta_cm <- as.numeric(delta_cm)
-    k <- as.numeric(k)
-    temperature <- as.numeric(temperature)
-    cost <- k * (delta_cm^2)
-    data.frame(
-        delta_cm = delta_cm,
-        k = k,
-        soft_cost = cost,
-        temperature = temperature,
-        weight_multiplier = exp(-cost / temperature)
-    )
-}
+# soft_cost_from_k <- function(delta_cm, k, temperature = 1) {
+#     delta_cm <- as.numeric(delta_cm)
+#     k <- as.numeric(k)
+#     temperature <- as.numeric(temperature)
+#     cost <- k * (delta_cm^2)
+#     data.frame(
+#         delta_cm = delta_cm,
+#         k = k,
+#         soft_cost = cost,
+#         temperature = temperature,
+#         weight_multiplier = exp(-cost / temperature)
+#     )
+# }
+
+# soft_cost_from_k(delta_cm = seq(-10, 10, by = 1), k = 20, temperature = 1)
 
 ensure_dir <- function(path) {
     if (!dir.exists(path)) {
@@ -529,13 +517,13 @@ auto_dp_max_tracks <- function(xrun) {
 run_dp_one_group <- function(dtg, dp_max_tracks) {
     match_stems_dp_global_backward_marginals_batch(
         tree_data = data.table::copy(dtg),
-        min_growth = min_annual_growth,
-        max_growth = max_annual_growth,
+        min_growth = MAX_SHRINK_FIXED,
+        max_growth = MAX_GROWTH_FIXED,
         anchor_start = anchor_start_census,
         max_tracks = dp_max_tracks,
         max_states = dp_max_states,
         slack_tracks = dp_slack_tracks,
-        temperature = DP_POSTERIOR_TEMPERATURE,
+        temperature = 1,
         posterior_top_k = DP_POSTERIOR_TOP_K,
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
         verbose = isTRUE(DP_VERBOSE)
@@ -550,8 +538,8 @@ maybe_add_posterior_bins <- function(out) {
     if (isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
         out <- add_dp_posterior_bins(
             out,
-            confident_prob = DP_BIN_CONFIDENT_PROB,
-            unlinked_prob = DP_BIN_UNLINKED_PROB,
+            confident_prob = 0.95,
+            unlinked_prob = 0.5,
             use_reconstructed_prob = TRUE,
             out_col = "DP_PosteriorBin"
         )
@@ -584,9 +572,112 @@ run_main <- function() {
     # but users may supply a per-row interval column (e.g., `Bio_IntervalYears`) in the
     # input dataset and `estimate_bio_pars()` will detect and use it when called with
     # `interval_years = NULL` or with `interval_col_candidates = "Bio_IntervalYears"`.
-    xrun[, Bio_IntervalYears := as.numeric(census_interval_years)]
+    # xrun[, Bio_IntervalYears := as.numeric(census_interval_years)]
     # 5.2 Estimate bio parameters (per species)
     bio_pars <- list()
+
+### NOTE: this needs to be run before checking esimate_bio_pars_TEstscript
+# interval_years = census_interval_years,
+# interval_col_candidates = "Bio_IntervalYears"
+# use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR)
+#             # Hard shrink guardrail (max_shrink)
+#             # - "data": estimated from observed shrink tail (with measurement-error support)
+#             # - "fixed": use a fixed constant bound (cm/year)
+#             max_shrink_source = MAX_SHRINK_HARD_SOURCE
+#             max_shrink_fixed = MAX_SHRINK_FIXED
+#             # Soft shrinkage penalty strength (k_shrink)
+#             # - "data": estimate from measurement-error scale (preferred) or from data variance
+#             # - "fixed": use a fixed constant (units: 1/cm^2)
+#             k_shrink_source = K_SHRINK_SOURCE
+#             k_shrink_fixed = K_SHRINK_FIXED
+#             # Soft extreme-growth penalty strength (k_growth) analogous to k_shrink
+#             # - "data": estimate from measurement-error scale (preferred) or from data variance
+#             # - "fixed": use a fixed constant (units: 1/cm^2); set 0 to disable soft penalty
+#             k_growth_source = K_GROWTH_SOURCE
+#             k_growth_fixed = K_GROWTH_FIXED
+#             # Hard growth guardrail (max_growth)
+#             # - "data": estimated from observed extreme-growth tail
+#             # - "fixed": use a fixed constant bound (cm/year)
+#             max_growth_source = MAX_GROWTH_HARD_SOURCE
+#             max_growth_fixed = MAX_GROWTH_FIXED
+#             # Quantiles used to set conservative guardrails
+#             # the lowest value of the probability function to get lowest shrink from measurement error
+#             shrink_hard_prob = 1e-4
+#             # the lowest value of the empirical quantile to get lowest shrink from data
+#             shrink_data_quantile = 0.001
+#             # if masurement error then lowest shrink is the min between the two for hard shrink guardrail
+#             #################
+#             # Extreme-growth guardrails (upper tail)
+#             # - growth_hard_prob is the *upper-tail* probability (e.g. 1e-4 means 99.99th percentile)
+#             # - growth_data_quantile is the empirical upper quantile used as a guardrail
+#             # - growth_soft_quantile sets a softer threshold used for a quadratic penalty
+#             # the highest (1 - growth_hard_prob) value of the probability function to get highest growth from measurement error
+#             growth_hard_prob = 1e-4
+#             # Upper quantile for hard growth guardrail from empirical data
+#             growth_data_quantile = 0.999
+#             # if masurement error then highest growth is the max between the two for hard growth guardrail
+#             #################
+#             # to etimate the growth soft penalty k_growth - its used if it becomes the minimum between max grwoth from measurement error or fixed or data
+#             growth_soft_quantile = 0.99
+#             # Recruitment max DBH (upper bound for recruits dbh at first census)
+#             recruit_max_quantile = 0.999
+#             recruit_max_source = get0("RECRUIT_MAX_SOURCE" ifnotfound = "data")
+#             recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED" ifnotfound = 5))
+### NOTE: UNTIL HERE
+
+source("./dp_global/R/estimate_bio_pars_test.R.R")
+
+estimate_bio_pars_test(
+            xrun[species == "all"],
+            # interval_years = census_interval_years,
+            # interval_col_candidates = "Bio_IntervalYears",
+            use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+            # Hard shrink guardrail (max_shrink)
+            # - "data": estimated from observed shrink tail (with measurement-error support)
+            # - "fixed": use a fixed constant bound (cm/year)
+            max_shrink_source = MAX_SHRINK_HARD_SOURCE,
+            max_shrink_fixed = MAX_SHRINK_FIXED,
+            # Soft shrinkage penalty strength (k_shrink)
+            # - "data": estimate from measurement-error scale (preferred) or from data variance
+            # - "fixed": use a fixed constant (units: 1/cm^2)
+            k_shrink_source = K_SHRINK_SOURCE,
+            k_shrink_fixed = K_SHRINK_FIXED,
+            # Soft extreme-growth penalty strength (k_growth), analogous to k_shrink
+            # - "data": estimate from measurement-error scale (preferred) or from data variance
+            # - "fixed": use a fixed constant (units: 1/cm^2); set 0 to disable soft penalty
+            k_growth_source = K_GROWTH_SOURCE,
+            k_growth_fixed = K_GROWTH_FIXED,
+            # Hard growth guardrail (max_growth)
+            # - "data": estimated from observed extreme-growth tail
+            # - "fixed": use a fixed constant bound (cm/year)
+            max_growth_source = MAX_GROWTH_HARD_SOURCE,
+            max_growth_fixed = MAX_GROWTH_FIXED,
+            # Quantiles used to set conservative guardrails
+            # the lowest value of the probability function to get lowest shrink from measurement error
+            shrink_hard_prob = 1e-4,
+            # the lowest value of the empirical quantile to get lowest shrink from data
+            shrink_data_quantile = 0.001,
+            # if masurement error, then, lowest shrink is the min between the two for hard shrink guardrail
+            #################
+            # Extreme-growth guardrails (upper tail)
+            # - growth_hard_prob is the *upper-tail* probability (e.g., 1e-4 means 99.99th percentile)
+            # - growth_data_quantile is the empirical upper quantile used as a guardrail
+            # - growth_soft_quantile sets a softer threshold used for a quadratic penalty
+            # the highest (1 - growth_hard_prob) value of the probability function to get highest growth from measurement error
+            growth_hard_prob = 1e-4,
+            # Upper quantile for hard growth guardrail from empirical data
+            growth_data_quantile = 0.999,
+            # if masurement error, then, highest growth is the max between the two for hard growth guardrail
+            #################
+            # to etimate the growth soft penalty k_growth - its used if it becomes the minimum between max grwoth from measurement error or fixed or data
+            growth_soft_quantile = 0.99,
+            # Recruitment max DBH (upper bound for recruits dbh at first census)
+            recruit_max_quantile = 0.999,
+            recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
+            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = 5))
+        )
+
+
     for (sp in unique(xrun$species)) {
         bio_pars[[sp]] <- estimate_bio_pars(
             xrun[species == sp],
