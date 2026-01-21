@@ -159,21 +159,21 @@ joblog_path <- file.path(log_dir, opt$joblog)
 # Experiment BASE_ARGS (mirrors bin/run_dp_full_cpp.sh defaults)
 BATCH_TS <- format(Sys.time(), "%Y%m%d_%H%M%S")
 BASE_ARGS <- c(
-  paste0("--input_file=", here("data_simulation", "data", "simulated_data_merr_3sp_inc1_c2c5c8_p1p7_dec1_c2c5c8_p0p1.csv")),
+  paste0("--input_file=", here("data_simulation", "data", "simulated_data_1.csv")),
   "--FORCE_ONE_SPECIES_PARAMETERS=FALSE",
   "--DP_MODE=map",
   "--which_tag=1",
   "--anchor_start_census=7",
-  "--census_interval_years=5",
   "--DP_VERBOSE=TRUE",
   "--RUN_ALL_TAGS=TRUE",
   # Allow overriding DP enumerator state budget from the orchestrator
   # (main_cpp.R defines `dp_max_states` in the DP settings section)
   # Use 0 to run igraph for all experiments in this script
-  "--dp_max_states=400", #40000
+  "--dp_max_states=40000", # default in main_cpp.R
   "--MANUAL_CORES=TRUE",
   sprintf("--MANUAL_CORES_VALUE=%d", opt$cores_per_job),
   "--WRITE_DP_CSV=TRUE",
+  "--WRITE_DP_RDS=TRUE",
   "--WRITE_DP_PDF=TRUE", # true to generate PDFs - set false if many Tags to save time/disk
   "--DP_PDF_INCLUDE_REFERENCE=TRUE",
   "--PLOT_PDF_ONE_TAG_ONLY=FALSE",
@@ -182,7 +182,7 @@ BASE_ARGS <- c(
   "--RUN_REALISM_REPORT=FALSE",
   paste0("--PROJECT_ROOT=", here::here()),
   paste0("--BATCH_TS=", BATCH_TS)
-)
+) 
 
 get_config_args <- function(cfg) {
   switch(cfg,
