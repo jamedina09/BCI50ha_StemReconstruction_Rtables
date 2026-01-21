@@ -267,39 +267,39 @@ RUN_K_SWEEP_DEMO <- TRUE
 ############################################################
 RUN_REALISM_REPORT <- TRUE
 
-# print_help <- function() {
-#     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
-#     cat("Common keys and defaults:\n")
-#     keys <- c(
-#         "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
-#         "anchor_start_census", "census_interval_years", "DP_VERBOSE", "RUN_ALL_TAGS",
-#         "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_PDF",
-#         "dp_max_states", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
-#         "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
-#     )
-#     for (k in keys) {
-#         val <- if (exists(k, inherits = FALSE)) get(k) else "<not set>"
-#         cat(sprintf("  --%s = %s\n", k, as.character(val)))
-#     }
-#     cat("\nFlags without =value are treated as boolean TRUE (e.g., --DRY_RUN).\n")
-# }
+print_help <- function() {
+    cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
+    cat("Common keys and defaults:\n")
+    keys <- c(
+        "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
+        "anchor_start_census", "DP_VERBOSE", "RUN_ALL_TAGS",
+        "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_RDS", "WRITE_DP_PDF",
+        "dp_max_states", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
+        "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
+    )
+    for (k in keys) {
+        val <- if (exists(k, inherits = FALSE)) get(k) else "<not set>"
+        cat(sprintf("  --%s = %s\n", k, as.character(val)))
+    }
+    cat("\nFlags without =value are treated as boolean TRUE (e.g., --DRY_RUN).\n")
+}
 
-# # If user asked for help, print and exit (do this before applying overrides)
-# if (isTRUE(overrides$help) || isTRUE(overrides$h)) {
-#     print_help()
-#     quit(save = "no", status = 0)
-# }
+# If user asked for help, print and exit (do this before applying overrides)
+if (isTRUE(overrides$help) || isTRUE(overrides$h)) {
+    print_help()
+    quit(save = "no", status = 0)
+}
 
 # Apply command-line overrides with validation and warnings for unknown keys
-# for (name in names(overrides)) {
-#     if (name %in% c("help", "h")) next
-#     if (!exists(name, inherits = FALSE)) {
-#         warning(sprintf("[dp_global main_cpp.R] Unknown override '%s' (ignored).\n", name))
-#         next
-#     }
-#     assign(name, overrides[[name]])
-#     message("[dp_global main_cpp.R] Overriding ", name, " = ", overrides[[name]])
-# }
+for (name in names(overrides)) {
+    if (name %in% c("help", "h")) next
+    if (!exists(name, inherits = FALSE)) {
+        warning(sprintf("[dp_global main_cpp.R] Unknown override '%s' (ignored).\n", name))
+        next
+    }
+    assign(name, overrides[[name]])
+    message("[dp_global main_cpp.R] Overriding ", name, " = ", overrides[[name]])
+}
 
 # Recompute derived values that depend on overridable inputs so CLI overrides take effect
 # - MC_CORES depends on MANUAL_CORES and MANUAL_CORES_VALUE
