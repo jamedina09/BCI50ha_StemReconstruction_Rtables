@@ -111,9 +111,7 @@ RECRUIT_MAX_FIXED <- 6
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
 which_tag <- 1L
 anchor_start_census <- 7L
-# census_interval_years <- 5
 DP_VERBOSE <- TRUE
-# DP_POSTERIOR_TEMPERATURE <- 1.0
 DP_POSTERIOR_TOP_K <- 2L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
@@ -261,7 +259,7 @@ PROJECT_ROOT <- here::here()
 ############################################################
 ### 2.5 Sensitivity analysis settings
 ############################################################
-SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
+SENSITIVITY_MODE <- "run+write+pdf" # Options: "none", "run", "run+write", "run+write+pdf"
 RUN_K_SWEEP_DEMO <- TRUE
 
 ############################################################
@@ -312,11 +310,6 @@ MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) {
 } else {
     1L
 }
-
-# Ensure growth/shrink derived bounds reflect overrides
-# FIXME:
-# min_annual_growth <- MAX_SHRINK_FIXED
-# max_annual_growth <- MAX_GROWTH_FIXED
 
 # Optional override: explicitly set project root (useful when running under different working dirs or job launchers)
 # Usage: --PROJECT_ROOT=/absolute/path/to/project
@@ -850,11 +843,11 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
         #* TODO: Define interval_years per row if needed
         interval_years = 5,
         bio = bio_pars[[sp0]],
-        temperature = DP_POSTERIOR_TEMPERATURE,
+        temperature = 1L,
         which_k = "auto",
         # optional: include candidate-pruning bounds from the DP enumerator
-        prune_min_annual_growth = min_annual_growth,
-        prune_max_annual_growth = max_annual_growth,
+        prune_min_annual_growth = MAX_SHRINK_FIXED,
+        prune_max_annual_growth = MAX_GROWTH_FIXED,
         subtitle = basename(out_dir)
     )
 
@@ -872,9 +865,9 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
     }
 }
 
-# source(here("dp_global", "R", "check_functions.r"))
-# export_bio_pars_report(res$bio_pars,
-#     species = NULL,
-#     interval_years = census_interval_years,
-#     out_file = file.path(out_dir, "bio_pars_report.pdf")
-# )
+source(here("dp_global", "R", "check_functions.r"))
+export_bio_pars_report(res$bio_pars,
+    species = NULL,
+    interval_years = 5,
+    out_file = file.path(out_dir, "bio_pars_report.pdf")
+)
