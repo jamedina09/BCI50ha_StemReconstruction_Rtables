@@ -17,7 +17,7 @@ if (sys.nframe() == 0L) {
 ### Command-line argument parsing
 ############################################################
 # Parse command-line arguments to override defaults.
-# Usage: Rscript main_cpp.R --which_tag=2 --RUN_ALL_TAGS=TRUE --DP_MODE=map --SENSITIVITY_MODE=run --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=8
+# Usage: Rscript main_cpp.R --which_tag=2 --RUN_ALL_TAGS=TRUE --DP_MODE=marginals+bins --SENSITIVITY_MODE=run --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=8
 # Supported args: any config variable name prefixed with --
 
 parse_args <- function() {

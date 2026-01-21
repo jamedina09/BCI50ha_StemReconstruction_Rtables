@@ -161,7 +161,7 @@ BATCH_TS <- format(Sys.time(), "%Y%m%d_%H%M%S")
 BASE_ARGS <- c(
   paste0("--input_file=", here("data_simulation", "data", "simulated_data_1.csv")),
   "--FORCE_ONE_SPECIES_PARAMETERS=FALSE",
-  "--DP_MODE=map",
+  "--DP_MODE=marginals+bins",
   "--which_tag=1",
   "--anchor_start_census=7",
   "--DP_VERBOSE=TRUE",
