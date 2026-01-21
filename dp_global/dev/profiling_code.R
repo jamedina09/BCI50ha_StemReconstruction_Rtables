@@ -48,11 +48,12 @@ library(here)
 ### 1) Minimal config for profiling
 ############################################################
 
-input_file <- here("data_simulation", "data", "simulation_legacy_backup", "simulated_data_one_species.csv")
+input_file <- here("data_simulation", "data", "simulated_data_1.csv")
+
+# /Users/medinaja/Library/CloudStorage/OneDrive-SmithsonianInstitution/STRI/STEM_IDENTIFICATION_TEST/data_simulation/data/simulated_data_1.csv
 
 which_tag <- 1L
 anchor_start_census <- 7L
-census_interval_years <- 5
 
 # Candidate pruning bounds used by add_constraint_violation()
 min_annual_growth <- -0.5
@@ -87,7 +88,8 @@ DP_VERBOSE <- TRUE
 ### 2) Source DP code
 ############################################################
 
-source(here("dp_global", "R", "dp_global_biol.R"))
+# source(here("dp_global", "R", "dp_global_biol.R"))
+source(here("dp_global", "R", "dp_global_main.R"))
 
 ############################################################
 ### 3) Minimal data prep + Bio_* columns (done OUTSIDE profiling)
@@ -124,7 +126,6 @@ get_growth_mu_const <- function(growth_list) {
 
 attach_bio_columns <- function(xrun, bio_pars) {
     xrun[, `:=`(
-        Bio_IntervalYears = as.numeric(census_interval_years),
         Bio_Mu_Growth = get_growth_mu_const(bio_pars[[species]]$growth),
         Bio_Gamma_Growth = {
             g <- bio_pars[[species]]$growth
@@ -185,7 +186,6 @@ bio_pars <- list()
 for (sp in unique(xrun$species)) {
     bio_pars[[sp]] <- estimate_bio_pars(
         xrun[species == sp],
-        interval_years = census_interval_years,
         mortality_start = c(log(0.01), 0),
         use_measurement_error = TRUE,
         max_shrink_source = "data",
