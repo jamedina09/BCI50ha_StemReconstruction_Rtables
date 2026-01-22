@@ -197,7 +197,7 @@ get_config_args <- function(cfg) {
       "--K_GROWTH_SOURCE=fixed",
       "--K_GROWTH_FIXED=0",
       "--RECRUIT_MAX_SOURCE=fixed",
-      "--RECRUIT_MAX_FIXED=6"
+      "--RECRUIT_MAX_FIXED=38"
     ),
     stop("Unknown config: ", cfg)
   )
