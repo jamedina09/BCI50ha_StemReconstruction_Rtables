@@ -98,9 +98,9 @@ MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_GROWTH_FIXED <- 7.5
 MAX_SHRINK_HARD_SOURCE <- "fixed"
 MAX_SHRINK_FIXED <- -0.5
-K_SHRINK_SOURCE <- "fixed"
+K_SHRINK_SOURCE <- "data"
 K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
-K_GROWTH_SOURCE <- "fixed"
+K_GROWTH_SOURCE <- "data"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
 RECRUIT_MAX_SOURCE <- "fixed"
 RECRUIT_MAX_FIXED <- 6
@@ -109,7 +109,7 @@ RECRUIT_MAX_FIXED <- 6
 ### 2.3 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-which_tag <- 39L
+which_tag <- 39L # 20 to compare outputs
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
@@ -503,6 +503,8 @@ auto_dp_max_tracks <- function(xrun) {
     if (!is.finite(max_obs_any_tag_census)) max_obs_any_tag_census <- 0L
     as.integer(max_obs_any_tag_census + 1L)
 }
+rm(match_stems_dp_global_backward_marginals_batch)
+source("./dp_global/R/dp_global_dp_test.R")
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
     match_stems_dp_global_backward_marginals_batch(
