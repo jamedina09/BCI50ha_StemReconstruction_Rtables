@@ -165,7 +165,7 @@ BASE_ARGS <- c(
   "--which_tag=1",
   "--anchor_start_census=7",
   "--DP_VERBOSE=TRUE",
-  "--RUN_ALL_TAGS=TRUE",
+  "--RUN_ALL_TAGS=FALSE",
   # Allow overriding DP enumerator state budget from the orchestrator
   # (main_cpp.R defines `dp_max_states` in the DP settings section)
   # Use 0 to run igraph for all experiments in this script
