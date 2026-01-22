@@ -2,6 +2,10 @@
 
 This folder contains development tools for the dp_global stem-matching algorithm, including regression tests, benchmarks, profiling scripts, and output files. dp_global is a dynamic programming-based approach for matching tree stems across multiple censuses in forest ecology datasets, accounting for biological processes like growth, mortality, and recruitment.
 
+Notes:
+- For per-pair interval handling in tests and examples, prefer `interval_years = NULL` (this enables detection of per-row interval columns like `Bio_IntervalYears`) or pass an explicit scalar `interval_years` when needed.
+- Use `--WRITE_DP_RDS=TRUE` to produce `.rds` artifacts alongside CSV/PDF outputs for R-native validation in tests.
+
 ## Prerequisites
 
 - R environment with required packages: `data.table`, `Rcpp` (optional for C++ acceleration)
@@ -34,26 +38,17 @@ These scripts validate the correctness and functionality of the dp_global implem
 
 ### Benchmarking and Profiling
 
-- **`profiling_code.R`**: 
-  - **Purpose**: Benchmarks execution times and profiles performance hotspots in the DP algorithm.
-  - **Variants**:
-    - `"scalar"`: Processes transitions one stem at a time (slower, for comparison).
-    - `"batch"`: Processes multiple candidates in batches (default, optimized).
-    - `"cpp"`: Uses C++ accelerated transition cost computation (fastest, requires `Rcpp`).
-  - **Inputs**: Synthetic dataset from `data_simulation/data/simulation_legacy_backup/simulated_data_one_species.csv`.
-  - **Outputs**: Execution time comparisons, Rprof profiling files (e.g., `dp_global_batch.prof`).
+- **`profiling_code.R`**:
+  - **Purpose**: Profile the C++-accelerated DP pipeline to locate hotspots (CPP-only profiler).
+  - **Inputs**: Synthetic dataset from `data_simulation/data/simulated_data_1.csv`.
+  - **Outputs**: Rprof profiling file `dp_global_cpp.prof` written to `dp_global/dev`.
   - **Usage**:
-    - Default: `Rscript --vanilla dp_global/dev/profiling_code.R`
-    - Specific variant: `PROFILE_VARIANT=scalar Rscript --vanilla dp_global/dev/profiling_code.R`
-    - Disable tie-breaking: `DP_EPS_TIEBREAK=0 Rscript --vanilla dp_global/dev/profiling_code.R`
+    - Run the profiler: `Rscript --vanilla dp_global/dev/profiling_code.R`
+    - Disable tie-breaking for performance tests: `DP_EPS_TIEBREAK=0 Rscript --vanilla dp_global/dev/profiling_code.R`
 
 ## Output Files
 
-- **`dp_global_scalar.prof`**: Profiling output for scalar variant.
-- **`dp_global_batch.prof`**: Profiling output for batch variant.
-- **`dp_global_cpp.prof`**: Profiling output for C++ variant.
-
-These `.prof` files contain R profiling data that can be analyzed with `summaryRprof()` or visualization tools.
+- **`dp_global_cpp.prof`**: Profiling output for the C++-only profiler. This file contains R profiling data that can be analyzed with `summaryRprof()` or visualization tools.
 
 ## Usage
 

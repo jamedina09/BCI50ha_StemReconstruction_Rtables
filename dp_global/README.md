@@ -70,7 +70,12 @@ source("dp_global/scripts/main_cpp.R")
 Rscript dp_global/scripts/main_cpp.R
 ```
 
-> For running experiments on a single machine, prefer `bin/run_dp_future.R` (concurrent runner). See `RUN_DP_README.md` for the legacy serial runner `bin/run_dp_full_cpp.sh` and historical notes about GNU-parallel usage.
+> For running experiments on a single machine, prefer `bin/run_dp_future.R` (concurrent runner) or `bin/run_dp_future_single.R` (fixed-config helper). See `bin/README.md` for runner usage and notes.
+
+Notes:
+- To specify census timing, pass `interval_years` (scalar) or ensure a per-row interval column (e.g., `Bio_IntervalYears`) is present and set `interval_years = NULL` to enable automatic per-pair interval detection (see `dp_global/R/dp_global_utils.R::resolve_interval_years()`).
+- You can request `.rds` outputs in addition to CSV/PDF by passing `--WRITE_DP_RDS=TRUE` to `main_cpp.R` or via orchestrator arguments.
+- Recommended runner scripts: `bin/run_dp_future.R` and `bin/run_dp_future_single.R`.
 
 ### File Structure
 
@@ -541,6 +546,20 @@ source("dp_global/R/realism_calibration.R")
 # Analyze reconstruction quality
 ```
 
+### Files written by `main_cpp.R`
+
+When you run `dp_global/scripts/main_cpp.R` (or via `bin/run_dp_future.R`), outputs are written to a run-specific directory under `dp_global/output/` (the driver prints `out_dir` on startup). Common files written by the run include:
+
+- `run_started.txt`, `run_finished.txt` — simple markers indicating job start/finish timestamps
+- `run_parameters_full.txt` — full parameter dump and command-line overrides for reproducibility
+- `stem_reconstruction_dp_global_rcpp.csv` — main reconstruction CSV (also written as RDS when `--WRITE_DP_RDS=TRUE`)
+- `stem_reconstruction_dp_global_rcpp.rds` — binary R object of the reconstruction (written when `--WRITE_DP_RDS=TRUE`)
+- `stem_reconstruction_dp_global_rcpp.pdf` — per-tag reconstruction plots (if enabled)
+- `tag_<which_tag>_realism_summary_rcpp.csv`, `tag_<which_tag>_realism_by_tag_rcpp.csv`, `tag_<which_tag>_realism_tuning_suggestions_rcpp.csv` — realism report tables when `--RUN_REALISM_REPORT=TRUE`
+- `simulated_all_transition_cost_sweeps_rcpp.rds`, `simulated_all_transition_cost_jumps_rcpp.csv`, `simulated_all_transition_cost_jumps_rcpp.rds` — sensitivity sweep outputs when `--SENSITIVITY_MODE` enables write
+
+Note: enabling `--WRITE_DP_RDS=TRUE` is recommended when you plan to post-process reconstructions in R (it preserves types and attributes without re-parsing CSVs). If you need a different output location, set `--PROJECT_ROOT` and `--BATCH_TS` or supply `OUT_DIR_NAME` via an override to control the output directory naming.
+
 ---
 
 ## Parameter Estimation
@@ -849,7 +868,7 @@ The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 
 ### Overview
 
-(Legacy) The `bin/run_dp_full.sh` script historically tested how different parameter estimation strategies affect reconstruction quality by varying:
+The experimental configuration explores how parameter estimation strategies affect reconstruction quality by varying:
 1. **Hard constraints** (MAX_GROWTH/MAX_SHRINK): Fixed vs data-driven bounds
 2. **Soft penalties** (K_SHRINK/K_GROWTH): Fixed vs data-driven quadratic penalties
 3. **Penalty strength**: None (K=0) vs moderate (K=25) vs strong (K=50)
@@ -860,13 +879,13 @@ These settings remain constant across all configurations to ensure fair comparis
 
 ```bash
 # Input data
-input_file="../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv"
+input_file="../data_simulation/data/simulated_data_1.csv"
 FORCE_ONE_SPECIES_PARAMETERS=FALSE
 
 # Census configuration
 which_tag=1
 anchor_start_census=7
-census_interval_years=5
+interval_years=5  # scalar interval; set to NULL to detect per-pair values from data (e.g., via Bio_IntervalYears), or pass --interval_years=5
 
 # Processing settings
 RUN_ALL_TAGS=TRUE
@@ -876,6 +895,7 @@ USE_MEASUREMENT_ERROR=TRUE  # Always enabled
 
 # Output settings
 WRITE_DP_CSV=TRUE
+WRITE_DP_RDS=TRUE
 WRITE_DP_PDF=TRUE
 DP_PDF_INCLUDE_REFERENCE=TRUE
 PLOT_PDF_ONE_TAG_ONLY=FALSE
@@ -1015,7 +1035,7 @@ bin/run_dp_full.sh
 ```
 
 **Note about parallel runs:**
-Parallel GNU parallel support was removed from this repository. For concurrent execution and better logging use `bin/run_dp_future.R`. If you prefer to run serially, you can still run `bin/run_dp_full.sh --config=<name>` manually and coordinate `BATCH_TS` if needed.
+For concurrent execution and improved logging use `bin/run_dp_future.R`. If you prefer a simple serial invocation for a single config, `bin/run_dp_full.sh --config=<name>` can be executed directly; coordinate `BATCH_TS` if you need grouped outputs.
 
 **Run single configuration:**
 ```bash
@@ -1144,7 +1164,7 @@ for (sp in unique(xraw$species)) {
   # ensure an interval column exists (e.g., `Bio_IntervalYears`). Example: `interval_col_candidates = "Bio_IntervalYears"`.
   bio_pars_list[[sp]] <- estimate_bio_pars(
     sp_data,
-    interval_years = census_interval_years,
+    interval_years = NULL, # prefer per-row/per-pair interval columns (e.g., Bio_IntervalYears); set scalar like 5 to force a constant interval
     use_measurement_error = USE_MEASUREMENT_ERROR,
     # Hard constraint sources
     max_shrink_source = "data",  # or "fixed"
@@ -1193,7 +1213,7 @@ out <- xraw[, match_stems_dp_global_backward(
   .SD,
   min_growth = -2,           # Used by fallback and diagnostics only
   max_growth = 10,           # Used by fallback and diagnostics only
-  interval_years = census_interval_years,
+  interval_years = NULL,     # set to NULL to prefer per-row interval column (e.g., Bio_IntervalYears) or pass a scalar like 5
   anchor_start = 7,
   max_tracks = 30,
   max_states = 50000,
@@ -1207,7 +1227,7 @@ out_marginal <- xraw[, match_stems_dp_global_backward_marginals(
   .SD,
   min_growth = -2,
   max_growth = 10,
-  interval_years = census_interval_years,
+  interval_years = NULL,    # set to NULL to prefer per-row interval column (e.g., Bio_IntervalYears) or pass a scalar like 5
   anchor_start = 7,
   max_tracks = 30,
   max_states = 50000,
@@ -1307,13 +1327,13 @@ source("R/estimate_dp_complexity_function.R")
 
 **Estimate complexity for all tags:**
 ```r
-complexity <- estimate_dp_complexity("../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv")
+complexity <- estimate_dp_complexity("../data_simulation/data/simulated_data_1.csv")
 print(complexity)
 ```
 
 **Get detailed analysis for a specific tag:**
 ```r
-details <- get_tag_complexity_details("../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv", tag = 11)
+details <- get_tag_complexity_details("../data_simulation/data/simulated_data_1.csv", tag = 11)
 print(details$observations_per_census)  # Observations per census
 print(details$states_per_census)        # States per census
 cat("Total transition computations:", format(details$transition_computations, big.mark = ","), "\n")
