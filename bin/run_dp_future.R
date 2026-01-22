@@ -161,21 +161,21 @@ joblog_path <- file.path(log_dir, opt$joblog)
 # Experiment BASE_ARGS (mirrors bin/run_dp_full_cpp.sh defaults)
 BATCH_TS <- format(Sys.time(), "%Y%m%d_%H%M%S")
 BASE_ARGS <- c(
-  paste0("--input_file=", here("data_simulation", "data", "simulated_data_merr_3sp_inc1_c2c5c8_p1p7_dec1_c2c5c8_p0p1.csv")),
+  paste0("--input_file=", here("data_simulation", "data", "simulated_data_1.csv")),
   "--FORCE_ONE_SPECIES_PARAMETERS=FALSE",
   "--DP_MODE=marginals+bins",
   "--which_tag=1",
   "--anchor_start_census=7",
-  "--census_interval_years=5",
   "--DP_VERBOSE=TRUE",
   "--RUN_ALL_TAGS=TRUE",
   # Allow overriding DP enumerator state budget from the orchestrator
   # (main_cpp.R defines `dp_max_states` in the DP settings section)
   # Use 0 to run igraph for all experiments in this script
-  "--dp_max_states=200", #40000
+  "--dp_max_states=40000", # default in main_cpp.R
   "--MANUAL_CORES=TRUE",
   sprintf("--MANUAL_CORES_VALUE=%d", opt$cores_per_job),
   "--WRITE_DP_CSV=TRUE",
+  "--WRITE_DP_RDS=TRUE",
   "--WRITE_DP_PDF=TRUE", # true to generate PDFs - set false if many Tags to save time/disk
   "--DP_PDF_INCLUDE_REFERENCE=TRUE",
   "--PLOT_PDF_ONE_TAG_ONLY=FALSE",
@@ -434,6 +434,6 @@ q(status = 0)
 
 # Rscript bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25" -- --DRY_RUN
 
-# Rscript bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
+# Rscript bin/run_dp_future.R --workers 3 --cores-per-job 5 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
 
 # Rscript bin/run_dp_future.R --workers 1 --cores-per-job 14 --configs "fixed"

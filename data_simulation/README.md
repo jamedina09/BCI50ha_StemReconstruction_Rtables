@@ -6,52 +6,36 @@ This directory contains the `simulate_data.R` script that generates realistic fo
 
 The simulation creates biologically plausible multi-species tropical forest dynamics using models derived from the DP (Dynamic Programming) workflow in `dp_global_biol.R`. It produces datasets that mimic ForestGEO census protocols with realistic growth, mortality, recruitment, measurement error, and stem identification challenges.
 
-## Key Features
-
+Key features include:
+- **Variable census intervals**: ~5 years between censuses with random noise
+- **Date-stamped censuses**: Each census has an exact date starting from 1980-01-01
+- **Organized code structure**: Script divided into clear sections for easy maintenance
 - **Multi-species forests** with species-specific trait variation
 - **Multi-stem trees** with recruitment and mortality processes
-- **Guaranteed single-stem trees**: For every species, the simulation always includes:
-  - One tag (tree) with exactly one stem that survives the entire census period
-  - One tag (tree) with exactly one stem that dies before the anchor census
 - **Realistic growth trajectories** with size-dependent growth and process variability
-- **Measurement error models** matching the DP workflow (diameter-dependent noise + blunders)
-- **Flexible growth scaling** for simulating disturbances (drought, etc.)
+- **Measurement error models** matching the DP workflow
+- **Flexible growth scaling** for simulating disturbances
 - **Stem ID masking** to simulate ForestGEO protocols
 - **Comprehensive diagnostics** with trajectory visualization
 
 ## Output Files
 
+The simulation generates several files in the `data/` subdirectory:
 
-The simulation generates several files with self-documenting filenames. The main dataset always includes:
+- `simulated_data_1.csv`: Main dataset with all stem measurements
+- `simulated_data_1.pdf`: Species-level growth trajectory plots
+- `simulated_data_tag_level_trajectories_1.pdf`: Tag-level individual stem trajectory plots
 
-- All simulated multi-stem trees per species (with random number of stems)
-- For each species, one single-stem tree that survives all censuses
-- For each species, one single-stem tree that dies before the anchor census
-
-- `simulated_data_[config].csv`: Main dataset with all stem measurements
-- `sp_lvl_traj_[config].pdf`: Species-level growth trajectory plots
-- `tg_lvl_traj_[config].pdf`: Tag-level individual stem trajectory plots
-- `simulation_params_[config].txt`: Text file containing the simulation parameters used
-
-### Filename Configuration
-
-The `[config]` part encodes the simulation settings:
-
-- **Measurement error**: `merr` or `no_merr`
-- **Species count**: `3sp` (for 3 species)
-- **Growth scaling**: Describes disturbances applied
-  - `inc{N}_{censuses}_p{M}`: N species with increased growth (multiplier M) in specified censuses
-  - `dec{N}_{censuses}_p{M}`: N species with decreased growth (multiplier M) in specified censuses
-  - Censuses are listed as `c2c5c8` (census 2, 5, 8)
-  - Multipliers use `p` for decimal point (e.g., `p1p7` = 1.7)
-
-Example: `merr_3sp_inc1_c2c5c8_p1p7_dec1_c2c5c8_p0p1`
-
-This indicates:
-- Measurement error enabled
-- 3 species total
-- 1 species with 1.7x growth increase in censuses 2, 5, 8
-- 1 species with 0.1x growth decrease in censuses 2, 5, 8
+### Main Dataset: `simulated_data_1.csv`
+Columns:
+- `Species`: Species name
+- `Tag`: Tree identifier
+- `OriginalStemID`: True stem ID within tree
+- `TrueStemID`: Observed stem ID (masked in early censuses)
+- `CensusID`: Census number (1-9)
+- `ExactDate`: Date of census (YYYY-MM-DD format)
+- `DBH`: Observed DBH (cm, with measurement error)
+- `CensusInterval`: Years between this census and the previous one (variable, ~5 years ± noise)
 
 ## Biological Models
 
@@ -99,22 +83,25 @@ Mixture model matching DP workflow:
 
 ## Simulation Process
 
-1. **Species Configuration**: Generate species with trait scaling factors
-2. **Parameter Scaling**: Apply species-specific scaling to growth, mortality, and recruitment
-3. **Stem Simulation**: For each stem:
-   - Determine birth timing (established vs. recruit)
-   - Simulate growth trajectory with process variability
-   - Apply species-specific growth scaling events
-   - Model mortality based on size-dependent hazard
-4. **Observation Generation**: Only stems ≥1 cm DBH are measured
-5. **Measurement Error**: Add realistic measurement noise to observed DBH
-6. **Stem ID Masking**: Simulate ForestGEO protocol (IDs unreliable in early censuses)
+The `simulate_data.R` script is organized into the following sections:
+
+1. **Setup**: Load required libraries and set random seed
+2. **Simulation Parameters**: Define all biological and methodological parameters
+3. **Helper Functions**: Utility functions for parameter scaling and truncated distributions
+4. **Simulation Engine**:
+   - **Species Configuration**: Generate species with trait scaling factors
+   - **Individual Stem Trajectory Simulation**: Simulate growth, mortality, and recruitment for each stem
+   - **Tree-Level Simulation**: Generate multi-stem trees with variable numbers of stems
+   - **Species-Level Simulation**: Create populations of trees for each species
+   - **Full Dataset Assembly**: Combine all simulated data into final dataset
+5. **Data Processing and Export**: Clean data, convert dates, and write output files
+6. **Diagnostic Plots**: Generate trajectory visualizations for validation
 
 ## Parameters
 
 ### Simulation Structure
 - `n_census`: Number of census intervals (9)
-- `census_interval_years`: Years between censuses (5). If you need per-pair/per-census intervals, add a per-row column (for example `Bio_IntervalYears`) with the interval in years for that measurement pair — `estimate_bio_pars()` will detect and use per-row intervals when `interval_years = NULL`.
+- `census_interval_years`: Base years between censuses (5), with random noise added: `interval_years = 5 + rnorm(n_census-1, 0, 0.1)`
 
 ### Species Configuration
 - `n_species`: Number of species (2)
@@ -179,59 +166,46 @@ events = list(
 
 ## Output Files
 
-### Main Dataset: `simulated_data_[config].csv`
-Columns:
-- `Species`: Species name
-- `Tag`: Tree identifier
-- `OriginalStemID`: True stem ID within tree
-- `TrueStemID`: Observed stem ID (masked in early censuses)
-- `CensusID`: Census number (1-9)
-- `BirthCensus`: Census when stem was born/recruited
-- `DeathCensus`: Census when stem died (if applicable)
-- `DBH_true`: True DBH (cm, for diagnostics)
-- `DBH`: Observed DBH (cm, with measurement error)
-- `Bio_IntervalYears`: (optional) Interval in years used for this observation/pair. When present, `estimate_bio_pars()` can use this per-row interval (set `interval_years = NULL`) to compute annualized increments and mortality probabilities.
-- `AnnualGrowth`: Annual growth rate (cm/year)
-- `YearFactor`: Applied growth scaling multiplier
-- `ObsSD`: Measurement error standard deviation
+### Main Dataset: `simulated_data_1.csv`
+This CSV contains the longitudinal stem-level measurements simulated by `simulate_data.R`. Each row is a single (Tag, OriginalStemID, CensusID) observation. Below are the columns, types, units, and NA semantics to help you load and use the dataset:
 
-**Special rows:**
-- For each species, there will always be:
-  - One tag with a single stem that never dies (DeathCensus = n_census)
-  - One tag with a single stem that dies before the anchor census (DeathCensus < anchor_start_census)
-- `BirthCensus`: Census when stem was born/recruited
-- `DeathCensus`: Census when stem died (if applicable)
-- `DBH_true`: True DBH (cm, for diagnostics)
-- `DBH`: Observed DBH (cm, with measurement error)
-- `AnnualGrowth`: Annual growth rate (cm/year)
-- `YearFactor`: Applied growth scaling multiplier
-- `ObsSD`: Measurement error standard deviation
+| Column | Type | Units / format | Description & NA semantics |
+|--------|------|----------------|----------------------------|
+| `Species` | character | N/A | Species code/name for the tree. |
+| `Tag` | integer / character | N/A | Unique tree identifier (grouping for stems). Use together with `OriginalStemID` to refer to a physical stem. |
+| `OriginalStemID` | integer | N/A | The true stem index within the tree (1,2,3,...). Identifies a specific stem across censuses. |
+| `TrueStemID` | integer or NA | N/A | Observed/masked stem ID used to emulate field-recorded IDs. For censuses before `anchor_start_census` this column is intentionally set to `NA` to simulate unreliable early IDs; values become available (non-NA) at and after the anchor census. |
+| `CensusID` | integer | N/A | Census ordinal (1 = first census, 2 = second, ...). Used for ordering and grouping observations. |
+| `CensusInterval` | numeric or NA | years | Interval (years) between this census and the previous census. `NA` for the first census or if interval is unknown. Use `interval_years = NULL` in downstream DP functions to prefer per-row intervals when present. |
+| `DBH` | numeric or NA | cm | Observed DBH value after applying measurement error. Missing (`NA`) means unobserved (stem not recorded in that census). |
+| `ExactDate` | character (YYYY-MM-DD) | date | Exact calendar date of the census for this row. Useful to compute intervals directly if `CensusInterval` is missing or to verify time continuity. |
+
+Notes & usage tips:
+- Rows with `DBH = NA` indicate the stem was not observed at that census (true absence or below detection threshold); downstream routines should handle missing DBH appropriately.
+- `TrueStemID` is the field-style ID used to emulate realistic matching challenges. The simulation sets `TrueStemID = NA` before the configured `anchor_start_census` to simulate masked early IDs.
+- `CensusInterval` is provided per-row but you can compute intervals from `ExactDate` if preferred (e.g., for irregular sampling). When running the DP/marginal inference, set `interval_years = NULL` to allow functions to detect per-pair intervals automatically from the data (see `dp_global/R/dp_global_utils.R::resolve_interval_years`).
+
+Quick R example (validate file & anchor census):
+
+```r
+library(data.table)
+dt <- fread("data/simulated_data_1.csv")
+# basic summary
+str(dt)
+# identify anchor census(es) (where TrueStemID becomes available)
+sort(unique(dt[!is.na(TrueStemID), CensusID]))
+# check first few rows for a Tag
+dt[Tag == 1L, .SD[1:12]]
+```
+
+This detailed schema should help you connect simulation outputs to the DP workflow and tests. If you want, I can also add a short example that joins `simulated_data_1.csv` with estimated bio-parameters to produce `Bio_*` columns used by `dp_global` functions.
 
 ### Diagnostic Plots
-- `sp_lvl_traj_[config].pdf`: Species-level growth trajectories
-- `tg_lvl_traj_[config].pdf`: Tag-level individual stem trajectories
+- `simulated_data_1.pdf`: Species-level growth trajectories (one page per species)
+- `simulated_data_tag_level_trajectories_1.pdf`: Tag-level individual stem trajectories (one page per tree)
 
-### Filename Encoding
-Filenames include configuration details for self-documentation:
-```
-meas_error_3sp_scaling_sp1-c3-0.5_all-c5-1.2
-```
-- `meas_error`: Measurement error enabled
-- `3sp`: 3 species simulated (general format: `{n}sp`)
-- `scaling_sp1-c3-0.5`: sp1 reduced to 50% growth in census 3
-- `all-c5-1.2`: All species increased to 120% growth in census 5
-
-**Complete naming convention:**
-- **Prefix**: `meas_error` (if measurement error enabled) or `no_error`
-- **Species count**: `{n}sp` where n = number of species (e.g., `2sp`, `3sp`, `5sp`)
-- **Scaling events**: `scaling_{species}-{census}-{multiplier}_...`
-  - `sp1-c3-0.5`: species sp1, census 3, 0.5x growth multiplier
-  - `all-c5-1.2`: all species, census 5, 1.2x growth multiplier
-  - **Multiple events**: All events are listed (e.g., `sp1-c3-0.5_sp1-c6-0.5` for multiple events on sp1)
-- **Examples**:
-  - `meas_error_2sp_scaling_sp1-c3-0.5_all-c5-1.2.csv`
-  - `no_error_1sp_scaling_all-c4-0.8.pdf`
-  - `meas_error_3sp_scaling_sp1-c3-0.5_sp1-c6-0.5_sp3-c3-1.2_sp3-c6-1.2.pdf`
+### File Naming
+Output files use simple sequential numbering (e.g., `simulated_data_1.csv`, `simulated_data_2.csv`) for easy reference. The simulation parameters are embedded in the script and can be inspected directly.
 
 ## Usage
 
@@ -241,12 +215,19 @@ cd /path/to/data_simulation
 Rscript simulate_data.R
 ```
 
+The script generates synthetic forest census data with:
+- Variable census intervals (~5 years ± random noise)
+- Date-stamped censuses starting from 1980-01-01
+- Multi-species dynamics with realistic growth, mortality, and recruitment
+- Measurement error and stem identification challenges
+
 ### Modifying Parameters
 Edit the `params` list in `simulate_data.R` to customize:
-- Species composition and traits
-- Growth scaling events
+- Number of species and trees per species
+- Biological parameters (growth rates, mortality, recruitment)
+- Census timing and intervals
 - Measurement error settings
-- Mortality/recruitment rates
+- Growth scaling events for disturbance simulation
 
 ### Dependencies
 - R packages: `data.table`, `ggplot2`, `here`
@@ -274,22 +255,25 @@ This simulated data is designed for:
 
 ```
 data_simulation/
-├── simulate_data.R          # Main simulation script
+├── simulate_data.R          # Main simulation script (organized in sections)
 ├── README.md               # This documentation
 ├── data/                   # Output directory
-│   ├── simulated_data_*.csv    # Main datasets
-│   ├── sp_lvl_traj_*.pdf       # Species-level plots
-│   └── tg_lvl_traj_*.pdf       # Tag-level plots
+│   ├── simulated_data_1.csv                    # Main dataset
+│   ├── simulated_data_1.pdf                    # Species-level trajectory plots
+│   └── simulated_data_tag_level_trajectories_1.pdf  # Tag-level trajectory plots
 └── [other files]
 ```
 
 ## Notes
 
-- Random seed (123) ensures reproducible results
+- Random seed (1234) ensures reproducible results
+- Census intervals are variable: base 5 years + random noise (N(0, 0.1))
+- Census dates start from 1980-01-01 and accumulate with variable intervals
 - All parameters match DP workflow conventions
 - Measurement error model validated against field data
 - Growth scaling enables controlled disturbance experiments
 - Stem ID masking creates realistic identification challenges
+- Code is organized into clear sections for maintainability
 
 
 ## Building This Documentation

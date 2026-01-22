@@ -3,13 +3,6 @@
 ############################################################
 # Run with:
 #   Rscript --vanilla dp_global/dev/profiling_code.R
-#
-# Notes:
-# - This script intentionally does NOT source main.R because main.R may rm(list=ls()).
-
-# PROFILE_VARIANT=scalar Rscript --vanilla dp_global/dev/profiling_code.R
-# PROFILE_VARIANT=batch Rscript --vanilla dp_global/dev/profiling_code.R
-# PROFILE_VARIANT=cpp Rscript --vanilla dp_global/dev/profiling_code.R
 
 get_script_dir <- function() {
     cmd <- commandArgs(trailingOnly = FALSE)
@@ -46,7 +39,7 @@ if (!requireNamespace("data.table", quietly = TRUE)) {
 }
 library(data.table)
 
-if( !requireNamespace("here", quietly = TRUE)) {
+if (!requireNamespace("here", quietly = TRUE)) {
     stop("Please install the 'here' package to run this profiling script.")
 }
 library(here)
@@ -55,18 +48,18 @@ library(here)
 ### 1) Minimal config for profiling
 ############################################################
 
-input_file <- here("data_simulation", "data", "simulation_legacy_backup", "simulated_data_one_species.csv")
+input_file <- here("data_simulation", "data", "simulated_data_1.csv")
+
+# /Users/medinaja/Library/CloudStorage/OneDrive-SmithsonianInstitution/STRI/STEM_IDENTIFICATION_TEST/data_simulation/data/simulated_data_1.csv
 
 which_tag <- 1L
 anchor_start_census <- 7L
-census_interval_years <- 5
 
 # Candidate pruning bounds used by add_constraint_violation()
 min_annual_growth <- -0.5
 max_annual_growth <- 5
 
 # DP controls
-RUN_DP_MARGINALS <- TRUE
 DP_POSTERIOR_TEMPERATURE <- 1.0
 DP_POSTERIOR_TOP_K <- 2L
 
@@ -85,97 +78,18 @@ dp_max_states <- 40000L
 
 dp_slack_tracks <- 1L
 
-# Benchmark / profiling controls
-RUN_BENCHMARK <- TRUE
-BENCHMARK_WARMUP <- TRUE
+# Profiling controls (minimal for CPP-only profiling)
 RUN_PROFILE <- TRUE
-
-# Which variant to profile: "scalar", "batch", or "cpp"
-# Override without editing: PROFILE_VARIANT=cpp Rscript --vanilla STEM_IDENTIFICATION_TEST/dp_global/dev/profiling_code.R
-PROFILE_VARIANT <- Sys.getenv("PROFILE_VARIANT", "batch")
-if (!(tolower(PROFILE_VARIANT) %in% c("scalar", "batch", "cpp"))) {
-    stop("PROFILE_VARIANT must be 'scalar', 'batch', or 'cpp'.")
-}
-
 # Turn off chatty printing during profiling (important)
-DP_VERBOSE <- FALSE
+DP_VERBOSE <- TRUE
+# Benchmarking flags removed for a simple single-run profiler
 
 ############################################################
-### 2) Source DP code (no main.R)
+### 2) Source DP code
 ############################################################
 
-source(here("dp_global", "R", "dp_global_biol.R"))
-source(here("dp_global", "R", "sensitivity_transition_cost_bio.R"))
-source(here("dp_global", "R", "realism_calibration.R"))
-
-if (tolower(PROFILE_VARIANT) == "cpp") {
-  library(Rcpp)
-  source(here("dp_global", "src", "transition_cost_rcpp.R"))
-  Rcpp::sourceCpp(here("dp_global", "src", "transition_cost_rcpp.cpp"))
-  
-  # Redefine transition_cost_tracks_bio_batch to use C++
-  original_transition_cost_tracks_bio_batch <- transition_cost_tracks_bio_batch
-  transition_cost_tracks_bio_batch <- function(
-    track_dbh_t,
-    track_dbh_tp1,
-    interval_years,
-    mu_const = 0,
-    mu_gamma = 0,
-    sigma0 = 1,
-    sigma1 = 0,
-    max_shrink = -Inf,
-    k_shrink = 0,
-    max_growth = Inf,
-    max_growth_soft = Inf,
-    k_growth = 0,
-    use_measurement_error = FALSE,
-    meas_sd1_a = 0.0062,
-    meas_sd1_b = 0.0904,
-    meas_sd2 = 4.64,
-    meas_p_big = 0.05,
-    h0 = 0,
-    beta = 0,
-    recruit_meanlog = 0,
-    recruit_sdlog = 1,
-    recruit_max_dbh = 200,
-    recruit_lambda = 0,
-    eps_tiebreak = 1e-6,
-    hard_penalty = 1e6
-  ) {
-        if (is.list(track_dbh_tp1)) {
-            mat_tp1 <- do.call(rbind, track_dbh_tp1)
-        } else {
-            mat_tp1 <- as.matrix(track_dbh_tp1)
-        }
-        transition_cost_tracks_bio_batch_rcpp(
-            track_dbh_t = track_dbh_t,
-            mat_tp1 = mat_tp1,
-            interval_years = interval_years,
-            mu_const = mu_const,
-            mu_gamma = mu_gamma,
-            sigma0 = sigma0,
-            sigma1 = sigma1,
-            max_shrink = max_shrink,
-            k_shrink = k_shrink,
-            max_growth = max_growth,
-            max_growth_soft = max_growth_soft,
-            k_growth = k_growth,
-            use_measurement_error = use_measurement_error,
-            meas_sd1_a = meas_sd1_a,
-            meas_sd1_b = meas_sd1_b,
-            meas_sd2 = meas_sd2,
-            meas_p_big = meas_p_big,
-            h0 = h0,
-            beta = beta,
-            recruit_meanlog = recruit_meanlog,
-            recruit_sdlog = recruit_sdlog,
-            recruit_max_dbh = recruit_max_dbh,
-            recruit_lambda = recruit_lambda,
-            eps_tiebreak = eps_tiebreak,
-            hard_penalty = hard_penalty
-        )
-    }
-}
+# source(here("dp_global", "R", "dp_global_biol.R"))
+source(here("dp_global", "R", "dp_global_main.R"))
 
 ############################################################
 ### 3) Minimal data prep + Bio_* columns (done OUTSIDE profiling)
@@ -212,7 +126,6 @@ get_growth_mu_const <- function(growth_list) {
 
 attach_bio_columns <- function(xrun, bio_pars) {
     xrun[, `:=`(
-        Bio_IntervalYears = as.numeric(census_interval_years),
         Bio_Mu_Growth = get_growth_mu_const(bio_pars[[species]]$growth),
         Bio_Gamma_Growth = {
             g <- bio_pars[[species]]$growth
@@ -273,7 +186,6 @@ bio_pars <- list()
 for (sp in unique(xrun$species)) {
     bio_pars[[sp]] <- estimate_bio_pars(
         xrun[species == sp],
-        interval_years = census_interval_years,
         mortality_start = c(log(0.01), 0),
         use_measurement_error = TRUE,
         max_shrink_source = "data",
@@ -302,24 +214,7 @@ if (nrow(dtg) < 1L) stop("No rows found for which_tag=", which_tag, " and specie
 ### 4) Profile the DP call
 ############################################################
 
-run_dp_scalar <- function(dt) {
-    match_stems_dp_global_backward_marginals(
-        tree_data = data.table::copy(dt),
-        min_growth = min_annual_growth,
-        max_growth = max_annual_growth,
-        anchor_start = anchor_start_census,
-        max_tracks = dp_max_tracks_local,
-        max_states = dp_max_states,
-        slack_tracks = dp_slack_tracks,
-        temperature = DP_POSTERIOR_TEMPERATURE,
-        posterior_top_k = DP_POSTERIOR_TOP_K,
-        eps_tiebreak = DP_EPS_TIEBREAK,
-        use_measurement_error = TRUE,
-        verbose = isTRUE(DP_VERBOSE)
-    )
-}
-
-run_dp_batch <- function(dt) {
+run_dp_cpp <- function(dt) {
     match_stems_dp_global_backward_marginals_batch(
         tree_data = data.table::copy(dt),
         min_growth = min_annual_growth,
@@ -336,78 +231,17 @@ run_dp_batch <- function(dt) {
     )
 }
 
-if (isTRUE(RUN_BENCHMARK)) {
-    message("[profiling_code] Benchmarking scalar vs batch (Tag=", which_tag, ", species=", sp0, ")")
-    if (isTRUE(BENCHMARK_WARMUP)) {
-        invisible(run_dp_scalar(dtg))
-        invisible(run_dp_batch(dtg))
-        gc()
-    }
-
-    gc()
-    t_scalar <- system.time({
-        out_scalar <- run_dp_scalar(dtg)
-    })
-    gc()
-    t_batch <- system.time({
-        out_batch <- run_dp_batch(dtg)
-    })
-
-    elapsed_scalar <- as.numeric(t_scalar[["elapsed"]])
-    elapsed_batch <- as.numeric(t_batch[["elapsed"]])
-    speedup <- if (is.finite(elapsed_batch) && elapsed_batch > 0) elapsed_scalar / elapsed_batch else NA_real_
-
-    message(
-        sprintf(
-            "[profiling_code] Benchmark results: scalar=%.3fs, batch=%.3fs, speedup=%.2fx",
-            elapsed_scalar,
-            elapsed_batch,
-            speedup
-        )
-    )
-
-    ok <- identical(out_scalar$ReconstructedStemID, out_batch$ReconstructedStemID)
-    message("[profiling_code] MAP match (ReconstructedStemID identical): ", ok)
-}
-
 if (!isTRUE(RUN_PROFILE)) {
     message("[profiling_code] RUN_PROFILE=FALSE; skipping Rprof.")
     quit(save = "no", status = 0)
 }
 
-prof_file <- file.path(
-    root_dir,
-    "STEM_IDENTIFICATION_TEST",
-    "DP_GLOBAL",
-    "dev",
-    paste0("dp_global_", tolower(PROFILE_VARIANT), ".prof")
-)
-
-message("[profiling_code] Profiling DP run (Tag=", which_tag, ", species=", sp0, ", variant=", PROFILE_VARIANT, ")")
+prof_file <- file.path(root_dir, "STEM_IDENTIFICATION_TEST", "DP_GLOBAL", "dev", "dp_global_cpp.prof")
+message("[profiling_code] Profiling DP run (Tag=", which_tag, ", species=", sp0, ")")
 message("[profiling_code] Writing profile to: ", prof_file)
 
 Rprof(prof_file, interval = 0.01, memory.profiling = TRUE)
-
-out_prof <- if (isTRUE(RUN_DP_MARGINALS)) {
-    if (tolower(PROFILE_VARIANT) %in% c("batch", "cpp")) {
-        run_dp_batch(dtg)
-    } else {
-        run_dp_scalar(dtg)
-    }
-} else {
-    match_stems_dp_global_backward(
-        tree_data = data.table::copy(dtg),
-        min_growth = min_annual_growth,
-        max_growth = max_annual_growth,
-        anchor_start = anchor_start_census,
-        max_tracks = dp_max_tracks_local,
-        max_states = dp_max_states,
-        slack_tracks = dp_slack_tracks,
-        use_measurement_error = TRUE,
-        verbose = isTRUE(DP_VERBOSE)
-    )
-}
-
+out_prof <- run_dp_cpp(dtg)
 Rprof(NULL)
 
 message("[profiling_code] Done. Top hotspots:\n")

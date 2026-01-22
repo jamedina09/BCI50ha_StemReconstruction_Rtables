@@ -17,7 +17,7 @@ if (sys.nframe() == 0L) {
 ### Command-line argument parsing
 ############################################################
 # Parse command-line arguments to override defaults.
-# Usage: Rscript main_cpp.R --which_tag=2 --RUN_ALL_TAGS=TRUE --DP_MODE=map --SENSITIVITY_MODE=run --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=8
+# Usage: Rscript main_cpp.R --which_tag=2 --RUN_ALL_TAGS=TRUE --DP_MODE=marginals+bins --SENSITIVITY_MODE=run --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=8
 # Supported args: any config variable name prefixed with --
 
 parse_args <- function() {
@@ -78,16 +78,9 @@ library(here)
 ############################################################
 ### Manual overrides (uncomment and edit for interactive/manual runs)
 ############################################################
-# Example: override defaults for manual runs
-# DP_MODE <- "map"
-# SENSITIVITY_MODE <- "run+write"
-# which_tag <- 2
-# RUN_ALL_TAGS <- TRUE
-# etc.
-
 ## 2.1 Input data and species handling
-input_file <- here("data_simulation", "data", "simulation_legacy_backup", "simulated_data_one_species.csv")
-FORCE_ONE_SPECIES_PARAMETERS <- FALSE
+input_file <- here("data_simulation", "data", "simulated_data_1.csv")
+FORCE_ONE_SPECIES_PARAMETERS <- TRUE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
     FORCED_SPECIES_LABEL <- "all"
     message("[dp_global main.R] FORCE_ONE_SPECIES_PARAMETERS=TRUE: using single species label '", FORCED_SPECIES_LABEL, "' for all trees.")
@@ -109,18 +102,16 @@ K_SHRINK_SOURCE <- "fixed"
 K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
 K_GROWTH_SOURCE <- "fixed"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
+RECRUIT_MAX_SOURCE <- "fixed"
+RECRUIT_MAX_FIXED <- 6
 
 ############################################################
 ### 2.3 DP running settings
 ############################################################
-DP_MODE <- "marginals+bins" # Options: "none", "map", "marginals", "marginals+bins"
+DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
 which_tag <- 1L
 anchor_start_census <- 7L
-census_interval_years <- 5
-DP_BIN_CONFIDENT_PROB <- 0.95
-DP_BIN_UNLINKED_PROB <- 0.50
 DP_VERBOSE <- TRUE
-DP_POSTERIOR_TEMPERATURE <- 1.0
 DP_POSTERIOR_TOP_K <- 2L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
@@ -136,14 +127,6 @@ MANUAL_CORES_VALUE <- 1L # Number of cores to use if MANUAL_CORES=TRUE
 ############################################################
 ### 2.5 CPP
 ############################################################
-# Load C++ implementation
-if (!requireNamespace("Rcpp", quietly = TRUE)) {
-    stop("Rcpp package is required for C++ acceleration.")
-}
-library(Rcpp)
-source(here("dp_global", "src", "transition_cost_rcpp.R"))
-Rcpp::sourceCpp(here("dp_global", "src", "transition_cost_rcpp.cpp"))
-message("[dp_global main_cpp.R] C++ acceleration enabled.")
 
 ## create output directory within project
 # Base output directory
@@ -155,7 +138,7 @@ message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 
 # Optional: explicitly set a subdirectory name for outputs.
 # If NULL, an automatic name based on timestamp + key config flags is used.
-OUT_DIR_NAME <- NULL
+# OUT_DIR_NAME <- NULL
 # CONFIG_NAME is set by the orchestrator (e.g., run_dp_future) to identify the
 # experimental configuration; default to NULL so override parsing treats it as
 # a valid, known variable rather than an unknown override.
@@ -173,19 +156,11 @@ encode_num <- function(x) {
     s
 }
 
-# decode_num <- function(s) {
-#     as.numeric(gsub("p", ".", gsub("m", "-", s)))
-# }
-
-flag <- function(cond, yes, no = "") {
-    if (isTRUE(cond)) yes else no
-}
-
 build_out_dir_name <- function() {
-    # Use explicit OUT_DIR_NAME if set
-    if (!is.null(OUT_DIR_NAME) && nzchar(OUT_DIR_NAME)) {
-        return(OUT_DIR_NAME)
-    }
+    # # Use explicit OUT_DIR_NAME if set
+    # if (!is.null(OUT_DIR_NAME) && nzchar(OUT_DIR_NAME)) {
+    #     return(OUT_DIR_NAME)
+    # }
 
     # Timestamp: use BATCH_TS if provided; else fallback to current date+time
     ts <- if (exists("BATCH_TS") && nzchar(BATCH_TS)) BATCH_TS else format(Sys.time(), "%Y%m%d_%H%M%S")
@@ -269,9 +244,16 @@ build_out_dir_name <- function() {
 }
 
 WRITE_DP_CSV <- TRUE
+WRITE_DP_RDS <- TRUE
 WRITE_DP_PDF <- TRUE
 DP_PDF_INCLUDE_REFERENCE <- TRUE
-PLOT_PDF_ONE_TAG_ONLY <- TRUE
+
+if (!isTRUE(RUN_ALL_TAGS)) {
+    PLOT_PDF_ONE_TAG_ONLY <- TRUE
+} else {
+    PLOT_PDF_ONE_TAG_ONLY <- FALSE
+}
+
 # Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
 PROJECT_ROOT <- here::here()
 ############################################################
@@ -283,15 +265,15 @@ RUN_K_SWEEP_DEMO <- TRUE
 ############################################################
 ### 2.6 Realism report settings
 ############################################################
-RUN_REALISM_REPORT <- FALSE
+RUN_REALISM_REPORT <- TRUE
 
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
     cat("Common keys and defaults:\n")
     keys <- c(
         "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
-        "anchor_start_census", "census_interval_years", "DP_VERBOSE", "RUN_ALL_TAGS",
-        "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_PDF",
+        "anchor_start_census", "DP_VERBOSE", "RUN_ALL_TAGS",
+        "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_RDS", "WRITE_DP_PDF",
         "dp_max_states", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
         "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
     )
@@ -329,10 +311,6 @@ MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) {
     1L
 }
 
-# Ensure growth/shrink derived bounds reflect overrides
-min_annual_growth <- MAX_SHRINK_FIXED
-max_annual_growth <- MAX_GROWTH_FIXED
-
 # Optional override: explicitly set project root (useful when running under different working dirs or job launchers)
 # Usage: --PROJECT_ROOT=/absolute/path/to/project
 if (exists("PROJECT_ROOT") && !is.null(PROJECT_ROOT) && nzchar(PROJECT_ROOT)) {
@@ -358,7 +336,6 @@ if (!file.exists(input_file)) {
 
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
-RUN_DP_MARGINALS <- DP_MODE %in% c("marginals", "marginals+bins")
 ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
 RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
 WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
@@ -370,83 +347,16 @@ message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
 DP_CSV_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.csv")
+DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
 DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
 
 ############################################################
 ### 3) Source project code
 ############################################################
-source(here("dp_global", "R", "dp_global_biol.R"))
+source(here("dp_global", "R", "dp_global_main.R"))
 source(here("dp_global", "R", "sensitivity_transition_cost_bio.R"))
 source(here("dp_global", "R", "realism_calibration.R"))
 source(here("dp_global", "R", "k_tuning_viz.R"))
-
-# Redefine transition_cost_tracks_bio_batch to use C++
-original_transition_cost_tracks_bio_batch <- transition_cost_tracks_bio_batch
-
-# here im replacing the base function with the Rcpp version
-transition_cost_tracks_bio_batch <- function(
-  track_dbh_t,
-  track_dbh_tp1,
-  interval_years,
-  mu_const,
-  mu_gamma,
-  sigma0,
-  sigma1,
-  max_shrink,
-  k_shrink,
-  max_growth,
-  max_growth_soft,
-  k_growth,
-  use_measurement_error,
-  meas_sd1_a,
-  meas_sd1_b,
-  meas_sd2,
-  meas_p_big,
-  h0,
-  beta,
-  recruit_meanlog,
-  recruit_sdlog,
-  recruit_max_dbh,
-  recruit_lambda,
-  eps_tiebreak,
-  hard_penalty = 1e6
-) {
-    # cat("C++ version called\n")
-    if (is.list(track_dbh_tp1)) {
-        mat_tp1 <- do.call(rbind, track_dbh_tp1)
-    } else {
-        mat_tp1 <- as.matrix(track_dbh_tp1)
-    }
-    result <- transition_cost_tracks_bio_batch_rcpp(
-        track_dbh_t = track_dbh_t,
-        mat_tp1 = mat_tp1,
-        interval_years = interval_years,
-        mu_const = mu_const,
-        mu_gamma = mu_gamma,
-        sigma0 = sigma0,
-        sigma1 = sigma1,
-        max_shrink = max_shrink,
-        k_shrink = k_shrink,
-        max_growth = max_growth,
-        max_growth_soft = max_growth_soft,
-        k_growth = k_growth,
-        use_measurement_error = use_measurement_error,
-        meas_sd1_a = meas_sd1_a,
-        meas_sd1_b = meas_sd1_b,
-        meas_sd2 = meas_sd2,
-        meas_p_big = meas_p_big,
-        h0 = h0,
-        beta = beta,
-        recruit_meanlog = recruit_meanlog,
-        recruit_sdlog = recruit_sdlog,
-        recruit_max_dbh = recruit_max_dbh,
-        recruit_lambda = recruit_lambda,
-        eps_tiebreak = eps_tiebreak,
-        hard_penalty = hard_penalty
-    )
-    return(result)
-}
-message("[dp_global main_cpp.R] C++ acceleration enabled for DP computation.")
 
 ############################################################
 ### 4) Helpers
@@ -467,19 +377,21 @@ message("[dp_global main_cpp.R] C++ acceleration enabled for DP computation.")
 # Helper: compute the *actual* soft-penalty cost for a given k and delta.
 # - delta_cm is in cm over the interval (NOT cm/year).
 # - temperature is the marginal-DP temperature; weight multiplier is exp(-soft_cost / temperature).
-soft_cost_from_k <- function(delta_cm, k, temperature = 1) {
-    delta_cm <- as.numeric(delta_cm)
-    k <- as.numeric(k)
-    temperature <- as.numeric(temperature)
-    cost <- k * (delta_cm^2)
-    data.frame(
-        delta_cm = delta_cm,
-        k = k,
-        soft_cost = cost,
-        temperature = temperature,
-        weight_multiplier = exp(-cost / temperature)
-    )
-}
+# soft_cost_from_k <- function(delta_cm, k, temperature = 1) {
+#     delta_cm <- as.numeric(delta_cm)
+#     k <- as.numeric(k)
+#     temperature <- as.numeric(temperature)
+#     cost <- k * (delta_cm^2)
+#     data.frame(
+#         delta_cm = delta_cm,
+#         k = k,
+#         soft_cost = cost,
+#         temperature = temperature,
+#         weight_multiplier = exp(-cost / temperature)
+#     )
+# }
+
+# soft_cost_from_k(delta_cm = seq(-10, 10, by = 1), k = 20, temperature = 1)
 
 ensure_dir <- function(path) {
     if (!dir.exists(path)) {
@@ -545,7 +457,6 @@ get_nested_numeric <- function(x, expr, fallback = NULL) {
 
 attach_bio_columns <- function(xrun, bio_pars) {
     xrun[, `:=`(
-        Bio_IntervalYears = as.numeric(census_interval_years),
         Bio_Mu_Growth = get_growth_mu_const(bio_pars[[.BY$species]]$growth),
         Bio_Gamma_Growth = {
             g <- bio_pars[[.BY$species]]$growth
@@ -553,8 +464,6 @@ attach_bio_columns <- function(xrun, bio_pars) {
         },
         Bio_Sigma0_Growth = bio_pars[[.BY$species]]$growth$sigma0,
         Bio_Sigma1_Growth = bio_pars[[.BY$species]]$growth$sigma1,
-        Bio_H0 = bio_pars[[.BY$species]]$mortality$h0,
-        Bio_Beta = bio_pars[[.BY$species]]$mortality$beta,
         Bio_H0_Mortality = bio_pars[[.BY$species]]$mortality$h0,
         Bio_Beta_Mortality = bio_pars[[.BY$species]]$mortality$beta,
         Bio_Recruit_Meanlog = bio_pars[[.BY$species]]$recruitment$meanlog,
@@ -596,41 +505,27 @@ auto_dp_max_tracks <- function(xrun) {
 }
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
-    if (isTRUE(RUN_DP_MARGINALS)) {
-        match_stems_dp_global_backward_marginals_batch(
-            tree_data = data.table::copy(dtg),
-            min_growth = min_annual_growth,
-            max_growth = max_annual_growth,
-            anchor_start = anchor_start_census,
-            max_tracks = dp_max_tracks,
-            max_states = dp_max_states,
-            slack_tracks = dp_slack_tracks,
-            temperature = DP_POSTERIOR_TEMPERATURE,
-            posterior_top_k = DP_POSTERIOR_TOP_K,
-            use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
-            verbose = isTRUE(DP_VERBOSE)
-        )
-    } else {
-        match_stems_dp_global_backward(
-            tree_data = data.table::copy(dtg),
-            min_growth = min_annual_growth,
-            max_growth = max_annual_growth,
-            anchor_start = anchor_start_census,
-            max_tracks = dp_max_tracks,
-            max_states = dp_max_states,
-            slack_tracks = dp_slack_tracks,
-            use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
-            verbose = isTRUE(DP_VERBOSE)
-        )
-    }
+    match_stems_dp_global_backward_marginals_batch(
+        tree_data = data.table::copy(dtg),
+        min_growth = MAX_SHRINK_FIXED,
+        max_growth = MAX_GROWTH_FIXED,
+        anchor_start = anchor_start_census,
+        max_tracks = dp_max_tracks,
+        max_states = dp_max_states,
+        slack_tracks = dp_slack_tracks,
+        temperature = 1,
+        posterior_top_k = DP_POSTERIOR_TOP_K,
+        use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+        verbose = isTRUE(DP_VERBOSE)
+    )
 }
 
 maybe_add_posterior_bins <- function(out) {
-    if (isTRUE(RUN_DP_MARGINALS) && isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
+    if (isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
         out <- add_dp_posterior_bins(
             out,
-            confident_prob = DP_BIN_CONFIDENT_PROB,
-            unlinked_prob = DP_BIN_UNLINKED_PROB,
+            confident_prob = 0.95,
+            unlinked_prob = 0.5,
             use_reconstructed_prob = TRUE,
             out_col = "DP_PosteriorBin"
         )
@@ -659,18 +554,13 @@ run_main <- function() {
     xraw <- data.table::fread(input_file)
     xraw <- ensure_species_column(xraw)
     xrun <- data.table::copy(xraw)
-    # By default we add `Bio_IntervalYears` as a constant (from `census_interval_years`),
-    # but users may supply a per-row interval column (e.g., `Bio_IntervalYears`) in the
-    # input dataset and `estimate_bio_pars()` will detect and use it when called with
-    # `interval_years = NULL` or with `interval_col_candidates = "Bio_IntervalYears"`.
-    xrun[, Bio_IntervalYears := as.numeric(census_interval_years)]
-    # 5.2 Estimate bio parameters (per species)
+
+    # 5.2 Estimate biological parameters
     bio_pars <- list()
+
     for (sp in unique(xrun$species)) {
         bio_pars[[sp]] <- estimate_bio_pars(
             xrun[species == sp],
-            # interval_years = census_interval_years,
-            interval_col_candidates = "Bio_IntervalYears",
             use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
             # Hard shrink guardrail (max_shrink)
             # - "data": estimated from observed shrink tail (with measurement-error support)
@@ -773,18 +663,6 @@ run_main <- function() {
 
     # 5.3 Attach Bio_* columns (DP reads parameters from columns)
     xrun <- attach_bio_columns(xrun, bio_pars)
-    ## adding variation to census interval to test errors need to be fixed
-    xrun[, Bio_IntervalYears := Bio_IntervalYears + rnorm(.N, mean = 0, sd = 1e-1)] # tiny jitter to avoid zero-interval issues
-
-    # Canonicalize to per-(Tag, CensusID) mean so tiny numeric jitter doesn't break DP.
-    # This respects NA values by taking mean with na.rm=TRUE; if all NA, value remains NA.
-    # xrun[, Bio_IntervalYears := as.numeric(mean(Bio_IntervalYears, na.rm = TRUE)), by = .(Tag, CensusID)]
-    # Informative message when we collapsed varying per-row intervals to per-census means
-    if (any(is.na(xrun$Bio_IntervalYears))) {
-        message("[dp_global main_cpp.R] Some Bio_IntervalYears are NA after canonicalization; DP will require explicit intervals or will error.")
-    } else {
-        message("[dp_global main_cpp.R] Bio_IntervalYears canonicalized to per-(Tag,CensusID) means (NA handled).")
-    }
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(dp_max_tracks)) auto_dp_max_tracks(xrun) else as.integer(dp_max_tracks)
     dp_max_tracks_local <- as.integer(dp_max_tracks_local)
@@ -825,6 +703,9 @@ run_main <- function() {
     if (isTRUE(WRITE_DP_CSV) && !is.null(out)) {
         data.table::fwrite(out, file = DP_CSV_FILE)
     }
+    if (isTRUE(WRITE_DP_RDS) && !is.null(out)) {
+        saveRDS(out, file = DP_RDS_FILE)
+    }
     if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
         plot_tag_to_pdf(
             out,
@@ -841,7 +722,8 @@ run_main <- function() {
         sp0 <- if (length(sp0) > 0L) sp0[[1L]] else FORCED_SPECIES_LABEL
 
         base_args0 <- bio_pars_to_transition_args(bio_pars[[sp0]])
-        rep0 <- realism_report_from_reconstruction(out, interval_years = census_interval_years, base_args = base_args0)
+        #* TODO: Define interval_years per row if needed
+        rep0 <- realism_report_from_reconstruction(out, interval_years = 5, base_args = base_args0)
 
         # Add out_dir to realism outputs
         rep0$summary[, out_dir := basename(out_dir)]
@@ -860,12 +742,14 @@ run_main <- function() {
         sp_sens <- if (length(sp_sens) > 0L) sp_sens[[1L]] else FORCED_SPECIES_LABEL
 
         base <- bio_pars_to_transition_args(bio_pars[[sp_sens]])
-        sc <- make_demo_scenarios(base, interval_years = census_interval_years)
+        #* TODO: Define interval_years per row if needed
+        sc <- make_demo_scenarios(base, interval_years = 5)
         param_grids <- default_param_grids(base, n = 200)
 
         all_sweeps <- build_all_sweeps(
             scenarios = sc,
-            interval_years = census_interval_years,
+            #* TODO: Define interval_years per row if needed
+            interval_years = 5,
             base_args = base,
             grids = param_grids,
             abs_jump = 1000
@@ -956,13 +840,14 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
                 "large tree growth", "moderate growth", "moderate shrink"
             )
         ),
-        interval_years = census_interval_years,
+        #* TODO: Define interval_years per row if needed
+        interval_years = 5,
         bio = bio_pars[[sp0]],
-        temperature = DP_POSTERIOR_TEMPERATURE,
+        temperature = 1L,
         which_k = "auto",
         # optional: include candidate-pruning bounds from the DP enumerator
-        prune_min_annual_growth = min_annual_growth,
-        prune_max_annual_growth = max_annual_growth,
+        prune_min_annual_growth = MAX_SHRINK_FIXED,
+        prune_max_annual_growth = MAX_GROWTH_FIXED,
         subtitle = basename(out_dir)
     )
 
@@ -983,6 +868,6 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
 source(here("dp_global", "R", "check_functions.r"))
 export_bio_pars_report(res$bio_pars,
     species = NULL,
-    interval_years = census_interval_years,
+    interval_years = 5,
     out_file = file.path(out_dir, "bio_pars_report.pdf")
 )
