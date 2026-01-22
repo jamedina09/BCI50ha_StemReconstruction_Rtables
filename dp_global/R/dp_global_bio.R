@@ -169,7 +169,7 @@ estimate_bio_pars <- function(
     }
 
     x_dt[, Tag := as.character(Tag)]
-    x_dt[, OriginalStemID := as.character(OriginalStemID)]
+    # x_dt[, OriginalStemID := as.character(OriginalStemID)]
     x_dt[, TrueStemID := as.character(TrueStemID)]
     x_dt[, CensusID := as.integer(CensusID)]
     x_dt[, DBH := as.numeric(DBH)]
