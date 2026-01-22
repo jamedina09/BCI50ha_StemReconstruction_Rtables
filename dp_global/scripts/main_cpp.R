@@ -109,7 +109,7 @@ RECRUIT_MAX_FIXED <- 6
 ### 2.3 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-which_tag <- 1L
+which_tag <- 39L
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
@@ -666,6 +666,9 @@ run_main <- function() {
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(dp_max_tracks)) auto_dp_max_tracks(xrun) else as.integer(dp_max_tracks)
     dp_max_tracks_local <- as.integer(dp_max_tracks_local)
+
+# FIXME
+xrun[Tag == which_tag, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
 
     # 5.5 DP reconstruction
     out <- NULL
