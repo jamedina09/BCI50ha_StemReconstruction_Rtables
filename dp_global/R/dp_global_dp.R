@@ -3,6 +3,7 @@
 # Core dynamic programming (MAP and marginal DP functions)
 ############################################################
 
+# # Guard against accidental top-level side-effect when sourcing in tests
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                                 min_growth = -Inf,
                                                                 max_growth = Inf,
@@ -139,12 +140,32 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         ReconstructionMethod = "given"
     )]
 
-    # Observed-stem counts up to anchor (for state-space diagnostics)
-    # tree_data[, .(CensusID, Tag, DBH)]
-    ## it counts the non-NA DBH observations per census up to anchor_start
-    # FIXME: Anchor doesn't has to be 7, it can be 7, if not, then the last census with observations
+    # Observed-stem counts over census interval from first observed census up to anchor (for state-space diagnostics)
+    # Determine the first census with any DBH observation at or before the anchor
+    census_ids_up_to_anchor <- sort(unique(tree_data$CensusID[tree_data$CensusID <= anchor_start]))
+    first_obs_census <- if (length(census_ids_up_to_anchor) > 0L) {
+        tmp <- tree_data[CensusID <= anchor_start & !is.na(DBH), CensusID]
+        if (length(tmp) > 0L) min(tmp) else NA_integer_
+    } else {
+        NA_integer_
+    }
+    if (is.na(first_obs_census)) {
+        vcat(prefix, "Cannot find any observations up to anchor_start. Falling back to igraph.")
+        K_used <- as.integer(min(0L, max_tracks))
+        tree_data[, `:=`(
+            DP_KUsed = K_used,
+            DP_MaxStatesPerCensus = 0L,
+            DP_MaxStatesCensusID = NA_integer_
+        )]
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        return(out)
+    }
+    census_range <- seq.int(from = first_obs_census, to = anchor_start)
+    n_census <- length(census_range)
+    vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
     obs_counts <- vapply(
-        seq_len(anchor_start),
+        census_range,
         function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
         integer(1L)
     )
@@ -160,7 +181,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
          tree_data[, `:=`(
              DP_KUsed = K_used,
              DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-             DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+             DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
          )]
          out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
          out <- ensure_posterior_columns(out)
@@ -176,7 +197,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
          tree_data[, `:=`(
              DP_KUsed = K_used,
              DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-             DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+             DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
          )]
          out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
          out <- ensure_posterior_columns(out)
@@ -203,7 +224,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     tree_data[, `:=`(
         DP_KUsed = as.integer(K),
         DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-        DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+        DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
     )]
     # FIXME: match_stems_optimal_backward uses time too
     if (K < max(obs_counts)) {
@@ -220,14 +241,15 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!is.finite(current_max)) current_max <- 0
     track_ids <- c(anchor_ids, if (n_extra > 0L) seq.int(from = current_max + 1L, length.out = n_extra) else integer(0))
 
-    # Pre-enumerate assignment states (injective obs->track) for each census
-    obs_dbh <- vector("list", anchor_start)
-    state_mats <- vector("list", anchor_start)
-    state_keys <- vector("list", anchor_start)
-    for (cc in seq_len(anchor_start)) {
+    # Pre-enumerate assignment states (injective obs->track) for each census in census_range
+    obs_dbh <- vector("list", n_census)
+    state_mats <- vector("list", n_census)
+    state_keys <- vector("list", n_census)
+    for (p in seq_len(n_census)) {
+        cc <- census_range[p]
         obs <- tree_data[CensusID == cc & !is.na(DBH)]
-        obs_dbh[[cc]] <- obs$DBH
-        n_obs <- length(obs_dbh[[cc]])
+        obs_dbh[[p]] <- obs$DBH
+        n_obs <- length(obs_dbh[[p]])
         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
         # FIXME: match_stems_optimal_backward uses time too
         if (is.null(mat)) {
@@ -236,8 +258,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- ensure_posterior_columns(out)
             return(out)
         }
-        state_mats[[cc]] <- mat
-        state_keys[[cc]] <- apply(mat, 1L, state_key)
+        state_mats[[p]] <- mat
+        state_keys[[p]] <- apply(mat, 1L, state_key)
 
         vcat(prefix, "Enumerated CensusID=", cc, ": n_obs=", n_obs, ", n_states=", nrow(mat))
     }
@@ -351,64 +373,67 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     Bio_Recruitment_lambda <- unique(tree_data$Bio_Recruitment_lambda)
 
     # Precompute track-wise DBH vectors for each *assignment* state (phase doesn't matter for costs)
-    track_dbh_by_state <- vector("list", anchor_start)
-    for (cc in seq_len(anchor_start)) {
-        mat <- state_mats[[cc]]
+    track_dbh_by_state <- vector("list", n_census)
+    for (p in seq_len(n_census)) {
+        mat <- state_mats[[p]]
         n_states <- nrow(mat)
         tdbh_list <- vector("list", n_states)
         for (i in seq_len(n_states)) {
-            tdbh_list[[i]] <- state_to_track_dbh(mat[i, ], obs_dbh[[cc]], K)
+            tdbh_list[[i]] <- state_to_track_dbh(mat[i, ], obs_dbh[[p]], K)
         }
-        track_dbh_by_state[[cc]] <- tdbh_list
+        track_dbh_by_state[[p]] <- tdbh_list
     }
 
     # Backward tables (sum-product) and Viterbi backpointers
-    keys_full <- vector("list", anchor_start)
-    assign_full <- vector("list", anchor_start)
-    logB <- vector("list", anchor_start)
-    vit_cost <- vector("list", anchor_start)
-    vit_ptr <- vector("list", anchor_start)
-    edges <- vector("list", anchor_start)
+    keys_full <- vector("list", n_census)
+    assign_full <- vector("list", n_census)
+    logB <- vector("list", n_census)
+    vit_cost <- vector("list", n_census)
+    vit_ptr <- vector("list", n_census)
+    edges <- vector("list", n_census)
 
-    # Initialize at anchor census: only one allowed full-state
+    # Initialize at anchor census: only one allowed full-state (use position index)
+    anchor_pos <- which(census_range == anchor_start)
     phase_anchor <- rep.int(2L, K)
     phase_anchor[anchor_track_idx] <- 1L
     anchor_full_key <- encode_full_key(anchor_track_idx, phase_anchor)
-    keys_full[[anchor_start]] <- anchor_full_key
-    assign_full[[anchor_start]] <- list(as.integer(anchor_track_idx))
-    logB[[anchor_start]] <- 0
-    vit_cost[[anchor_start]] <- 0
-    vit_ptr[[anchor_start]] <- integer(0)
-    edges[[anchor_start]] <- NULL
+    keys_full[[anchor_pos]] <- anchor_full_key
+    assign_full[[anchor_pos]] <- list(as.integer(anchor_track_idx))
+    logB[[anchor_pos]] <- 0
+    vit_cost[[anchor_pos]] <- 0
+    vit_ptr[[anchor_pos]] <- integer(0)
+    edges[[anchor_pos]] <- NULL
 
-    # Backward recursion cc = anchor_start-1 .. 1
+    # Backward recursion p = anchor_pos-1 .. 1 (maps to CensusID via census_range)
     vcat(prefix, "Backward pass (log-sum-exp + Viterbi) starting ...")
-    for (cc in seq.int(anchor_start - 1L, 1L, by = -1L)) {
-        # cc <- 6L # For testing only
-        mat_cc <- state_mats[[cc]]
+    for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
+        # p: position in census_range (for testing only)
+        cc <- census_range[p]
+        next_cc <- census_range[p + 1L]
+        mat_cc <- state_mats[[p]]
         n_states_cc <- nrow(mat_cc)
 
         t_cc0 <- tic()
-        vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[cc + 1L]]))
+        vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[p + 1L]]))
 
-        next_keys <- keys_full[[cc + 1L]]
+        next_keys <- keys_full[[p + 1L]]
         n_next <- length(next_keys)
         if (n_next == 0L) {
-            vcat(prefix, "No reachable next full-states at CensusID=", cc + 1L, ". Falling back to igraph.")
+            vcat(prefix, "No reachable next full-states at CensusID=", next_cc, ". Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             return(out)
         }
         next_index <- seq_len(n_next)
         names(next_index) <- next_keys
-        logB_next <- as.numeric(logB[[cc + 1L]])
-        vit_next <- as.numeric(vit_cost[[cc + 1L]])
+        logB_next <- as.numeric(logB[[p + 1L]])
+        vit_next <- as.numeric(vit_cost[[p + 1L]])
 
         # Fast lookup for next assignment DBHs via assignment key
-        next_assign_list <- assign_full[[cc + 1L]]
+        next_assign_list <- assign_full[[p + 1L]]
         # Build assignment-key -> state index for next census (since phase differs but assignment cost uses assignment)
         next_assign_key <- vapply(next_assign_list, state_key, character(1L))
-        next_assign_row_idx <- match(next_assign_key, state_keys[[cc + 1L]])
+        next_assign_row_idx <- match(next_assign_key, state_keys[[p + 1L]])
         if (any(is.na(next_assign_row_idx))) {
             # Should not happen; indicates mismatch in state enumeration.
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
@@ -423,7 +448,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
         tdbh1_by_next <- vector("list", n_next)
         for (j in seq_len(n_next)) {
-            tdbh1_by_next[[j]] <- track_dbh_by_state[[cc + 1L]][[next_assign_row_idx[[j]]]]
+            tdbh1_by_next[[j]] <- track_dbh_by_state[[p + 1L]][[next_assign_row_idx[[j]]]]
         }
 
         # Preallocate edge arrays (worst-case: every (assignment_state, next_full_state) is feasible)
@@ -457,7 +482,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         for (i in seq_len(n_states_cc)) {
             # i <- 1L # For testing only
-            tdbh0 <- track_dbh_by_state[[cc]][[i]]
+            tdbh0 <- track_dbh_by_state[[p]][[i]]
             assign0 <- mat_cc[i, ]
 
             # Collect all feasible next states (based on phase constraints) for this current assignment
@@ -485,7 +510,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             feasible_key <- feasible_key[seq_len(feasible_n)]
             feasible_tdbh1 <- feasible_tdbh1[seq_len(feasible_n)]
 
-            interval_val <- (as.numeric(pair_interval[[as.character(cc + 1L)]]) - as.numeric(pair_interval[[as.character(cc)]])) / 365.25
+            interval_val <- (as.numeric(pair_interval[[as.character(next_cc)]]) - as.numeric(pair_interval[[as.character(cc)]])) / 365.25
             # print(interval_val)
             # Batch compute all transition costs from this current assignment
             c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
@@ -562,11 +587,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             return(out)
         }
 
-        keys_full[[cc]] <- unlist(curr_keys_list, use.names = FALSE)
-        assign_full[[cc]] <- curr_assign_list
-        logB[[cc]] <- curr_logB
-        vit_cost[[cc]] <- curr_vit
-        vit_ptr[[cc]] <- curr_ptr
+        keys_full[[p]] <- unlist(curr_keys_list, use.names = FALSE)
+        assign_full[[p]] <- curr_assign_list
+        logB[[p]] <- curr_logB
+        vit_cost[[p]] <- curr_vit
+        vit_ptr[[p]] <- curr_ptr
 
         if (used_edges == 0L) {
             vcat(prefix, "No feasible edges at CensusID=", cc, ". Falling back to igraph.")
@@ -574,13 +599,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- ensure_posterior_columns(out)
             return(out)
         }
-        edges[[cc]] <- data.table::data.table(
+        edges[[p]] <- data.table::data.table(
             from_idx = from_idx[seq_len(used_edges)],
             to_idx = to_idx[seq_len(used_edges)],
             logw = logw[seq_len(used_edges)]
         )
 
-        vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[cc]]), ", edges=", used_edges, ", dt=", sprintf("%.2fs", tic() - t_cc0))
+        vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[p]]), ", edges=", used_edges, ", dt=", sprintf("%.2fs", tic() - t_cc0))
     }
 
     # -----------------
@@ -593,22 +618,23 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out <- ensure_posterior_columns(out)
         return(out)
     }
-    map_idx <- integer(anchor_start)
+    map_idx <- integer(n_census)
     map_idx[1L] <- start_idx
-    for (cc in seq_len(anchor_start - 1L)) {
-        nxt <- vit_ptr[[cc]][map_idx[cc]]
+    for (p in seq_len(n_census - 1L)) {
+        nxt <- vit_ptr[[p]][map_idx[p]]
         if (!is.finite(nxt) || is.na(nxt) || nxt < 1L) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             return(out)
         }
-        map_idx[cc + 1L] <- nxt
+        map_idx[p + 1L] <- nxt
     }
 
-    for (cc in seq_len(anchor_start)) {
+    for (p in seq_len(n_census)) {
+        cc <- census_range[p]
         obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
         if (length(obs_idx) == 0L) next
-        sv <- assign_full[[cc]][[map_idx[cc]]]
+        sv <- assign_full[[p]][[map_idx[p]]]
         if (length(sv) != length(obs_idx)) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
@@ -626,17 +652,17 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # -----------------
     vcat(prefix, "Forward pass starting ...")
     # Start distribution: uniform over all reachable states at census 1.
-    logalpha <- vector("list", anchor_start)
+    logalpha <- vector("list", n_census)
     logalpha[[1L]] <- rep.int(0, length(keys_full[[1L]]))
 
-    for (cc in seq_len(anchor_start - 1L)) {
-        ed <- edges[[cc]]
+    for (p in seq_len(n_census - 1L)) {
+        ed <- edges[[p]]
         if (is.null(ed) || nrow(ed) == 0L) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             return(out)
         }
-        la_from <- logalpha[[cc]][ed$from_idx]
+        la_from <- logalpha[[p]][ed$from_idx]
         vals <- la_from + ed$logw
         dt <- data.table::data.table(to_idx = ed$to_idx, v = vals)
         dt <- dt[is.finite(v)]
@@ -646,16 +672,16 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             return(out)
         }
         la_next_dt <- dt[, .(logalpha = log_sum_exp(v)), by = to_idx]
-        la_next <- rep.int(-Inf, length(keys_full[[cc + 1L]]))
+        la_next <- rep.int(-Inf, length(keys_full[[p + 1L]]))
         la_next[la_next_dt$to_idx] <- la_next_dt$logalpha
-        logalpha[[cc + 1L]] <- la_next
+        logalpha[[p + 1L]] <- la_next
 
-        vcat(prefix, "Forward step CensusID=", cc + 1L, ": reached ", sum(is.finite(la_next)), " / ", length(la_next), " states")
+        vcat(prefix, "Forward step CensusID=", census_range[p + 1L], ": reached ", sum(is.finite(la_next)), " / ", length(la_next), " states")
     }
 
     # Partition function Z = total weight of all paths ending at the fixed anchor state.
     # At anchor_start there is exactly one state.
-    logZ <- logalpha[[anchor_start]][1L]
+    logZ <- logalpha[[anchor_pos]][1L]
     if (!is.finite(logZ)) {
         # Fallback: compute from backward at census 1.
         logZ <- log_sum_exp(logB[[1L]])
@@ -669,19 +695,20 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     anchor_set <- anchor_ids
     is_anchor_track <- track_ids %in% anchor_set
 
-    for (cc in seq_len(anchor_start)) {
+    for (p in seq_len(n_census)) {
+        cc <- census_range[p]
         obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
         if (length(obs_idx) == 0L) next
 
         # State posterior weights at this census
-        lg <- logalpha[[cc]] + logB[[cc]] - logZ
+        lg <- logalpha[[p]] + logB[[p]] - logZ
         # Normalize defensively
         lg <- lg - log_sum_exp(lg)
         w <- exp(lg)
 
         n_obs <- length(obs_idx)
         prob_mat <- matrix(0, nrow = n_obs, ncol = K)
-        st_assign <- assign_full[[cc]]
+        st_assign <- assign_full[[p]]
         for (s in seq_along(st_assign)) {
             ww <- w[s]
             if (!is.finite(ww) || ww <= 0) next
@@ -700,7 +727,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         # MAP assignment for DP_PosteriorReconstructedProb
-        map_assign <- assign_full[[cc]][[map_idx[cc]]]
+        map_assign <- assign_full[[p]][[map_idx[p]]]
 
         # Prepare containers for top-K posterior summaries
         Ktop <- max(1L, as.integer(posterior_top_k))
@@ -711,23 +738,23 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         p_unlinked <- numeric(n_obs)
 
         for (j in seq_len(n_obs)) {
-            p <- prob_mat[j, ]
+            pvec <- prob_mat[j, ]
             # numeric stability
-            p[p < 0] <- 0
-            sp <- sum(p)
-            if (sp > 0) p <- p / sp
-            ord <- order(p, decreasing = TRUE)
+            pvec[pvec < 0] <- 0
+            sp <- sum(pvec)
+            if (sp > 0) pvec <- pvec / sp
+            ord <- order(pvec, decreasing = TRUE)
             m <- min(length(ord), Ktop)
             if (m >= 1L) {
                 for (kk in seq_len(m)) {
                     idxk <- ord[kk]
                     top_id_mat[j, kk] <- track_ids[idxk]
-                    top_p_mat[j, kk] <- p[idxk]
+                    top_p_mat[j, kk] <- pvec[idxk]
                 }
             }
-            entropy[j] <- -sum(ifelse(p > 0, p * log(p), 0))
-            p_map[j] <- p[map_assign[j]]
-            p_unlinked[j] <- sum(p[!is_anchor_track])
+            entropy[j] <- -sum(ifelse(pvec > 0, pvec * log(pvec), 0))
+            p_map[j] <- pvec[map_assign[j]]
+            p_unlinked[j] <- sum(pvec[!is_anchor_track])
         }
 
         # Build named list for data.table assignment

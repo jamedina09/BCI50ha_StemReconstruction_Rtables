@@ -94,25 +94,25 @@ SPECIES_COL <- NULL
 ############################################################
 # All settings related to parameter estimation and biological realism
 USE_MEASUREMENT_ERROR <- TRUE
-MAX_GROWTH_HARD_SOURCE <- "fixed"
+MAX_GROWTH_HARD_SOURCE <- "data"
 MAX_GROWTH_FIXED <- 7.5
-MAX_SHRINK_HARD_SOURCE <- "fixed"
+MAX_SHRINK_HARD_SOURCE <- "data"
 MAX_SHRINK_FIXED <- -0.5
 K_SHRINK_SOURCE <- "data"
-K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
+K_SHRINK_FIXED <- 50 # 0 to disable soft penalty
 K_GROWTH_SOURCE <- "data"
-K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
-RECRUIT_MAX_SOURCE <- "fixed"
-RECRUIT_MAX_FIXED <- 6
+K_GROWTH_FIXED <- 50 # 0 to disable soft penalty
+RECRUIT_MAX_SOURCE <- "data"
+RECRUIT_MAX_FIXED <- 35
 
 ############################################################
 ### 2.3 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-which_tag <- 39L # 20 to compare outputs
+which_tag <- 20L # 20 to compare outputs
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
-DP_POSTERIOR_TOP_K <- 2L
+DP_POSTERIOR_TOP_K <- 3L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
 dp_slack_tracks <- 1L
@@ -259,13 +259,13 @@ PROJECT_ROOT <- here::here()
 ############################################################
 ### 2.5 Sensitivity analysis settings
 ############################################################
-SENSITIVITY_MODE <- "run+write+pdf" # Options: "none", "run", "run+write", "run+write+pdf"
-RUN_K_SWEEP_DEMO <- TRUE
+SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
+RUN_K_SWEEP_DEMO <- FALSE
 
 ############################################################
 ### 2.6 Realism report settings
 ############################################################
-RUN_REALISM_REPORT <- TRUE
+RUN_REALISM_REPORT <- FALSE
 
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
@@ -503,8 +503,6 @@ auto_dp_max_tracks <- function(xrun) {
     if (!is.finite(max_obs_any_tag_census)) max_obs_any_tag_census <- 0L
     as.integer(max_obs_any_tag_census + 1L)
 }
-rm(match_stems_dp_global_backward_marginals_batch)
-source("./dp_global/R/dp_global_dp_test.R")
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
     match_stems_dp_global_backward_marginals_batch(
@@ -668,9 +666,6 @@ run_main <- function() {
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(dp_max_tracks)) auto_dp_max_tracks(xrun) else as.integer(dp_max_tracks)
     dp_max_tracks_local <- as.integer(dp_max_tracks_local)
-
-# FIXME
-xrun[Tag == which_tag, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
 
     # 5.5 DP reconstruction
     out <- NULL
