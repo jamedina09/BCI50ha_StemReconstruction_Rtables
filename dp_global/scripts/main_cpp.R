@@ -97,13 +97,13 @@ USE_MEASUREMENT_ERROR <- TRUE
 MAX_GROWTH_HARD_SOURCE <- "data"
 MAX_GROWTH_FIXED <- 7.5
 MAX_SHRINK_HARD_SOURCE <- "data"
-MAX_SHRINK_FIXED <- -0.5
-K_SHRINK_SOURCE <- "data"
-K_SHRINK_FIXED <- 50 # 0 to disable soft penalty
-K_GROWTH_SOURCE <- "data"
-K_GROWTH_FIXED <- 50 # 0 to disable soft penalty
-RECRUIT_MAX_SOURCE <- "data"
-RECRUIT_MAX_FIXED <- 35
+MAX_SHRINK_FIXED <- -0.01
+K_SHRINK_SOURCE <- "fixed"
+K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
+K_GROWTH_SOURCE <- "fixed"
+K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
+RECRUIT_MAX_SOURCE <- "fixed"
+RECRUIT_MAX_FIXED <- 100
 
 ############################################################
 ### 2.3 DP running settings
@@ -112,7 +112,7 @@ DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
 which_tag <- 20L # 20 to compare outputs
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
-DP_POSTERIOR_TOP_K <- 3L
+DP_POSTERIOR_TOP_K <- 2L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
 dp_slack_tracks <- 1L
