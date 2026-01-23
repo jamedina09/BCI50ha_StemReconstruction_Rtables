@@ -4,7 +4,7 @@ This directory contains the `simulate_data.R` script that generates realistic fo
 
 ## Overview
 
-The simulation creates biologically plausible multi-species tropical forest dynamics using models derived from the DP (Dynamic Programming) workflow in `dp_global_biol.R`. It produces datasets that mimic ForestGEO census protocols with realistic growth, mortality, recruitment, measurement error, and stem identification challenges.
+Simulates biologically plausible multi-species tropical forest census data (growth, mortality, recruitment, measurement error, and stem ID masking) compatible with the DP workflow.
 
 Key features include:
 - **Variable census intervals**: ~5 years between censuses with random noise
@@ -17,6 +17,16 @@ Key features include:
 - **Flexible growth scaling** for simulating disturbances
 - **Stem ID masking** to simulate ForestGEO protocols
 - **Comprehensive diagnostics** with trajectory visualization
+
+## Quickstart
+
+Run the simulation:
+
+```bash
+Rscript simulate_data.R
+```
+
+Generated outputs are placed in `data/`.
 
 ## Output Files
 
@@ -161,9 +171,6 @@ events = list(
 ### Visualization
 - `make_plot`: Generate trajectory plots (TRUE)
 
-### Visualization
-- `make_plot`: Generate trajectory plots (TRUE)
-
 ## Output Files
 
 ### Main Dataset: `simulated_data_1.csv`
@@ -198,7 +205,7 @@ sort(unique(dt[!is.na(TrueStemID), CensusID]))
 dt[Tag == 1L, .SD[1:12]]
 ```
 
-This detailed schema should help you connect simulation outputs to the DP workflow and tests. If you want, I can also add a short example that joins `simulated_data_1.csv` with estimated bio-parameters to produce `Bio_*` columns used by `dp_global` functions.
+This detailed schema should help you connect simulation outputs to the DP workflow and tests.
 
 ### Diagnostic Plots
 - `simulated_data_1.pdf`: Species-level growth trajectories (one page per species)
@@ -278,14 +285,4 @@ data_simulation/
 
 ## Building This Documentation
 
-**Fully offline HTML (recommended):**
-```bash
-pandoc README.md --standalone --mathml \
-  --embed-resources -o README.html
-```
-
-**MathJax HTML (requires internet):**
-```bash
-pandoc README.md --standalone --mathjax \
-  --embed-resources -o README.html
-```
+Use `pandoc` (if available) to render `README.md` to HTML, or use your preferred tooling.

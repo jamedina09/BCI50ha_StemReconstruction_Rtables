@@ -1,5 +1,8 @@
-Minimal error-propagation helpers (README)
-==========================================
+# Error propagation helpers
+
+## Prerequisites
+
+R (package: `data.table`)
 
 Overview
 --------

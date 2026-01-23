@@ -1,6 +1,10 @@
 # dpglobal_bundle — Portable function bundle for DP_GLOBAL 🔧
 
-This directory bundles the R code and Rcpp helper wrappers needed to run the DP_GLOBAL workflow (the `main_cpp.R` driver). The goal is a portable, reproducible snapshot you can ship to another machine and load quickly.
+Bundle of R code and Rcpp wrapper helpers that collects project modules into an environment and saves a reproducible `dpglobal_bundle.RData` archive.
+
+## Prerequisites
+
+R and `Rcpp` (to compile C++ on the target system).
 
 ---
 
@@ -16,8 +20,7 @@ This directory bundles the R code and Rcpp helper wrappers needed to run the DP_
 - **src/transition_cost_rcpp.cpp**
   - The C++ implementation for Rcpp-accelerated functions. **This is source code only** and must be compiled on the target system.
 
-- **transition_cost_rcpp.R** (recommended to add here)
-  - Minimal R wrapper that calls `Rcpp::sourceCpp("src/transition_cost_rcpp.cpp")`. Place this in the bundle directory so users can compile the C++ code locally.
+- **transition_cost_rcpp.R**: R wrapper that calls `Rcpp::sourceCpp("src/transition_cost_rcpp.cpp")`. Include this wrapper in the bundle so the C++ code can be compiled on the target system.
 
 ---
 
@@ -30,7 +33,7 @@ This directory bundles the R code and Rcpp helper wrappers needed to run the DP_
 
 ---
 
-## Quick start (generate & use) 🚀
+## Quickstart (generate & use) 🚀
 
 From the project root (recommended):
 
