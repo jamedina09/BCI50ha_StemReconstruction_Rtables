@@ -37,12 +37,11 @@ Reconstruct stable stem identities across censuses using a biologically informed
 
 ---
 
-## Installation & Quickstart
+## Quickstart
 
 ### Prerequisites
 
-**Required R packages:** `data.table`, `igraph`  
-**Optional:** `ggplot2`, `cowplot`
+R (packages: `data.table`, `igraph`; optional: `ggplot2`, `cowplot`) 
 
 ### Running the Code
 

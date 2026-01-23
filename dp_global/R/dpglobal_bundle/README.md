@@ -4,7 +4,7 @@ Bundle of R code and Rcpp wrapper helpers that collects project modules into an 
 
 ## Prerequisites
 
-R and `Rcpp` (to compile C++ on the target system).
+R (package: `Rcpp`) 
 
 ---
 
