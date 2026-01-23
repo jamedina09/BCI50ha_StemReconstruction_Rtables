@@ -224,8 +224,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
 
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
-    # FIXME: match_stems_optimal_backward uses time too
-    # FIXME: Maybe add a key to fallback_igraph = TRUE or FALSE
     if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
         vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
         K_used <- as.integer(min(max_obs, max_tracks))
