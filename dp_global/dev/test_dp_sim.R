@@ -22,6 +22,7 @@ src_dir <- file.path("dp_global", "R")
 source(file.path(src_dir, "dp_global_states.R"))
 source(file.path(src_dir, "dp_global_utils.R"))
 source(file.path(src_dir, "dp_global_diag.R"))
+source(file.path(src_dir, "dp_global_matchers.R"))
 source(file.path(src_dir, "dp_global_dp.R"))
 
 # Construct a small simulated dataset
@@ -84,8 +85,8 @@ print(dt)
 # Run the DP with anchor_start = 7
 out <- match_stems_dp_global_backward_marginals_batch(
     tree_data = dt,
-    min_growth = -Inf,
-    max_growth = Inf,
+    min_growth = -5,
+    max_growth = 15,
     anchor_start = 7L,
     max_tracks = 6L,
     slack_tracks = 1L,
@@ -115,3 +116,84 @@ print("DP diagnostics:")
 print(unique(out[, .(DP_KUsed, DP_MaxStatesPerCensus, DP_MaxStatesCensusID)]))
 
 fwrite(out, "./out.csv")
+
+# --- Compare runs: no pruning vs pruning (tight max_growth to demonstrate effect) ---
+print("\nRunning comparison: no pruning vs pruning (growth bounds = -5 .. 15)\n")
+
+# No pruning
+out_noprune <- match_stems_dp_global_backward_marginals_batch(
+    tree_data = dt,
+    min_growth = -5,
+    max_growth = 15,
+    anchor_start = 7L,
+    max_tracks = 6L,
+    slack_tracks = 1L,
+    max_states = 50000L,
+    temperature = 1.0,
+    prune_hard = FALSE,
+    verbose = FALSE
+)
+print("DP_PruneInfo [no prune]:")
+print(attr(out_noprune, "DP_PruneInfo"))
+
+# With pruning (tight max_growth to force pruning)
+out_pruned <- match_stems_dp_global_backward_marginals_batch(
+    tree_data = dt,
+    min_growth = -5,
+    max_growth = 15,
+    anchor_start = 7L,
+    max_tracks = 6L,
+    slack_tracks = 1L,
+    max_states = 50000L,
+    temperature = 1.0,
+    prune_hard = TRUE,
+    verbose = TRUE
+)
+print("DP_PruneInfo [pruned]:")
+print(attr(out_pruned, "DP_PruneInfo"))
+
+# Compare posterior top-1 probabilities for census 1 with and without pruning
+print("Posterior Top1ID/Prob comparison (census 1):")
+print(data.table(
+    no_prune = out_noprune[CensusID == 1, .(Top1 = DP_PosteriorTop1ID, P1 = DP_PosteriorTop1Prob)],
+    pruned = out_pruned[CensusID == 1, .(Top1 = DP_PosteriorTop1ID, P1 = DP_PosteriorTop1Prob)
+]))
+
+# --- Demonstrate new pruning flags ---
+print("\nDemonstrating explicit prune_min/prune_max (wider than biological: prune_use_bio_bounds=FALSE)")
+out_wide_prune <- match_stems_dp_global_backward_marginals_batch(
+    tree_data = dt,
+    min_growth = -5,
+    max_growth = 15,
+    prune_hard = TRUE,
+    prune_min_growth = -10,
+    prune_max_growth = 25,
+    prune_use_bio_bounds = FALSE,
+    anchor_start = 7L,
+    max_tracks = 6L,
+    slack_tracks = 1L,
+    max_states = 50000L,
+    temperature = 1.0,
+    verbose = TRUE
+)
+print("DP_PruneInfo [wide prune]:")
+print(attr(out_wide_prune, "DP_PruneInfo"))
+
+print("\nDemonstrating prune_recruit_max_dbh override (stricter recruit size)")
+out_recruit_prune <- match_stems_dp_global_backward_marginals_batch(
+    tree_data = dt,
+    min_growth = -5,
+    max_growth = 15,
+    prune_hard = TRUE,
+    prune_recruit_max_dbh = 5,
+    prune_use_bio_recruit = FALSE,
+    anchor_start = 7L,
+    max_tracks = 6L,
+    slack_tracks = 1L,
+    max_states = 50000L,
+    temperature = 1.0,
+    verbose = TRUE
+)
+print("DP_PruneInfo [recruit prune]:")
+print(attr(out_recruit_prune, "DP_PruneInfo"))
+

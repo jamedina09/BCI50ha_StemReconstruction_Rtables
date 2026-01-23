@@ -18,8 +18,9 @@
 9. [Outputs & Diagnostics](#outputs--diagnostics)
 10. [Parameter Estimation](#parameter-estimation)
 11. [Fallback Mechanisms](#fallback-mechanisms)
-12. [Workflows & Usage Patterns](#workflows--usage-patterns)
-13. [Implementation Reference](#implementation-reference)
+12. [Pruning & Conservative Guards](#pruning--conservative-guards)
+13. [Workflows & Usage Patterns](#workflows--usage-patterns)
+14. [Implementation Reference](#implementation-reference)
 
 ---
 
@@ -843,6 +844,57 @@ The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 **Marking:** Rows assigned by fallback have `ReconstructionMethod="igraph"`
 
 **Important:** `min_growth` and `max_growth` constraints affect **only** the fallback method and post-hoc diagnostics, not the DP objective.
+
+## Pruning & Conservative Guards
+
+### Motivation — factorial growth of the state space
+The DP enumerates injective assignment states per census. For a census with `n_obs` observed stems and `K` tracks the number of assignment states is the falling-permutation
+
+```
+P(K, n_obs) = K × (K-1) × ... × (K - n_obs + 1)
+```
+
+The total number of full-paths (and candidate transitions between adjacent census assignment states) grows multiplicatively across censuses, which quickly becomes intractable (factorial-like explosion). To keep the DP practical, we apply *conservative, cheap* pre-filters that remove biologically impossible or extremely implausible candidate transitions before evaluating the full (expensive) transition cost.
+
+These filters are intentionally conservative: they are meant to remove clearly impossible candidates (hard physical/biological limits) while preserving borderline cases for the full cost evaluation.
+
+### Where pruning runs
+- Pruning happens in the backward recursion immediately *before* calling `transition_cost_tracks_bio_batch_rcpp` for a candidate transition. This avoids the costly likelihood evaluation for obviously impossible transitions.
+- Pruning is only applied when `prune_hard = TRUE` (default). If `prune_hard = FALSE`, no pre-filtering is performed and all candidate transitions are passed to the cost routine (slower but conservative).
+
+### Parameters & exact semantics
+We separate pruning thresholds from the biological (`Bio_*`) parameters so you can control pruning behaviour without changing the biological model used in the transition-cost calculations.
+
+- `prune_min_growth` (numeric | NULL): explicit lower bound (cm/year) used for pruning. If `NULL` the value `min_growth` passed to the DP is used.
+- `prune_max_growth` (numeric | NULL): explicit upper bound (cm/year) used for pruning. If `NULL` the value `max_growth` passed to the DP is used.
+- `prune_use_bio_bounds` (logical, default TRUE): whether to intersect the user-specified prune bounds with the biological hard bounds found in the data (`Bio_Max_Shrink`, `Bio_Max_Growth`). If TRUE (default):
+  - eff_min_grow = max(user_min, Bio_Max_Shrink)
+  - eff_max_grow = min(user_max, Bio_Max_Growth)
+  where `user_min` = `prune_min_growth` if provided else `min_growth`, and similarly for `user_max`.
+  If `prune_use_bio_bounds = FALSE` the `eff_*` values equal `user_*` directly.
+- `prune_recruit_max_dbh` (numeric | NULL): override for the recruit-size cut used during pruning. If `NULL` the biological `Bio_Recruit_MaxDBH_unit` is used. If `prune_use_bio_recruit = TRUE` (default) and both are finite, we use the more conservative value `min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)`; otherwise the explicit override is used.
+- `prune_use_bio_recruit` (logical, default TRUE): controls whether the biological recruit bound should be intersected with `prune_recruit_max_dbh`.
+
+Notes:
+- These pruning parameters affect only the *pre-filtering* step (they do not change the transition cost function or post-hoc diagnostics beyond recording the effective prune values).
+- If interval length between censuses is invalid or not finite for a pair, growth-based pruning is skipped for that pair and only recruit-size pruning (if applicable) is used.
+
+### Diagnostics & reproducibility
+- The DP exposes `attr(out, "DP_PruneInfo")` with:
+  - `total_examined`, `total_pruned` (counts)
+  - `per_census` (count per census pair)
+  - `eff_min_growth`, `eff_max_growth`, `eff_recruit_max` (the effective thresholds used)
+- The effective prune bounds are also `vcat`-logged at the start of the backward pass for transparency.
+
+### Practical guidance and examples
+- Default behaviour (safe): leave `prune_min_growth = NULL` and `prune_max_growth = NULL`. The code will use `user_min = min_growth`, `user_max = max_growth` and intersect them with `Bio_*` values. This preserves biological hard limits while letting you set study-level `min_growth`/`max_growth` if you want to narrow behaviour across the run.
+- If you want *wider* pruning (less aggressive rejection) than the biological bounds allow (e.g., because you trust the DP cost to handle edge cases), set `prune_use_bio_bounds = FALSE` and set `prune_min_growth`/`prune_max_growth` to the desired wide range (e.g., `-10`..`25`).
+- If you want *stricter* recruit-size pruning, provide a small `prune_recruit_max_dbh` (and set `prune_use_bio_recruit = FALSE` if you want to use it without intersecting the biological bound).
+- Beware of overly tight pruning: if pruning removes all feasible transitions at a census the DP will fallback to the `igraph` matcher (or produce no DP states). If you see frequent fallbacks for reasonable data, relax the prune bounds or set `prune_hard = FALSE` for a diagnostic run.
+
+### Why this approach?
+- The combinatorial nature of injective assignments makes per-census state counts grow factorially with `n_obs`. Pruning cheaply removes impossibilities and reduces the number of pairwise assignment evaluations from `O(n_states_cc × n_states_{cc+1})` to a manageable number while retaining feasible candidates for the full probabilistic scoring.
+- Because pruning is conservative and logged, it is auditable: you can use `DP_PruneInfo` to quantify how many candidate transitions were removed and where.
 
 ---
 

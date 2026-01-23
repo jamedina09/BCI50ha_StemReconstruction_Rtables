@@ -26,6 +26,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            posterior_samples_format = c("rds", "feather", "csv"),
                                                            posterior_samples_path = NULL,
                                                            posterior_sample_seed = NULL,
+                                                           # --- pruning options (conservative hard guards) ---
+                                                           prune_hard = TRUE,
+                                                           prune_min_growth = NULL,
+                                                           prune_max_growth = NULL,
+                                                           prune_use_bio_bounds = TRUE,
+                                                           prune_recruit_max_dbh = NULL,
+                                                           prune_use_bio_recruit = TRUE,
                                                            verbose = FALSE) {
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
@@ -174,6 +181,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         )]
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
         return(out)
     }
     census_range <- seq.int(from = first_obs_census, to = anchor_start)
@@ -185,6 +193,22 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         integer(1L)
     )
     max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+
+    # Initialize conservative hard-pruning diagnostics (per transition between adjacent censuses)
+    prune_hard <- isTRUE(prune_hard)
+
+    # Normalize pruning parameters
+    if (!is.null(prune_min_growth)) prune_min_growth <- as.numeric(prune_min_growth)
+    if (!is.null(prune_max_growth)) prune_max_growth <- as.numeric(prune_max_growth)
+    prune_use_bio_bounds <- isTRUE(prune_use_bio_bounds)
+    if (!is.null(prune_recruit_max_dbh)) prune_recruit_max_dbh <- as.numeric(prune_recruit_max_dbh)
+    prune_use_bio_recruit <- isTRUE(prune_use_bio_recruit)
+
+    prune_stats <- list(
+        total_examined = 0L,
+        total_pruned = 0L,
+        per_census = setNames(integer(max(0, n_census - 1L)), as.character(if (n_census > 1L) census_range[-length(census_range)] else integer(0)))
+    )
 
     # Need a fully-anchored endpoint
     # If the requested anchor census is missing entirely or all rows at that census
@@ -218,6 +242,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             )]
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
     }
@@ -234,6 +259,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         )]
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
         return(out)
     }
     anchor_ids <- sort(unique(anchor_obs$TrueStemID))
@@ -294,6 +320,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         vcat(prefix, "K too small for observed counts (K=", K, ", max_obs=", max(obs_counts), "). Falling back to igraph.")
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
         return(out)
     }
 
@@ -319,6 +346,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vcat(prefix, "State enumeration exceeded max_states at CensusID=", cc, " (n_obs=", n_obs, "). Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         state_mats[[p]] <- mat
@@ -335,6 +363,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         vcat(prefix, "Anchor TrueStemID not found in track_ids. Falling back to igraph.")
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
         return(out)
     }
 
@@ -435,6 +464,33 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     Bio_Recruit_MaxDBH_unit <- unique(tree_data$Bio_Recruit_MaxDBH_unit)
     Bio_Recruitment_lambda <- unique(tree_data$Bio_Recruitment_lambda)
 
+    # --- Determine effective pruning bounds (separate from biological min/max)
+    user_min <- if (!is.null(prune_min_growth)) prune_min_growth else min_growth
+    user_max <- if (!is.null(prune_max_growth)) prune_max_growth else max_growth
+    if (isTRUE(prune_use_bio_bounds)) {
+        eff_min_grow <- max(user_min, Bio_max_shrink_unit)
+        eff_max_grow <- min(user_max, Bio_max_growth_unit)
+    } else {
+        eff_min_grow <- user_min
+        eff_max_grow <- user_max
+    }
+
+    if (!is.null(prune_recruit_max_dbh)) {
+        if (isTRUE(prune_use_bio_recruit) && is.finite(Bio_Recruit_MaxDBH_unit)) {
+            eff_recruit_max <- min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)
+        } else {
+            eff_recruit_max <- prune_recruit_max_dbh
+        }
+    } else {
+        eff_recruit_max <- Bio_Recruit_MaxDBH_unit
+    }
+
+    prune_stats$eff_min_growth <- as.numeric(eff_min_grow)
+    prune_stats$eff_max_growth <- as.numeric(eff_max_grow)
+    prune_stats$eff_recruit_max <- as.numeric(eff_recruit_max)
+
+    vcat(prefix, "Pruning effective bounds: min=", eff_min_grow, ", max=", eff_max_grow, ", recruit_max=", eff_recruit_max)
+
     # Precompute track-wise DBH vectors for each *assignment* state (phase doesn't matter for costs)
     track_dbh_by_state <- vector("list", n_census)
     for (p in seq_len(n_census)) {
@@ -485,6 +541,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vcat(prefix, "No reachable next full-states at CensusID=", next_cc, ". Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         next_index <- seq_len(n_next)
@@ -501,6 +558,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # Should not happen; indicates mismatch in state enumeration.
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
 
@@ -542,6 +600,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         pair_interval <- resolve_interval_years_pair(tree_data)
+        # Interval (years) between cc and next_cc (computed once for this census pair)
+        interval_val <- (as.numeric(pair_interval[[as.character(next_cc)]]) - as.numeric(pair_interval[[as.character(cc)]])) / 365.25
+        if (!is.finite(interval_val) || interval_val <= 0) {
+            # fallback safe default; if invalid, growth-based pruning will be skipped
+            interval_val <- NA_real_
+        }
 
         for (i in seq_len(n_states_cc)) {
             # i <- 1L # For testing only
@@ -561,6 +625,38 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 phase_t <- derive_phase_prev(phase_tp1, tdbh0, tdbh1)
                 if (is.null(phase_t)) next
 
+                # Conservative hard-pruning: cheap vectorized checks before expensive cost evaluation
+                if (isTRUE(prune_hard)) {
+                    prune_stats$total_examined <- prune_stats$total_examined + 1L
+                    candidate_ok <- TRUE
+                    # Use precomputed effective prune bounds (eff_min_grow/eff_max_grow/eff_recruit_max)
+                    if (is.finite(interval_val)) {
+                        for (k in seq_len(K)) {
+                            v0 <- tdbh0[k]
+                            v1 <- tdbh1[k]
+                            if (!is.na(v0) && !is.na(v1)) {
+                                g <- (v1 - v0) / interval_val
+                                if (g < eff_min_grow || g > eff_max_grow) {
+                                    candidate_ok <- FALSE
+                                    break
+                                }
+                            } else if (is.na(v0) && !is.na(v1)) {
+                                # recruit size guard
+                                if (!is.na(eff_recruit_max) && is.finite(eff_recruit_max) && (v1 > eff_recruit_max)) {
+                                    candidate_ok <- FALSE
+                                    break
+                                }
+                            }
+                        }
+                    }
+
+                    if (!candidate_ok) {
+                        prune_stats$total_pruned <- prune_stats$total_pruned + 1L
+                        prune_stats$per_census[[as.character(cc)]] <- prune_stats$per_census[[as.character(cc)]] + 1L
+                        next
+                    }
+                }
+
                 feasible_n <- feasible_n + 1L
                 feasible_j[[feasible_n]] <- j
                 feasible_key[[feasible_n]] <- encode_full_key(assign0, phase_t)
@@ -573,8 +669,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             feasible_key <- feasible_key[seq_len(feasible_n)]
             feasible_tdbh1 <- feasible_tdbh1[seq_len(feasible_n)]
 
-            interval_val <- (as.numeric(pair_interval[[as.character(next_cc)]]) - as.numeric(pair_interval[[as.character(cc)]])) / 365.25
-            # print(interval_val)
             # Batch compute all transition costs from this current assignment
             c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
                 track_dbh_t = tdbh0,
@@ -647,6 +741,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vcat(prefix, "DP produced no states at CensusID=", cc, ". Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
 
@@ -660,6 +755,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vcat(prefix, "No feasible edges at CensusID=", cc, ". Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         edges[[p]] <- data.table::data.table(
@@ -679,6 +775,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (length(start_idx) == 0L || !is.finite(vit_cost[[1L]][start_idx])) {
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
         return(out)
     }
     map_idx <- integer(n_census)
@@ -688,6 +785,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (!is.finite(nxt) || is.na(nxt) || nxt < 1L) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         map_idx[p + 1L] <- nxt
@@ -701,6 +799,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (length(sv) != length(obs_idx)) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         tree_data[obs_idx, ReconstructedStemID := track_ids[sv]]
@@ -723,6 +822,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (is.null(ed) || nrow(ed) == 0L) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         la_from <- logalpha[[p]][ed$from_idx]
@@ -732,6 +832,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (nrow(dt) == 0L) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         la_next_dt <- dt[, .(logalpha = log_sum_exp(v)), by = to_idx]
@@ -987,6 +1088,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             saveRDS(list(full = samples_dt, summary = samples_summary, paths = paths_summary), file = paste0(out_path_base, ".rds"))
             vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".rds"))
         }
+    }
+
+    # Attach pruning diagnostics
+    attr(tree_data, "DP_PruneInfo") <- prune_stats
+    if (prune_stats$total_examined > 0L) {
+        vcat(prefix, "Prune summary: removed", prune_stats$total_pruned, "of", prune_stats$total_examined, "candidate transitions; per-census:", paste(names(prune_stats$per_census), prune_stats$per_census, sep = ":", collapse = ","))
     }
 
     vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
