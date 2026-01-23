@@ -83,7 +83,7 @@ if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
 
 args <- commandArgs(trailingOnly = TRUE)
 # Simple arg parsing
-opt <- list(workers = 3L, cores_per_job = 5L, configs = NULL, joblog = "parallel_future.log", force = FALSE, overrides = character(0), cfg_overrides = list())
+opt <- list(workers = 3L, cores_per_job = 5L, configs = NULL, joblog = "parallel_future.log", force = FALSE, overrides = character(0), cfg_overrides = list(), dry_run = FALSE, no_blas_limit = FALSE)
 extras <- c()
 i <- 1
 while (i <= length(args)) {
@@ -128,8 +128,15 @@ while (i <= length(args)) {
     }
     i <- i + 2
   } else if (a == "--help" || a == "-h") {
-    cat("Usage: run_dp_future_single.R [--workers N] [--cores-per-job N] [--joblog file] [--force] [--override KEY=VAL] [--cfg-override fixed:KEY=VAL] -- [extra args passed to main_cpp.R]\n")
+    cat("Usage: run_dp_future_single.R [--workers N] [--cores-per-job N] [--joblog file] [--force] [--dry-run] [--no-blas-limit] [--override KEY=VAL] [--cfg-override fixed:KEY=VAL] -- [extra args passed to main_cpp.R]\n")
     q(status = 0)
+  } else if (a == "--dry-run" || a == "--dry_run") {
+    opt$dry_run <- TRUE
+    i <- i + 1
+  } else if (a == "--no-blas-limit") {
+    # Do not set OMP/MKL/OPENBLAS env vars; allow BLAS threading
+    opt$no_blas_limit <- TRUE
+    i <- i + 1
   } else if (a == "--") {
     extras <- args[(i + 1):length(args)]
     break
@@ -162,7 +169,7 @@ BASE_ARGS <- c(
   paste0("--input_file=", here("data_simulation", "data", "simulated_data_1.csv")),
   "--FORCE_ONE_SPECIES_PARAMETERS=FALSE",
   "--DP_MODE=marginals+bins",
-  "--which_tag=39",
+  "--which_tag=20",
   "--anchor_start_census=7",
   "--DP_VERBOSE=TRUE",
   "--RUN_ALL_TAGS=FALSE",
@@ -172,6 +179,8 @@ BASE_ARGS <- c(
   "--dp_max_states=40000", # default in main_cpp.R
   "--MANUAL_CORES=TRUE",
   sprintf("--MANUAL_CORES_VALUE=%d", opt$cores_per_job),
+  "--dp_slack_require_anchor_recruitable=TRUE",
+  "--dp_slack_tracks=1",
   "--WRITE_DP_CSV=TRUE",
   "--WRITE_DP_RDS=TRUE",
   "--WRITE_DP_PDF=TRUE", # true to generate PDFs - set false if many Tags to save time/disk
@@ -202,6 +211,7 @@ get_config_args <- function(cfg) {
     stop("Unknown config: ", cfg)
   )
 }
+
 
 # Setup future plan
 plan(multisession, workers = opt$workers)
@@ -255,7 +265,9 @@ futures_list <- lapply(seq_along(commands), function(i) {
   future({
     cfg <- entry$config
     cmd <- entry$cmd
-    log_file <- file.path(log_dir, paste0(cfg, ".log"))
+    # Unique log filename to avoid overwriting previous runs
+    log_suffix <- paste0(BATCH_TS, "_", format(Sys.time(), "%H%M%S"), "_", sprintf("%06d", sample.int(1e6, 1)))
+    log_file <- file.path(log_dir, paste0(cfg, "_", log_suffix, ".log"))
     # Ensure the log directory exists even if removed or not visible to workers
     log_dir_local <- dirname(log_file)
     if (!dir.exists(log_dir_local)) dir.create(log_dir_local, recursive = TRUE, showWarnings = FALSE)
@@ -268,23 +280,44 @@ futures_list <- lapply(seq_along(commands), function(i) {
     cmd_str_raw <- paste(c("Rscript", shQuote("dp_global/scripts/main_cpp.R"), vapply(cmd, shQuote, character(1))), collapse = " ")
     cmd_str <- gsub(here::here(), ".", cmd_str_raw, fixed = TRUE)
 
-    if (any(grepl("--DRY_RUN", cmd))) {
-      out <- paste("DRY RUN:", cmd_str)
+    # Top-level dry-run override or explicit --DRY_RUN in args means we don't execute
+    is_dry <- isTRUE(opt$dry_run) || any(grepl("--DRY_RUN", cmd))
+
+    if (is_dry) {
+      out_header <- c(sprintf("DRY RUN: %s", cmd_str), sprintf("Generated log file: %s", log_file))
+      writeLines(out_header, con = log_file)
       exit_status <- 0L
-      writeLines(out, con = log_file)
       cat(sprintf("[DRY_RUN] %s: %s\n", cfg, cmd_str))
       flush.console()
     } else {
-      res <- tryCatch({
+      # Prepare env vars to limit BLAS/OMP threading unless disabled by flag
+      if (isTRUE(opt$no_blas_limit)) {
+        env_vars <- character(0)
+      } else {
         env_vars <- c("OMP_NUM_THREADS=1", "MKL_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1")
-        out <- system2("Rscript", args = c("dp_global/scripts/main_cpp.R", cmd), stdout = TRUE, stderr = TRUE, env = env_vars)
-        writeLines(out, con = log_file)
-        list(status = 0L, out = out)
+      }
+
+      # Run command and stream stdout/stderr to a temp file then prepend header into final log
+      temp_log <- tempfile(pattern = paste0(cfg, "_"), tmpdir = tempdir(), fileext = ".log")
+      header_lines <- c(sprintf("COMMAND: %s", cmd_str), sprintf("ENV: %s", paste(env_vars, collapse = " ")), sprintf("START: %s", format(start, tz = "UTC")))
+      writeLines(header_lines, con = log_file)
+
+      status <- tryCatch({
+        system2("Rscript", args = c("dp_global/scripts/main_cpp.R", cmd), stdout = temp_log, stderr = temp_log, env = env_vars)
       }, error = function(e) {
-        writeLines(c(paste0("ERROR: ", conditionMessage(e)), ""), con = log_file)
-        list(status = 1L, out = conditionMessage(e))
+        # system2 may throw in rare cases; capture message in temp_log
+        writeLines(c(paste0("ERROR: ", conditionMessage(e)), ""), con = temp_log)
+        1L
       })
-      exit_status <- as.integer(res$status)
+
+      # Append temp_log contents to final log (header already written)
+      if (file.exists(temp_log)) {
+        logs <- readLines(temp_log, warn = FALSE)
+        if (length(logs) > 0) writeLines(logs, con = log_file, sep = "\n", useBytes = TRUE, append = TRUE)
+        unlink(temp_log)
+      }
+
+      exit_status <- as.integer(status)
     }
 
     end <- Sys.time()
@@ -306,7 +339,10 @@ while (!all(completed)) {
       # Try to get value; on error, record failure info
       val <- tryCatch(value(futures_list[[i]]), error = function(e) {
         entry <- commands[[i]]
-        list(config = entry$config, start = NA, end = NA, status = 1L, log = file.path(log_dir, paste0(entry$config, ".log")), cmd = "")
+        # Fallback: find the most recent log file for this config if available
+        logs_found <- list.files(log_dir, pattern = paste0("^", entry$config, "_.*\\.log$"), full.names = TRUE)
+        log_file_fallback <- if (length(logs_found) > 0) tail(sort(logs_found), 1) else file.path(log_dir, paste0(entry$config, ".log"))
+        list(config = entry$config, start = NA, end = NA, status = 1L, log = log_file_fallback, cmd = "")
       })
       results[[i]] <- val
       completed[i] <- TRUE
@@ -344,7 +380,19 @@ while (!all(completed)) {
 
 # Write joblog CSV
 joblog_rows <- do.call(rbind, lapply(results, function(r) {
-  data.frame(config = r$config, start = format(r$start, tz = "UTC"), end = format(r$end, tz = "UTC"), status = r$status, log = r$log, cmd = r$cmd, stringsAsFactors = FALSE)
+  data.frame(
+    BATCH_TS = BATCH_TS,
+    workers = opt$workers,
+    cores_per_job = opt$cores_per_job,
+    dry_run = as.logical(opt$dry_run),
+    config = r$config,
+    start = format(r$start, tz = "UTC"),
+    end = format(r$end, tz = "UTC"),
+    status = r$status,
+    log = r$log,
+    cmd = r$cmd,
+    stringsAsFactors = FALSE
+  )
 }))
 write.csv(joblog_rows, file = joblog_path, row.names = FALSE)
 
