@@ -832,6 +832,9 @@ The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 3. K insufficient ($K < \max$ observed stems)
 4. DP recursion yields no feasible keys
 
+#### Anchor fallback behavior
+If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back to the igraph matcher. If no such earlier census exists, the algorithm falls back to `match_stems_optimal_backward()`.
+
 ### Fallback Method: `match_stems_optimal_backward()`
 
 **Algorithm:**
@@ -1312,12 +1315,80 @@ out_marginal <- add_dp_posterior_bins(
 | Transition costs | `transition_cost_tracks_bio()` | `dp_global_biol.R` |
 | Cost breakdown (debug) | `transition_cost_tracks_bio_components()` | `dp_global_biol.R` |
 | MAP/Viterbi DP | `match_stems_dp_global_backward()` | `dp_global_biol.R` |
-| Posterior marginals | `match_stems_dp_global_backward_marginals()` | `dp_global_biol.R` |
+| Posterior marginals (single-tag) | `match_stems_dp_global_backward_marginals()` | `dp_global_biol.R` |
+| Posterior marginals (batch / production) | `match_stems_dp_global_backward_marginals_batch()` | `dp_global/R/dp_global_dp.R` |
 | Posterior binning | `add_dp_posterior_bins()` | `dp_global_biol.R` |
 | Fallback matcher | `match_stems_optimal_backward()` | `dp_global_biol.R` |
 | Parameter estimation | `estimate_bio_pars()` | `dp_global_biol.R` |
 | Plotting | `plot_tag_to_pdf()` | `dp_global_biol.R` |
 | Driver/wiring | `scripts/main.R` | `scripts/main.R` |
+
+### match_stems_dp_global_backward_marginals_batch — Function reference (implementation details)
+
+This implementation is the production-grade, batch-capable marginal DP solver. Below are the key computations, helper functions it uses, and the semantics of important parameters (including the new pruning controls).
+
+Key computations and helpers:
+
+- Anchor selection
+  - If requested `anchor_start` has no DBH/TrueStemID, the function searches backward for the most recent census with at least one row having non-NA DBH and non-NA TrueStemID and uses that as the anchor. If none found, it falls back to `match_stems_optimal_backward()`.
+
+- State enumeration
+  - `enumerate_states_injective(K, n_obs, max_states)` enumerates injective assignments (permutation-based states). If enumeration exceeds `max_states` it falls back to igraph.
+  - `count_injective_states(K, n_obs)` computes theoretical counts used for diagnostics.
+
+- Track DBH vectors
+  - `state_to_track_dbh(assign_vec, obs_dbh, K)` constructs length-K DBH vectors for each state used in cost evaluation.
+
+- Phase constraints
+  - `derive_phase_prev(phase_tp1, tdbh_t, tdbh_tp1)` computes the feasible phase vector at t given the next phase and DBH presence/absence; used to enforce life-cycle feasibility (prebirth, alive, dead).
+
+- Interval computation
+  - Uses per-census mean `ExactDate` to compute `interval_val` (years) between census pairs. If `interval_val` is NA or non-finite, growth-based pruning is skipped for that pair.
+
+- Conservative pruning (pre-filters)
+  - Controlled by: `prune_hard` (logical); `prune_min_growth`, `prune_max_growth`, `prune_use_bio_bounds`, `prune_recruit_max_dbh`, `prune_use_bio_recruit`.
+  - Effective pruning thresholds computed as
+
+    user_min = prune_min_growth (if given) else min_growth
+
+    user_max = prune_max_growth (if given) else max_growth
+
+    if prune_use_bio_bounds:
+      eff_min_grow = max(user_min, Bio_Max_Shrink)
+      eff_max_grow = min(user_max, Bio_Max_Growth)
+    else:
+      eff_min_grow = user_min
+      eff_max_grow = user_max
+
+    eff_recruit_max chosen from `prune_recruit_max_dbh` and `Bio_Recruit_MaxDBH_unit` depending on flags.
+
+  - For each candidate (assignment-state pair) and each track with DBH at both times compute
+
+    g = (D_{t+1} - D_t) / Δt
+
+    and prune if g ∉ [eff_min_grow, eff_max_grow]; for recruits (NA→DBH) prune if DBH > eff_recruit_max.
+
+  - Pruning updates `prune_stats` and avoids calling the expensive `transition_cost_tracks_bio_batch_rcpp()` for pruned candidates.
+
+- Transition cost computation
+  - `transition_cost_tracks_bio_batch_rcpp(track_dbh_t, track_dbh_tp1, interval_years, ...)` computes per-candidate cost (sum across tracks) including growth likelihood, mortality, recruitment, and hard-penalties (1e6) for impossible transitions.
+
+- Backward recursion & Viterbi
+  - Uses log-sum-exp (`log_add_exp` / `log_sum_exp`) to accumulate marginal weights and a Viterbi update to compute MAP path (per-step `vit_cost`, `vit_ptr` arrays).
+
+- Forward pass & posterior marginals
+  - Builds per-observation posterior distributions (`DP_PosteriorTopK*` columns) via normalized state weights.
+
+- Posterior sampling
+  - Optional sample drawing from the DP graph (`posterior_samples`), with backward sampling and per-sample `logp` weights converted to `sample_prob`.
+
+- Diagnostics & fallbacks
+  - `attr(out, "DP_PruneInfo")` contains pruning diagnostics (counts and effective thresholds). The function falls back to `match_stems_optimal_backward()` on anchor failures, enumeration exhaustion, K insufficiency or if DP produces no feasible states after pruning. These fallback return values always include `DP_PruneInfo`.
+
+Notes:
+- `min_growth`/`max_growth` still primarily control the **fallback matcher** and post-hoc `ConstraintViolation` checks. They can be defined as `Bio_Max_Shrink`/`Bio_Max_Growth`. 
+
+---
 
 ### Key Implementation Details
 
