@@ -13,15 +13,7 @@ C++ implementation and R wrapper for Rcpp-accelerated transition-cost computatio
 
 ### Prerequisites
 
-1. Install the `Rcpp` package:
-   ```r
-   install.packages("Rcpp")
-   ```
-
-2. For performance testing, also install `microbenchmark`:
-   ```r
-   install.packages("microbenchmark")
-   ```
+R (packages: `Rcpp`; optional for benchmarking: `microbenchmark`) 
 
 ### Quickstart & API
 

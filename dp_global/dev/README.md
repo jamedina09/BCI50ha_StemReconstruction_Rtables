@@ -17,9 +17,7 @@ Rscript dp_global/dev/test_match_stems_dp_global_backward_marginals_batch.R
 
 ## Prerequisites
 
-- R environment with required packages: `data.table`, `Rcpp` (optional for C++ acceleration)
-- Access to the project root directory for relative paths
-- Synthetic data from `data_simulation/data/` for profiling
+R (packages: `data.table`, `Rcpp`); access to project root and synthetic data in `data_simulation/data/` for profiling.
 
 ## Scripts Overview
 

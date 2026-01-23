@@ -18,23 +18,23 @@
 
 ## Quickstart
 
-1. Dry-run (fast; no heavy computation):
+Dry-run the runner to verify commands (no execution):
 
-   ```bash
-   ./bin/run_dp_future.R --workers 2 --cores-per-job 4 --configs "fixed data_hard" -- --DRY_RUN
-   ```
+```bash
+./bin/run_dp_future.R --workers 2 --cores-per-job 4 --configs "fixed data_hard" -- --DRY_RUN
+```
 
-2. Real run (executes configs concurrently):
+Run configs concurrently:
 
-   ```bash
-   ./bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_soft"
-   ```
+```bash
+./bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_soft"
+```
 
-3. Single-config runner (dry-run or real):
+Run a single config (serial or via helper):
 
-   ```bash
-   ./bin/run_dp_future_single.R --workers 1 --cores-per-job 4 -- --DRY_RUN
-   ```
+```bash
+./bin/run_dp_future_single.R --workers 1 --cores-per-job 4 -- --DRY_RUN
+```
 
 ## Options
 
@@ -69,7 +69,7 @@ Concurrent runs with `future` + `progressr` (working)
 
 ## Prerequisites
 
-R packages: `future`, `future.apply`, `progressr` (install via `install.packages()` if needed).
+R (packages: `future`, `future.apply`, `progressr`) 
 
 Usage examples
 
