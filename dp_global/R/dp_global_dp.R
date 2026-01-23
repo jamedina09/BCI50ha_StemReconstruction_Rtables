@@ -3,7 +3,6 @@
 # Core dynamic programming (MAP and marginal DP functions)
 ############################################################
 
-# # Guard against accidental top-level side-effect when sourcing in tests
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            min_growth = -Inf,
                                                            max_growth = Inf,
