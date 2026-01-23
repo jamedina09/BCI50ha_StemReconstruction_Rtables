@@ -135,10 +135,20 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (!(is.numeric(dt$DP_PosteriorReconstructedProb))) dt[, DP_PosteriorReconstructedProb := as.numeric(DP_PosteriorReconstructedProb)]
         if (!(is.numeric(dt$DP_PosteriorUnlinkedProb))) dt[, DP_PosteriorUnlinkedProb := as.numeric(DP_PosteriorUnlinkedProb)]
 
+        # Add a stable per-row identifier useful for posterior matching (preserve existing if present)
+        if (!("obs_row_id" %in% names(dt))) {
+            dt[, obs_row_id := seq_len(.N)]
+        } else {
+            # ensure integer type
+            if (!is.integer(dt$obs_row_id)) dt[, obs_row_id := as.integer(obs_row_id)]
+        }
+        # Return the data.table (explicit)
         dt
     }
 
+    # Ensure tree_data has posterior columns and obs_row_id assigned
     tree_data <- ensure_posterior_columns(tree_data)
+    vcat(prefix, "Ensured posterior columns; obs_row_id present (or created)")
 
     # Preserve any provided TrueStemID as hard values in output.
     tree_data[!is.na(TrueStemID), `:=`(
@@ -858,7 +868,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 logp <- logp + log(probs[k])
             }
             # Convert sampled full-state indices to ReconstructedStemID per census
-            sample_dt <- data.table::data.table(Tag = tag_local, Sample = m, CensusID = integer(0), ReconstructedStemID = integer(0))
+            sample_dt <- data.table::data.table(Tag = tag_local, Sample = m, CensusID = integer(0), ReconstructedStemID = integer(0), ObsRowID = integer(0))
             for (p in seq_len(n_census)) {
                 cc <- census_range[p]
                 assign_vec <- assign_full[[p]][[sampled_idx[p]]]
@@ -866,7 +876,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 # attach as multiple rows (one per observed tree)
                 obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
                 if (length(obs_idx) > 0) {
-                    sample_dt <- rbind(sample_dt, data.table::data.table(Tag = tag_local, Sample = m, CensusID = rep(cc, length(obs_idx)), ReconstructedStemID = track_ids_loc))
+                    obs_row_ids <- tree_data$obs_row_id[obs_idx]
+                    sample_dt <- rbind(sample_dt, data.table::data.table(Tag = tag_local, Sample = m, CensusID = rep(cc, length(obs_idx)), ReconstructedStemID = track_ids_loc, ObsRowID = obs_row_ids))
                 }
             }
             sample_dt[, logp := logp]
@@ -905,11 +916,22 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out_path_base <- file.path(out_dir_post, paste0("tag_", ifelse(is.na(tag_local), "NA", tag_local), "_posterior_samples", "_", ts_local))
 
         # Prepare summary tables useful for downstream uncertainty propagation
+        # Attach per-sample ObsRowID list when available (semicolon-separated string of ObsRowIDs in sample order)
+        if ("ObsRowID" %in% names(samples_dt)) {
+            sample_obsids <- samples_dt[, .(ObsRowIDs = paste0(ObsRowID, collapse = ";")), by = Sample]
+        } else {
+            sample_obsids <- data.table::data.table(Sample = integer(0), ObsRowIDs = character(0))
+        }
         samples_summary <- unique(samples_dt[, .(Sample, Tag, logp, path_sig, path_count, sample_weight, sample_prob)])
+        if (nrow(sample_obsids) > 0) samples_summary <- merge(samples_summary, sample_obsids, by = "Sample", all.x = TRUE)
         # per-path aggregated probabilities
         paths_summary <- samples_summary[, .(path_count = sum(path_count, na.rm = TRUE), path_prob = sum(sample_prob, na.rm = TRUE)), by = path_sig]
         # also create a compact per-path reconstruction mapping (one row per path)
-        recon_by_path <- samples_dt[, .(recon = paste0(CensusID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
+        if ("ObsRowID" %in% names(samples_dt)) {
+            recon_by_path <- samples_dt[, .(recon = paste0(ObsRowID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
+        } else {
+            recon_by_path <- samples_dt[, .(recon = paste0(CensusID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
+        }
         # take first recon per path_sig (they are identical across samples with same path_sig)
         recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
         paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)

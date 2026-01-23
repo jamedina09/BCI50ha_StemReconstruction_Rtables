@@ -149,6 +149,10 @@ while (i <= length(args)) {
   } else if (a == "--posterior-seed") {
     opt$posterior_seed <- as.integer(args[i + 1])
     i <- i + 2
+  } else if (a == "--posterior-seed-auto") {
+    # Internal/testing flag: can be used to force auto-seed behavior explicitly
+    opt$posterior_seed <- NULL
+    i <- i + 1
   } else if (a == "--posterior-path") {
     opt$posterior_path <- args[i + 1]
     i <- i + 2
@@ -163,6 +167,16 @@ while (i <= length(args)) {
 
 if (is.null(opt$configs) || length(opt$configs) == 0L) {
   opt$configs <- c("fixed")
+}
+
+# Auto-generate a reproducible posterior seed when posterior sampling is requested
+# and no explicit seed was provided. This helps avoid the future RNG misuse warning
+# and ensures reproducible sampling across parallel runs. The generated seed is
+# forwarded as `--POSTERIOR_SAMPLE_SEED=` to `main_cpp.R` and recorded in the joblog.
+if (!is.null(opt$posterior_samples) && as.integer(opt$posterior_samples) > 0L && is.null(opt$posterior_seed)) {
+  opt$posterior_seed <- as.integer(sample.int(.Machine$integer.max - 1L, 1))
+  cat(sprintf("[run_dp_future_single] Auto-generated posterior seed: %d\n", opt$posterior_seed))
+  flush.console()
 }
 
 # Safety check: avoid oversubscription
@@ -434,6 +448,7 @@ joblog_rows <- do.call(rbind, lapply(results, function(r) {
     cmd = r$cmd,
     posterior_samples = opt$posterior_samples,
     posterior_format = if (is.null(opt$posterior_format)) NA_character_ else opt$posterior_format,
+    posterior_seed = if (is.null(opt$posterior_seed)) NA_integer_ else as.integer(opt$posterior_seed),
     posterior_path = if (is.null(opt$posterior_path)) NA_character_ else opt$posterior_path,
     stringsAsFactors = FALSE
   )
