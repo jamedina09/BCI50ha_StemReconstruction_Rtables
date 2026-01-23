@@ -102,8 +102,8 @@ K_SHRINK_SOURCE <- "data"
 K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
 K_GROWTH_SOURCE <- "data"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
-RECRUIT_MAX_SOURCE <- "data"
-RECRUIT_MAX_FIXED <- 37.5
+RECRUIT_MAX_SOURCE <- "fixed"
+RECRUIT_MAX_FIXED <- 5
 
 ############################################################
 ### 2.3 DP running settings
@@ -116,6 +116,11 @@ DP_POSTERIOR_TOP_K <- 2L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
 dp_slack_tracks <- 1L
+# NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
+# (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.
+dp_slack_require_anchor_recruitable <- TRUE
+# Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
+dp_slack_require_anchor_eps <- 1e-6
 
 ############################################################
 ### 2.4 Parallel and output settings
@@ -513,6 +518,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         max_tracks = dp_max_tracks,
         max_states = dp_max_states,
         slack_tracks = dp_slack_tracks,
+        slack_require_anchor_recruitable = dp_slack_require_anchor_recruitable,
+        slack_require_anchor_eps = dp_slack_require_anchor_eps,
         temperature = 1,
         posterior_top_k = DP_POSTERIOR_TOP_K,
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
