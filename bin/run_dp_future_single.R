@@ -9,6 +9,12 @@
 # command-line arguments. This script provides the fixed config definition,
 # logging, per-config overrides, and safety checks to avoid CPU oversubscription.
 #
+# Note for maintainers/orchestrators
+# - This runner constructs canonical CLI flags (e.g., --POSTERIOR_SAMPLES=200)
+#   expected by `dp_global/scripts/main_cpp.R`. The mapping is case-insensitive
+#   and accepts '-' or '_' separators. Keep this script's MAIN_CLI_KEYS in sync
+#   with the main script's `CLI_REFERENCE` to avoid mismatches.
+#
 # Design & resource model
 # ----------------------
 # - Outer concurrency (W workers): `--workers N` controls how many R
@@ -88,12 +94,36 @@ log_dir <- here("tests", "parallel_future_logs")
 if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
 
 args <- commandArgs(trailingOnly = TRUE)
-# Simple arg parsing
-opt <- list(
-  workers = 3L, cores_per_job = 5L, configs = NULL, joblog = "parallel_future.log", force = FALSE, overrides = character(0), cfg_overrides = list(), dry_run = FALSE, no_blas_limit = FALSE,
-  posterior_samples = 0L, posterior_format = NULL, posterior_seed = NULL, posterior_path = NULL
+
+############################################################
+### CLI defaults and mapping (runner-side)
+############################################################
+# The runner accepts a small set of flags which it maps into canonical DP
+# CLI options (the DP expects flags like --POSTERIOR_SAMPLES=... etc.). Keep
+# these names in sync with `dp_global/scripts/main_cpp.R`.
+MAIN_CLI_KEYS <- c(
+  "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLE_SEED", "POSTERIOR_SAMPLES_PATH", "PROJECT_ROOT", "BATCH_TS", "CONFIG_NAME"
 )
+
+# Runner options (lowercase names for user-facing flags)
+opt <- list(
+  workers = 3L,
+  cores_per_job = 5L,
+  configs = NULL,
+  joblog = "parallel_future.log",
+  force = FALSE,
+  overrides = character(0),
+  cfg_overrides = list(),
+  dry_run = FALSE,
+  no_blas_limit = FALSE,
+  posterior_samples = 0L,            # maps -> POSTERIOR_SAMPLES
+  posterior_format = NULL,           # maps -> POSTERIOR_SAMPLES_FORMAT
+  posterior_seed = NULL,             # maps -> POSTERIOR_SAMPLE_SEED
+  posterior_path = NULL              # maps -> POSTERIOR_SAMPLES_PATH
+)
+
 extras <- c()
+
 i <- 1
 while (i <= length(args)) {
   a <- args[i]
@@ -139,6 +169,8 @@ while (i <= length(args)) {
   } else if (a == "--help" || a == "-h") {
     cat("Usage: run_dp_future_single.R [--workers N] [--cores-per-job N] [--joblog file] [--force] [--dry-run] [--no-blas-limit] [--override KEY=VAL] [--cfg-override fixed:KEY=VAL] [--posterior-samples N] [--posterior-format rds|feather|csv] [--posterior-seed N] [--posterior-path /path/to/dir] -- [extra args passed to main_cpp.R]\n")
     cat("\nNote: If --posterior-samples is supplied but no --posterior-seed is provided, the runner will auto-generate a reproducible seed and forward it to the DP (recorded in the joblog).\n")
+    cat("\nCanonical DP CLI keys this runner will produce (case-insensitive, '-' or '_' allowed):\n")
+    cat(sprintf("  %s\n", paste(MAIN_CLI_KEYS, collapse = ", ")))
     q(status = 0)
   } else if (a == "--dry-run" || a == "--dry_run") {
     opt$dry_run <- TRUE
@@ -284,29 +316,65 @@ commands <- lapply(opt$configs, function(cfg) {
   # precedence: BASE_ARGS < cfg_args < extras < global overrides < cfg_specific
   cmd <- c(BASE_ARGS, cfg_args, extras, opt$overrides, cfg_specific, paste0("--CONFIG_NAME=", cfg))
 
+  # Helper to form canonical flags expected by `main_cpp.R` (uppercase, underscores)
+  make_main_flag <- function(k, v) paste0("--", toupper(gsub("[- ]", "_", k)), "=", v)
+
   # Append posterior sampling flags when requested. If posterior_path is NULL
   # the DP will write samples to its own out_dir/posteriors by default.
   if (!is.null(opt$posterior_samples) && as.integer(opt$posterior_samples) > 0L) {
-    cmd <- c(cmd, paste0("--POSTERIOR_SAMPLES=", as.integer(opt$posterior_samples)))
+    cmd <- c(cmd, make_main_flag("posterior-samples", as.integer(opt$posterior_samples)))
     if (!is.null(opt$posterior_format) && nzchar(opt$posterior_format)) {
-      cmd <- c(cmd, paste0("--POSTERIOR_SAMPLES_FORMAT=", opt$posterior_format))
+      cmd <- c(cmd, make_main_flag("posterior-samples-format", opt$posterior_format))
     }
     if (!is.null(opt$posterior_seed)) {
-      cmd <- c(cmd, paste0("--POSTERIOR_SAMPLE_SEED=", as.integer(opt$posterior_seed)))
+      cmd <- c(cmd, make_main_flag("posterior-sample-seed", as.integer(opt$posterior_seed)))
     }
     if (!is.null(opt$posterior_path) && nzchar(opt$posterior_path)) {
-      cmd <- c(cmd, paste0("--POSTERIOR_SAMPLES_PATH=", opt$posterior_path))
+      cmd <- c(cmd, make_main_flag("posterior-samples-path", opt$posterior_path))
     }
   }
 
   list(config = cfg, cmd = cmd)
 })
 
-# Launch each config as an individual future and monitor progress with simple
-# ETA/summary messages (progress bar removed to avoid terminal incompatibilities).
-# This approach provides explicit STARTED/DONE lines and an ETA after each
-# completed task based on the mean duration of finished tasks.
+# Validate overrides to catch obvious typos early (map KEY=VAL pairs and warn
+# if the KEY doesn't resemble a known main CLI key; this helps keep runner and
+# main in sync and surfaces user mistakes instead of silent mis-overrides).
+validate_override_key <- function(k) {
+  normalize <- function(x) toupper(gsub("[- ]", "_", x))
+  nk <- normalize(k)
+  known <- toupper(gsub("[- ]", "_", c(
+    "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag", "anchor_start_census",
+    "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLE_SEED", "POSTERIOR_SAMPLES_PATH",
+    "PROJECT_ROOT", "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
+  )))
+  if (!(nk %in% known)) {
+    warning(sprintf("[run_dp_future_single] Override key '%s' does not match known main options; check spelling.", k))
+  }
+}
 
+# Check global overrides
+if (length(opt$overrides) > 0) {
+  for (ov in opt$overrides) {
+    if (grepl("=", ov)) {
+      k <- strsplit(ov, "=", fixed = TRUE)[[1]][1]
+      validate_override_key(k)
+    }
+  }
+}
+
+# Check cfg-specific overrides
+if (length(opt$cfg_overrides) > 0) {
+  for (cfg in names(opt$cfg_overrides)) {
+    for (ov in opt$cfg_overrides[[cfg]]) {
+      if (grepl("=", ov)) {
+        k <- strsplit(ov, "=", fixed = TRUE)[[1]][1]
+        validate_override_key(k)
+      }
+    }
+  }
+}
+# Total tasks to launch (one future per config)
 total_tasks <- length(commands)
 cat(sprintf("Launching %d tasks...\n", total_tasks))
 flush.console()

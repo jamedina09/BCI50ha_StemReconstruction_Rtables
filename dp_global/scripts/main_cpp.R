@@ -3,6 +3,14 @@
 ############################################################
 # Goal
 #   One place to run the DP_GLOBAL workflow end-to-end
+#
+# Note for orchestrators
+# - This script accepts CLI overrides of internal variables via --KEY=VALUE.
+# - See the `CLI_REFERENCE` variable below for the canonical keys used by
+#   external orchestrators (e.g., bin/run_dp_future_single.R) which should
+#   construct flags matching these canonical names (case-insensitive, '-' or
+#   '_' allowed). Keep the orchestrator in sync with `CLI_REFERENCE`.
+
 
 ############################################################
 ### 0) Housekeeping
@@ -273,6 +281,41 @@ if (!isTRUE(RUN_ALL_TAGS)) {
 
 # Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
 PROJECT_ROOT <- here::here()
+
+############################################################
+### CLI options reference (canonical names and internal variables)
+############################################################
+# This short reference is useful when constructing or validating CLI flags
+# in external orchestrators (e.g., bin/run_dp_future_single.R). Keys in the CLI
+# are case-insensitive and may use '-' or '_' as separators; they are mapped to
+# the corresponding internal variable names below.
+CLI_REFERENCE <- list(
+    INPUT_FILE = "input_file",
+    FORCE_ONE_SPECIES_PARAMETERS = "FORCE_ONE_SPECIES_PARAMETERS",
+    DP_MODE = "DP_MODE",
+    WHICH_TAG = "which_tag",
+    ANCHOR_START_CENSUS = "anchor_start_census",
+    DP_VERBOSE = "DP_VERBOSE",
+    RUN_ALL_TAGS = "RUN_ALL_TAGS",
+    MANUAL_CORES = "MANUAL_CORES",
+    MANUAL_CORES_VALUE = "MANUAL_CORES_VALUE",
+    WRITE_DP_CSV = "WRITE_DP_CSV",
+    WRITE_DP_RDS = "WRITE_DP_RDS",
+    WRITE_DP_PDF = "WRITE_DP_PDF",
+    DP_MAX_STATES = "dp_max_states",
+    DP_SLACK_TRACKS = "dp_slack_tracks",
+    DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "dp_slack_require_anchor_recruitable",
+    DP_SLACK_REQUIRE_ANCHOR_EPS = "dp_slack_require_anchor_eps",
+    POSTERIOR_SAMPLES = "POSTERIOR_SAMPLES",
+    POSTERIOR_SAMPLES_FORMAT = "POSTERIOR_SAMPLES_FORMAT",
+    POSTERIOR_SAMPLES_PATH = "POSTERIOR_SAMPLES_PATH",
+    POSTERIOR_SAMPLE_SEED = "POSTERIOR_SAMPLE_SEED",
+    PROJECT_ROOT = "PROJECT_ROOT",
+    BATCH_TS = "BATCH_TS",
+    CONFIG_NAME = "CONFIG_NAME",
+    USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR"
+)
+
 ############################################################
 ### 2.5 Sensitivity analysis settings
 ############################################################
@@ -287,17 +330,19 @@ RUN_REALISM_REPORT <- FALSE
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
     cat("Common keys and defaults:\n")
-    keys <- c(
-        "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
-        "anchor_start_census", "DP_VERBOSE", "RUN_ALL_TAGS",
-        "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_RDS", "WRITE_DP_PDF",
-        "dp_max_states", "dp_slack_tracks", "dp_slack_require_anchor_recruitable", "dp_slack_require_anchor_eps", "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLES_PATH", "POSTERIOR_SAMPLE_SEED", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
-        "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
-    )
-    for (k in keys) {
-        val <- if (exists(k, inherits = FALSE)) get(k) else "<not set>"
-        cat(sprintf("  --%s = %s\n", k, as.character(val)))
+
+    # Prefer printing the canonical CLI keys from CLI_REFERENCE so the help is
+    # always in sync with the internal mapping.
+    for (key in names(CLI_REFERENCE)) {
+        varname <- CLI_REFERENCE[[key]]
+        if (exists(varname, envir = globalenv())) {
+            val <- get(varname, envir = globalenv())
+        } else {
+            val <- "<not set>"
+        }
+        cat(sprintf("  --%s = %s\n", key, as.character(val)))
     }
+
     cat("\nFlags without =value are treated as boolean TRUE (e.g., --DRY_RUN).\n")
 }
 
@@ -308,14 +353,64 @@ if (isTRUE(overrides$help) || isTRUE(overrides$h)) {
 }
 
 # Apply command-line overrides with validation and warnings for unknown keys
+# This logic is intentionally flexible: users can pass keys such as
+#   --POSTERIOR-SAMPLES=200  or  --posterior-samples=200  or  --POSTERIOR_SAMPLES=200
+# All of these will match the canonical in-memory variable names such as
+# `POSTERIOR_SAMPLES` or `POSTERIOR_SAMPLES_FORMAT` or `which_tag` regardless of
+# case or punctuation.
+
+# Helper: normalize an override key to uppercase letters and underscores
+normalize_key <- function(k) {
+    toupper(gsub("[- ]", "_", k))
+}
+
+# Helper: find an existing variable name that matches the normalized key
+find_matching_var <- function(norm_key) {
+    # Normalize current environment variable names for comparison
+    norm_var <- function(v) toupper(gsub("[^A-Z0-9_]", "", v))
+    vars <- ls(envir = globalenv())
+    matches <- sapply(vars, function(v) norm_var(v) == norm_key)
+    if (any(matches)) return(vars[which(matches)[1]])
+    NULL
+}
+
 for (name in names(overrides)) {
     if (name %in% c("help", "h")) next
-    if (!exists(name, inherits = FALSE)) {
+
+    norm <- normalize_key(name)
+    match_var <- find_matching_var(norm)
+
+    if (is.null(match_var)) {
         warning(sprintf("[dp_global main_cpp.R] Unknown override '%s' (ignored).\n", name))
         next
     }
-    assign(name, overrides[[name]])
-    message("[dp_global main_cpp.R] Overriding ", name, " = ", overrides[[name]])
+
+    # Coerce type where appropriate (basic numeric/logical conversions were
+    # already attempted in parse_args). Here we ensure that integer-like
+    # numeric values are stored as integers when the default was integer.
+    old_val <- get(match_var, inherits = FALSE)
+    new_val <- overrides[[name]]
+
+    if (is.integer(old_val) && is.numeric(new_val)) {
+        new_val <- as.integer(new_val)
+    }
+
+    assign(match_var, new_val, envir = globalenv())
+    message("[dp_global main_cpp.R] Overriding ", match_var, " = ", as.character(new_val))
+}
+
+# Post-override validation: Check a few key options for allowed values and types
+if (!DP_MODE %in% c("none", "marginals", "marginals+bins", "map")) {
+    stop("Invalid DP_MODE: ", DP_MODE, ". Allowed: 'none','marginals','marginals+bins','map'.")
+}
+if (!POSTERIOR_SAMPLES_FORMAT %in% c("rds", "feather", "csv")) {
+    stop("Invalid POSTERIOR_SAMPLES_FORMAT: ", POSTERIOR_SAMPLES_FORMAT, ". Allowed: 'rds','feather','csv'.")
+}
+if (!is.null(POSTERIOR_SAMPLES) && (!is.numeric(POSTERIOR_SAMPLES) || as.integer(POSTERIOR_SAMPLES) < 0L)) {
+    stop("POSTERIOR_SAMPLES must be a non-negative integer or 0 to disable.")
+}
+if (!is.null(POSTERIOR_SAMPLE_SEED) && (!is.numeric(POSTERIOR_SAMPLE_SEED) || as.integer(POSTERIOR_SAMPLE_SEED) < 0L)) {
+    stop("POSTERIOR_SAMPLE_SEED must be a non-negative integer or NULL.")
 }
 
 # Recompute derived values that depend on overridable inputs so CLI overrides take effect
