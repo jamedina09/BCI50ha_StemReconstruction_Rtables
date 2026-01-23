@@ -279,7 +279,7 @@ print_help <- function() {
         "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
         "anchor_start_census", "DP_VERBOSE", "RUN_ALL_TAGS",
         "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_RDS", "WRITE_DP_PDF",
-        "dp_max_states", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
+        "dp_max_states", "dp_slack_tracks", "dp_slack_require_anchor_recruitable", "dp_slack_require_anchor_eps", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
         "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
     )
     for (k in keys) {
