@@ -7,7 +7,6 @@
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            min_growth = -Inf,
                                                            max_growth = Inf,
-                                                           interval_years = NULL,
                                                            anchor_start,
                                                            max_tracks = 30L,
                                                            slack_tracks = 1L,
@@ -176,6 +175,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Need a fully-anchored endpoint
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     # FIXME: match_stems_optimal_backward uses time too
+    # FIXME: Maybe add a key to fallback_igraph = TRUE or FALSE
     if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
         vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
         K_used <- as.integer(min(max_obs, max_tracks))
@@ -191,7 +191,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
     anchor_ids <- sort(unique(anchor_obs$TrueStemID))
     anchor_ids <- anchor_ids[!is.na(anchor_ids)]
-    # FIXME: match_stems_optimal_backward uses time too
+
     if (length(anchor_ids) == 0L) {
         vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
         K_used <- as.integer(min(max_obs, max_tracks))
@@ -242,7 +242,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
         DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
     )]
-    # FIXME: match_stems_optimal_backward uses time too
+
     if (K < max(obs_counts)) {
         vcat(prefix, "K too small for observed counts (K=", K, ", max_obs=", max(obs_counts), "). Falling back to igraph.")
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
@@ -267,7 +267,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         obs_dbh[[p]] <- obs$DBH
         n_obs <- length(obs_dbh[[p]])
         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
-        # FIXME: match_stems_optimal_backward uses time too
+
         if (is.null(mat)) {
             vcat(prefix, "State enumeration exceeded max_states at CensusID=", cc, " (n_obs=", n_obs, "). Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
@@ -283,7 +283,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Anchor state assignment (pins endpoint)
     anchor_obs_ordered <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     anchor_track_idx <- match(anchor_obs_ordered$TrueStemID, track_ids)
-    # FIXME: match_stems_optimal_backward uses time too
+
     if (any(is.na(anchor_track_idx))) {
         vcat(prefix, "Anchor TrueStemID not found in track_ids. Falling back to igraph.")
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
@@ -354,7 +354,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
         phase_t
     }
-    # FIXME: Check if the extracted parameters are the right ones
+
     # Bio params (same extraction logic as MAP DP)
     Bio_Mu_Growth_unit <- unique(tree_data$Bio_Mu_Growth)
     Bio_Gamma_Growth_unit <- if ("Bio_Gamma_Growth" %in% names(tree_data)) {
@@ -795,7 +795,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         max_growth = max_growth,
         pair_interval = pair_interval
     )
-    # FIXME: Maybe add a key to fallback_igraph = TRUE or FALSE
 
     vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
     return(tree_data)
