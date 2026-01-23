@@ -1060,11 +1060,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # per-path aggregated probabilities
         paths_summary <- samples_summary[, .(path_count = sum(path_count, na.rm = TRUE), path_prob = sum(sample_prob, na.rm = TRUE)), by = path_sig]
         # also create a compact per-path reconstruction mapping (one row per path)
-        if ("ObsRowID" %in% names(samples_dt)) {
-            recon_by_path <- samples_dt[, .(recon = paste0(ObsRowID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
-        } else {
-            recon_by_path <- samples_dt[, .(recon = paste0(CensusID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
+        # Enforce ObsRowID-based reconstructions only (legacy CensusID encoding removed).
+        if (!("ObsRowID" %in% names(samples_dt))) {
+            stop("Posterior sampling must include ObsRowID values; regenerate with posterior_samples that preserve observation row identifiers")
         }
+        recon_by_path <- samples_dt[, .(recon = paste0(ObsRowID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
         # take first recon per path_sig (they are identical across samples with same path_sig)
         recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
         paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
@@ -1110,9 +1110,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 # sample_prob is normalized over all drawn samples and can be used as sampling weight for downstream propagation.
 # Per-path aggregated summary (unique reconstructions):
 # posteriors/tag_20_posterior_samples_<ts>_paths.csv
-# Columns: path_sig, path_count, path_prob, recon (compact reconstruction mapping like "1:8;2:3;3:4;...")
+# Columns: path_sig, path_count, path_prob, recon (compact reconstruction mapping like "<ObsRowID>:<ReconstructedStemID>;..." — ObsRowID is enforced)
 
 # How to use these for error propagation (suggestions)
 # Use paths.csv directly: each row is a unique reconstruction with probability path_prob (sums to 1 across unique paths) — convenient for expectation of downstream metrics without resampling.
 # Or sample reconstructions according to sample_prob in the summary file to create Monte Carlo realizations for error propagation; then expand each sample using the full long file if needed to attach per-census reconstructed IDs.
-# The recon column in paths.csv is handy to quickly apply a mapping (parse "CensusID:ReconstructedStemID" pairs).
+# The recon column in paths.csv is handy to quickly apply a mapping (parse "ObsRowID:ReconstructedStemID" pairs).

@@ -19,9 +19,13 @@ Available functions
 -------------------
 - `parse_recon(s)`
   - Parse a compact `recon` string produced by the DP. Accepts:
-    - explicit pairs: `"1:8;2:3;3:4"` (left value is `ObsRowID` or `CensusID`), or
-    - compact path: `"7-4-8-..."` (hyphen-separated stem IDs assigned in census order).
-  - Returns a `data.table` with columns `CensusID` (integer) and `ReconstructedStemID` (integer).
+    - explicit pairs: `"1:8;2:3;3:4"` (left value is `ObsRowID`; legacy `CensusID` encodings are deprecated), or
+    - compact path: `"7-4-8-..."` (hyphen-separated stem IDs in census order — legacy; compact paths lack explicit `ObsRowID` and are discouraged).
+  - Returns a `data.table` with columns `ObsRowID` (integer) and `ReconstructedStemID` (integer).
+
+  Note: For backwards compatibility `parse_recon()` will accept compact hyphen-style
+  paths but will return positional `ObsRowID = 1..n` and emit a warning. Regenerate
+  posterior samples with explicit `ObsRowID` encoded to ensure deterministic attachments.
 
 - `load_posterior_paths(paths_file)`
   - Read a per-path summary file (`*_paths.csv`, feather, or rds) and return a
@@ -48,6 +52,7 @@ Notes & rationale
 - The helper intentionally leaves rows that have no mapping as `NA` for the
   `DP_ReconstructedStemID_k` column; this reflects the DP's actual sampling
   output (only observed DBH rows are included in sampled full-reconstructions).
+- **Enforced requirement:** posterior path `recon` strings must contain explicit `ObsRowID:ReconstructedStemID` pairs. Legacy `CensusID` encodings are no longer supported; `attach_paths_to_output()` will error if parsed reconstructions do not include `ObsRowID`. Regenerate posterior samples with `ObsRowID` preserved to ensure robust attachments.
 - **MAP vs sampled paths:** `attach_paths_to_output(..., which = "map")` attaches
   the highest-`path_prob` path present in the `*_paths.csv` summary. **Important:**
   the `ReconstructedStemID` column written in the main `stem_reconstruction_*.csv` is

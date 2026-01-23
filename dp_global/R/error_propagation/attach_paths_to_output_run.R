@@ -44,11 +44,14 @@ if (!file.exists(paths_file) || !file.exists(out_file)) {
 # `load_posterior_paths()` will return a data.table with parsed reconstructions
 paths_dt <- load_posterior_paths(paths_file)
 
+paths_dt$recon[1]
+paths_dt$recon_parsed[1]
+
 # Attach the top-2 most-probable unique paths to the main output by obs_row_id.
 # This will add columns to the output table:
 #   DP_PathSig_1, DP_ReconstructedStemID_1, DP_PathSig_2, DP_ReconstructedStemID_2
 # and will write a new CSV to disk with suffix `_with_paths.csv`.
-out_dt <- attach_paths_to_output(paths_dt, out_file, which = "top_n", n = 2, write_out = TRUE)
+out_dt <- attach_paths_to_output(paths = paths_dt, out = out_file, which = "top_n", n = 2, write_out = TRUE)
 cat("Attached top 2 paths; new columns:", paste0("DP_PathSig_", 1:2), "and", paste0("DP_ReconstructedStemID_", 1:2), "\n")
 
 # Show a short head of the updated table so you can inspect the mapping quickly
