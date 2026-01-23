@@ -223,11 +223,13 @@ run_dp_cpp <- function(dt) {
         max_tracks = dp_max_tracks_local,
         max_states = dp_max_states,
         slack_tracks = dp_slack_tracks,
+        slack_require_anchor_recruitable = TRUE,
         temperature = DP_POSTERIOR_TEMPERATURE,
         posterior_top_k = DP_POSTERIOR_TOP_K,
         eps_tiebreak = DP_EPS_TIEBREAK,
         use_measurement_error = TRUE,
-        verbose = isTRUE(DP_VERBOSE)
+        verbose = isTRUE(DP_VERBOSE), 
+        posterior_samples = 100L
     )
 }
 
