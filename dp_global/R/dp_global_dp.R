@@ -22,6 +22,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            meas_sd1_b = 0.0904,
                                                            meas_sd2 = 4.64,
                                                            meas_p_big = 0.05,
+                                                           # --- posterior sampling options ---
+                                                           posterior_samples = 0L,
+                                                           posterior_samples_format = c("rds", "feather", "csv"),
+                                                           posterior_samples_path = NULL,
+                                                           posterior_sample_seed = NULL,
                                                            verbose = FALSE) {
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
@@ -796,6 +801,157 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         pair_interval = pair_interval
     )
 
+    # ------------------------------
+    # Optional: posterior sampling of full reconstructions
+    # ------------------------------
+    posterior_samples <- as.integer(posterior_samples)
+    if (!is.null(posterior_samples) && posterior_samples > 0L) {
+        fmt <- match.arg(posterior_samples_format)
+        out_dir_local <- if (!is.null(posterior_samples_path)) posterior_samples_path else get0("out_dir", ifnotfound = NULL)
+        if (is.null(out_dir_local) || (is.character(out_dir_local) && nzchar(out_dir_local) == FALSE)) {
+            out_dir_local <- getwd()
+        }
+        if (is.null(out_dir_local) || !nzchar(out_dir_local)) out_dir_local <- tempdir()
+
+        # Fallback for Tag if not present in tree_data
+        tag_local <- if (!is.na(tag_val)) tag_val else get0("which_tag", ifnotfound = NA_integer_)
+
+        # Build adjacency lookup for quick sampling
+        adj_by_p <- vector("list", n_census - 1L)
+        for (p in seq_len(n_census - 1L)) {
+            ed <- edges[[p]]
+            # rows grouped by to_idx
+            to_idxs <- unique(ed$to_idx)
+            m <- vector("list", length(ed$to_idx))
+            lookup <- vector("list", max(to_idxs))
+            for (r in seq_len(nrow(ed))) {
+                j <- ed$to_idx[r]
+                if (is.null(lookup[[j]])) lookup[[j]] <- integer(0)
+                lookup[[j]] <- c(lookup[[j]], r)
+            }
+            adj_by_p[[p]] <- lookup
+        }
+
+        # sampler: backwards sampling from anchor_pos to census 1
+        if (!is.null(posterior_sample_seed)) set.seed(as.integer(posterior_sample_seed))
+        samples_list <- vector("list", posterior_samples)
+        for (m in seq_len(posterior_samples)) {
+            sampled_idx <- integer(n_census)
+            sampled_idx[anchor_pos] <- 1L # anchor position has single full-state at index 1
+            logp <- 0
+            # sample backwards
+            for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
+                j <- sampled_idx[p + 1L]
+                rows <- adj_by_p[[p]][[j]]
+                # rows are indices into edges[[p]]
+                from_idx <- edges[[p]]$from_idx[rows]
+                logw <- edges[[p]]$logw[rows]
+                loga <- logalpha[[p]][from_idx]
+                L <- loga + logw
+                # normalize to probabilities
+                Lmax <- max(L)
+                probs <- exp(L - Lmax)
+                probs <- probs / sum(probs)
+                k <- sample.int(length(probs), size = 1L, prob = probs)
+                chosen_row <- rows[k]
+                sampled_idx[p] <- edges[[p]]$from_idx[chosen_row]
+                logp <- logp + log(probs[k])
+            }
+            # Convert sampled full-state indices to ReconstructedStemID per census
+            sample_dt <- data.table::data.table(Tag = tag_local, Sample = m, CensusID = integer(0), ReconstructedStemID = integer(0))
+            for (p in seq_len(n_census)) {
+                cc <- census_range[p]
+                assign_vec <- assign_full[[p]][[sampled_idx[p]]]
+                track_ids_loc <- track_ids[assign_vec]
+                # attach as multiple rows (one per observed tree)
+                obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+                if (length(obs_idx) > 0) {
+                    sample_dt <- rbind(sample_dt, data.table::data.table(Tag = tag_local, Sample = m, CensusID = rep(cc, length(obs_idx)), ReconstructedStemID = track_ids_loc))
+                }
+            }
+            sample_dt[, logp := logp]
+            samples_list[[m]] <- sample_dt
+        }
+
+        samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
+        # Ensure rows are ordered for signature construction
+        samples_dt <- samples_dt[order(Sample, CensusID)]
+
+        # Collate per-sample path signature and counts (useful diagnostics)
+        sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")), by = Sample]
+        path_counts <- sample_sigs[, .N, by = path_sig]
+        sample_sigs <- merge(sample_sigs, path_counts, by = "path_sig")
+        setnames(sample_sigs, "N", "path_count")
+        samples_dt <- merge(samples_dt, sample_sigs, by = "Sample", all.x = TRUE)
+
+        # Normalize sample weights from logp using per-Sample unique logp
+        sample_logp <- unique(samples_dt[, .(Sample, logp)])
+        maxlp <- max(sample_logp$logp, na.rm = TRUE)
+        sample_logp[, sample_weight := exp(logp - maxlp)]
+        sample_logp[, sample_prob := sample_weight / sum(sample_weight)]
+        samples_dt <- merge(samples_dt, sample_logp[, .(Sample, sample_weight, sample_prob)], by = "Sample", all.x = TRUE)
+
+        # Diagnostic summary
+        n_unique_paths <- uniqueN(sample_sigs$path_sig)
+        vcat(prefix, sprintf("Posterior sampling: generated %d samples (%d unique paths)", posterior_samples, n_unique_paths))
+        if (uniqueN(sample_logp$logp) == 1L) {
+            vcat(prefix, sprintf("Warning: all sampled logp identical (logp=%f); posterior may be degenerate or sampling explored equivalent paths", sample_logp$logp[1]))
+        }
+
+        # Export samples: prefer feather via arrow for speed if available
+        ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
+        out_dir_post <- file.path(out_dir_local, "posteriors")
+        if (!dir.exists(out_dir_post)) dir.create(out_dir_post, recursive = TRUE, showWarnings = FALSE)
+        out_path_base <- file.path(out_dir_post, paste0("tag_", ifelse(is.na(tag_local), "NA", tag_local), "_posterior_samples", "_", ts_local))
+
+        # Prepare summary tables useful for downstream uncertainty propagation
+        samples_summary <- unique(samples_dt[, .(Sample, Tag, logp, path_sig, path_count, sample_weight, sample_prob)])
+        # per-path aggregated probabilities
+        paths_summary <- samples_summary[, .(path_count = sum(path_count, na.rm = TRUE), path_prob = sum(sample_prob, na.rm = TRUE)), by = path_sig]
+        # also create a compact per-path reconstruction mapping (one row per path)
+        recon_by_path <- samples_dt[, .(recon = paste0(CensusID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
+        # take first recon per path_sig (they are identical across samples with same path_sig)
+        recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
+        paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
+
+        # Export samples and summaries: prefer feather via arrow for speed if available
+        if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
+            arrow::write_feather(samples_dt, paste0(out_path_base, ".feather"))
+            arrow::write_feather(samples_summary, paste0(out_path_base, "_summary.feather"))
+            arrow::write_feather(paths_summary, paste0(out_path_base, "_paths.feather"))
+            vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".feather"))
+            vcat(prefix, "Wrote posterior samples summary to: ", paste0(out_path_base, "_summary.feather"))
+            vcat(prefix, "Wrote posterior paths summary to: ", paste0(out_path_base, "_paths.feather"))
+        } else if (fmt == "csv") {
+            data.table::fwrite(samples_dt, paste0(out_path_base, ".csv"))
+            data.table::fwrite(samples_summary, paste0(out_path_base, "_summary.csv"))
+            data.table::fwrite(paths_summary, paste0(out_path_base, "_paths.csv"))
+            vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".csv"))
+            vcat(prefix, "Wrote posterior samples summary to: ", paste0(out_path_base, "_summary.csv"))
+            vcat(prefix, "Wrote posterior paths summary to: ", paste0(out_path_base, "_paths.csv"))
+        } else {
+            saveRDS(list(full = samples_dt, summary = samples_summary, paths = paths_summary), file = paste0(out_path_base, ".rds"))
+            vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".rds"))
+        }
+    }
+
     vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
     return(tree_data)
 }
+
+# Summary of what's available in posteriors
+
+# Full long-format samples file (one row per observed reconstructed tree per sample):
+# Example: posteriors/tag_20_posterior_samples_<ts>.csv
+# Per-sample summary (one row per sampled full-reconstruction):
+# posteriors/tag_20_posterior_samples_<ts>_summary.csv
+# Columns: Sample, Tag, logp, path_sig, path_count, sample_weight, sample_prob
+# sample_prob is normalized over all drawn samples and can be used as sampling weight for downstream propagation.
+# Per-path aggregated summary (unique reconstructions):
+# posteriors/tag_20_posterior_samples_<ts>_paths.csv
+# Columns: path_sig, path_count, path_prob, recon (compact reconstruction mapping like "1:8;2:3;3:4;...")
+
+# How to use these for error propagation (suggestions)
+# Use paths.csv directly: each row is a unique reconstruction with probability path_prob (sums to 1 across unique paths) — convenient for expectation of downstream metrics without resampling.
+# Or sample reconstructions according to sample_prob in the summary file to create Monte Carlo realizations for error propagation; then expand each sample using the full long file if needed to attach per-census reconstructed IDs.
+# The recon column in paths.csv is handy to quickly apply a mapping (parse "CensusID:ReconstructedStemID" pairs).

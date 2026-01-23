@@ -122,6 +122,12 @@ dp_slack_require_anchor_recruitable <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
 dp_slack_require_anchor_eps <- 1e-6
 
+# Posterior sampling defaults (disabled by default)
+POSTERIOR_SAMPLES <- 0L
+POSTERIOR_SAMPLES_FORMAT <- "rds" # options: 'rds', 'feather', 'csv'
+POSTERIOR_SAMPLES_PATH <- NULL
+POSTERIOR_SAMPLE_SEED <- NULL
+
 ############################################################
 ### 2.4 Parallel and output settings
 ############################################################
@@ -279,7 +285,7 @@ print_help <- function() {
         "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag",
         "anchor_start_census", "DP_VERBOSE", "RUN_ALL_TAGS",
         "MANUAL_CORES", "MANUAL_CORES_VALUE", "WRITE_DP_CSV", "WRITE_DP_RDS", "WRITE_DP_PDF",
-        "dp_max_states", "dp_slack_tracks", "dp_slack_require_anchor_recruitable", "dp_slack_require_anchor_eps", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
+        "dp_max_states", "dp_slack_tracks", "dp_slack_require_anchor_recruitable", "dp_slack_require_anchor_eps", "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLES_PATH", "POSTERIOR_SAMPLE_SEED", "SENSITIVITY_MODE", "RUN_K_SWEEP_DEMO", "RUN_REALISM_REPORT", "PROJECT_ROOT",
         "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
     )
     for (k in keys) {
@@ -522,6 +528,11 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         slack_require_anchor_eps = dp_slack_require_anchor_eps,
         temperature = 1,
         posterior_top_k = DP_POSTERIOR_TOP_K,
+        # posterior sampling controls (disabled by default)
+        posterior_samples = get0("POSTERIOR_SAMPLES", ifnotfound = 0L),
+        posterior_samples_format = get0("POSTERIOR_SAMPLES_FORMAT", ifnotfound = "rds"),
+        posterior_samples_path = get0("POSTERIOR_SAMPLES_PATH", ifnotfound = NULL),
+        posterior_sample_seed = get0("POSTERIOR_SAMPLE_SEED", ifnotfound = NULL),
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
         verbose = isTRUE(DP_VERBOSE)
     )
