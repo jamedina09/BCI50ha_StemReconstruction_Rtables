@@ -477,6 +477,7 @@ Default: $\varepsilon_{\text{tiebreak}} = 10^{-6}$
 
 The probabilistic solver defines a Gibbs-like posterior:
 
+**Posterior samples (optional):** If `POSTERIOR_SAMPLES` > 0, the DP can draw full-path posterior samples and write them to disk. Use `POSTERIOR_SAMPLES_FORMAT` to select `rds`, `feather` (arrow), or `csv`. By default, samples are written into a `posteriors/` subdirectory under the DP output directory (or to `POSTERIOR_SAMPLES_PATH` if that option is supplied).
 $$P(\text{path}) \propto \exp\left(-\frac{\text{TotalCost}(\text{path})}{\tau}\right)$$
 
 where $\tau$ is the temperature parameter:

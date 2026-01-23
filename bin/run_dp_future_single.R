@@ -83,7 +83,10 @@ if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
 
 args <- commandArgs(trailingOnly = TRUE)
 # Simple arg parsing
-opt <- list(workers = 3L, cores_per_job = 5L, configs = NULL, joblog = "parallel_future.log", force = FALSE, overrides = character(0), cfg_overrides = list(), dry_run = FALSE, no_blas_limit = FALSE)
+opt <- list(
+  workers = 3L, cores_per_job = 5L, configs = NULL, joblog = "parallel_future.log", force = FALSE, overrides = character(0), cfg_overrides = list(), dry_run = FALSE, no_blas_limit = FALSE,
+  posterior_samples = 0L, posterior_format = NULL, posterior_seed = NULL, posterior_path = NULL
+)
 extras <- c()
 i <- 1
 while (i <= length(args)) {
@@ -128,7 +131,7 @@ while (i <= length(args)) {
     }
     i <- i + 2
   } else if (a == "--help" || a == "-h") {
-    cat("Usage: run_dp_future_single.R [--workers N] [--cores-per-job N] [--joblog file] [--force] [--dry-run] [--no-blas-limit] [--override KEY=VAL] [--cfg-override fixed:KEY=VAL] -- [extra args passed to main_cpp.R]\n")
+    cat("Usage: run_dp_future_single.R [--workers N] [--cores-per-job N] [--joblog file] [--force] [--dry-run] [--no-blas-limit] [--override KEY=VAL] [--cfg-override fixed:KEY=VAL] [--posterior-samples N] [--posterior-format rds|feather|csv] [--posterior-seed N] [--posterior-path /path/to/dir] -- [extra args passed to main_cpp.R]\n")
     q(status = 0)
   } else if (a == "--dry-run" || a == "--dry_run") {
     opt$dry_run <- TRUE
@@ -137,6 +140,18 @@ while (i <= length(args)) {
     # Do not set OMP/MKL/OPENBLAS env vars; allow BLAS threading
     opt$no_blas_limit <- TRUE
     i <- i + 1
+  } else if (a == "--posterior-samples") {
+    opt$posterior_samples <- as.integer(args[i + 1])
+    i <- i + 2
+  } else if (a == "--posterior-format") {
+    opt$posterior_format <- args[i + 1]
+    i <- i + 2
+  } else if (a == "--posterior-seed") {
+    opt$posterior_seed <- as.integer(args[i + 1])
+    i <- i + 2
+  } else if (a == "--posterior-path") {
+    opt$posterior_path <- args[i + 1]
+    i <- i + 2
   } else if (a == "--") {
     extras <- args[(i + 1):length(args)]
     break
@@ -186,12 +201,12 @@ BASE_ARGS <- c(
   "--WRITE_DP_PDF=TRUE", # true to generate PDFs - set false if many Tags to save time/disk
   "--DP_PDF_INCLUDE_REFERENCE=TRUE",
   "--PLOT_PDF_ONE_TAG_ONLY=FALSE",
-  "--SENSITIVITY_MODE=none", #run+write+pdf
+  "--SENSITIVITY_MODE=none", # run+write+pdf
   "--RUN_K_SWEEP_DEMO=FALSE",
   "--RUN_REALISM_REPORT=FALSE",
   paste0("--PROJECT_ROOT=", here::here()),
   paste0("--BATCH_TS=", BATCH_TS)
-) 
+)
 
 get_config_args <- function(cfg) {
   switch(cfg,
@@ -247,6 +262,22 @@ commands <- lapply(opt$configs, function(cfg) {
   cfg_specific <- if (!is.null(opt$cfg_overrides[[cfg]])) opt$cfg_overrides[[cfg]] else character(0)
   # precedence: BASE_ARGS < cfg_args < extras < global overrides < cfg_specific
   cmd <- c(BASE_ARGS, cfg_args, extras, opt$overrides, cfg_specific, paste0("--CONFIG_NAME=", cfg))
+
+  # Append posterior sampling flags when requested. If posterior_path is NULL
+  # the DP will write samples to its own out_dir/posteriors by default.
+  if (!is.null(opt$posterior_samples) && as.integer(opt$posterior_samples) > 0L) {
+    cmd <- c(cmd, paste0("--POSTERIOR_SAMPLES=", as.integer(opt$posterior_samples)))
+    if (!is.null(opt$posterior_format) && nzchar(opt$posterior_format)) {
+      cmd <- c(cmd, paste0("--POSTERIOR_SAMPLES_FORMAT=", opt$posterior_format))
+    }
+    if (!is.null(opt$posterior_seed)) {
+      cmd <- c(cmd, paste0("--POSTERIOR_SAMPLE_SEED=", as.integer(opt$posterior_seed)))
+    }
+    if (!is.null(opt$posterior_path) && nzchar(opt$posterior_path)) {
+      cmd <- c(cmd, paste0("--POSTERIOR_SAMPLES_PATH=", opt$posterior_path))
+    }
+  }
+
   list(config = cfg, cmd = cmd)
 })
 
@@ -262,70 +293,76 @@ flush.console()
 # Create futures (non-blocking)
 futures_list <- lapply(seq_along(commands), function(i) {
   entry <- commands[[i]]
-  future({
-    cfg <- entry$config
-    cmd <- entry$cmd
-    # Unique log filename to avoid overwriting previous runs
-    log_suffix <- paste0(BATCH_TS, "_", format(Sys.time(), "%H%M%S"), "_", sprintf("%06d", sample.int(1e6, 1)))
-    log_file <- file.path(log_dir, paste0(cfg, "_", log_suffix, ".log"))
-    # Ensure the log directory exists even if removed or not visible to workers
-    log_dir_local <- dirname(log_file)
-    if (!dir.exists(log_dir_local)) dir.create(log_dir_local, recursive = TRUE, showWarnings = FALSE)
+  future(
+    {
+      cfg <- entry$config
+      cmd <- entry$cmd
+      # Unique log filename to avoid overwriting previous runs
+      log_suffix <- paste0(BATCH_TS, "_", format(Sys.time(), "%H%M%S"), "_", sprintf("%06d", sample.int(1e6, 1)))
+      log_file <- file.path(log_dir, paste0(cfg, "_", log_suffix, ".log"))
+      # Ensure the log directory exists even if removed or not visible to workers
+      log_dir_local <- dirname(log_file)
+      if (!dir.exists(log_dir_local)) dir.create(log_dir_local, recursive = TRUE, showWarnings = FALSE)
 
-    start <- Sys.time()
-    cat(sprintf("[%s] STARTED at %s\n", cfg, format(start, tz = "UTC")))
-    flush.console()
-
-    # Build the full command string for logging (project-relative)
-    cmd_str_raw <- paste(c("Rscript", shQuote("dp_global/scripts/main_cpp.R"), vapply(cmd, shQuote, character(1))), collapse = " ")
-    cmd_str <- gsub(here::here(), ".", cmd_str_raw, fixed = TRUE)
-
-    # Top-level dry-run override or explicit --DRY_RUN in args means we don't execute
-    is_dry <- isTRUE(opt$dry_run) || any(grepl("--DRY_RUN", cmd))
-
-    if (is_dry) {
-      out_header <- c(sprintf("DRY RUN: %s", cmd_str), sprintf("Generated log file: %s", log_file))
-      writeLines(out_header, con = log_file)
-      exit_status <- 0L
-      cat(sprintf("[DRY_RUN] %s: %s\n", cfg, cmd_str))
+      start <- Sys.time()
+      cat(sprintf("[%s] STARTED at %s\n", cfg, format(start, tz = "UTC")))
       flush.console()
-    } else {
-      # Prepare env vars to limit BLAS/OMP threading unless disabled by flag
-      if (isTRUE(opt$no_blas_limit)) {
-        env_vars <- character(0)
+
+      # Build the full command string for logging (project-relative)
+      cmd_str_raw <- paste(c("Rscript", shQuote("dp_global/scripts/main_cpp.R"), vapply(cmd, shQuote, character(1))), collapse = " ")
+      cmd_str <- gsub(here::here(), ".", cmd_str_raw, fixed = TRUE)
+
+      # Top-level dry-run override or explicit --DRY_RUN in args means we don't execute
+      is_dry <- isTRUE(opt$dry_run) || any(grepl("--DRY_RUN", cmd))
+
+      if (is_dry) {
+        out_header <- c(sprintf("DRY RUN: %s", cmd_str), sprintf("Generated log file: %s", log_file))
+        writeLines(out_header, con = log_file)
+        exit_status <- 0L
+        cat(sprintf("[DRY_RUN] %s: %s\n", cfg, cmd_str))
+        flush.console()
       } else {
-        env_vars <- c("OMP_NUM_THREADS=1", "MKL_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1")
+        # Prepare env vars to limit BLAS/OMP threading unless disabled by flag
+        if (isTRUE(opt$no_blas_limit)) {
+          env_vars <- character(0)
+        } else {
+          env_vars <- c("OMP_NUM_THREADS=1", "MKL_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1")
+        }
+
+        # Run command and stream stdout/stderr to a temp file then prepend header into final log
+        temp_log <- tempfile(pattern = paste0(cfg, "_"), tmpdir = tempdir(), fileext = ".log")
+        header_lines <- c(sprintf("COMMAND: %s", cmd_str), sprintf("ENV: %s", paste(env_vars, collapse = " ")), sprintf("START: %s", format(start, tz = "UTC")))
+        writeLines(header_lines, con = log_file)
+
+        status <- tryCatch(
+          {
+            system2("Rscript", args = c("dp_global/scripts/main_cpp.R", cmd), stdout = temp_log, stderr = temp_log, env = env_vars)
+          },
+          error = function(e) {
+            # system2 may throw in rare cases; capture message in temp_log
+            writeLines(c(paste0("ERROR: ", conditionMessage(e)), ""), con = temp_log)
+            1L
+          }
+        )
+
+        # Append temp_log contents to final log (header already written)
+        if (file.exists(temp_log)) {
+          logs <- readLines(temp_log, warn = FALSE)
+          if (length(logs) > 0) writeLines(logs, con = log_file, sep = "\n", useBytes = TRUE, append = TRUE)
+          unlink(temp_log)
+        }
+
+        exit_status <- as.integer(status)
       }
 
-      # Run command and stream stdout/stderr to a temp file then prepend header into final log
-      temp_log <- tempfile(pattern = paste0(cfg, "_"), tmpdir = tempdir(), fileext = ".log")
-      header_lines <- c(sprintf("COMMAND: %s", cmd_str), sprintf("ENV: %s", paste(env_vars, collapse = " ")), sprintf("START: %s", format(start, tz = "UTC")))
-      writeLines(header_lines, con = log_file)
+      end <- Sys.time()
+      cat(sprintf("[%s] DONE at %s (status=%d) log=%s\n", cfg, format(end, tz = "UTC"), exit_status, log_file))
+      flush.console()
 
-      status <- tryCatch({
-        system2("Rscript", args = c("dp_global/scripts/main_cpp.R", cmd), stdout = temp_log, stderr = temp_log, env = env_vars)
-      }, error = function(e) {
-        # system2 may throw in rare cases; capture message in temp_log
-        writeLines(c(paste0("ERROR: ", conditionMessage(e)), ""), con = temp_log)
-        1L
-      })
-
-      # Append temp_log contents to final log (header already written)
-      if (file.exists(temp_log)) {
-        logs <- readLines(temp_log, warn = FALSE)
-        if (length(logs) > 0) writeLines(logs, con = log_file, sep = "\n", useBytes = TRUE, append = TRUE)
-        unlink(temp_log)
-      }
-
-      exit_status <- as.integer(status)
-    }
-
-    end <- Sys.time()
-    cat(sprintf("[%s] DONE at %s (status=%d) log=%s\n", cfg, format(end, tz = "UTC"), exit_status, log_file))
-    flush.console()
-
-    list(config = cfg, start = start, end = end, status = exit_status, log = log_file, cmd = cmd_str)
-  }, future.seed = TRUE)
+      list(config = cfg, start = start, end = end, status = exit_status, log = log_file, cmd = cmd_str)
+    },
+    future.seed = TRUE
+  )
 })
 
 # Monitor futures and print ETA information as tasks complete
@@ -350,7 +387,9 @@ while (!all(completed)) {
       # Compute ETA using mean duration of completed tasks
       finished_vals <- Filter(Negate(is.null), results[completed])
       durations <- sapply(finished_vals, function(r) {
-        if (is.na(r$start) || is.na(r$end)) return(NA_real_)
+        if (is.na(r$start) || is.na(r$end)) {
+          return(NA_real_)
+        }
         as.numeric(difftime(r$end, r$start, units = "secs"))
       })
       durations <- durations[!is.na(durations)]
@@ -360,8 +399,10 @@ while (!all(completed)) {
         avg <- mean(durations)
         est_remaining <- avg * remaining
         eta_time <- Sys.time() + est_remaining
-        cat(sprintf("[ETA] %d/%d done, avg=%.1fs, remaining=%d, est_remaining=%.1fs (finish at %s)\n",
-                    finished_count, total_tasks, avg, remaining, est_remaining, format(eta_time, tz = "UTC")))
+        cat(sprintf(
+          "[ETA] %d/%d done, avg=%.1fs, remaining=%d, est_remaining=%.1fs (finish at %s)\n",
+          finished_count, total_tasks, avg, remaining, est_remaining, format(eta_time, tz = "UTC")
+        ))
       } else {
         cat(sprintf("[PROGRESS] %d/%d done\n", finished_count, total_tasks))
       }
@@ -391,6 +432,9 @@ joblog_rows <- do.call(rbind, lapply(results, function(r) {
     status = r$status,
     log = r$log,
     cmd = r$cmd,
+    posterior_samples = opt$posterior_samples,
+    posterior_format = if (is.null(opt$posterior_format)) NA_character_ else opt$posterior_format,
+    posterior_path = if (is.null(opt$posterior_path)) NA_character_ else opt$posterior_path,
     stringsAsFactors = FALSE
   )
 }))
@@ -415,3 +459,12 @@ q(status = 0)
 # Rscript bin/run_dp_future_single.R --workers 4 --cores-per-job 4
 
 # Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1
+
+# Dry-run (verify commands without executing):
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 200 --posterior-format feather -- --DRY_RUN
+
+# Real run (write Feather samples into out_dir/posteriors):
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 200 --posterior-format feather
+
+# If you want to explicitly control path:
+# Rscript bin/run_dp_future_single.R --posterior-samples 200 --posterior-path /path/to/store/posteriors
