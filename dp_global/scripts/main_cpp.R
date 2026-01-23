@@ -117,7 +117,7 @@ RECRUIT_MAX_FIXED <- 5
 ### 2.3 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-which_tag <- 20L # 20 to compare outputs
+which_tag <- 19L # 20 to compare outputs
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
@@ -137,8 +137,8 @@ dp_slack_require_anchor_eps <- 1e-6
 # - POSTERIOR_SAMPLE_SEED: integer seed used to make posterior sampling reproducible. If NULL sampling is not deterministically seeded; runners
 #   (e.g., bin/run_dp_future_single.R) may auto-generate a seed when running in batch/parallel to avoid RNG misuse warnings and ensure
 #   reproducible sampling across tasks. If you want reproducible CLI runs, pass --POSTERIOR_SAMPLE_SEED explicitly.
-POSTERIOR_SAMPLES <- 0L
-POSTERIOR_SAMPLES_FORMAT <- "rds" # options: 'rds', 'feather', 'csv'
+POSTERIOR_SAMPLES <- 200L
+POSTERIOR_SAMPLES_FORMAT <- "csv" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
 POSTERIOR_SAMPLE_SEED <- NULL
 
@@ -370,7 +370,9 @@ find_matching_var <- function(norm_key) {
     norm_var <- function(v) toupper(gsub("[^A-Z0-9_]", "", v))
     vars <- ls(envir = globalenv())
     matches <- sapply(vars, function(v) norm_var(v) == norm_key)
-    if (any(matches)) return(vars[which(matches)[1]])
+    if (any(matches)) {
+        return(vars[which(matches)[1]])
+    }
     NULL
 }
 
@@ -461,6 +463,21 @@ message("[dp_global main_cpp.R] getwd(): ", getwd())
 DP_CSV_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.csv")
 DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
 DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
+
+# If posterior sampling is requested, set sensible defaults inside the run-specific out_dir
+# These defaults can still be overridden via CLI (e.g., --POSTERIOR_SAMPLES_PATH=... or --POSTERIOR_SAMPLE_SEED=...)
+if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
+    if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
+        POSTERIOR_SAMPLES_PATH <- file.path(out_dir, "posteriors")
+    }
+    # normalize path for consistency; don't require it to exist yet (created in run_main)
+    POSTERIOR_SAMPLES_PATH <- normalizePath(POSTERIOR_SAMPLES_PATH, winslash = "/", mustWork = FALSE)
+    if (is.null(POSTERIOR_SAMPLE_SEED)) {
+        POSTERIOR_SAMPLE_SEED <- as.integer(123L)
+    } else {
+        POSTERIOR_SAMPLE_SEED <- as.integer(POSTERIOR_SAMPLE_SEED)
+    }
+}
 
 ############################################################
 ### 3) Source project code
@@ -630,14 +647,22 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         temperature = 1,
         posterior_top_k = DP_POSTERIOR_TOP_K,
         # posterior sampling controls (disabled by default)
-        posterior_samples = get0("POSTERIOR_SAMPLES", ifnotfound = 0L),
-        posterior_samples_format = get0("POSTERIOR_SAMPLES_FORMAT", ifnotfound = "rds"),
-        posterior_samples_path = get0("POSTERIOR_SAMPLES_PATH", ifnotfound = NULL),
-        posterior_sample_seed = get0("POSTERIOR_SAMPLE_SEED", ifnotfound = NULL),
+        posterior_samples = POSTERIOR_SAMPLES,
+        posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
+        posterior_samples_path = POSTERIOR_SAMPLES_PATH,
+        posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+        # prune controls
+        prune_hard = TRUE,
+        prune_min_growth = -5, # very wide fixed bounds
+        prune_max_growth = 15, # very wide fixed bounds
+        prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
+        prune_recruit_max_dbh = 10 * 5, # very high recruit max dbh
+        prune_use_bio_recruit = FALSE, # use fixed recruit max dbh instead of biological one
         verbose = isTRUE(DP_VERBOSE)
     )
 }
+# [dp_global_batch]  Done. Total elapsed  117.22s 
 
 maybe_add_posterior_bins <- function(out) {
     if (isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
@@ -657,6 +682,11 @@ maybe_add_posterior_bins <- function(out) {
 ############################################################
 run_main <- function() {
     ensure_dir(out_dir)
+
+    # Create posteriors directory if requested (POSTERIOR_SAMPLES > 0)
+    if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
+        ensure_dir(POSTERIOR_SAMPLES_PATH)
+    }
 
     # Write a small startup marker so parallel runs can be observed immediately
     # (helps verify jobs start concurrently before heavy computation)
