@@ -328,6 +328,10 @@ futures_list <- lapply(seq_along(commands), function(i) {
       start <- Sys.time()
       cat(sprintf("[%s] STARTED at %s\n", cfg, format(start, tz = "UTC")))
       flush.console()
+      # Record basic info in the final log immediately so we have a trace even if
+      # later steps fail inside the worker
+      cat(sprintf("FUTURE: pid=%d, start=%s\n", Sys.getpid(), format(start, tz = "UTC")), file = log_file, append = TRUE)
+      cat(sprintf("FUTURE: R.version=%s, R.home=%s\n", paste(R.version, collapse = " "), R.home()), file = log_file, append = TRUE)
 
       # Build the full command string for logging (project-relative)
       cmd_str_raw <- paste(c("Rscript", shQuote("dp_global/scripts/main_cpp.R"), vapply(cmd, shQuote, character(1))), collapse = " ")
@@ -355,22 +359,50 @@ futures_list <- lapply(seq_along(commands), function(i) {
         header_lines <- c(sprintf("COMMAND: %s", cmd_str), sprintf("ENV: %s", paste(env_vars, collapse = " ")), sprintf("START: %s", format(start, tz = "UTC")))
         writeLines(header_lines, con = log_file)
 
+        # Add diagnostics to temp_log to help debug worker environment issues
+        diag_lines <- c(
+          sprintf("worker getwd: %s", getwd()),
+          sprintf("Rscript (Sys.which): %s", Sys.which("Rscript")),
+          sprintf("R.home(bin): %s", file.path(R.home("bin"), "Rscript")),
+          sprintf("main_cpp exists: %s", file.exists("dp_global/scripts/main_cpp.R"))
+        )
+        # Use cat() with append to reliably add diagnostics to the temp log
+        cat(paste0(diag_lines, collapse = "\n"), file = temp_log, sep = "\n", append = TRUE)
+
+        # Prefer an explicit Rscript binary (fall back to R.home if PATH not available in worker)
+        rscript_bin <- Sys.which("Rscript")
+        if (!nzchar(rscript_bin)) rscript_bin <- file.path(R.home("bin"), "Rscript")
+
+        # Log the exact command we will call into the final log for easier debugging
+        cat(sprintf("FUTURE: About to call system2: rscript_bin=%s, temp_log=%s\n", rscript_bin, temp_log), file = log_file, append = TRUE)
+
         status <- tryCatch(
           {
-            system2("Rscript", args = c("dp_global/scripts/main_cpp.R", cmd), stdout = temp_log, stderr = temp_log, env = env_vars)
+            system2(rscript_bin, args = c("dp_global/scripts/main_cpp.R", cmd), stdout = temp_log, stderr = temp_log, env = env_vars)
           },
           error = function(e) {
-            # system2 may throw in rare cases; capture message in temp_log
-            writeLines(c(paste0("ERROR: ", conditionMessage(e)), ""), con = temp_log)
+            # system2 may throw in rare cases; capture message in both temp_log and final log
+            cat(paste0("ERROR: ", conditionMessage(e), "\n"), file = temp_log, append = TRUE)
+            cat(paste0("ERROR: system2 threw in worker: ", conditionMessage(e), "\n"), file = log_file, append = TRUE)
             1L
           }
         )
+        # Log the return status in the final log as well
+        cat(sprintf("FUTURE: system2 returned status=%s\n", as.character(status)), file = log_file, append = TRUE)
 
         # Append temp_log contents to final log (header already written)
         if (file.exists(temp_log)) {
-          logs <- readLines(temp_log, warn = FALSE)
-          if (length(logs) > 0) writeLines(logs, con = log_file, sep = "\n", useBytes = TRUE, append = TRUE)
-          unlink(temp_log)
+          tryCatch(
+            {
+              logs <- readLines(temp_log, warn = FALSE)
+              if (length(logs) > 0) cat(paste0(logs, collapse = "\n"), file = log_file, sep = "\n", append = TRUE, useBytes = TRUE)
+              unlink(temp_log)
+              cat("FUTURE: appended temp_log to log_file and unlinked temp_log\n", file = log_file, append = TRUE)
+            },
+            error = function(e) {
+              cat(sprintf("FUTURE: failed to append or unlink temp_log: %s\n", conditionMessage(e)), file = log_file, append = TRUE)
+            }
+          )
         }
 
         exit_status <- as.integer(status)
@@ -382,7 +414,7 @@ futures_list <- lapply(seq_along(commands), function(i) {
 
       list(config = cfg, start = start, end = end, status = exit_status, log = log_file, cmd = cmd_str)
     },
-    future.seed = TRUE
+    seed = TRUE
   )
 })
 
@@ -400,7 +432,12 @@ while (!all(completed)) {
         # Fallback: find the most recent log file for this config if available
         logs_found <- list.files(log_dir, pattern = paste0("^", entry$config, "_.*\\.log$"), full.names = TRUE)
         log_file_fallback <- if (length(logs_found) > 0) tail(sort(logs_found), 1) else file.path(log_dir, paste0(entry$config, ".log"))
-        list(config = entry$config, start = NA, end = NA, status = 1L, log = log_file_fallback, cmd = "")
+        # Record the future error message in the fallback log for diagnosability
+        tryCatch(
+          writeLines(c("ERROR: Future error in worker:", conditionMessage(e)), con = log_file_fallback, sep = "\n", useBytes = TRUE, append = TRUE),
+          error = function(we) NULL
+        )
+        list(config = entry$config, start = NA, end = NA, status = 1L, log = log_file_fallback, cmd = "", error = conditionMessage(e))
       })
       results[[i]] <- val
       completed[i] <- TRUE
@@ -483,11 +520,11 @@ q(status = 0)
 # Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1
 
 # Dry-run (verify commands without executing):
-# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 200 --posterior-format feather -- --DRY_RUN
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 100 --posterior-format feather -- --DRY_RUN
 
 # Real run (write Feather/csv samples into out_dir/posteriors):
-# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 200 --posterior-format feather
-# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 200 --posterior-format csv
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 100 --posterior-format feather
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 100 --posterior-format csv
 
 # If you want to explicitly control path:
-# Rscript bin/run_dp_future_single.R --posterior-samples 200 --posterior-path /path/to/store/posteriors
+# Rscript bin/run_dp_future_single.R --posterior-samples 100 --posterior-path /path/to/store/posteriors
