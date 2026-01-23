@@ -33,7 +33,7 @@ Available functions
   - Adds columns: `DP_PathSig_k` and `DP_ReconstructedStemID_k` for each selected path `k`.
   - If `out` lacks `obs_row_id`, one is created (sequence of row numbers) before matching.
   - Modes:
-    - `which = "map"` attach the single MAP path (highest `path_prob`)
+    - `which = "map"` attach the single MAP (Maximum a posteriori) path (highest `path_prob`)
     - `which = "top_n"` attach the top-`n` paths
     - `which = "indices"` attach specific path indices (pass `indices=c(...)`)
     - `which = "sample"` sample `n` paths according to `path_prob`
