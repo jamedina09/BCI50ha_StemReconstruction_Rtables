@@ -123,6 +123,12 @@ dp_slack_require_anchor_recruitable <- TRUE
 dp_slack_require_anchor_eps <- 1e-6
 
 # Posterior sampling defaults (disabled by default)
+# - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
+# - POSTERIOR_SAMPLES_FORMAT: output format forwarded to DP ('rds','feather','csv')
+# - POSTERIOR_SAMPLES_PATH: optional path to write posterior files; when NULL DP writes to out_dir/posteriors
+# - POSTERIOR_SAMPLE_SEED: integer seed used to make posterior sampling reproducible. If NULL sampling is not deterministically seeded; runners
+#   (e.g., bin/run_dp_future_single.R) may auto-generate a seed when running in batch/parallel to avoid RNG misuse warnings and ensure
+#   reproducible sampling across tasks. If you want reproducible CLI runs, pass --POSTERIOR_SAMPLE_SEED explicitly.
 POSTERIOR_SAMPLES <- 0L
 POSTERIOR_SAMPLES_FORMAT <- "rds" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL

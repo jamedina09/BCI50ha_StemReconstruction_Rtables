@@ -40,6 +40,12 @@
 #   main_cpp.R (same place the serial runner would receive them).
 # - Precedence: BASE_ARGS < config default args < extras < --override < --cfg-override
 #
+# Posterior sampling note:
+# - If you request posterior sampling via --posterior-samples but don't provide
+#   --posterior-seed, the runner will auto-generate a reproducible integer seed,
+#   forward it to main_cpp.R as --POSTERIOR_SAMPLE_SEED, and record it in the joblog.
+#   This reduces RNG misuse warnings from `future` and helps reproducibility.
+#
 # Safety & recommended workflow
 # ----------------------------
 # 1) DRY_RUN first to verify commands and logging: pass `-- --DRY_RUN` after
@@ -132,6 +138,7 @@ while (i <= length(args)) {
     i <- i + 2
   } else if (a == "--help" || a == "-h") {
     cat("Usage: run_dp_future_single.R [--workers N] [--cores-per-job N] [--joblog file] [--force] [--dry-run] [--no-blas-limit] [--override KEY=VAL] [--cfg-override fixed:KEY=VAL] [--posterior-samples N] [--posterior-format rds|feather|csv] [--posterior-seed N] [--posterior-path /path/to/dir] -- [extra args passed to main_cpp.R]\n")
+    cat("\nNote: If --posterior-samples is supplied but no --posterior-seed is provided, the runner will auto-generate a reproducible seed and forward it to the DP (recorded in the joblog).\n")
     q(status = 0)
   } else if (a == "--dry-run" || a == "--dry_run") {
     opt$dry_run <- TRUE
@@ -478,8 +485,9 @@ q(status = 0)
 # Dry-run (verify commands without executing):
 # Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 200 --posterior-format feather -- --DRY_RUN
 
-# Real run (write Feather samples into out_dir/posteriors):
+# Real run (write Feather/csv samples into out_dir/posteriors):
 # Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 200 --posterior-format feather
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 200 --posterior-format csv
 
 # If you want to explicitly control path:
 # Rscript bin/run_dp_future_single.R --posterior-samples 200 --posterior-path /path/to/store/posteriors

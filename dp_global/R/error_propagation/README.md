@@ -19,6 +19,44 @@ Files
   - `sample_posterior_paths(paths_dt, n)` — sample path_sig indices according to path probability.
   - `sample_apply_growth(paths_dt, obs_dt, n)` — Monte Carlo draws of mean-growth per draw.
 
+Posterior outputs
+-----------------
+The DP writes three posterior output artifacts (usually under `out_dir/posteriors`). Recommended format is `feather` (fast, via `arrow`); `csv` is portable, and `rds` can store a list with all tables.
+
+1) Full samples (long format): `posteriors/tag_<TAG>_posterior_samples_<TS>.(csv|feather|rds)`
+   - One row per observed reconstructed tree per drawn sample.
+   - Columns:
+     - `Sample` (integer): sample index
+     - `Tag` (integer/NA): tag identifier when present
+     - `CensusID` (integer): census id for the observation
+     - `ObsRowID` (integer, optional): stable observation row id (preferred for matching)
+     - `ReconstructedStemID` (integer): constructed track id for that observation in the sample
+     - `logp` (numeric): log-probability assigned to the sampled full-path
+     - `path_sig` (string): sample signature (concat of ReconstructedStemID values)
+     - `path_count` (integer): multiplicity (count of identical samples)
+     - `sample_weight` (numeric): unnormalized exp(logp - max_logp)
+     - `sample_prob` (numeric): normalized sampling probability across draws
+
+   - Use: expand samples to per-observation rows; join to observations via `ObsRowID` (preferred) or by Census/order when `ObsRowID` missing.
+
+2) Per-sample summary: `posteriors/tag_<TAG>_posterior_samples_<TS>_summary.(csv|feather|rds)`
+   - One row per sampled full-reconstruction.
+   - Columns:
+     - `Sample`, `Tag`, `logp`, `path_sig`, `path_count`, `sample_weight`, `sample_prob`
+     - `ObsRowIDs` (string, optional): semicolon-separated `ObsRowID` list in sample order — convenient to remap a sample deterministically to observed rows.
+
+   - Use: quick weighted Monte Carlo (resample or use `sample_prob` weights directly) and for lightweight downstream workflows.
+
+3) Per-path aggregated summary: `posteriors/tag_<TAG>_posterior_samples_<TS>_paths.(csv|feather|rds)`
+   - One row per unique reconstruction (unique `path_sig`).
+   - Columns:
+     - `path_sig` (string)
+     - `path_count` (integer): number of draws with this signature
+     - `path_prob` (numeric): aggregated probability (sum of `sample_prob` for draws of this path; should sum to ≈1 across rows)
+     - `recon` (string): compact mapping; pairs like `LeftID:ReconstructedStemID` separated by `;` — `LeftID` is `ObsRowID` when available, otherwise `CensusID` (order-based)
+
+   - Use: analytic expectations (no resampling needed), summary reporting, and simple parsing for deterministic applications.
+
 Design & behavior
 -----------------
 
