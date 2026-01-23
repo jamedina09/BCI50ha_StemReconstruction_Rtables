@@ -188,6 +188,41 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
 
     # Need a fully-anchored endpoint
+    # If the requested anchor census is missing entirely or all rows at that census
+    # have both NA DBH and NA TrueStemID, prefer the most recent earlier census
+    # that has at least one row with non-NA DBH and non-NA TrueStemID and use that
+    # as the anchor instead of immediately falling back to the igraph matcher.
+    anchor_rows_all <- tree_data[CensusID == anchor_start]
+    if (nrow(anchor_rows_all) == 0L || (all(is.na(anchor_rows_all$DBH)) && all(is.na(anchor_rows_all$TrueStemID)))) {
+        cand_census <- sort(unique(tree_data$CensusID[tree_data$CensusID < anchor_start & !is.na(tree_data$DBH) & !is.na(tree_data$TrueStemID)]))
+        if (length(cand_census) > 0L) {
+            new_anchor <- as.integer(max(cand_census))
+            vcat(prefix, "Requested anchor census=", anchor_start, " had no DBH/TrueStemID; using earlier anchor census=", new_anchor)
+            anchor_start <- new_anchor
+            census_range <- seq.int(from = first_obs_census, to = anchor_start)
+            n_census <- length(census_range)
+            vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
+            obs_counts <- vapply(
+                census_range,
+                function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
+                integer(1L)
+            )
+            max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+        } else {
+            vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+            K_used <- as.integer(min(max_obs, max_tracks))
+            n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+            tree_data[, `:=`(
+                DP_KUsed = K_used,
+                DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+                DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+            )]
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            return(out)
+        }
+    }
+
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     # FIXME: match_stems_optimal_backward uses time too
     # FIXME: Maybe add a key to fallback_igraph = TRUE or FALSE
