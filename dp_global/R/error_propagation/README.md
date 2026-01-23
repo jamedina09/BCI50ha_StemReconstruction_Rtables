@@ -48,6 +48,32 @@ Notes & rationale
 - The helper intentionally leaves rows that have no mapping as `NA` for the
   `DP_ReconstructedStemID_k` column; this reflects the DP's actual sampling
   output (only observed DBH rows are included in sampled full-reconstructions).
+- **MAP vs sampled paths:** `attach_paths_to_output(..., which = "map")` attaches
+  the highest-`path_prob` path present in the `*_paths.csv` summary. **Important:**
+  the `ReconstructedStemID` column written in the main `stem_reconstruction_*.csv` is
+  the MAP *decoded joint path* (Viterbi-style), which may *not* appear among
+  the sampled unique paths if the posterior sampler did not draw it. If this
+  occurs and you need the MAP present in the per-path summaries, either (a)
+  increase `posterior_samples` when running DP so sampling explores more
+  trajectories, or (b) compute the MAP signature from the main output and
+  attach it explicitly (or add the signature to the `paths` table before
+  calling `attach_paths_to_output()`).
+
+**Quick attach example (R)**
+
+```r
+paths_dt <- load_posterior_paths(".../tag_<TAG>_posterior_samples_<TS>_paths.csv")
+out_dt <- fread(".../stem_reconstruction_dp_global_rcpp.csv")
+# MAP sig built from main output; try to find it among sampled paths
+mapsig <- paste0(out_dt[ReconstructionMethod == "dp", ReconstructedStemID], collapse = "-")
+if (any(paths_dt$path_sig == mapsig)) {
+  # attach by signature index
+  out2 <- attach_paths_to_output(paths_dt, out_dt, which = "indices", indices = which(paths_dt$path_sig == mapsig), write_out = TRUE)
+} else {
+  message("MAP path not sampled: increase posterior_samples or insert MAP into paths_dt first.")
+}
+```
+
 
 Example: attach top 2 paths to the main reconstruction CSV
 ---------------------------------------------------------

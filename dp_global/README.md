@@ -227,6 +227,33 @@ When running `match_stems_dp_global_backward_marginals()`:
 - `DP_PosteriorUnlinkedProb`
 - `DP_PosteriorBin` (if using `add_dp_posterior_bins()`)
 
+### MAP vs posterior-sampled paths 🔀
+
+**What these two outputs represent**
+
+- **`ReconstructedStemID` (main output)** is the *MAP joint assignment* decoded by the DP (a deterministic Viterbi-style backtrace of the most probable full path). This is written per-observation in the main `stem_reconstruction_*.csv` as the best joint reconstruction under the model.
+
+- **Per-path posterior summary (`*_paths.csv`)** is an *empirical* summary of full reconstructions produced by the posterior sampler (only generated when `posterior_samples > 0`). Each row is a unique path observed among draws and `path_prob` is the normalized sampling weight for that unique path (sums to 1 across sampled unique paths).
+
+**Why they can differ**
+
+- Posterior sampling is finite and stochastic: the MAP joint path may have non-zero posterior mass yet still not be drawn among the finite samples. Consequently, the concatenation of per-row MAPs (`ReconstructedStemID`) may *not* appear as any `path_sig` in the `*_paths.csv` file.
+
+**Practical recommendations**
+
+- Increase `posterior_samples` to raise the chance the MAP path is drawn and therefore present in `*_paths.csv`.
+- If you require the MAP path to be represented in per-path summaries, you can either (a) explicitly insert the MAP signature into `paths_summary` after sampling (and mark it), or (b) attach it directly to your main output using the `attach_paths_to_output()` helper (see `dp_global/R/error_propagation/reconstruct_and_propagate.R`).
+
+**Quick check example (R)**
+
+```r
+library(data.table)
+dp <- fread("dp_global/output/.../stem_reconstruction_dp_global_rcpp.csv")
+sig <- paste0(dp[ReconstructionMethod == "dp", ReconstructedStemID], collapse = "-")
+paths <- fread("dp_global/output/.../posteriors/..._paths.csv")
+paths[path_sig == sig]  # empty => MAP path wasn't sampled
+```
+
 ---
 
 ## Biological Model & Parameters

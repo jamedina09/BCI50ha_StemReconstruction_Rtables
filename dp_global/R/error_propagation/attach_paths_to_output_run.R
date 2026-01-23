@@ -30,8 +30,8 @@ source("dp_global/R/error_propagation/reconstruct_and_propagate.R")
 # -----------------------------------------------------------------------------
 # Configuration: change these to point at the files you want to process
 # -----------------------------------------------------------------------------
-paths_file <- "dp_global/output/20260123_005933_fixed_T20_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/posteriors/tag_20_posterior_samples_20260123_005948_paths.csv"
-out_file <- "dp_global/output/20260123_005933_fixed_T20_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/stem_reconstruction_dp_global_rcpp.csv"
+paths_file <- "./dp_global/output/20260123_134331_unknown_T19_DP_MB_ME_gD_sD_kgD_ksD_rcpp/posteriors/posteriors/tag_19_posterior_samples_20260123_134529_paths.csv"
+out_file <- "./dp_global/output/20260123_134331_unknown_T19_DP_MB_ME_gD_sD_kgD_ksD_rcpp/stem_reconstruction_dp_global_rcpp.csv"
 
 # Quick existence check to fail early with a helpful message
 if (!file.exists(paths_file) || !file.exists(out_file)) {
@@ -146,3 +146,6 @@ ggplot(simp, aes(
     geom_point(, size = 2, alpha = 0.7) +
     geom_line() +
     theme_minimal()
+
+
+simp[, .(ReconstructedStemID, DBH, CensusID, obs_row_id, DP_ReconstructedStemID_1, DP_ReconstructedStemID_2)]
