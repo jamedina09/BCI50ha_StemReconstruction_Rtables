@@ -228,8 +228,14 @@ run_dp_cpp <- function(dt) {
         posterior_top_k = DP_POSTERIOR_TOP_K,
         eps_tiebreak = DP_EPS_TIEBREAK,
         use_measurement_error = TRUE,
-        verbose = isTRUE(DP_VERBOSE), 
-        posterior_samples = 100L
+        verbose = isTRUE(DP_VERBOSE),
+        posterior_samples = 100L,
+        prune_hard = TRUE,
+        prune_min_growth = min_annual_growth * 1,
+        prune_max_growth = max_annual_growth * 1,
+        prune_use_bio_bounds = FALSE,
+        prune_recruit_max_dbh = 7.5*5,
+        prune_use_bio_recruit = FALSE
     )
 }
 
