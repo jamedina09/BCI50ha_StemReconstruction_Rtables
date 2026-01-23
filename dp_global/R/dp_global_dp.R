@@ -5,23 +5,25 @@
 
 # # Guard against accidental top-level side-effect when sourcing in tests
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
-                                                                min_growth = -Inf,
-                                                                max_growth = Inf,
-                                                                interval_years = NULL,
-                                                                anchor_start,
-                                                                max_tracks = 30L,
-                                                                slack_tracks = 1L,
-                                                                max_states = 50000L,
-                                                                temperature = 1.0,
-                                                                posterior_top_k = 2L,
-                                                                eps_tiebreak = 1e-6,
-                                                                # --- measurement error (optional) ---
-                                                                use_measurement_error = FALSE,
-                                                                meas_sd1_a = 0.0062,
-                                                                meas_sd1_b = 0.0904,
-                                                                meas_sd2 = 4.64,
-                                                                meas_p_big = 0.05,
-                                                                verbose = FALSE) {
+                                                           min_growth = -Inf,
+                                                           max_growth = Inf,
+                                                           interval_years = NULL,
+                                                           anchor_start,
+                                                           max_tracks = 30L,
+                                                           slack_tracks = 1L,
+                                                           slack_require_anchor_recruitable = FALSE,
+                                                           slack_require_anchor_eps = 1e-6,
+                                                           max_states = 50000L,
+                                                           temperature = 1.0,
+                                                           posterior_top_k = 2L,
+                                                           eps_tiebreak = 1e-6,
+                                                           # --- measurement error (optional) ---
+                                                           use_measurement_error = FALSE,
+                                                           meas_sd1_a = 0.0062,
+                                                           meas_sd1_b = 0.0904,
+                                                           meas_sd2 = 4.64,
+                                                           meas_p_big = 0.05,
+                                                           verbose = FALSE) {
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
     if (!is.finite(posterior_top_k) || is.na(posterior_top_k) || posterior_top_k < 1L) {
@@ -174,35 +176,35 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Need a fully-anchored endpoint
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     # FIXME: match_stems_optimal_backward uses time too
-     if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
-         vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
-         K_used <- as.integer(min(max_obs, max_tracks))
-         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
-         tree_data[, `:=`(
-             DP_KUsed = K_used,
-             DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-             DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
-         )]
-         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
-         out <- ensure_posterior_columns(out)
-         return(out)
-     }
+    if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
+        vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+        K_used <- as.integer(min(max_obs, max_tracks))
+        n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+        tree_data[, `:=`(
+            DP_KUsed = K_used,
+            DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+            DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+        )]
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        return(out)
+    }
     anchor_ids <- sort(unique(anchor_obs$TrueStemID))
     anchor_ids <- anchor_ids[!is.na(anchor_ids)]
     # FIXME: match_stems_optimal_backward uses time too
-     if (length(anchor_ids) == 0L) {
-         vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
-         K_used <- as.integer(min(max_obs, max_tracks))
-         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
-         tree_data[, `:=`(
-             DP_KUsed = K_used,
-             DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-             DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
-         )]
-         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
-         out <- ensure_posterior_columns(out)
-         return(out)
-     }
+    if (length(anchor_ids) == 0L) {
+        vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
+        K_used <- as.integer(min(max_obs, max_tracks))
+        n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+        tree_data[, `:=`(
+            DP_KUsed = K_used,
+            DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+            DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+        )]
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        return(out)
+    }
 
     # Choose K (tracks) same logic as the MAP DP
     births_needed <- if (length(obs_counts) >= 2L) sum(pmax(0L, diff(obs_counts))) else 0L
@@ -213,10 +215,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!is.finite(slack_tracks) || is.na(slack_tracks) || slack_tracks < 0L) {
         slack_tracks <- 0L
     }
-    K_target <- K_base
-    if (slack_tracks > 0L && K_base == max_obs) {
-        K_target <- K_base + slack_tracks
+
+    # Optionally require that an anchor DBH be recruitable before granting slack.
+    anchor_ok <- TRUE
+    if (isTRUE(slack_require_anchor_recruitable)) {
+        eps <- suppressWarnings(as.numeric(slack_require_anchor_eps))
+        if (!is.finite(eps) || is.na(eps)) eps <- 0
+        anchor_ok <- any(
+            !is.na(anchor_obs$DBH) &
+                !is.na(anchor_obs$Bio_Recruit_MaxDBH_unit) &
+                (anchor_obs$DBH <= (anchor_obs$Bio_Recruit_MaxDBH_unit + eps))
+        )
+        if (!anchor_ok) {
+            vcat(prefix, "slack requested but not granted: no anchor DBH <= recruit_max_dbh (eps=", eps, ")")
+        }
     }
+
+    # Apply slack only when requested and when anchor_ok (if required).
+    K_target <- K_base + ifelse(slack_tracks > 0L && isTRUE(anchor_ok), slack_tracks, 0L)
     K <- min(K_target, max_tracks)
 
     # Report theoretical worst-case state count
