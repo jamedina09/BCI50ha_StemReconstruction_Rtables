@@ -1,5 +1,8 @@
 # STEM_IDENTIFICATION_TEST
 
+## Overview
+A collection of scripts and R modules for running and testing the DP stem-identification workflow.
+
 Quick pointers:
 
 - See `dp_global/README.md` for details on the DP implementation and R driver. 🔧
@@ -28,12 +31,11 @@ Quickstart
 Notes
 -----
 - Output directories are written under `dp_global/output/` by default. If you're using OneDrive or similar sync services, consider excluding this directory from sync to avoid I/O delays and accidental commits. ⚠️
-- See `bin/README.md` for a quick reference to the runners and usage notes.
 
 Conventions
 -----------
 - Top-level helper scripts intended for users live in `bin/` (e.g., `bin/run_dp_future.R` — the recommended entrypoint for running experiments). Module internals and helpers live under `dp_global/`.
-- Directory names are lowercase snake_case (e.g., `data_simulation`, `dp_global`). Most scripts and documentation were updated to reflect this convention.
+- Directory names are lowercase snake_case (e.g., `data_simulation`, `dp_global`). Most scripts and documentation follow this convention.
 
 Testing & CI
 ------------

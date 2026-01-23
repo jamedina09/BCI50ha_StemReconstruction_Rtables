@@ -25,37 +25,23 @@
 
 ## Overview
 
-### What This Solves
-
-For each (Tag, species) group in forest census data, this system reconstructs stable stem identities in early censuses by finding the **globally optimal** set of stem identity assignments. The solution is consistent with:
-
-- A biological transition model (growth, recruitment, mortality)
-- Explicit life-cycle constraints (birth→alive→death, no resurrection)
-- Optional exact posterior uncertainty quantification via probabilistic DP
-
-### Why Global DP?
-
-**Problem with stepwise matching:** Local one-step matches can appear optimal but cause identity swaps when considering the full multi-census history.
-
-**DP solution:** Optimizes the *entire multi-census trajectory* simultaneously, using a track-based state space representation where each "track" represents a potential stem identity slot that can be occupied or empty across censuses.
+Reconstruct stable stem identities across censuses using a biologically informed global dynamic programming solver that enforces life-cycle constraints and provides uncertainty quantification.
 
 ### Key Features
 
-- **Global optimization** across all censuses simultaneously
-- **Biological realism** through parametric growth, mortality, and recruitment models
+- **Global optimization** across multiple censuses
+- **Biological realism** (growth, mortality, recruitment)
 - **Measurement error handling** following Chave et al. (2004)
 - **Exact uncertainty quantification** via posterior marginals
-- **Life-cycle constraints** preventing impossible transitions
-- **High-performance C++ acceleration** reducing computation time by 10-50x compared to pure R implementation
-- **Automatic fallback** to stepwise matching when DP becomes intractable
+- **C++ acceleration** for performance and fallbacks when DP is intractable
 
 ---
 
 ## Installation & Quickstart
 
-### Requirements
+### Prerequisites
 
-**Required packages:** `data.table`, `igraph`  
+**Required R packages:** `data.table`, `igraph`  
 **Optional:** `ggplot2`, `cowplot`
 
 ### Running the Code
@@ -121,12 +107,8 @@ Forest census measurements track multiple stems per tree over time:
 - Measurement error complicates growth assessment
 - Local greedy matching can trap in suboptimal solutions
 
-### TODO:
-The code assumes that HOM (height of measurement) is the same for all stems.
-Include HOM column, and for those that are not the same (e.g., HOM != 1.3), 
-predict the DBH at the common HOM (1.3 m) and proceed.
-
-Now, the user needs to include DBH measurements at 1.3m.
+Note on measurement heights (HOM):
+If DBH measurements were taken at differing heights, include a `HOM` column and convert DBH to a common reference height (1.3 m) prior to running the workflow. If conversion is not possible, document measurement heights; preprocessing may be required.
 
 ---
 
@@ -1474,19 +1456,4 @@ Chave, J., Condit, R., Aguilar, S., Hernandez, A., Lao, S., & Perez, R. (2004). 
 
 ## Building This Documentation
 
-**Fully offline HTML (recommended):**
-```bash
-pandoc README.md --standalone --mathml \
-  --embed-resources -o README.html
-```
-
-**MathJax HTML (requires internet):**
-```bash
-pandoc README.md --standalone --mathjax \
-  --embed-resources -o README.html
-```
-
-**Automated build:**
-```bash
-bash dev/build_readme_html.sh
-```
+Use `pandoc` (if available) to render `README.md` to HTML. An automated build script is provided (`dev/build_readme_html.sh`) that wraps common rendering steps.

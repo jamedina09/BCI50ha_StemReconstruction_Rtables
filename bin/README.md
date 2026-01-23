@@ -2,21 +2,21 @@
 
 **IMPORTANT: DRY_RUN first ✅**
 
-- Always verify constructed commands and logging paths before running real experiments. Use the `-- --DRY_RUN` flag to print the fully sanitized Rscript invocations and write per-config dry logs. Examples:
+- Use the `-- --DRY_RUN` flag to print the fully constructed Rscript invocations and write per-config dry logs (no execution). Examples:
 
   ```bash
   ./bin/run_dp_future.R --workers 1 --cores-per-job 1 --configs "fixed" -- --DRY_RUN
   ./bin/run_dp_future_single.R --workers 1 --cores-per-job 1 -- --DRY_RUN
   ```
 
-Purpose
+## Overview
 
 - Recommended entrypoints for running experiments on a single machine:
   - `bin/run_dp_future.R` — concurrent runner using `future` + `progressr` (preferred for multi-config runs).
   - `bin/run_dp_future_single.R` — helper to run a fixed configuration set with the same concurrent/future orchestration semantics (useful for testing or single-config experiments).
 - For single-config serial execution, use `bin/run_dp_future_single.R` or run `run_dp_future.R` with `--workers 1` for equivalent behavior and consistent logging.
 
-Quick start
+## Quickstart
 
 1. Dry-run (fast; no heavy computation):
 
@@ -36,7 +36,7 @@ Quick start
    ./bin/run_dp_future_single.R --workers 1 --cores-per-job 4 -- --DRY_RUN
    ```
 
-Flags & options
+## Options
 
 - `--config=<name>`        : run a single config (e.g., `--config=fixed`) (used by serial helpers; for `run_dp_future.R` use `--configs`)
 - `--DRY_RUN`               : prints Rscript invocations instead of executing them (pass after `--` to forward to `main_cpp.R`)
@@ -67,11 +67,9 @@ Concurrent runs with `future` + `progressr` (working)
 - Purpose: Run multiple named experiment configs concurrently in a robust, observable way.
 - Script: `bin/run_dp_future.R` (R script using `future`, `future.apply` and `progressr`).
 
-Installation (if needed)
+## Prerequisites
 
-```r
-install.packages(c("future", "future.apply", "progressr"))
-```
+R packages: `future`, `future.apply`, `progressr` (install via `install.packages()` if needed).
 
 Usage examples
 
