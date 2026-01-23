@@ -97,13 +97,13 @@ USE_MEASUREMENT_ERROR <- TRUE
 MAX_GROWTH_HARD_SOURCE <- "data"
 MAX_GROWTH_FIXED <- 7.5
 MAX_SHRINK_HARD_SOURCE <- "data"
-MAX_SHRINK_FIXED <- -0.01
-K_SHRINK_SOURCE <- "fixed"
+MAX_SHRINK_FIXED <- -0.5
+K_SHRINK_SOURCE <- "data"
 K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
-K_GROWTH_SOURCE <- "fixed"
+K_GROWTH_SOURCE <- "data"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
-RECRUIT_MAX_SOURCE <- "fixed"
-RECRUIT_MAX_FIXED <- 100
+RECRUIT_MAX_SOURCE <- "data"
+RECRUIT_MAX_FIXED <- 37.5
 
 ############################################################
 ### 2.3 DP running settings
