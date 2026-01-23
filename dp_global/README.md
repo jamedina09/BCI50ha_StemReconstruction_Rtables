@@ -227,6 +227,8 @@ When running `match_stems_dp_global_backward_marginals()`:
 - `DP_PosteriorUnlinkedProb`
 - `DP_PosteriorBin` (if using `add_dp_posterior_bins()`)
 
+Note: in posterior path summaries (`*_paths.csv`) the `recon` column is encoded as `ObsRowID:ReconstructedStemID` pairs. Legacy `CensusID` encodings are deprecated and no longer supported by the attachment helpers.
+
 ### MAP vs posterior-sampled paths 🔀
 
 **What these two outputs represent**

@@ -5,35 +5,38 @@
 
 stopifnot(requireNamespace("data.table", quietly = TRUE))
 
-# Parse recon strings. Support two formats:
-#  - explicit pairs: "1:8;2:3;3:4"   (CensusID:ReconstructedStemID;...)
-#  - compact path: "7-4-8-..."       (one ReconstructedStemID per census, hyphen-separated)
+# Parse recon strings. Support explicit ObsRowID:ReconstructedStemID pairs. Legacy compact hyphen paths are supported
+# for backwards compatibility but are discouraged (they lack explicit ObsRowID information).
 parse_recon <- function(s) {
     if (is.na(s) || !nzchar(s)) {
-        return(data.table::data.table(CensusID = integer(0), ReconstructedStemID = integer(0)))
+        return(data.table::data.table(ObsRowID = integer(0), ReconstructedStemID = integer(0)))
     }
-    # If string contains a ':' assume explicit "CensusID:StemID" pairs
+    # If string contains a ':' assume explicit "ObsRowID:StemID" pairs
     if (grepl(":", s, fixed = TRUE)) {
         parts <- strsplit(s, ";", fixed = TRUE)[[1]]
         parts <- parts[nzchar(trimws(parts))]
         if (length(parts) == 0) {
-            return(data.table::data.table(CensusID = integer(0), ReconstructedStemID = integer(0)))
+            return(data.table::data.table(ObsRowID = integer(0), ReconstructedStemID = integer(0)))
         }
-        civ <- as.integer(vapply(parts, function(x) sub(":.*$", "", trimws(x)), FUN.VALUE = ""))
+        obsiv <- as.integer(vapply(parts, function(x) sub(":.*$", "", trimws(x)), FUN.VALUE = ""))
         riv <- as.integer(vapply(parts, function(x) sub("^.*:", "", trimws(x)), FUN.VALUE = ""))
-        return(data.table::data.table(CensusID = civ, ReconstructedStemID = riv))
+        return(data.table::data.table(ObsRowID = obsiv, ReconstructedStemID = riv))
     }
 
     # Otherwise attempt compact path parsing: common separators are '-' or ',' or whitespace
+    # NOTE: compact path lacks explicit ObsRowID; we return positional ObsRowID = 1..n and issue a warning.
     sep <- if (grepl("-", s, fixed = TRUE)) "-" else if (grepl(",", s, fixed = TRUE)) "," else " "
     parts <- strsplit(s, sep, fixed = TRUE)[[1]]
     parts <- parts[nzchar(trimws(parts))]
     if (length(parts) == 0) {
-        return(data.table::data.table(CensusID = integer(0), ReconstructedStemID = integer(0)))
+        return(data.table::data.table(ObsRowID = integer(0), ReconstructedStemID = integer(0)))
     }
     riv <- as.integer(trimws(parts))
-    civ <- seq_along(riv)
-    data.table::data.table(CensusID = civ, ReconstructedStemID = riv)
+    # positional indices (legacy): these are NOT real ObsRowIDs, and attachment should
+    # attempt a conversion using out_dt (see attach_paths_to_output). Warn user.
+    warning("Legacy compact path parsed without ObsRowID; returning positional ObsRowID = 1..n. Regenerate posterior samples to include ObsRowID for robust matching.")
+    obsiv <- seq_along(riv)
+    data.table::data.table(ObsRowID = obsiv, ReconstructedStemID = riv)
 }
 
 # Load posterior paths summary file (CSV / Feather / RDS)
@@ -125,23 +128,35 @@ attach_paths_to_output <- function(paths, out, which = c("map", "top_n", "indice
         path_sig <- as.character(paths_dt$path_sig[i])
         recon_dt <- paths_dt$recon_parsed[[i]]
         recon_dt_copy <- data.table::copy(recon_dt)
-        matches <- match(as.character(recon_dt_copy$CensusID), as.character(out_dt[[obs_row_id_col]]))
-        if (any(!is.na(matches))) {
-            recon_dt_copy[, ObsRowID := as.integer(as.character(CensusID))]
-            map_dt <- recon_dt_copy[!is.na(ObsRowID), .(ObsRowID = ObsRowID, ReconstructedStemID = ReconstructedStemID)]
-            data.table::setkeyv(out_dt, obs_row_id_col)
-            data.table::setkeyv(map_dt, "ObsRowID")
-            new_recon_col <- paste0("DP_ReconstructedStemID_", k)
-            new_sig_col <- paste0("DP_PathSig_", k)
-            out_dt[, (new_recon_col) := as.integer(NA)]
-            out_dt[map_dt, (new_recon_col) := i.ReconstructedStemID]
-            out_dt[, (new_sig_col) := path_sig]
+
+        # Primary behavior: prefer explicit ObsRowID for matching
+        if ("ObsRowID" %in% names(recon_dt_copy)) {
+            matches <- match(as.character(recon_dt_copy$ObsRowID), as.character(out_dt[[obs_row_id_col]]))
+            if (any(!is.na(matches))) {
+                map_dt <- recon_dt_copy[!is.na(ObsRowID), .(ObsRowID = as.integer(as.character(ObsRowID)), ReconstructedStemID = ReconstructedStemID)]
+                data.table::setkeyv(out_dt, obs_row_id_col)
+                data.table::setkeyv(map_dt, "ObsRowID")
+                new_recon_col <- paste0("DP_ReconstructedStemID_", k)
+                new_sig_col <- paste0("DP_PathSig_", k)
+                out_dt[, (new_recon_col) := as.integer(NA)]
+                out_dt[map_dt, (new_recon_col) := i.ReconstructedStemID]
+                out_dt[, (new_sig_col) := path_sig]
+            } else {
+                new_recon_col <- paste0("DP_ReconstructedStemID_", k)
+                new_sig_col <- paste0("DP_PathSig_", k)
+                out_dt[, (new_recon_col) := as.integer(NA)]
+                out_dt[, (new_sig_col) := path_sig]
+                warning(sprintf("Path %s did not contain ObsRowID matches; column %s filled with NA", path_sig, new_recon_col))
+            }
         } else {
+            # Enforce ObsRowID-only reconstructions. Legacy CensusID-based reconstructions
+            # are no longer supported: fail loudly so users regenerate posterior samples
+            # with ObsRowID encoded.
             new_recon_col <- paste0("DP_ReconstructedStemID_", k)
             new_sig_col <- paste0("DP_PathSig_", k)
             out_dt[, (new_recon_col) := as.integer(NA)]
             out_dt[, (new_sig_col) := path_sig]
-            warning(sprintf("Path %s did not contain ObsRowID matches; column %s filled with NA", path_sig, new_recon_col))
+            stop(sprintf("Path %s does not contain ObsRowID; legacy CensusID-based matching is removed. Regenerate posterior samples with ObsRowID encoded.", path_sig))
         }
     }
 
