@@ -335,7 +335,7 @@ apply_paths_compute_growth <- function(paths_dt, obs_dt, census_col = "CensusID"
             library(ggplot2)
             p <- ggplot2::ggplot(df, ggplot2::aes(x = mean_growth)) +
                 ggplot2::geom_histogram(ggplot2::aes(y = ..density..), bins = 30, fill = "lightblue", color = "black") +
-                ggplot2::geom_vline(xintercept = wmean, color = "red", linetype = "dashed", size = 1) +
+                ggplot2::geom_vline(xintercept = wmean, color = "red", linetype = "dashed", linewidth = 1) +
                 ggplot2::labs(title = "Posterior distribution of mean growth (sampled paths)", x = "Mean growth (cm)", y = "Density") +
                 ggplot2::theme_minimal()
             if (!is.na(wsd)) {
