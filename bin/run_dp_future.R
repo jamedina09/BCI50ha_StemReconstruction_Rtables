@@ -725,3 +725,6 @@ q(status = 0)
 # Rscript bin/run_dp_future.R --workers 3 --cores-per-job 5 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
 
 # Rscript bin/run_dp_future.R --workers 1 --cores-per-job 14 --configs "fixed"
+
+## NOTE: If you want to run all experiments for one tag only, set --WHICH_TAG=N --RUN_ALL_TAGS=FALSE
+# Rscript bin/run_dp_future.R --workers 8 --cores-per-job 1 --WHICH_TAG=20 --RUN_ALL_TAGS=FALSE  --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
