@@ -1,7 +1,5 @@
 # dpglobal_bundle — Focused bundle folder (what's actually here)
 
-This README describes exactly the files present in `dp_global/R/dpglobal_bundle` and documents what `package_bundle.sh` does.
-
 Files currently in this folder
 - `dpglobal_bundle_loader.R` — script that builds `dpglobal_bundle.RData` and `dpglobal_bundle_manifest.rds` by sourcing the project R modules into a temporary environment and saving the results into this folder. Run this on the source machine when you want to update the RData/manifest.
 - `package_bundle.sh` — packaging helper (see detailed description below).

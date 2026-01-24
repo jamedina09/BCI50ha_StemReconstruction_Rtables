@@ -670,11 +670,11 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
         # prune controls
         prune_hard = TRUE,
-        prune_min_growth = -2.5, # very wide fixed bounds
-        prune_max_growth = 10, # very wide fixed bounds
+        prune_min_growth = MAX_SHRINK_FIXED * 2.5, # very wide fixed bounds
+        prune_max_growth = MAX_GROWTH_FIXED * 1.5, # very wide fixed bounds
         prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
-        prune_recruit_max_dbh = 10 * 5, # very high recruit max dbh
-        prune_use_bio_recruit = FALSE, # use fixed recruit max dbh instead of biological one
+        prune_recruit_max_dbh = RECRUIT_MAX_FIXED * 1.2, # very high recruit max dbh
+        prune_use_bio_recruit = TRUE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
         verbose = isTRUE(DP_VERBOSE)
     )
 }
