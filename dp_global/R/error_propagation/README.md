@@ -66,7 +66,7 @@ Files in this directory
 - `process_posteriors.R` — canonical implementation of parsing, loading, attaching, and expansion helpers.
 - `attach_paths_to_output_run.R` — interactive runner and demonstration (`run_attach_and_expand()`).
 
-If you'd like, I can add a small example aggregated file (sample output snippet) to the README or add a simple unit test to assert ObsRowID enforcement. Let me know which you'd prefer.
+
 
 Files in this directory
 -----------------------

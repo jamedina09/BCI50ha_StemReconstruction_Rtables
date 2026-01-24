@@ -77,11 +77,9 @@ Rscript -e "load('dp_global/R/dpglobal_bundle/dpglobal_bundle.RData')"
 
 Notes and recommendations
 - The archive contains compiled-source (**not** compiled binaries). Always run `Rcpp::sourceCpp()` on the target machine to build the shared object locally (platform- and R-version-dependent).
-- If you need a smaller, minimal distribution (only the bundle files), let me know and I can add a `--mode minimal|full` option to `package_bundle.sh`.
 
 ---
 
-If you want, I can now shorten this further, or add a single-line summary at the top for quick copy/paste. Please tell me which you prefer. (optional; may be removed if you prefer a minimal folder)
 
 Minimal quickstart (copy-paste-ready commands)
 
@@ -155,11 +153,6 @@ Notes & troubleshooting
 - `dpglobal_bundle.RData` does NOT contain compiled binaries. Compile the C++ on the target with `Rcpp::sourceCpp("./dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp")` (or the shorter path if you're in the bundle dir).
 - If a function is missing after loading, rebuild the bundle using `dpglobal_bundle_loader.R` on the source machine and re-copy both the `RData` and `manifest`.
 - If compiled symbols are missing after compilation, run the `sourceCpp()` line interactively and re-check the `exists()` call above.
-
-That's the complete minimal doc limited to files that actually exist in `dp_global/R/dpglobal_bundle/` and `dp_global/R/dpglobal_bundle/src/`.
- 
-
-That's it — simple and robust. If you want, I can also add a one-line checklist script (`verify_bundle.R`) that checks the minimal set and prints missing items.
 
 
 ## Full, detailed workflow (step-by-step) 📋
