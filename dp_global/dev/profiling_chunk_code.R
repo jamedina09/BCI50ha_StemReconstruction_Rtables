@@ -196,6 +196,7 @@ bio_pars <- list()
 for (sp in unique(xrun$species)) {
     bio_pars[[sp]] <- estimate_bio_pars(
         xrun[species == sp],
+        mortality_start = c(log(0.01), 0),
         use_measurement_error = TRUE,
         max_shrink_source = "data",
         max_shrink_fixed = -1,
