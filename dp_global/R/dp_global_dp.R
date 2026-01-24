@@ -1071,22 +1071,25 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         # Export samples and summaries: prefer feather via arrow for speed if available
         if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
-            arrow::write_feather(samples_dt, paste0(out_path_base, ".feather"))
+            # Full long-format samples export intentionally disabled to reduce I/O and runtime.
+            # arrow::write_feather(samples_dt, paste0(out_path_base, ".feather"))
             arrow::write_feather(samples_summary, paste0(out_path_base, "_summary.feather"))
             arrow::write_feather(paths_summary, paste0(out_path_base, "_paths.feather"))
-            vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".feather"))
+            # vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".feather"))
             vcat(prefix, "Wrote posterior samples summary to: ", paste0(out_path_base, "_summary.feather"))
             vcat(prefix, "Wrote posterior paths summary to: ", paste0(out_path_base, "_paths.feather"))
         } else if (fmt == "csv") {
-            data.table::fwrite(samples_dt, paste0(out_path_base, ".csv"))
+            # Full long-format samples export intentionally disabled to reduce I/O and runtime.
+            # data.table::fwrite(samples_dt, paste0(out_path_base, ".csv"))
             data.table::fwrite(samples_summary, paste0(out_path_base, "_summary.csv"))
             data.table::fwrite(paths_summary, paste0(out_path_base, "_paths.csv"))
-            vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".csv"))
+            # vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".csv"))
             vcat(prefix, "Wrote posterior samples summary to: ", paste0(out_path_base, "_summary.csv"))
             vcat(prefix, "Wrote posterior paths summary to: ", paste0(out_path_base, "_paths.csv"))
         } else {
-            saveRDS(list(full = samples_dt, summary = samples_summary, paths = paths_summary), file = paste0(out_path_base, ".rds"))
-            vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".rds"))
+            # Save only aggregated results (no full long-format samples)
+            saveRDS(list(summary = samples_summary, paths = paths_summary), file = paste0(out_path_base, ".rds"))
+            vcat(prefix, "Wrote posterior samples summary to: ", paste0(out_path_base, ".rds"))
         }
     }
 
