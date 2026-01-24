@@ -6,6 +6,7 @@
 estimate_bio_pars <- function(
   x,
   mortality_start = c(log(0.01), 0),
+  anchor_start_census = ANCHOR_START_CENSUS,
   # -----------------------------------------------------------------
   # Measurement error model (DBH remeasurement)
   # -----------------------------------------------------------------
