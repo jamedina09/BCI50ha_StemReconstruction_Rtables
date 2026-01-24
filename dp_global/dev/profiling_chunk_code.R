@@ -256,6 +256,14 @@ maybe_add_posterior_bins <- function(out) {
 
 # Make a small wrapper to run the chunk (so we can profile it)
 run_one_chunk <- function() {
+    # If posterior sampling requested, ensure samples are written into this run's output directory
+    if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
+        if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
+            POSTERIOR_SAMPLES_PATH <<- file.path(tmp_out_dir, "posteriors")
+        }
+        if (!dir.exists(POSTERIOR_SAMPLES_PATH)) dir.create(POSTERIOR_SAMPLES_PATH, recursive = TRUE)
+    }
+
     res <- parallel::mclapply(seq_len(nrow(groups_ci)), function(j) {
         data.table::setDTthreads(1L)
         g <- groups_ci[j]
@@ -275,6 +283,9 @@ run_one_chunk <- function() {
             use_measurement_error = TRUE,
             verbose = isTRUE(DP_VERBOSE),
             posterior_samples = POSTERIOR_SAMPLES,
+            posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
+            posterior_samples_path = POSTERIOR_SAMPLES_PATH,
+            posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
             prune_hard = TRUE,
             prune_min_growth = min_annual_growth,
             prune_max_growth = max_annual_growth,
@@ -289,7 +300,7 @@ run_one_chunk <- function() {
         out_chunk[, DP_Chunk := ci]
         out_chunk <- maybe_add_posterior_bins(out_chunk)
 
-        # ensure posterior samples path if sampling requested
+        # keep the posterior path around for subsequent export timing checks
         if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
             if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
                 POSTERIOR_SAMPLES_PATH <<- file.path(tmp_out_dir, "posteriors")
@@ -363,11 +374,11 @@ run_one_chunk <- function() {
             export_timings$posterior_files_total_size <- NA_integer_
         }
 
-        export_timings
+        ret <- list(out_chunk = out_chunk, export_timings = export_timings)
+        return(ret)
     } else {
-        NULL
+        return(list(out_chunk = NULL, export_timings = NULL))
     }
-    invisible(out_chunk)
 }
 
 prof_file <- file.path(here("dp_global", "dev"), "dp_global_chunk_cpp.prof")
@@ -375,10 +386,10 @@ message("[profiling_chunk_code] Profiling chunk run; writing profile to: ", prof
 
 if (!isTRUE(RUN_PROFILE)) {
     message("[profiling_chunk_code] RUN_PROFILE=FALSE; performing a dry-run chunk execution")
-    out <- run_one_chunk()
+    res <- run_one_chunk()
 } else {
     Rprof(prof_file, interval = 0.01, memory.profiling = TRUE)
-    out <- run_one_chunk()
+    res <- run_one_chunk()
     Rprof(NULL)
     message("[profiling_chunk_code] Profiling complete. Top hotspots:")
     s <- summaryRprof(prof_file)
@@ -387,6 +398,16 @@ if (!isTRUE(RUN_PROFILE)) {
     print(utils::head(s$by.total, 25))
 }
 
+# res contains out_chunk (or NULL) and export timings (if any)
+if (!is.null(res) && !is.null(res$out_chunk)) {
+    cat("\nExport timings (seconds) and sizes (bytes):\n")
+    print(res$export_timings)
+} else if (!is.null(res)) {
+    cat("\nNo out_chunk produced; nothing to report.\n")
+}
+
 message("[profiling_chunk_code] Chunk profiling finished; artifacts written to: ", tmp_out_dir)
 
-invisible(out)
+invisible(res)
+
+# POSTERIOR_SAMPLES=200 POSTERIOR_SAMPLES_FORMAT=feather Rscript dp_global/dev/profiling_chunk_code.R
