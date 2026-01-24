@@ -91,6 +91,21 @@ RUN_PROFILE <- TRUE
 DP_VERBOSE <- TRUE
 # Benchmarking flags removed for a simple single-run profiler
 
+# Export controls (env overrides accepted: 1/0, TRUE/FALSE)
+env_flag <- function(name, default = FALSE) {
+    v <- Sys.getenv(name, "")
+    if (v == "") return(default)
+    tolower(v) %in% c("1", "true", "t", "yes", "y")
+}
+
+WRITE_DP_FEATHER <- env_flag("WRITE_DP_FEATHER", TRUE)
+WRITE_DP_RDS <- env_flag("WRITE_DP_RDS", TRUE)
+WRITE_DP_CSV <- env_flag("WRITE_DP_CSV", TRUE)
+WRITE_DP_PDF <- env_flag("WRITE_DP_PDF", TRUE)
+# Control whether the DP code writes posterior summaries to disk
+WRITE_POSTERIORS <- env_flag("WRITE_POSTERIORS", TRUE)
+
+
 ############################################################
 ### 2) Source DP code
 ############################################################
@@ -140,8 +155,6 @@ attach_bio_columns <- function(xrun, bio_pars) {
         },
         Bio_Sigma0_Growth = bio_pars[[species]]$growth$sigma0,
         Bio_Sigma1_Growth = bio_pars[[species]]$growth$sigma1,
-        Bio_H0 = bio_pars[[species]]$mortality$h0,
-        Bio_Beta = bio_pars[[species]]$mortality$beta,
         Bio_H0_Mortality = bio_pars[[species]]$mortality$h0,
         Bio_Beta_Mortality = bio_pars[[species]]$mortality$beta,
         Bio_Recruit_Meanlog = bio_pars[[species]]$recruitment$meanlog,
@@ -265,16 +278,26 @@ prof_file <- file.path(here("dp_global", "dev"), "dp_global_cpp.prof")
 message("[profiling_code] Profiling DP run (Tag=", which_tag, ", species=", sp0, ")")
 message("[profiling_code] Writing profile to: ", prof_file)
 message("[profiling_code] Using out_dir: ", tmp_out_dir)
+message("[profiling_code] Export flags - FEATHER=", WRITE_DP_FEATHER, ", RDS=", WRITE_DP_RDS, ", CSV=", WRITE_DP_CSV, ", PDF=", WRITE_DP_PDF, ", POSTERIORS=", WRITE_POSTERIORS)
 
 # Ensure POSTERIOR_SAMPLES_PATH maps to our tmp_out_dir when sampling requested
-if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
+effective_posterior_samples <- as.integer(POSTERIOR_SAMPLES)
+if (!isTRUE(WRITE_POSTERIORS)) {
+    effective_posterior_samples <- 0L
+}
+if (!is.null(effective_posterior_samples) && effective_posterior_samples > 0L) {
     if (!nzchar(POSTERIOR_SAMPLES_PATH)) POSTERIOR_SAMPLES_PATH <- tmp_out_dir
     if (!dir.exists(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))) dir.create(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"), recursive = TRUE)
 }
 
+# Temporarily override POSTERIOR_SAMPLES used by run_dp_cpp
+old_POSTERIOR_SAMPLES <- POSTERIOR_SAMPLES
+POSTERIOR_SAMPLES <- effective_posterior_samples
 Rprof(prof_file, interval = 0.01, memory.profiling = TRUE)
 out_prof <- run_dp_cpp(dtg, out_dir = tmp_out_dir)
 Rprof(NULL)
+POSTERIOR_SAMPLES <- old_POSTERIOR_SAMPLES
+
 
 message("[profiling_code] Done. Top hotspots:\n")
 s <- summaryRprof(prof_file)
@@ -282,11 +305,11 @@ print(utils::head(s$by.self, 25))
 cat("\n---- by.total ----\n")
 print(utils::head(s$by.total, 25))
 
-# Export write timings and sizes for the main DP output
+# Export write timings and sizes for the main DP output (respect WRITE_* flags)
 export_timings <- list()
 if (!is.null(out_prof) && data.table::is.data.table(out_prof) && nrow(out_prof) > 0L) {
     # Feather
-    if (requireNamespace("arrow", quietly = TRUE)) {
+    if (isTRUE(WRITE_DP_FEATHER) && requireNamespace("arrow", quietly = TRUE)) {
         feather_path <- file.path(tmp_out_dir, "stem_reconstruction_dp_global_rcpp_profile.feather")
         t0 <- proc.time(); arrow::write_feather(out_prof, feather_path); t1 <- proc.time()
         export_timings$feather <- as.numeric((t1 - t0)["elapsed"])
@@ -297,31 +320,46 @@ if (!is.null(out_prof) && data.table::is.data.table(out_prof) && nrow(out_prof) 
     }
 
     # RDS
-    rds_path <- file.path(tmp_out_dir, "stem_reconstruction_dp_global_rcpp_profile.rds")
-    t0 <- proc.time(); saveRDS(out_prof, file = rds_path); t1 <- proc.time()
-    export_timings$rds <- as.numeric((t1 - t0)["elapsed"])
-    export_timings$rds_size <- file.size(rds_path)
+    if (isTRUE(WRITE_DP_RDS)) {
+        rds_path <- file.path(tmp_out_dir, "stem_reconstruction_dp_global_rcpp_profile.rds")
+        t0 <- proc.time(); saveRDS(out_prof, file = rds_path); t1 <- proc.time()
+        export_timings$rds <- as.numeric((t1 - t0)["elapsed"])
+        export_timings$rds_size <- file.size(rds_path)
+    } else {
+        export_timings$rds <- NA_real_
+        export_timings$rds_size <- NA_integer_
+    }
 
     # CSV
-    csv_path <- file.path(tmp_out_dir, "stem_reconstruction_dp_global_rcpp_profile.csv")
-    t0 <- proc.time(); data.table::fwrite(out_prof, csv_path); t1 <- proc.time()
-    export_timings$csv <- as.numeric((t1 - t0)["elapsed"])
-    export_timings$csv_size <- file.size(csv_path)
+    if (isTRUE(WRITE_DP_CSV)) {
+        csv_path <- file.path(tmp_out_dir, "stem_reconstruction_dp_global_rcpp_profile.csv")
+        t0 <- proc.time(); data.table::fwrite(out_prof, csv_path); t1 <- proc.time()
+        export_timings$csv <- as.numeric((t1 - t0)["elapsed"])
+        export_timings$csv_size <- file.size(csv_path)
+    } else {
+        export_timings$csv <- NA_real_
+        export_timings$csv_size <- NA_integer_
+    }
 
     # PDF
-    pdf_path <- file.path(tmp_out_dir, "stem_reconstruction_dp_global_rcpp_profile.pdf")
-    t0 <- proc.time();
-    tryCatch({
-        plot_tag_to_pdf(out_prof, pdf_file = pdf_path, include_reference = TRUE)
-        t1 <- proc.time()
-        export_timings$pdf <- as.numeric((t1 - t0)["elapsed"])
-        export_timings$pdf_size <- file.size(pdf_path)
-    }, error = function(e) {
-        t1 <- proc.time()
-        export_timings$pdf <- as.numeric((t1 - t0)["elapsed"])
+    if (isTRUE(WRITE_DP_PDF)) {
+        pdf_path <- file.path(tmp_out_dir, "stem_reconstruction_dp_global_rcpp_profile.pdf")
+        t0 <- proc.time();
+        tryCatch({
+            plot_tag_to_pdf(out_prof, pdf_file = pdf_path, include_reference = TRUE)
+            t1 <- proc.time()
+            export_timings$pdf <- as.numeric((t1 - t0)["elapsed"])
+            export_timings$pdf_size <- file.size(pdf_path)
+        }, error = function(e) {
+            t1 <- proc.time()
+            export_timings$pdf <- as.numeric((t1 - t0)["elapsed"])
+            export_timings$pdf_size <- NA_integer_
+            message("[profiling_code] PDF generation failed: ", conditionMessage(e))
+        })
+    } else {
+        export_timings$pdf <- NA_real_
         export_timings$pdf_size <- NA_integer_
-        message("[profiling_code] PDF generation failed: ", conditionMessage(e))
-    })
+    }
 } else {
     message("[profiling_code] DP returned no rows; skipping output exports.")
 }
@@ -329,10 +367,13 @@ if (!is.null(out_prof) && data.table::is.data.table(out_prof) && nrow(out_prof) 
 # Posterior file stats
 posterior_files_count <- NA_integer_
 posterior_files_total_size <- NA_integer_
-if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && dir.exists(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))) {
+if (isTRUE(WRITE_POSTERIORS) && !is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && dir.exists(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))) {
     p_files <- list.files(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"), full.names = TRUE)
     posterior_files_count <- length(p_files)
     posterior_files_total_size <- if (length(p_files) > 0) sum(file.size(p_files)) else 0L
+} else if (!isTRUE(WRITE_POSTERIORS)) {
+    posterior_files_count <- NA_integer_
+    posterior_files_total_size <- NA_integer_
 }
 
 cat("\nExport timings (seconds) and sizes (bytes):\n")
@@ -357,4 +398,4 @@ message("[profiling_code] Profiling artifacts written to: ", tmp_out_dir)
 
 invisible(out_prof)
 
-# POSTERIOR_SAMPLES=200 POSTERIOR_SAMPLES_FORMAT=feather Rscript --vanilla dp_global/dev/profiling_code.R
+# POSTERIOR_SAMPLES=20 POSTERIOR_SAMPLES_FORMAT=feather WRITE_DP_FEATHER=TRUE WRITE_DP_RDS=FALSE WRITE_DP_CSV=FALSE WRITE_DP_PDF=FALSE WRITE_POSTERIORS=FALSE Rscript --vanilla dp_global/dev/profiling_code.R
