@@ -969,7 +969,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (is.null(out_dir_local) || !nzchar(out_dir_local)) out_dir_local <- tempdir()
 
         # Fallback for Tag if not present in tree_data
-        tag_local <- if (!is.na(tag_val)) tag_val else get0("which_tag", ifnotfound = NA_integer_)
+        tag_local <- if (!is.na(tag_val)) tag_val else get0("WHICH_TAG", ifnotfound = NA_integer_)
 
         # Collect simple sampling CPU/memory metrics and attach them to the returned object
         sampling_profile <- list(posterior_samples = posterior_samples, started = Sys.time())
