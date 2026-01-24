@@ -32,8 +32,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            prune_max_growth = NULL,
                                                            prune_use_bio_bounds = TRUE,
                                                            prune_recruit_max_dbh = NULL,
-                                                           # if doing biology, incluse the possible recruitment by 20% margin
-                                                           # then, use the minimum between user and bio+margin
+                                                           # NOTE: Check the TODO in the code about possibly adding a margin when using biological recruit max DBH
                                                            prune_use_bio_recruit = TRUE,
                                                            verbose = FALSE) {
     # Safety
@@ -483,9 +482,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     if (!is.null(prune_recruit_max_dbh)) {
         if (isTRUE(prune_use_bio_recruit) && is.finite(Bio_Recruit_MaxDBH_unit)) {
-            # if doing biology, incluse the possible recruitment by 20% margin
-            # then, use the minimum between user and bio+margin
-            eff_recruit_max <- min(prune_recruit_max_dbh, (Bio_Recruit_MaxDBH_unit * 1.2))
+            # TODO: probably should add a margin here - e.g., Bio_Recruit_MaxDBH_unit * 1.2
+            eff_recruit_max <- min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)
         } else {
             eff_recruit_max <- prune_recruit_max_dbh
         }

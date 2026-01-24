@@ -906,11 +906,20 @@ We separate pruning thresholds from the biological (`Bio_*`) parameters so you c
   where `user_min` = `prune_min_growth` if provided else `min_growth`, and similarly for `user_max`.
   If `prune_use_bio_bounds = FALSE` the `eff_*` values equal `user_*` directly.
 - `prune_recruit_max_dbh` (numeric | NULL): override for the recruit-size cut used during pruning. If `NULL` the biological `Bio_Recruit_MaxDBH_unit` is used. If `prune_use_bio_recruit = TRUE` (default) and both are finite, we use the more conservative value `min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)`; otherwise the explicit override is used.
-- `prune_use_bio_recruit` (logical, default TRUE): controls whether the biological recruit bound should be intersected with `prune_recruit_max_dbh`. If TRUE, the maximum recruitment parameter DBH is icnreased by 20%. Then, we select the minimum as min(prune_recruit_max_dbh, (maximum recruitment dbh * 1.2))—very conservative.
+- `prune_use_bio_recruit` (logical, default TRUE): controls whether the biological recruit bound should be intersected with `prune_recruit_max_dbh`. If TRUE, we select the minimum as min(prune_recruit_max_dbh, maximum recruitment dbh). Note: maximum recruitment dbh could be either the 0.999 quantile of recruitment DBH or a fixed value defined earlier when estimating the parameters.
 
 Notes:
 - These pruning parameters affect only the *pre-filtering* step (they do not change the transition cost function or post-hoc diagnostics beyond recording the effective prune values).
 - If interval length between censuses is invalid or not finite for a pair, growth-based pruning is skipped for that pair and only recruit-size pruning (if applicable) is used.
+- You can always define extra margins for these parameters. For example:
+
+```r
+prune_min_growth = MAX_SHRINK_FIXED * 2.5 # very wide fixed bounds
+prune_max_growth = MAX_GROWTH_FIXED * 1.5 # very wide fixed bounds
+prune_use_bio_bounds = FALSE # use fixed prune bounds instead of biological ones
+prune_recruit_max_dbh = RECRUIT_MAX_FIXED * 1.2 # very high recruit max dbh
+prune_use_bio_recruit = FALSE# use fixed prune bounds instead of biological ones
+```
 
 ### Diagnostics & reproducibility
 - The DP exposes `attr(out, "DP_PruneInfo")` with:
