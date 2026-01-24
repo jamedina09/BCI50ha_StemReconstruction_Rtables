@@ -75,10 +75,6 @@ if [ -f "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.cpp" ]; then
 else
   echo "[package_bundle] NOTE: transition_cost_rcpp.cpp not found in dp_global/src; skipping"
 fi
-# copy wrapper into dp_global/R/dpglobal_bundle/ for README-consistent location
-if [ -f "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" ]; then
-  cp -v "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" "${STAGE_DIR}/dp_global/R/dpglobal_bundle/transition_cost_rcpp.R" || true
-fi
 
 # Copy the full dp_global project tree required to run scripts/main_cpp.R
 # Exclude large runtime outputs and generated bundle dist files to keep tarball reasonable.
