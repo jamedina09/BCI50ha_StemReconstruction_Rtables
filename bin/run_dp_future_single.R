@@ -234,21 +234,21 @@ joblog_path <- file.path(log_dir, opt$joblog)
 # Experiment BASE_ARGS (mirrors bin/run_dp_full_cpp.sh defaults)
 BATCH_TS <- format(Sys.time(), "%Y%m%d_%H%M%S")
 BASE_ARGS <- c(
-  paste0("--input_file=", here("data_simulation", "data", "simulated_data_1.csv")),
+  paste0("--INPUT_FILE=", here("data_simulation", "data", "simulated_data_1.csv")),
   "--FORCE_ONE_SPECIES_PARAMETERS=FALSE",
   "--DP_MODE=marginals+bins",
-  "--which_tag=20",
-  "--anchor_start_census=7",
+  "--WHICH_TAG=20",
+  "--ANCHOR_START_CENSUS=7",
   "--DP_VERBOSE=TRUE",
   "--RUN_ALL_TAGS=FALSE",
   # Allow overriding DP enumerator state budget from the orchestrator
   # (main_cpp.R defines `dp_max_states` in the DP settings section)
   # Use 0 to run igraph for all experiments in this script
-  "--dp_max_states=40000", # default in main_cpp.R
+  "--DP_MAX_STATES=40000", # default in main_cpp.R
   "--MANUAL_CORES=TRUE",
   sprintf("--MANUAL_CORES_VALUE=%d", opt$cores_per_job),
-  "--dp_slack_require_anchor_recruitable=TRUE",
-  "--dp_slack_tracks=1",
+  "--DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE=TRUE",
+  "--DP_SLACK_TRACKS=1",
   "--WRITE_DP_CSV=TRUE",
   "--WRITE_DP_RDS=TRUE",
   "--WRITE_DP_PDF=TRUE", # true to generate PDFs - set false if many Tags to save time/disk
@@ -313,12 +313,27 @@ tryCatch(
   }
 )
 
+# Canonicalize overrides into --KEY=VAL uppercase form so main_cpp.R receives consistent keys
+canonicalize_override <- function(ov) {
+  if (!nzchar(ov) || is.na(ov)) return(ov)
+  if (grepl("=", ov, fixed = TRUE)) {
+    parts <- strsplit(ov, "=", fixed = TRUE)[[1]]
+    key <- toupper(gsub("[- ]", "_", parts[1]))
+    val <- parts[2]
+    return(paste0("--", key, "=", val))
+  }
+  key <- toupper(gsub("[- ]", "_", ov))
+  paste0("--", key)
+}
+norm_overrides <- if (length(opt$overrides) > 0) vapply(opt$overrides, canonicalize_override, character(1)) else character(0)
+
 # Build commands: BASE_ARGS + config-specific args + extras + global overrides + per-config overrides
 commands <- lapply(opt$configs, function(cfg) {
   cfg_args <- get_config_args(cfg)
-  cfg_specific <- if (!is.null(opt$cfg_overrides[[cfg]])) opt$cfg_overrides[[cfg]] else character(0)
+  cfg_specific_raw <- if (!is.null(opt$cfg_overrides[[cfg]])) opt$cfg_overrides[[cfg]] else character(0)
+  cfg_specific <- if (length(cfg_specific_raw) > 0) vapply(cfg_specific_raw, canonicalize_override, character(1)) else character(0)
   # precedence: BASE_ARGS < cfg_args < extras < global overrides < cfg_specific
-  cmd <- c(BASE_ARGS, cfg_args, extras, opt$overrides, cfg_specific, paste0("--CONFIG_NAME=", cfg))
+  cmd <- c(BASE_ARGS, cfg_args, extras, norm_overrides, cfg_specific, paste0("--CONFIG_NAME=", cfg))
 
   # Helper to form canonical flags expected by `main_cpp.R` (uppercase, underscores)
   make_main_flag <- function(k, v) paste0("--", toupper(gsub("[- ]", "_", k)), "=", v)
@@ -347,12 +362,15 @@ commands <- lapply(opt$configs, function(cfg) {
 validate_override_key <- function(k) {
   normalize <- function(x) toupper(gsub("[- ]", "_", x))
   nk <- normalize(k)
-  known <- toupper(gsub("[- ]", "_", c(
-    "input_file", "FORCE_ONE_SPECIES_PARAMETERS", "DP_MODE", "which_tag", "anchor_start_census",
-    "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLE_SEED", "POSTERIOR_SAMPLES_PATH",
-    "PROJECT_ROOT", "BATCH_TS", "CONFIG_NAME", "USE_MEASUREMENT_ERROR"
-  )))
-  if (!(nk %in% known)) {
+  known_keys <- toupper(c(
+    MAIN_CLI_KEYS,
+    "INPUT_FILE","FORCE_ONE_SPECIES_PARAMETERS","DP_MODE","WHICH_TAG","ANCHOR_START_CENSUS",
+    "DP_VERBOSE","RUN_ALL_TAGS","MANUAL_CORES","MANUAL_CORES_VALUE",
+    "WRITE_DP_CSV","WRITE_DP_RDS","WRITE_DP_PDF","WRITE_DP_FEATHER",
+    "DP_MAX_STATES","DP_SLACK_TRACKS","DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE","DP_SLACK_REQUIRE_ANCHOR_EPS",
+    "USE_MEASUREMENT_ERROR"
+  ))
+  if (!(nk %in% known_keys)) {
     warning(sprintf("[run_dp_future_single] Override key '%s' does not match known main options; check spelling.", k))
   }
 }
@@ -418,6 +436,9 @@ futures_list <- lapply(seq_along(commands), function(i) {
         exit_status <- 0L
         cat(sprintf("[DRY_RUN] %s: %s\n", cfg, cmd_str))
         flush.console()
+        # Early return for dry-run to avoid runtime errors in future worker and
+        # to ensure the future resolves to a clean success (status = 0)
+        return(list(config = cfg, start = start, end = start, status = 0L, log = log_file, cmd = cmd_str, main_out_dir = NA_character_))
       } else {
         # Prepare env vars to limit BLAS/OMP threading unless disabled by flag
         if (isTRUE(opt$no_blas_limit)) {
