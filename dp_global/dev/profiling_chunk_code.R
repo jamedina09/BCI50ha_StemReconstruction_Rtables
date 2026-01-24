@@ -56,11 +56,11 @@ DP_CHUNK_START <- 1L
 DP_CHUNK_END <- 1L
 DP_CHUNK_RESUME <- FALSE
 DP_CHUNK_OVERWRITE <- TRUE
-WRITE_DP_PDF_PER_CHUNK <- TRUE
-WRITE_DP_PDF <- TRUE
+WRITE_DP_PDF_PER_CHUNK <- FALSE
+WRITE_DP_PDF <- FALSE
 WRITE_DP_FEATHER <- TRUE
-WRITE_DP_RDS <- TRUE
-WRITE_DP_CSV <- FALSE  # avoid appending to global CSV during profiling
+WRITE_DP_RDS <- FALSE
+WRITE_DP_CSV <- FALSE # avoid appending to global CSV during profiling
 
 # Posterior sampling (enabled for profiling). Can be overridden with env var POSTERIOR_SAMPLES
 POSTERIOR_SAMPLES <- suppressWarnings(as.integer(Sys.getenv("POSTERIOR_SAMPLES", "200")))
@@ -292,10 +292,18 @@ run_one_chunk <- function() {
             prune_min_growth = min_annual_growth,
             prune_max_growth = max_annual_growth,
             prune_use_bio_bounds = FALSE,
-            prune_recruit_max_dbh = 7.5*5,
+            prune_recruit_max_dbh = 7.5 * 5,
             prune_use_bio_recruit = FALSE
         )
     }, mc.cores = MC_CORES)
+
+    # Collect DP sampling profiles (if any) before collapsing into out_chunk
+    dp_sampling_profiles <- lapply(res, function(el) {
+        if (is.null(el)) {
+            return(NULL)
+        }
+        attr(el, "DP_Sampling_Profile", exact = TRUE)
+    })
 
     out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
     if (nrow(out_chunk) > 0L) {
@@ -317,7 +325,9 @@ run_one_chunk <- function() {
         # Feather export
         if (isTRUE(WRITE_DP_FEATHER) && requireNamespace("arrow", quietly = TRUE)) {
             feather_path <- file.path(tmp_out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.feather", ci))
-            t0 <- proc.time(); arrow::write_feather(out_chunk, feather_path); t1 <- proc.time()
+            t0 <- proc.time()
+            arrow::write_feather(out_chunk, feather_path)
+            t1 <- proc.time()
             export_timings$feather <- as.numeric((t1 - t0)["elapsed"])
             export_timings$feather_size <- file.size(feather_path)
         } else {
@@ -328,7 +338,9 @@ run_one_chunk <- function() {
         # RDS export
         if (isTRUE(WRITE_DP_RDS)) {
             rds_path <- file.path(tmp_out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.rds", ci))
-            t0 <- proc.time(); saveRDS(out_chunk, file = rds_path); t1 <- proc.time()
+            t0 <- proc.time()
+            saveRDS(out_chunk, file = rds_path)
+            t1 <- proc.time()
             export_timings$rds <- as.numeric((t1 - t0)["elapsed"])
             export_timings$rds_size <- file.size(rds_path)
         } else {
@@ -339,7 +351,9 @@ run_one_chunk <- function() {
         # CSV export (simulated combined CSV write for benchmarking)
         if (isTRUE(WRITE_DP_CSV)) {
             csv_path <- file.path(tmp_out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.csv", ci))
-            t0 <- proc.time(); data.table::fwrite(out_chunk, csv_path); t1 <- proc.time()
+            t0 <- proc.time()
+            data.table::fwrite(out_chunk, csv_path)
+            t1 <- proc.time()
             export_timings$csv <- as.numeric((t1 - t0)["elapsed"])
             export_timings$csv_size <- file.size(csv_path)
         } else {
@@ -350,18 +364,21 @@ run_one_chunk <- function() {
         # PDF export
         if (isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF)) {
             pdf_path <- file.path(tmp_out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.pdf", ci))
-            t0 <- proc.time();
-            tryCatch({
-                plot_tag_to_pdf(out_chunk, pdf_file = pdf_path, include_reference = TRUE)
-                t1 <- proc.time()
-                export_timings$pdf <- as.numeric((t1 - t0)["elapsed"])
-                export_timings$pdf_size <- file.size(pdf_path)
-            }, error = function(e) {
-                t1 <- proc.time()
-                export_timings$pdf <- as.numeric((t1 - t0)["elapsed"])
-                export_timings$pdf_size <- NA_integer_
-                message("[profiling_chunk_code] PDF generation failed: ", conditionMessage(e))
-            })
+            t0 <- proc.time()
+            tryCatch(
+                {
+                    plot_tag_to_pdf(out_chunk, pdf_file = pdf_path, include_reference = TRUE)
+                    t1 <- proc.time()
+                    export_timings$pdf <- as.numeric((t1 - t0)["elapsed"])
+                    export_timings$pdf_size <- file.size(pdf_path)
+                },
+                error = function(e) {
+                    t1 <- proc.time()
+                    export_timings$pdf <- as.numeric((t1 - t0)["elapsed"])
+                    export_timings$pdf_size <- NA_integer_
+                    message("[profiling_chunk_code] PDF generation failed: ", conditionMessage(e))
+                }
+            )
         } else {
             export_timings$pdf <- NA_real_
             export_timings$pdf_size <- NA_integer_
@@ -377,7 +394,7 @@ run_one_chunk <- function() {
             export_timings$posterior_files_total_size <- NA_integer_
         }
 
-        ret <- list(out_chunk = out_chunk, export_timings = export_timings)
+        ret <- list(out_chunk = out_chunk, export_timings = export_timings, dp_sampling_profiles = dp_sampling_profiles)
         return(ret)
     } else {
         return(list(out_chunk = NULL, export_timings = NULL))
@@ -405,6 +422,65 @@ if (!isTRUE(RUN_PROFILE)) {
 if (!is.null(res) && !is.null(res$out_chunk)) {
     cat("\nExport timings (seconds) and sizes (bytes):\n")
     print(res$export_timings)
+
+    # Aggregate DP sampling profiles if present
+    if (!is.null(res$dp_sampling_profiles)) {
+        profiles <- Filter(Negate(is.null), res$dp_sampling_profiles)
+        if (length(profiles) > 0) {
+            cat("\nDP sampling profile (aggregated across tags):\n")
+            n_tags_with_samples <- length(profiles)
+            total_samples_requested <- sum(sapply(profiles, function(x) if (!is.null(x$posterior_samples)) as.integer(x$posterior_samples) else 0L))
+            total_adj_time <- sum(sapply(profiles, function(x) if (!is.null(x$adj_build_time)) as.numeric(x$adj_build_time) else 0), na.rm = TRUE)
+            total_sample_gen_time <- sum(sapply(profiles, function(x) if (!is.null(x$sample_generation_time)) as.numeric(x$sample_generation_time) else 0), na.rm = TRUE)
+            total_samples_dt_bytes <- sum(sapply(profiles, function(x) if (!is.null(x$samples_dt_size_bytes)) as.numeric(x$samples_dt_size_bytes) else 0), na.rm = TRUE)
+            total_export_time <- sum(sapply(profiles, function(x) if (!is.null(x$export_time_seconds)) as.numeric(x$export_time_seconds) else 0), na.rm = TRUE)
+            total_export_size <- sum(sapply(profiles, function(x) if (!is.null(x$export_total_size_bytes)) as.numeric(x$export_total_size_bytes) else 0), na.rm = TRUE)
+
+            cat(sprintf("tags_with_samples: %d\n", n_tags_with_samples))
+            cat(sprintf("total_samples_requested: %d\n", total_samples_requested))
+            cat(sprintf("adjacency_build_time (s): %.3f\n", total_adj_time))
+            cat(sprintf("sample_generation_time (s): %.3f\n", total_sample_gen_time))
+            cat(sprintf("samples_dt_total_size (bytes): %d\n", total_samples_dt_bytes))
+            cat(sprintf("posterior_export_time_total (s): %.3f\n", total_export_time))
+            cat(sprintf("posterior_export_total_size (bytes): %d\n", total_export_size))
+
+            # Also aggregate compute-time profiles (transition-cost)
+            dp_compute_profiles <- lapply(res$dp_sampling_profiles, function(x) {
+                if (is.null(x)) {
+                    return(NULL)
+                }
+                # Some runs may have compute info embedded in sampling profile
+                list(transition_cost_total_seconds = x$transition_cost_total_seconds, transition_cost_calls = x$transition_cost_calls)
+            })
+            dp_compute_profiles <- Filter(Negate(is.null), dp_compute_profiles)
+            if (length(dp_compute_profiles) > 0) {
+                total_tc_time <- sum(sapply(dp_compute_profiles, function(x) if (!is.null(x$transition_cost_total_seconds)) as.numeric(x$transition_cost_total_seconds) else 0), na.rm = TRUE)
+                total_tc_calls <- sum(sapply(dp_compute_profiles, function(x) if (!is.null(x$transition_cost_calls)) as.integer(x$transition_cost_calls) else 0), na.rm = TRUE)
+                cat(sprintf("transition_cost_total_seconds (sum): %.3f\n", total_tc_time))
+                cat(sprintf("transition_cost_calls (sum): %d\n", total_tc_calls))
+                if (total_tc_calls > 0) {
+                    cat(sprintf("transition_cost_avg_seconds_per_call: %.6f\n", total_tc_time / total_tc_calls))
+                }
+            }
+
+            # Print per-tag brief summary (tag index, requested samples, gen time, export size)
+            per_tag_tbl <- data.table::rbindlist(lapply(seq_along(profiles), function(i) {
+                p <- profiles[[i]]
+                data.table::data.table(
+                    tag_index = i,
+                    posterior_samples = if (!is.null(p$posterior_samples)) as.integer(p$posterior_samples) else NA_integer_,
+                    adj_time_s = if (!is.null(p$adj_build_time)) as.numeric(p$adj_build_time) else NA_real_,
+                    sample_gen_time_s = if (!is.null(p$sample_generation_time)) as.numeric(p$sample_generation_time) else NA_real_,
+                    samples_dt_bytes = if (!is.null(p$samples_dt_size_bytes)) as.numeric(p$samples_dt_size_bytes) else NA_real_,
+                    export_time_s = if (!is.null(p$export_time_seconds)) as.numeric(p$export_time_seconds) else NA_real_,
+                    export_size_bytes = if (!is.null(p$export_total_size_bytes)) as.numeric(p$export_total_size_bytes) else NA_real_,
+                    transition_cost_total_seconds = if (!is.null(p$transition_cost_total_seconds)) as.numeric(p$transition_cost_total_seconds) else NA_real_,
+                    transition_cost_calls = if (!is.null(p$transition_cost_calls)) as.integer(p$transition_cost_calls) else NA_integer_
+                )
+            }), use.names = TRUE, fill = TRUE)
+            print(per_tag_tbl)
+        }
+    }
 } else if (!is.null(res)) {
     cat("\nNo out_chunk produced; nothing to report.\n")
 }
@@ -413,4 +489,4 @@ message("[profiling_chunk_code] Chunk profiling finished; artifacts written to: 
 
 invisible(res)
 
-# POSTERIOR_SAMPLES=200 POSTERIOR_SAMPLES_FORMAT=feather Rscript dp_global/dev/profiling_chunk_code.R
+# POSTERIOR_SAMPLES=1000 POSTERIOR_SAMPLES_FORMAT=feather Rscript dp_global/dev/profiling_chunk_code.R

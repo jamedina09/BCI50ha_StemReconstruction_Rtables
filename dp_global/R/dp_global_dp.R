@@ -56,6 +56,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     tic <- function() as.numeric(proc.time()[[3L]])
     t_start <- tic()
 
+    # Compute profiling accumulators
+    transition_cost_time <- 0
+    transition_cost_calls <- 0L
+
     tag_val <- tryCatch(
         {
             u <- unique(tree_data$Tag)
@@ -671,6 +675,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             feasible_tdbh1 <- feasible_tdbh1[seq_len(feasible_n)]
 
             # Batch compute all transition costs from this current assignment
+            # Time the C++ batch transition-cost call for profiling
+            t_tc0 <- tic()
             c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
                 track_dbh_t = tdbh0,
                 track_dbh_tp1 = feasible_tdbh1,
@@ -701,6 +707,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 recruit_lambda = Bio_Recruitment_lambda,
                 eps_tiebreak = eps_tiebreak
             )
+            t_tc1 <- tic()
+            transition_cost_time <- transition_cost_time + (t_tc1 - t_tc0)
+            transition_cost_calls <- transition_cost_calls + 1L
 
             for (e in seq_len(feasible_n)) {
                 j <- feasible_j[[e]]
@@ -960,81 +969,92 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # Fallback for Tag if not present in tree_data
         tag_local <- if (!is.na(tag_val)) tag_val else get0("which_tag", ifnotfound = NA_integer_)
 
-        # Build adjacency lookup for quick sampling
-        adj_by_p <- vector("list", n_census - 1L)
-        for (p in seq_len(n_census - 1L)) {
-            ed <- edges[[p]]
-            # rows grouped by to_idx
-            to_idxs <- unique(ed$to_idx)
-            m <- vector("list", length(ed$to_idx))
-            lookup <- vector("list", max(to_idxs))
-            for (r in seq_len(nrow(ed))) {
-                j <- ed$to_idx[r]
-                if (is.null(lookup[[j]])) lookup[[j]] <- integer(0)
-                lookup[[j]] <- c(lookup[[j]], r)
-            }
-            adj_by_p[[p]] <- lookup
-        }
+            # Collect simple sampling CPU/memory metrics and attach them to the returned object
+            sampling_profile <- list(posterior_samples = posterior_samples, started = Sys.time())
+            t_sampling_start <- tic()
 
-        # sampler: backwards sampling from anchor_pos to census 1
-        if (!is.null(posterior_sample_seed)) set.seed(as.integer(posterior_sample_seed))
-        samples_list <- vector("list", posterior_samples)
-        for (m in seq_len(posterior_samples)) {
-            sampled_idx <- integer(n_census)
-            sampled_idx[anchor_pos] <- 1L # anchor position has single full-state at index 1
-            logp <- 0
-            # sample backwards
-            for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
-                j <- sampled_idx[p + 1L]
-                rows <- adj_by_p[[p]][[j]]
-                # rows are indices into edges[[p]]
-                from_idx <- edges[[p]]$from_idx[rows]
-                logw <- edges[[p]]$logw[rows]
-                loga <- logalpha[[p]][from_idx]
-                L <- loga + logw
-                # normalize to probabilities
-                Lmax <- max(L)
-                probs <- exp(L - Lmax)
-                probs <- probs / sum(probs)
-                k <- sample.int(length(probs), size = 1L, prob = probs)
-                chosen_row <- rows[k]
-                sampled_idx[p] <- edges[[p]]$from_idx[chosen_row]
-                logp <- logp + log(probs[k])
-            }
-            # Convert sampled full-state indices to ReconstructedStemID per census
-            sample_dt <- data.table::data.table(Tag = tag_local, Sample = m, CensusID = integer(0), ReconstructedStemID = integer(0), ObsRowID = integer(0))
-            for (p in seq_len(n_census)) {
-                cc <- census_range[p]
-                assign_vec <- assign_full[[p]][[sampled_idx[p]]]
-                track_ids_loc <- track_ids[assign_vec]
-                # attach as multiple rows (one per observed tree)
-                obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
-                if (length(obs_idx) > 0) {
-                    obs_row_ids <- tree_data$obs_row_id[obs_idx]
-                    sample_dt <- rbind(sample_dt, data.table::data.table(Tag = tag_local, Sample = m, CensusID = rep(cc, length(obs_idx)), ReconstructedStemID = track_ids_loc, ObsRowID = obs_row_ids))
+            # Build adjacency lookup for quick sampling
+            t_adj_start <- tic()
+            adj_by_p <- vector("list", n_census - 1L)
+            for (p in seq_len(n_census - 1L)) {
+                ed <- edges[[p]]
+                # rows grouped by to_idx
+                to_idxs <- unique(ed$to_idx)
+                m <- vector("list", length(ed$to_idx))
+                lookup <- vector("list", max(to_idxs))
+                for (r in seq_len(nrow(ed))) {
+                    j <- ed$to_idx[r]
+                    if (is.null(lookup[[j]])) lookup[[j]] <- integer(0)
+                    lookup[[j]] <- c(lookup[[j]], r)
                 }
+                adj_by_p[[p]] <- lookup
             }
-            sample_dt[, logp := logp]
-            samples_list[[m]] <- sample_dt
-        }
+            sampling_profile$adj_build_time <- tic() - t_adj_start
 
-        samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
-        # Ensure rows are ordered for signature construction
-        samples_dt <- samples_dt[order(Sample, CensusID)]
+            # sampler: backwards sampling from anchor_pos to census 1
+            if (!is.null(posterior_sample_seed)) set.seed(as.integer(posterior_sample_seed))
+            t_gen_start <- tic()
+            samples_list <- vector("list", posterior_samples)
+            for (m in seq_len(posterior_samples)) {
+                sampled_idx <- integer(n_census)
+                sampled_idx[anchor_pos] <- 1L # anchor position has single full-state at index 1
+                logp <- 0
+                # sample backwards
+                for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
+                    j <- sampled_idx[p + 1L]
+                    rows <- adj_by_p[[p]][[j]]
+                    # rows are indices into edges[[p]]
+                    from_idx <- edges[[p]]$from_idx[rows]
+                    logw <- edges[[p]]$logw[rows]
+                    loga <- logalpha[[p]][from_idx]
+                    L <- loga + logw
+                    # normalize to probabilities
+                    Lmax <- max(L)
+                    probs <- exp(L - Lmax)
+                    probs <- probs / sum(probs)
+                    k <- sample.int(length(probs), size = 1L, prob = probs)
+                    chosen_row <- rows[k]
+                    sampled_idx[p] <- edges[[p]]$from_idx[chosen_row]
+                    logp <- logp + log(probs[k])
+                }
+                # Convert sampled full-state indices to ReconstructedStemID per census
+                sample_dt <- data.table::data.table(Tag = tag_local, Sample = m, CensusID = integer(0), ReconstructedStemID = integer(0), ObsRowID = integer(0))
+                for (p in seq_len(n_census)) {
+                    cc <- census_range[p]
+                    assign_vec <- assign_full[[p]][[sampled_idx[p]]]
+                    track_ids_loc <- track_ids[assign_vec]
+                    # attach as multiple rows (one per observed tree)
+                    obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+                    if (length(obs_idx) > 0) {
+                        obs_row_ids <- tree_data$obs_row_id[obs_idx]
+                        sample_dt <- rbind(sample_dt, data.table::data.table(Tag = tag_local, Sample = m, CensusID = rep(cc, length(obs_idx)), ReconstructedStemID = track_ids_loc, ObsRowID = obs_row_ids))
+                    }
+                }
+                sample_dt[, logp := logp]
+                samples_list[[m]] <- sample_dt
+            }
+            sampling_profile$sample_generation_time <- tic() - t_gen_start
+            sampling_profile$samples_list_size_bytes <- as.numeric(object.size(samples_list))
 
-        # Collate per-sample path signature and counts (useful diagnostics)
-        sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")), by = Sample]
-        path_counts <- sample_sigs[, .N, by = path_sig]
-        sample_sigs <- merge(sample_sigs, path_counts, by = "path_sig")
-        setnames(sample_sigs, "N", "path_count")
-        samples_dt <- merge(samples_dt, sample_sigs, by = "Sample", all.x = TRUE)
+            samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
+            # Ensure rows are ordered for signature construction
+            samples_dt <- samples_dt[order(Sample, CensusID)]
+            sampling_profile$samples_dt_size_bytes <- as.numeric(object.size(samples_dt))
+            sampling_profile$after_samples_time <- tic() - t_sampling_start
 
-        # Normalize sample weights from logp using per-Sample unique logp
-        sample_logp <- unique(samples_dt[, .(Sample, logp)])
-        maxlp <- max(sample_logp$logp, na.rm = TRUE)
-        sample_logp[, sample_weight := exp(logp - maxlp)]
-        sample_logp[, sample_prob := sample_weight / sum(sample_weight)]
-        samples_dt <- merge(samples_dt, sample_logp[, .(Sample, sample_weight, sample_prob)], by = "Sample", all.x = TRUE)
+            # Collate per-sample path signature and counts (useful diagnostics)
+            sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")), by = Sample]
+            path_counts <- sample_sigs[, .N, by = path_sig]
+            sample_sigs <- merge(sample_sigs, path_counts, by = "path_sig")
+            setnames(sample_sigs, "N", "path_count")
+            samples_dt <- merge(samples_dt, sample_sigs, by = "Sample", all.x = TRUE)
+
+            # Normalize sample weights from logp using per-Sample unique logp
+            sample_logp <- unique(samples_dt[, .(Sample, logp)])
+            maxlp <- max(sample_logp$logp, na.rm = TRUE)
+            sample_logp[, sample_weight := exp(logp - maxlp)]
+            sample_logp[, sample_prob := sample_weight / sum(sample_weight)]
+            samples_dt <- merge(samples_dt, sample_logp[, .(Sample, sample_weight, sample_prob)], by = "Sample", all.x = TRUE)
 
         # Diagnostic summary
         n_unique_paths <- uniqueN(sample_sigs$path_sig)
@@ -1071,33 +1091,63 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
 
         # Export samples and summaries: prefer feather via arrow for speed if available
+        sampling_profile$export_paths <- character(0)
+        sampling_profile$export_time_seconds <- 0
         if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
             # Full long-format samples export intentionally disabled to reduce I/O and runtime.
             # arrow::write_feather(samples_dt, paste0(out_path_base, ".feather"))
-            arrow::write_feather(samples_summary, paste0(out_path_base, "_summary.feather"))
-            arrow::write_feather(paths_summary, paste0(out_path_base, "_paths.feather"))
-            # vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".feather"))
-            vcat(prefix, "Wrote posterior samples summary to: ", paste0(out_path_base, "_summary.feather"))
-            vcat(prefix, "Wrote posterior paths summary to: ", paste0(out_path_base, "_paths.feather"))
+            p1 <- paste0(out_path_base, "_summary.feather")
+            t0 <- tic(); arrow::write_feather(samples_summary, p1); t1 <- tic(); sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            p2 <- paste0(out_path_base, "_paths.feather")
+            t0 <- tic(); arrow::write_feather(paths_summary, p2); t1 <- tic(); sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1, p2)
+            vcat(prefix, "Wrote posterior samples summary to: ", p1)
+            vcat(prefix, "Wrote posterior paths summary to: ", p2)
         } else if (fmt == "csv") {
             # Full long-format samples export intentionally disabled to reduce I/O and runtime.
             # data.table::fwrite(samples_dt, paste0(out_path_base, ".csv"))
-            data.table::fwrite(samples_summary, paste0(out_path_base, "_summary.csv"))
-            data.table::fwrite(paths_summary, paste0(out_path_base, "_paths.csv"))
-            # vcat(prefix, "Wrote posterior samples to: ", paste0(out_path_base, ".csv"))
-            vcat(prefix, "Wrote posterior samples summary to: ", paste0(out_path_base, "_summary.csv"))
-            vcat(prefix, "Wrote posterior paths summary to: ", paste0(out_path_base, "_paths.csv"))
+            p1 <- paste0(out_path_base, "_summary.csv")
+            t0 <- tic(); data.table::fwrite(samples_summary, p1); t1 <- tic(); sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            p2 <- paste0(out_path_base, "_paths.csv")
+            t0 <- tic(); data.table::fwrite(paths_summary, p2); t1 <- tic(); sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1, p2)
+            vcat(prefix, "Wrote posterior samples summary to: ", p1)
+            vcat(prefix, "Wrote posterior paths summary to: ", p2)
         } else {
             # Save only aggregated results (no full long-format samples)
-            saveRDS(list(summary = samples_summary, paths = paths_summary), file = paste0(out_path_base, ".rds"))
-            vcat(prefix, "Wrote posterior samples summary to: ", paste0(out_path_base, ".rds"))
+            p1 <- paste0(out_path_base, ".rds")
+            t0 <- tic(); saveRDS(list(summary = samples_summary, paths = paths_summary), file = p1); t1 <- tic(); sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1)
+            vcat(prefix, "Wrote posterior samples summary to: ", p1)
         }
+
+        sampling_profile$export_total_size_bytes <- if (length(sampling_profile$export_paths) > 0) sum(file.size(sampling_profile$export_paths)) else 0L
+        sampling_profile$finished <- Sys.time()
+
+        # Attach sampling profile to the returned data.table for external inspection
+        attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
     }
 
     # Attach pruning diagnostics
     attr(tree_data, "DP_PruneInfo") <- prune_stats
     if (prune_stats$total_examined > 0L) {
         vcat(prefix, "Prune summary: removed", prune_stats$total_pruned, "of", prune_stats$total_examined, "candidate transitions; per-census:", paste(names(prune_stats$per_census), prune_stats$per_census, sep = ":", collapse = ","))
+    }
+
+    # Attach compute profiling (transition cost timing)
+    compute_profile <- list(
+        transition_cost_total_seconds = as.numeric(transition_cost_time),
+        transition_cost_calls = as.integer(transition_cost_calls),
+        transition_cost_avg_seconds = if (transition_cost_calls > 0L) as.numeric(transition_cost_time) / as.integer(transition_cost_calls) else NA_real_
+    )
+    attr(tree_data, "DP_Compute_Profile") <- compute_profile
+
+    # If a sampling profile exists (posterior sampling was requested), embed compute_profile into it for convenience
+    if (exists("sampling_profile", inherits = FALSE) && is.list(sampling_profile)) {
+        sampling_profile$transition_cost_total_seconds <- compute_profile$transition_cost_total_seconds
+        sampling_profile$transition_cost_calls <- compute_profile$transition_cost_calls
+        sampling_profile$transition_cost_avg_seconds <- compute_profile$transition_cost_avg_seconds
+        attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
     }
 
     vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
