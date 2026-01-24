@@ -270,6 +270,7 @@ build_out_dir_name <- function() {
 
 WRITE_DP_CSV <- TRUE
 WRITE_DP_RDS <- TRUE
+WRITE_DP_FEATHER <- FALSE
 WRITE_DP_PDF <- TRUE
 DP_PDF_INCLUDE_REFERENCE <- TRUE
 
@@ -301,6 +302,7 @@ CLI_REFERENCE <- list(
     MANUAL_CORES_VALUE = "MANUAL_CORES_VALUE",
     WRITE_DP_CSV = "WRITE_DP_CSV",
     WRITE_DP_RDS = "WRITE_DP_RDS",
+    WRITE_DP_FEATHER = "WRITE_DP_FEATHER",
     WRITE_DP_PDF = "WRITE_DP_PDF",
     DP_MAX_STATES = "dp_max_states",
     DP_SLACK_TRACKS = "dp_slack_tracks",
@@ -462,6 +464,7 @@ message("[dp_global main_cpp.R] getwd(): ", getwd())
 
 DP_CSV_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.csv")
 DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
+DP_FEATHER_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.feather")
 DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
 
 # If posterior sampling is requested, set sensible defaults inside the run-specific out_dir
@@ -891,6 +894,23 @@ run_main <- function() {
             }
         )
     }
+
+    if (isTRUE(WRITE_DP_FEATHER) && !is.null(out)) {
+        tryCatch(
+            {
+                if (!requireNamespace("arrow", quietly = TRUE)) {
+                    log_msg("'arrow' package not available; skipping feather output", "WARN")
+                } else {
+                    arrow::write_feather(out, DP_FEATHER_FILE)
+                    log_msg(sprintf("Wrote Feather: %s", DP_FEATHER_FILE))
+                }
+            },
+            error = function(e) {
+                log_msg(sprintf("Failed to write Feather %s: %s", DP_FEATHER_FILE, conditionMessage(e)), "ERROR")
+            }
+        )
+    }
+
     if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
         tryCatch(
             {
