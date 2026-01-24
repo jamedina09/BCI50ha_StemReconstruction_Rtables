@@ -620,7 +620,6 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         verbose = isTRUE(DP_VERBOSE)
     )
 }
-# [dp_global_batch]  Done. Total elapsed  117.22s
 
 maybe_add_posterior_bins <- function(out) {
     if (isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
