@@ -146,7 +146,7 @@ Rscript -e "load('dp_global/R/dpglobal_bundle/dpglobal_bundle.RData')"
 
 5) Run main driver (example; adapt flags as needed):
 # Example: run tag 2 in a single-process mode
-Rscript dp_global/scripts/main_cpp.R --which_tag=2 --RUN_ALL_TAGS=TRUE --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1
+Rscript dp_global/scripts/main_cpp.R --WHICH_TAG=2 --RUN_ALL_TAGS=TRUE --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1
 
 Notes:
 - The compiled shared object is platform- and R-version-specific. Compile on the target machine using Rcpp::sourceCpp().

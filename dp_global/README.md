@@ -959,7 +959,7 @@ input_file="../data_simulation/data/simulated_data_1.csv"
 FORCE_ONE_SPECIES_PARAMETERS=FALSE
 
 # Census configuration
-which_tag=1
+WHICH_TAG=1
 anchor_start_census=7
 interval_years=5  # scalar interval; set to NULL to detect per-pair values from data (e.g., via Bio_IntervalYears), or pass --interval_years=5
 
@@ -1120,7 +1120,7 @@ bin/run_dp_full.sh --config=data_hard_soft
 
 **Override specific parameters:**
 ```bash
-bin/run_dp_full.sh --which_tag=2 --MC_CORES=8
+bin/run_dp_full.sh --WHICH_TAG=2 --MC_CORES=8
 ```
 
 ### Output Organization

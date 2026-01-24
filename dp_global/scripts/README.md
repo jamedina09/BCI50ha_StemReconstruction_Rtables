@@ -168,7 +168,7 @@ Runner integration
 - Run one tag (interactive):
 
 ```
-Rscript dp_global/scripts/main_cpp.R --INPUT_FILE=data_simulation/data/simulated_data_1.csv --which_tag=19
+Rscript dp_global/scripts/main_cpp.R --INPUT_FILE=data_simulation/data/simulated_data_1.csv --WHICH_TAG=19
 ```
 
 - Run all tags with chunking (use the chunked driver):
