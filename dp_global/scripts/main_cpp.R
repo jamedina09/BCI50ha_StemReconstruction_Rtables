@@ -248,7 +248,7 @@ CLI_REFERENCE <- list(
     BATCH_TS = "BATCH_TS",
     CONFIG_NAME = "CONFIG_NAME",
     USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR"
-) 
+)
 
 ############################################################
 ### 2.5 Sensitivity analysis settings
@@ -382,7 +382,7 @@ if (!exists("INPUT_FILE") || is.null(INPUT_FILE) || !nzchar(INPUT_FILE)) {
 
 if (!file.exists(INPUT_FILE)) {
     stop("INPUT_FILE does not exist: ", INPUT_FILE)
-} 
+}
 
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
@@ -585,7 +585,7 @@ auto_dp_max_tracks <- function(xrun) {
     ][, max(N, na.rm = TRUE)]
     if (!is.finite(max_obs_any_tag_census)) max_obs_any_tag_census <- 0L
     as.integer(max_obs_any_tag_census + 1L)
-} 
+}
 
 ############################################################
 ### 6) Core DP functions — run helpers used by the pipeline
@@ -781,7 +781,7 @@ run_main <- function() {
     xrun <- attach_bio_columns(xrun, bio_pars)
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)
-    dp_max_tracks_local <- as.integer(dp_max_tracks_local) 
+    dp_max_tracks_local <- as.integer(dp_max_tracks_local)
 
     # 5.5 DP reconstruction
     out <- NULL
