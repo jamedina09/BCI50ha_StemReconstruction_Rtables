@@ -137,12 +137,10 @@ Notes about chunking & downstream outputs:
   - The script runs the DP in parallel over the groups in the chunk (each child sets `data.table::setDTthreads(1L)` to limit thread contention).
   - The chunk's results are combined into `out_chunk` and annotated with `DP_Chunk = ci`.
   - `maybe_add_posterior_bins(out_chunk)` is applied to add `DP_PosteriorBin` if requested.
-  - The chunk rows are annotated with a `run_out_dir` column (basename of the run `out_dir`) to make downstream merging and provenance tracking explicit.
-  - If `WRITE_DP_CSV=TRUE`, `out_chunk` is appended to `stem_reconstruction_dp_global_rcpp.csv` (the script writes the header only on the first write).
-  - If `WRITE_DP_RDS=TRUE`, `out_chunk` is saved as `stem_reconstruction_dp_global_rcpp_chunk_###.rds` (used as a resume marker).
-  - If `WRITE_DP_PDF=TRUE` and `WRITE_DP_PDF_PER_CHUNK=TRUE`, the script will attempt to generate a per-chunk PDF `stem_reconstruction_dp_global_rcpp_chunk_###.pdf` using `plot_tag_to_pdf()` (errors are caught and logged).
-  - If `WRITE_DP_FEATHER=TRUE`, per-chunk Feather files will be written when the `arrow` package is available; otherwise Feather output is skipped with a warning.
-  - The script aggressively `rm()`s temporary variables and calls `gc()` after each chunk.
+- The chunk rows include a `run_out_dir` column set to the basename of the run `out_dir`.
+- If `WRITE_DP_CSV=TRUE`, `out_chunk` is appended to `stem_reconstruction_dp_global_rcpp.csv` (the script writes the header only on the first write).
+- If `WRITE_DP_RDS=TRUE`, `out_chunk` is saved as `stem_reconstruction_dp_global_rcpp_chunk_###.rds` (used as a resume marker).
+- If `WRITE_DP_PDF=TRUE` and `WRITE_DP_PDF_PER_CHUNK=TRUE`, the script will attempt to generate a per-chunk PDF `stem_reconstruction_dp_global_rcpp_chunk_###.pdf` using `plot_tag_to_pdf()`; PDF generation errors are logged but will not abort the run.
 
 Memory-saving recommendations:
 - Prefer the chunking + incremental CSV approach for very large datasets (keeps peak RAM low).
@@ -159,9 +157,9 @@ Memory-saving recommendations:
 
 This ensures posterior-bin computation is done while memory per-chunk is small and avoids double-processing.
 
-### Runner integration
+Runner integration
 
-- When you run DP via the orchestrator (`bin/run_dp_future_single.R` / `bin/run_dp_future.R`), the runner attempts to detect the main run's output directory by matching the `BATCH_TS` (timestamp) and `CONFIG_NAME` and will include the main run's `run_log.txt` in the per-config worker log (if found). The runner also populates the joblog CSV with a `main_out_dir` column containing the full path to the detected run `out_dir` for easier discovery of artifacts and diagnostics.
+- When an orchestrator (`bin/run_dp_future_single.R` / `bin/run_dp_future.R`) runs DP, it attempts to detect the run `out_dir` by matching `BATCH_TS` and `CONFIG_NAME`. If the `out_dir` is located, the orchestrator will include the main run's `run_log.txt` in the per-config worker log and record the `main_out_dir` in the joblog CSV for easier discovery of artifacts and diagnostics.
 
 ---
 
@@ -181,7 +179,7 @@ Note: `dp_global/scripts/main_cpp_chunk.R` is a **standalone, manual** chunk dri
 Rscript dp_global/scripts/main_cpp_chunk.R
 ```
 
-This approach avoids adding a second, complex CLI surface for chunking and keeps the chunk driver intentionally explicit and easy to tweak for interactive debugging and small test runs.
+
 
 - Run all tags without chunking (not recommended for very large datasets):
 

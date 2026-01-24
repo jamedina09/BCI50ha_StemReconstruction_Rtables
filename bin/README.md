@@ -97,8 +97,8 @@ Options
 Behavior & outputs
 
 - Oversubscription safety: script checks `workers * cores_per_job <= available logical CPUs` and will abort unless `--force` used.
-- Per-config logs: `tests/parallel_future_logs/<config>.log` (created if not present). The runner will also attempt to capture and include the main driver run log (`run_log.txt`) from the DP run (when it can detect the run output directory), which makes post-run debugging easier.
-- Joblog CSV: (default) `parallel_future.log` summarizing start/end, exit status, and log file path. New: the joblog now includes a `main_out_dir` column that will contain the main run's output directory (when the runner can detect it) to make locating run artifacts straightforward.
+- Per-config logs: `tests/parallel_future_logs/<config>.log` (created if not present). When the orchestrator can detect the DP run output directory, it will include the main run `run_log.txt` in the per-config worker log.
+- Joblog CSV: (default) `parallel_future.log` summarizing start/end, exit status, and log file path. The joblog may contain a `main_out_dir` column pointing to the main run output directory when it can be detected.
 - Progress: displayed with `progressr` (text progress bar by default)
 
 Caveats & tips
