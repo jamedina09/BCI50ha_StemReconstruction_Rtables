@@ -5,10 +5,10 @@ args <- commandArgs(trailingOnly = TRUE)
 param_name <- if (length(args)>=1) args[1] else 'Bio_Recruit_MaxDBH_unit'
 grid_str <- if (length(args)>=2) args[2] else '0.5,1,2,5,10'
 mode <- if (length(args)>=3) args[3] else 'cost' # 'cost' or 'full'
-book1_path <- if (length(args)>=4) args[4] else NULL
+dataset_path <- if (length(args)>=4) args[4] else NULL
 
-source(file.path('dp_global','examples','diagnostics','utils.R'))
-Dt <- load_dataset(book1_path)
+source(file.path('dp_global','dev','diagnostics','utils.R'))
+Dt <- load_dataset(dataset_path)
 vals <- as.numeric(strsplit(grid_str, ',')[[1]])
 out <- data.table(param = vals, chosen_chain_total = NA_real_, alternative_chain_total = NA_real_, note = NA_character_)
 for (i in seq_along(vals)) {
@@ -43,6 +43,6 @@ for (i in seq_along(vals)) {
     } else out[i, note := 'no anchors']
   }
 }
-save_report(out, file.path('dp_global','examples','diagnostics',paste0('sweep_generic_',gsub('[^A-Za-z0-9]','_',param_name),'.csv')))
+save_report(out, file.path('dp_global','dev','diagnostics',paste0('sweep_generic_',gsub('[^A-Za-z0-9]','_',param_name),'.csv')))
 
 invisible(NULL)

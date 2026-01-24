@@ -2,13 +2,13 @@
 # Diagnose anchor recruit plausibility across a recruit_max grid
 suppressPackageStartupMessages({ library(data.table) })
 args <- commandArgs(trailingOnly = TRUE)
-book1_path <- if (length(args) >= 1) args[1] else NULL
+dataset_path <- if (length(args) >= 1) args[1] else NULL
 grid_vals <- if (length(args) >= 2) as.numeric(strsplit(args[2], ',')[[1]]) else c(0.5,1,2,5,10)
 
-source(file.path('dp_global','examples','diagnostics','utils.R'))
-Dt <- load_dataset(book1_path)
+source(file.path('dp_global','dev','diagnostics','utils.R'))
+Dt <- load_dataset(dataset_path)
 # require a DP run to get anchor bio params and prior context; try reading an rds
-rds_path <- file.path('dp_global','examples','diagnostics','book1_dp_diag.rds')
+rds_path <- file.path('dp_global','dev','diagnostics','diagnostics_dp_diag.rds')
 if (file.exists(rds_path)) {
   res <- readRDS(rds_path); setDT(res)
 } else {
@@ -48,6 +48,6 @@ for (i in seq_len(nrow(anchors))) {
 }
 
 out_dt <- rbindlist(out_list)
-save_report(out_dt, file.path('dp_global','examples','diagnostics','anchor_plausibility_grid.csv'))
+save_report(out_dt, file.path('dp_global','dev','diagnostics','anchor_plausibility_grid.csv'))
 
 invisible(NULL)
