@@ -259,9 +259,11 @@ run_one_chunk <- function() {
     # If posterior sampling requested, ensure samples are written into this run's output directory
     if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
         if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
-            POSTERIOR_SAMPLES_PATH <<- file.path(tmp_out_dir, "posteriors")
+            # Provide the DP with the run's base out_dir; the DP will create the
+            # 'posteriors/' subdirectory itself, avoiding double-nesting.
+            POSTERIOR_SAMPLES_PATH <<- tmp_out_dir
         }
-        if (!dir.exists(POSTERIOR_SAMPLES_PATH)) dir.create(POSTERIOR_SAMPLES_PATH, recursive = TRUE)
+        if (!dir.exists(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))) dir.create(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"), recursive = TRUE)
     }
 
     res <- parallel::mclapply(seq_len(nrow(groups_ci)), function(j) {
@@ -300,12 +302,13 @@ run_one_chunk <- function() {
         out_chunk[, DP_Chunk := ci]
         out_chunk <- maybe_add_posterior_bins(out_chunk)
 
-        # keep the posterior path around for subsequent export timing checks
+        # keep the posterior base path around for subsequent export timing checks
         if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
             if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
-                POSTERIOR_SAMPLES_PATH <<- file.path(tmp_out_dir, "posteriors")
+                # set to the chunk's base output dir; DP function will create 'posteriors/' inside it
+                POSTERIOR_SAMPLES_PATH <<- tmp_out_dir
             }
-            if (!dir.exists(POSTERIOR_SAMPLES_PATH)) dir.create(POSTERIOR_SAMPLES_PATH, recursive = TRUE)
+            if (!dir.exists(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))) dir.create(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"), recursive = TRUE)
         }
 
         # measure DP -> produce out_chunk time (already measured by outer profiler); now benchmark exports
