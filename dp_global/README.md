@@ -245,7 +245,7 @@ Note: in posterior path summaries (`*_paths.csv`) the `recon` column is encoded 
 **Practical recommendations**
 
 - Increase `posterior_samples` to raise the chance the MAP path is drawn and therefore present in `*_paths.csv`.
-- If you require the MAP path to be represented in per-path summaries, you can either (a) explicitly insert the MAP signature into `paths_summary` after sampling (and mark it), or (b) attach it directly to your main output using the `attach_paths_to_output()` helper (see `dp_global/R/error_propagation/reconstruct_and_propagate.R`).
+- If you require the MAP path to be represented in per-path summaries, you can either (a) explicitly insert the MAP signature into `paths_summary` after sampling (and mark it), or (b) attach it directly to your main output using the `attach_paths_to_output()` helper (see `dp_global/R/error_propagation/process_posteriors.R`).
 
 **Quick check example (R)**
 
