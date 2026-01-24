@@ -1,3 +1,4 @@
+# FIXME - RUN PROFILE TO dp_global/scripts/main_cpp_chunk.R
 ########################################################################
 ### main_cpp_chunk.R — dp_global driver (standalone chunked version)
 ###
@@ -79,13 +80,12 @@ K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
 K_GROWTH_SOURCE <- "fixed"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
 RECRUIT_MAX_SOURCE <- "fixed"
-RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED  * 5) - 0.9999
+RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED  * 5) + 0.9999
 
 ############################################################
 ### 2.3 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-# which_tag <- 19L
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
@@ -102,7 +102,11 @@ dp_slack_require_anchor_eps <- 1e-6
 DP_CHUNK_SIZE <- 5L
 DP_CHUNK_RESUME <- TRUE
 DP_CHUNK_OVERWRITE <- FALSE
-WRITE_DP_FEATHER <- TRUE
+# Whether to produce a per-chunk PDF (helps debugging small batches)
+WRITE_DP_PDF_PER_CHUNK <- TRUE
+# Optional: limit chunks to a specific range for testing (NULL means all)
+DP_CHUNK_START <- NULL
+DP_CHUNK_END <- NULL
 
 # Posterior sampling defaults (disabled by default)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
@@ -121,7 +125,7 @@ POSTERIOR_SAMPLE_SEED <- NULL
 ############################################################
 RUN_ALL_TAGS <- TRUE
 MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
-MANUAL_CORES_VALUE <- 14L # Number of cores to use if MANUAL_CORES=TRUE
+MANUAL_CORES_VALUE <- 15L # Number of cores to use if MANUAL_CORES=TRUE
 
 ############################################################
 ### 2.5 CPP
@@ -134,14 +138,6 @@ message("[dp_global main_cpp.R] here root: ", here::here())
 message("[dp_global main_cpp.R] base_out_dir (raw): ", base_out_dir)
 base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
 message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
-
-# Optional: explicitly set a subdirectory name for outputs.
-# If NULL, an automatic name based on timestamp + key config flags is used.
-# OUT_DIR_NAME <- NULL
-# CONFIG_NAME is set by the orchestrator (e.g., run_dp_future) to identify the
-# experimental configuration; default to NULL so override parsing treats it as
-# a valid, known variable rather than an unknown override.
-# CONFIG_NAME <- NULL
 
 # Encode numeric values for directory-safe names
 # -0.5 -> m0p5, 7.5 -> 7p5
@@ -160,24 +156,20 @@ build_out_dir_name <- function() {
     # if (!is.null(OUT_DIR_NAME) && nzchar(OUT_DIR_NAME)) {
     #     return(OUT_DIR_NAME)
     # }
-
     # Timestamp: use BATCH_TS if provided; else fallback to current date+time
     ts <- if (exists("BATCH_TS") && nzchar(BATCH_TS)) BATCH_TS else format(Sys.time(), "%Y%m%d_%H%M%S")
-
     # Config name (for output directory label)
     config_part <- if (exists("CONFIG_NAME") && !is.null(CONFIG_NAME)) {
         CONFIG_NAME
     } else {
         "unknown"
     }
-
     # Tag info
     tag_part <- if (isTRUE(RUN_ALL_TAGS)) {
         "allT"
     } else {
         paste0("T", as.integer(which_tag))
     }
-
     # DP mode label
     dp_part <- switch(DP_MODE,
         "none" = "NO_DP",
@@ -186,10 +178,8 @@ build_out_dir_name <- function() {
         "marginals+bins" = "DP_MB",
         "DP_U"
     )
-
     # Measurement error label
     me_part <- if (isTRUE(USE_MEASUREMENT_ERROR)) "ME" else "NME"
-
     # Encode numeric values for directory-safe names
     encode_num <- function(x) {
         if (is.null(x) || is.na(x)) {
@@ -200,31 +190,26 @@ build_out_dir_name <- function() {
         s <- gsub("\\.", "p", s)
         s
     }
-
     max_growth_hard_ <- switch(MAX_GROWTH_HARD_SOURCE,
         "fixed" = paste0("g", encode_num(MAX_GROWTH_FIXED)),
         "data"  = "gD",
         "gU"
     )
-
     max_shrink_hard_ <- switch(MAX_SHRINK_HARD_SOURCE,
         "fixed" = paste0("s", encode_num(MAX_SHRINK_FIXED)),
         "data"  = "sD",
         "sU"
     )
-
     soft_growth_ <- switch(K_GROWTH_SOURCE,
         "fixed" = paste0("kg", encode_num(K_GROWTH_FIXED)),
         "data"  = "kgD",
         "kgU"
     )
-
     soft_shrink_ <- switch(K_SHRINK_SOURCE,
         "fixed" = paste0("ks", encode_num(K_SHRINK_FIXED)),
         "data"  = "ksD",
         "ksU"
     )
-
     # Assemble final directory name
     dir_name <- paste(
         ts,
@@ -238,28 +223,21 @@ build_out_dir_name <- function() {
         "rcpp",
         sep = "_"
     )
-
     return(dir_name)
 }
 
 WRITE_DP_CSV <- TRUE
 WRITE_DP_RDS <- TRUE
+WRITE_DP_FEATHER <- TRUE
 WRITE_DP_PDF <- TRUE
+WRITE_DP_PDF_PER_CHUNK <- TRUE
 DP_PDF_INCLUDE_REFERENCE <- TRUE
-PLOT_PDF_ONE_TAG_ONLY <- FALSE
 PROJECT_ROOT <- here::here()
 
 # Validate a few things
 if (!POSTERIOR_SAMPLES_FORMAT %in% c("rds", "feather", "csv")) stop("Invalid POSTERIOR_SAMPLES_FORMAT: ", POSTERIOR_SAMPLES_FORMAT)
 
 MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) as.integer(MANUAL_CORES_VALUE) else if (requireNamespace("parallel", quietly = TRUE)) max(1L, parallel::detectCores(logical = TRUE) - 1L) else 1L
-
-# Ensure chunk params exist (keep defaults in sync with main_cpp.R)
-############################################################
-### 2.5 Sensitivity analysis settings
-############################################################
-SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
-RUN_K_SWEEP_DEMO <- FALSE
 
 ############################################################
 ### 2.6 Realism report settings
@@ -284,9 +262,6 @@ if (!file.exists(input_file)) {
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
 ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
-RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
-WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
-MAKE_ALL_SWEEPS_PDF <- SENSITIVITY_MODE == "run+write+pdf"
 
 # Final output directory for this run (created at runtime in run_main())
 out_dir <- file.path(base_out_dir, build_out_dir_name())
@@ -479,7 +454,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
         # prune controls
         prune_hard = TRUE,
-        prune_min_growth = MAX_SHRINK_FIXED * 5, # very wide fixed bounds
+        prune_min_growth = MAX_SHRINK_FIXED * 2.5, # very wide fixed bounds
         prune_max_growth = MAX_GROWTH_FIXED * 1.5, # very wide fixed bounds
         prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
         prune_recruit_max_dbh = RECRUIT_MAX_FIXED * 1.25, # very high recruit max dbh
@@ -646,10 +621,26 @@ run_main_chunked <- function() {
     first_chunk <- !file.exists(DP_CSV_FILE)
 
     # Optionally limit to a subset of chunks for testing
-    start_ci <- if (!is.null(DP_CHUNK_START)) as.integer(DP_CHUNK_START) else 1L
-    end_ci <- if (!is.null(DP_CHUNK_END)) as.integer(DP_CHUNK_END) else length(chunks)
-    start_ci <- max(1L, start_ci)
-    end_ci <- min(length(chunks), end_ci)
+    start_ci <- if (exists("DP_CHUNK_START") && !is.null(DP_CHUNK_START)) as.integer(DP_CHUNK_START) else 1L
+    end_ci <- if (exists("DP_CHUNK_END") && !is.null(DP_CHUNK_END)) as.integer(DP_CHUNK_END) else length(chunks)
+
+    # Handle edge cases: empty chunk list or out-of-range values
+    if (length(chunks) == 0L) {
+        log_msg("No groups/chunks to process — exiting.")
+        tryCatch({ writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt")) }, error = function(e) NULL)
+        return(invisible(list(xrun = xrun, bio_pars = bio_pars)))
+    }
+
+    # Clamp values to valid range
+    start_ci <- max(1L, min(length(chunks), start_ci))
+    end_ci <- max(1L, min(length(chunks), end_ci))
+
+    if (start_ci > end_ci) {
+        stop(sprintf("Invalid chunk range: DP_CHUNK_START=%s, DP_CHUNK_END=%s after clamping => start=%d > end=%d", 
+                     if (exists("DP_CHUNK_START") && !is.null(DP_CHUNK_START)) as.character(DP_CHUNK_START) else "NULL",
+                     if (exists("DP_CHUNK_END") && !is.null(DP_CHUNK_END)) as.character(DP_CHUNK_END) else "NULL",
+                     start_ci, end_ci))
+    }
 
     for (ci in seq_len(length(chunks))) {
         if (ci < start_ci || ci > end_ci) {
@@ -680,7 +671,8 @@ run_main_chunked <- function() {
             if (nrow(out_chunk) > 0L) {
                 out_chunk[, DP_Chunk := ci]
                 out_chunk <- maybe_add_posterior_bins(out_chunk)
-                out_chunk[, out_dir := basename(out_dir)]
+                # Record run output directory (basename) in each row to avoid variable/column name collision
+                out_chunk[, run_out_dir := basename(out_dir)]
 
                 if (isTRUE(WRITE_DP_CSV)) {
                     data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)

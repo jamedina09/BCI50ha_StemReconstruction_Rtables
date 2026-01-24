@@ -675,6 +675,7 @@ joblog_rows <- do.call(rbind, lapply(results, function(r) {
     status = r$status,
     log = r$log,
     cmd = r$cmd,
+    main_out_dir = if (is.null(r$main_out_dir)) NA_character_ else as.character(r$main_out_dir),
     posterior_samples = opt$posterior_samples,
     posterior_format = if (is.null(opt$posterior_format)) NA_character_ else opt$posterior_format,
     posterior_seed = if (is.null(opt$posterior_seed)) NA_integer_ else as.integer(opt$posterior_seed),
