@@ -5,10 +5,10 @@ args <- commandArgs(trailingOnly = TRUE)
 track_probe <- if (length(args)>=1) as.integer(args[1]) else 6
 param_name <- if (length(args)>=2) args[2] else 'Bio_Recruit_MaxDBH_unit'
 grid_vals <- if (length(args)>=3) as.numeric(strsplit(args[3],',')[[1]]) else c(0.5,1,2,5,10)
-book1_path <- if (length(args)>=4) args[4] else NULL
+dataset_path <- if (length(args)>=4) args[4] else NULL
 
-source(file.path('dp_global','examples','diagnostics','utils.R'))
-Dt <- load_dataset(book1_path)
+source(file.path('dp_global','dev','diagnostics','utils.R'))
+Dt <- load_dataset(dataset_path)
 compile_transition_cost()
 
 out_rows <- list()
@@ -30,6 +30,6 @@ for (v in grid_vals) {
   }
 }
 out_dt <- rbindlist(out_rows)
-save_report(out_dt, file.path('dp_global','examples','diagnostics',paste0('track_cost_timeseries_probe_',track_probe,'.csv')))
+save_report(out_dt, file.path('dp_global','dev','diagnostics',paste0('track_cost_timeseries_probe_',track_probe,'.csv')))
 
 invisible(NULL)

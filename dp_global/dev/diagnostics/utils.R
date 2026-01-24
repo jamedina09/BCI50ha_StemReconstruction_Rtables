@@ -6,7 +6,7 @@ suppressPackageStartupMessages({
 # Load dataset CSV (path defaults to diagnostics diagnostics_dataset.csv if present)
 load_dataset <- function(path = NULL) {
   if (is.null(path)) {
-    candidate <- file.path('dp_global','examples','diagnostics','diagnostics_dataset.csv')
+    candidate <- file.path('dp_global','dev','diagnostics','diagnostics_dataset.csv')
     if (file.exists(candidate)) path <- candidate
     else stop('No dataset path provided and default diagnostics dataset not found at ', candidate)
   }

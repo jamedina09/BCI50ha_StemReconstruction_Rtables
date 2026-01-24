@@ -13,27 +13,22 @@ Usage examples:
   Rscript run_synthetic_diagnostics.R
 
 - Generate parameterized synthetic datasets (single):
-  Rscript generate_fake_book1.R dp_global/examples/diagnostics/Book1_fake.csv 20 "5,6,7" 42 "6,2" 5 0.5
+  Rscript generate_synthetic_data.R dp_global/dev/diagnostics/diagnostics_dataset.csv 20 "5,6,7" 42 "6,2" 5 0.5
 
-- Run anchor plausibility grid on a specific CSV:
-  Rscript diagnose_anchor_plausibility.R /path/to/Book1.csv "0.5,1,2,5,10"
+- Run anchor plausibility grid on a specific CSV (diagnostics uses only provided datasets; Book1 is not used):
+  Rscript diagnose_anchor_plausibility.R /path/to/diagnostics_dataset.csv "0.5,1,2,5,10"
 
 - Run a generic parameter sweep (cost-only) on a dataset:
-  Rscript sweep_param_generic.R Bio_Recruit_MaxDBH_unit "0.5,1,2,5,10" cost /path/to/Book1.csv
+  Rscript sweep_param_generic.R Bio_Recruit_MaxDBH_unit "0.5,1,2,5,10" cost /path/to/diagnostics_dataset.csv
 
 - Compute per-track cost time series (probe=6) on a dataset:
-  Rscript track_cost_timeseries.R 6 Bio_Recruit_MaxDBH_unit "0.5,1,2,5,10" /path/to/Book1.csv
+  Rscript track_cost_timeseries.R 6 Bio_Recruit_MaxDBH_unit "0.5,1,2,5,10" /path/to/diagnostics_dataset.csv
 
-- Generate a grid of simulated datasets and run full diagnostics on each:
-  Rscript simulate_and_run_diagnostics.R
-  (Outputs are placed under `dp_global/examples/diagnostics/sims/`)
-
-Files created:
-- `utils.R` : helper functions
-- `generate_fake_book1.R` : parameterized dataset generator
+Files included:
+- `utils.R` : helper functions (load_dataset, run_dp_on_dt, compute_cost_components, p_recruit_from_costs, save_report)
+- `generate_synthetic_data.R` : parameterized dataset generator
 - `diagnose_anchor_plausibility.R` : per-anchor plausibility grid
 - `sweep_param_generic.R` : general parameter sweep
 - `track_cost_timeseries.R` : per-track cost time series
 - `run_synthetic_diagnostics.R` : convenience runner (single run)
-- `simulate_and_run_diagnostics.R` : orchestrator to run diagnostics on simulated dataset grid
 
