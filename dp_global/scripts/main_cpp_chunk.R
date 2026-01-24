@@ -88,7 +88,7 @@ RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED  * 5) + 0.9999
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
-DP_POSTERIOR_TOP_K <- 2L
+DP_POSTERIOR_TOP_K <- 1L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
 dp_slack_tracks <- 1L
@@ -99,11 +99,9 @@ dp_slack_require_anchor_recruitable <- TRUE
 dp_slack_require_anchor_eps <- 1e-6
 
 # Chunk-specific defaults
-DP_CHUNK_SIZE <- 5L
+DP_CHUNK_SIZE <- 7L
 DP_CHUNK_RESUME <- TRUE
 DP_CHUNK_OVERWRITE <- FALSE
-# Whether to produce a per-chunk PDF (helps debugging small batches)
-WRITE_DP_PDF_PER_CHUNK <- TRUE
 # Optional: limit chunks to a specific range for testing (NULL means all)
 DP_CHUNK_START <- NULL
 DP_CHUNK_END <- NULL
@@ -125,7 +123,7 @@ POSTERIOR_SAMPLE_SEED <- NULL
 ############################################################
 RUN_ALL_TAGS <- TRUE
 MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
-MANUAL_CORES_VALUE <- 15L # Number of cores to use if MANUAL_CORES=TRUE
+MANUAL_CORES_VALUE <- 7L # Number of cores to use if MANUAL_CORES=TRUE
 
 ############################################################
 ### 2.5 CPP
@@ -226,11 +224,10 @@ build_out_dir_name <- function() {
     return(dir_name)
 }
 
-WRITE_DP_CSV <- TRUE
-WRITE_DP_RDS <- TRUE
+WRITE_DP_CSV <- FALSE
+WRITE_DP_RDS <- FALSE
 WRITE_DP_FEATHER <- TRUE
-WRITE_DP_PDF <- TRUE
-WRITE_DP_PDF_PER_CHUNK <- TRUE
+WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- TRUE
 DP_PDF_INCLUDE_REFERENCE <- TRUE
 PROJECT_ROOT <- here::here()
 
@@ -269,14 +266,15 @@ message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
 DP_CSV_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.csv")
-DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
-DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
 
-# If posterior sampling is requested, set sensible defaults inside the run-specific out_dir
+# If posterior sampling is requested, provide the DP with the run's base out_dir.
+# The DP itself will create the 'posteriors/' subdirectory (avoids double-nesting).
 # These defaults can still be overridden via CLI (e.g., --POSTERIOR_SAMPLES_PATH=... or --POSTERIOR_SAMPLE_SEED=...)
 if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
     if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
-        POSTERIOR_SAMPLES_PATH <- file.path(out_dir, "posteriors")
+        # Provide the DP with the run's base out_dir; the DP will create the
+        # 'posteriors/' subdirectory itself, avoiding double-nesting.
+        POSTERIOR_SAMPLES_PATH <- out_dir
     }
     # normalize path for consistency; don't require it to exist yet (created in run_main)
     POSTERIOR_SAMPLES_PATH <- normalizePath(POSTERIOR_SAMPLES_PATH, winslash = "/", mustWork = FALSE)
@@ -482,9 +480,9 @@ maybe_add_posterior_bins <- function(out) {
 run_main_chunked <- function() {
     ensure_dir(out_dir)
 
-    # Create posteriors directory if requested (POSTERIOR_SAMPLES > 0)
+    # Create posteriors subdirectory (DP writes its files into <base>/posteriors)
     if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
-        ensure_dir(POSTERIOR_SAMPLES_PATH)
+        ensure_dir(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))
     }
     #xf
 
