@@ -1,11 +1,35 @@
-# FIXME - RUN PROFILE TO dp_global/scripts/main_cpp_chunk.R
-########################################################################
-### main_cpp_chunk.R — dp_global driver (standalone chunked version)
-###
-### Standalone chunked driver that does NOT source `main_cpp.R`.
-### It uses the same helpers in `dp_global/R/` but contains its own
-### CLI parsing, defaults, and chunk-only run loop.
-########################################################################
+############################################################
+### main_cpp_chunk.R — dp_global driver
+############################################################
+# Goal
+#   One place to run the DP_GLOBAL workflow end-to-end
+#
+# Note for orchestrators
+# - This script accepts CLI overrides of internal variables via --KEY=VALUE.
+# - See the `CLI_REFERENCE` variable below for the canonical keys used by
+#   external orchestrators (e.g., bin/run_dp_future_single.R) which should
+#   construct flags matching these canonical names (case-insensitive, '-' or
+#   '_' allowed). Keep the orchestrator in sync with `CLI_REFERENCE`.
+#
+# Table of Contents (high-level)
+#  0) Housekeeping — safe top-level behavior
+#  1) CLI parsing — parse and coerce command-line overrides
+#  2) Dependencies — package checks and imports
+#  3) Defaults & constants — editable run defaults and output naming
+#    3.1) Parameter estimation settings
+#    3.2) DP running settings
+#    3.3) Parallel & output settings
+#    3.4) Output naming & CPP settings
+#  4) CLI reference & override mapping — canonical CLI keys and matching logic
+#  5) Helpers — utility functions for filesystem, logging and data manipulation
+#  6) Core DP functions — the DP runner helpers used by the main pipeline
+#  7) Main pipeline — `run_main()`; load data, estimate parameters, run DP, write outputs
+#  8) Entrypoint — execute `run_main()` when invoked via Rscript
+#
+# Use the numbered sections to quickly scan the file. Each section contains a
+# short header and concise responsibilities to make navigation quick and clear.
+
+
 ############################################################
 ### 0) Housekeeping
 ############################################################
@@ -16,7 +40,55 @@ if (sys.nframe() == 0L) {
 }
 
 ############################################################
-### 1) Dependencies
+### 1) CLI parsing — Command-line parsing & overrides
+############################################################
+# Parse command-line arguments to override defaults.
+# Usage: Rscript main_cpp.R --WHICH_TAG=2 --RUN_ALL_TAGS=TRUE --DP_MODE=marginals+bins --SENSITIVITY_MODE=run --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=8
+# Supported args: any config variable name prefixed with --
+
+parse_args <- function() {
+    args <- commandArgs(trailingOnly = TRUE)
+    overrides <- list()
+    for (arg in args) {
+        # Short help flag
+        if (identical(arg, "-h") || identical(arg, "--help")) {
+            overrides[["help"]] <- TRUE
+            next
+        }
+
+        if (grepl("^--", arg)) {
+            # --key=value or --FLAG
+            if (grepl("=", arg)) {
+                kv <- strsplit(sub("^--", "", arg), "=", fixed = TRUE)[[1]]
+                key <- kv[1]
+                val <- kv[2]
+                # Try to convert to appropriate type (handle booleans, integers, floats, including negatives)
+                if (tolower(val) %in% c("true", "false")) {
+                    val <- as.logical(tolower(val))
+                } else if (grepl("^[+-]?[0-9]+$", val)) {
+                    val <- as.integer(val)
+                } else if (grepl("^[+-]?[0-9]*\\.[0-9]+$", val)) {
+                    val <- as.numeric(val)
+                }
+            } else {
+                key <- sub("^--", "", arg)
+                # Valueless flags are treated as TRUE
+                val <- TRUE
+            }
+            overrides[[key]] <- val
+        } else if (grepl("^-[A-Za-z]$", arg)) {
+            # Short single-letter flags (-h handled above); treat others as boolean TRUE
+            key <- sub("^-", "", arg)
+            overrides[[key]] <- TRUE
+        }
+    }
+    overrides
+}
+
+overrides <- parse_args()
+
+############################################################
+### 2) Dependencies — package imports
 ############################################################
 
 if (!requireNamespace("data.table", quietly = TRUE)) {
@@ -29,34 +101,11 @@ if (!requireNamespace("here", quietly = TRUE)) {
 }
 library(here)
 
-# Small helper to create directories safely
-ensure_dir <- function(path) {
-    if (!dir.exists(path)) {
-        dir.create(path, recursive = TRUE)
-        message("[main_cpp_chunk.R] Created directory: ", path)
-    }
-    invisible(path)
-}
-
-# Simple logging helper (prints and appends to run_log.txt in out_dir when available)
-log_msg <- function(msg, level = "INFO") {
-    ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-    full <- sprintf("[%s] %s: %s", ts, level, msg)
-    message(full)
-    # Append to run log if out_dir exists
-    if (exists("out_dir") && nzchar(out_dir)) {
-        tryCatch(
-            write(full, file = file.path(out_dir, "run_log.txt"), append = TRUE),
-            error = function(e) NULL
-        )
-    }
-} 
-
 ############################################################
-### Manual overrides (uncomment and edit for interactive/manual runs)
+### 3) Defaults & constants — editable run defaults
 ############################################################
 ## 2.1 Input data and species handling
-input_file <- here("data_simulation", "data", "simulated_data_1.csv")
+INPUT_FILE <- here("data_simulation", "data", "simulated_data_1.csv")
 FORCE_ONE_SPECIES_PARAMETERS <- TRUE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
     FORCED_SPECIES_LABEL <- "all"
@@ -67,9 +116,10 @@ if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
 SPECIES_COL <- NULL
 
 ############################################################
-### 2.2 Parameter estimation settings
+### 3.1 Parameter estimation settings
 ############################################################
 # All settings related to parameter estimation and biological realism
+# NOTE: Ypu can define them with parameter data from your specie(s) of interest
 USE_MEASUREMENT_ERROR <- TRUE
 MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_GROWTH_FIXED <- 7.5
@@ -80,31 +130,24 @@ K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
 K_GROWTH_SOURCE <- "fixed"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
 RECRUIT_MAX_SOURCE <- "fixed"
-RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED  * 5) + 0.9999
+RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) - 0.9999
 
 ############################################################
-### 2.3 DP running settings
+### 3.2 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-anchor_start_census <- 7L
+WHICH_TAG <- 0L
+ANCHOR_START_CENSUS <- 7L
 DP_VERBOSE <- TRUE
-DP_POSTERIOR_TOP_K <- 1L
-dp_max_tracks <- NULL # auto (computed from data)
-dp_max_states <- 40000L
-dp_slack_tracks <- 1L
+DP_POSTERIOR_TOP_K <- 2L
+DP_MAX_TRACKS <- NULL # auto (computed from data)
+DP_MAX_STATES <- 40000L
+DP_SLACK_TRACKS <- 1L
 # NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
 # (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.
-dp_slack_require_anchor_recruitable <- TRUE
+DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
-dp_slack_require_anchor_eps <- 1e-6
-
-# Chunk-specific defaults
-DP_CHUNK_SIZE <- 7L
-DP_CHUNK_RESUME <- TRUE
-DP_CHUNK_OVERWRITE <- FALSE
-# Optional: limit chunks to a specific range for testing (NULL means all)
-DP_CHUNK_START <- NULL
-DP_CHUNK_END <- NULL
+DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
 
 # Posterior sampling defaults (disabled by default)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
@@ -114,19 +157,28 @@ DP_CHUNK_END <- NULL
 #   (e.g., bin/run_dp_future_single.R) may auto-generate a seed when running in batch/parallel to avoid RNG misuse warnings and ensure
 #   reproducible sampling across tasks. If you want reproducible CLI runs, pass --POSTERIOR_SAMPLE_SEED explicitly.
 POSTERIOR_SAMPLES <- 200L
-POSTERIOR_SAMPLES_FORMAT <- "feather" # options: 'rds', 'feather', 'csv'
+POSTERIOR_SAMPLES_FORMAT <- "csv" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
 POSTERIOR_SAMPLE_SEED <- NULL
 
-############################################################
-### 2.4 Parallel and output settings
-############################################################
-RUN_ALL_TAGS <- TRUE
-MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
-MANUAL_CORES_VALUE <- 7L # Number of cores to use if MANUAL_CORES=TRUE
+# Chunk-specific defaults
+DP_CHUNK_SIZE <- 7L
+DP_CHUNK_RESUME <- TRUE
+DP_CHUNK_OVERWRITE <- FALSE
+# Optional: limit chunks to a specific range for testing (NULL means all)
+DP_CHUNK_START <- NULL
+DP_CHUNK_END <- NULL
+
 
 ############################################################
-### 2.5 CPP
+### 3.3 Parallel & output settings
+############################################################
+RUN_ALL_TAGS <- FALSE
+MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
+MANUAL_CORES_VALUE <- 1L # Number of cores to use if MANUAL_CORES=TRUE
+
+############################################################
+### 3.4 Output naming & CPP settings
 ############################################################
 
 ## create output directory within project
@@ -137,128 +189,226 @@ message("[dp_global main_cpp.R] base_out_dir (raw): ", base_out_dir)
 base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
 message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 
-# Encode numeric values for directory-safe names
-# -0.5 -> m0p5, 7.5 -> 7p5
-encode_num <- function(x) {
-    if (is.null(x) || is.na(x)) {
-        return("NA")
-    }
-    s <- as.character(x)
-    s <- gsub("-", "m", s)
-    s <- gsub("\\.", "p", s)
-    s
-}
+# Optional: explicitly set a subdirectory name for outputs.
+# If NULL, an automatic name based on timestamp + key config flags is used.
+# OUT_DIR_NAME <- NULL
+# CONFIG_NAME is set by the orchestrator (e.g., run_dp_future) to identify the
+# experimental configuration; default to NULL so override parsing treats it as
+# a valid, known variable rather than an unknown override.
+CONFIG_NAME <- NULL
 
-build_out_dir_name <- function() {
-    # # Use explicit OUT_DIR_NAME if set
-    # if (!is.null(OUT_DIR_NAME) && nzchar(OUT_DIR_NAME)) {
-    #     return(OUT_DIR_NAME)
-    # }
-    # Timestamp: use BATCH_TS if provided; else fallback to current date+time
-    ts <- if (exists("BATCH_TS") && nzchar(BATCH_TS)) BATCH_TS else format(Sys.time(), "%Y%m%d_%H%M%S")
-    # Config name (for output directory label)
-    config_part <- if (exists("CONFIG_NAME") && !is.null(CONFIG_NAME)) {
-        CONFIG_NAME
-    } else {
-        "unknown"
-    }
-    # Tag info
-    tag_part <- if (isTRUE(RUN_ALL_TAGS)) {
-        "allT"
-    } else {
-        paste0("T", as.integer(which_tag))
-    }
-    # DP mode label
-    dp_part <- switch(DP_MODE,
-        "none" = "NO_DP",
-        "map" = "DP_S",
-        "marginals" = "DP_M",
-        "marginals+bins" = "DP_MB",
-        "DP_U"
-    )
-    # Measurement error label
-    me_part <- if (isTRUE(USE_MEASUREMENT_ERROR)) "ME" else "NME"
-    # Encode numeric values for directory-safe names
-    encode_num <- function(x) {
-        if (is.null(x) || is.na(x)) {
-            return("NA")
-        }
-        s <- as.character(x)
-        s <- gsub("-", "m", s)
-        s <- gsub("\\.", "p", s)
-        s
-    }
-    max_growth_hard_ <- switch(MAX_GROWTH_HARD_SOURCE,
-        "fixed" = paste0("g", encode_num(MAX_GROWTH_FIXED)),
-        "data"  = "gD",
-        "gU"
-    )
-    max_shrink_hard_ <- switch(MAX_SHRINK_HARD_SOURCE,
-        "fixed" = paste0("s", encode_num(MAX_SHRINK_FIXED)),
-        "data"  = "sD",
-        "sU"
-    )
-    soft_growth_ <- switch(K_GROWTH_SOURCE,
-        "fixed" = paste0("kg", encode_num(K_GROWTH_FIXED)),
-        "data"  = "kgD",
-        "kgU"
-    )
-    soft_shrink_ <- switch(K_SHRINK_SOURCE,
-        "fixed" = paste0("ks", encode_num(K_SHRINK_FIXED)),
-        "data"  = "ksD",
-        "ksU"
-    )
-    # Assemble final directory name
-    dir_name <- paste(
-        ts,
-        config_part,
-        tag_part,
-        paste0(dp_part, "_", me_part),
-        max_growth_hard_,
-        max_shrink_hard_,
-        soft_growth_,
-        soft_shrink_,
-        "rcpp",
-        sep = "_"
-    )
-    return(dir_name)
-}
+# `encode_num()` and `build_out_dir_name()` are provided by
+# dp_global/R/naming_helpers.R (sourced above). See that file for
+# directory-safe naming utilities.
 
-WRITE_DP_CSV <- FALSE
-WRITE_DP_RDS <- FALSE
-WRITE_DP_FEATHER <- TRUE
+# `build_out_dir_name()` is provided by dp_global/R/naming_helpers.R
+# and referenced later when computing `out_dir`.
+
+WRITE_DP_CSV <- TRUE
+WRITE_DP_RDS <- TRUE
+WRITE_DP_FEATHER <- FALSE
 WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- TRUE
-DP_PDF_INCLUDE_REFERENCE <- TRUE
+## when no simulated data, this needs to be FALSE to avoid errors
+DP_PDF_INCLUDE_REFERENCE <- FALSE
+
+# Per-tag PDF plotting control is part of the full runner but not used in
+# the chunked DP runner. Leave commented to avoid confusion.
+# if (!isTRUE(RUN_ALL_TAGS)) {
+#     PLOT_PDF_ONE_TAG_ONLY <- TRUE
+# } else {
+#     PLOT_PDF_ONE_TAG_ONLY <- FALSE
+# }
+
+# Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
 PROJECT_ROOT <- here::here()
+# Batch timestamp can be provided by orchestrators; default empty so overrides like --BATCH_TS=... are accepted without warnings
+BATCH_TS <- ""
+# Naming helpers (encode_num, build_out_dir_name) live in a separate helper
+# file to keep the main script concise. Source it early so it's available
+# when we compute `out_dir` below.
+source(here("dp_global", "R", "naming_helpers.R"))
 
-# Validate a few things
-if (!POSTERIOR_SAMPLES_FORMAT %in% c("rds", "feather", "csv")) stop("Invalid POSTERIOR_SAMPLES_FORMAT: ", POSTERIOR_SAMPLES_FORMAT)
+############################################################
+### 4) CLI reference & override mapping — canonical flags and mapping
+############################################################
+# This short reference is useful when constructing or validating CLI flags
+# in external orchestrators (e.g., bin/run_dp_future_single.R). Keys in the CLI
+# are case-insensitive and may use '-' or '_' as separators; they are mapped to
+# the corresponding internal variable names below.
+CLI_REFERENCE <- list(
+    INPUT_FILE = "INPUT_FILE",
+    FORCE_ONE_SPECIES_PARAMETERS = "FORCE_ONE_SPECIES_PARAMETERS",
+    DP_MODE = "DP_MODE",
+    # WHICH_TAG = "WHICH_TAG",
+    ANCHOR_START_CENSUS = "ANCHOR_START_CENSUS",
+    DP_VERBOSE = "DP_VERBOSE",
+    RUN_ALL_TAGS = "RUN_ALL_TAGS",
+    MANUAL_CORES = "MANUAL_CORES",
+    MANUAL_CORES_VALUE = "MANUAL_CORES_VALUE",
+    WRITE_DP_CSV = "WRITE_DP_CSV",
+    WRITE_DP_RDS = "WRITE_DP_RDS",
+    WRITE_DP_FEATHER = "WRITE_DP_FEATHER",
+    WRITE_DP_PDF = "WRITE_DP_PDF",
+    DP_MAX_STATES = "DP_MAX_STATES",
+    DP_SLACK_TRACKS = "DP_SLACK_TRACKS",
+    DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE",
+    DP_SLACK_REQUIRE_ANCHOR_EPS = "DP_SLACK_REQUIRE_ANCHOR_EPS",
+    POSTERIOR_SAMPLES = "POSTERIOR_SAMPLES",
+    POSTERIOR_SAMPLES_FORMAT = "POSTERIOR_SAMPLES_FORMAT",
+    POSTERIOR_SAMPLES_PATH = "POSTERIOR_SAMPLES_PATH",
+    POSTERIOR_SAMPLE_SEED = "POSTERIOR_SAMPLE_SEED",
+    PROJECT_ROOT = "PROJECT_ROOT",
+    BATCH_TS = "BATCH_TS",
+    CONFIG_NAME = "CONFIG_NAME",
+    USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR"
+) 
 
-MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) as.integer(MANUAL_CORES_VALUE) else if (requireNamespace("parallel", quietly = TRUE)) max(1L, parallel::detectCores(logical = TRUE) - 1L) else 1L
+############################################################
+### 2.5 Sensitivity analysis settings
+############################################################
+# Sensitivity analysis options are defined here in the full runner but are not
+# used by the chunked DP runner. Commented out to reduce clutter and avoid
+# confusion when running chunked DP.
+# SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
+# RUN_K_SWEEP_DEMO <- FALSE
 
 ############################################################
 ### 2.6 Realism report settings
 ############################################################
-RUN_REALISM_REPORT <- FALSE
+# Realism report generation is not used by the chunked DP runner; keep disabled
+# and commented out here to avoid suggesting it affects chunked runs.
+# RUN_REALISM_REPORT <- FALSE
+
+print_help <- function() {
+    cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
+    cat("Common keys and defaults:\n")
+
+    # Prefer printing the canonical CLI keys from CLI_REFERENCE so the help is
+    # always in sync with the internal mapping.
+    for (key in names(CLI_REFERENCE)) {
+        varname <- CLI_REFERENCE[[key]]
+        if (exists(varname, envir = globalenv())) {
+            val <- get(varname, envir = globalenv())
+        } else {
+            val <- "<not set>"
+        }
+        cat(sprintf("  --%s = %s\n", key, as.character(val)))
+    }
+
+    cat("\nFlags without =value are treated as boolean TRUE (e.g., --DRY_RUN).\n")
+}
+
+# If user asked for help, print and exit (do this before applying overrides)
+if (isTRUE(overrides$help) || isTRUE(overrides$h)) {
+    print_help()
+    quit(save = "no", status = 0)
+}
+
+# Apply command-line overrides with validation and warnings for unknown keys
+# This logic is intentionally flexible: users can pass keys such as
+#   --POSTERIOR-SAMPLES=200  or  --posterior-samples=200  or  --POSTERIOR_SAMPLES=200
+# All of these will match the canonical in-memory variable names such as
+# `POSTERIOR_SAMPLES` or `POSTERIOR_SAMPLES_FORMAT` or `which_tag` regardless of
+# case or punctuation.
+
+# Helper: normalize an override key to uppercase letters and underscores
+normalize_key <- function(k) {
+    toupper(gsub("[- ]", "_", k))
+}
+
+# Helper: find an existing variable name that matches the normalized key (case-insensitive)
+find_matching_var <- function(norm_key) {
+    # Normalize current environment variable names for comparison (case-insensitive)
+    norm_var <- function(v) toupper(gsub("[^A-Z0-9_]", "", toupper(v)))
+    vars <- ls(envir = globalenv())
+    matches <- sapply(vars, function(v) norm_var(v) == norm_key)
+    if (any(matches)) {
+        return(vars[which(matches)[1]])
+    }
+    NULL
+}
+
+for (name in names(overrides)) {
+    if (name %in% c("help", "h")) next
+
+    norm <- normalize_key(name)
+    match_var <- find_matching_var(norm)
+
+    if (is.null(match_var)) {
+        warning(sprintf("[dp_global main_cpp.R] Unknown override '%s' (ignored).\n", name))
+        next
+    }
+
+    # Coerce type where appropriate (basic numeric/logical conversions were
+    # already attempted in parse_args). Here we ensure that integer-like
+    # numeric values are stored as integers when the default was integer.
+    old_val <- get(match_var, inherits = FALSE)
+    new_val <- overrides[[name]]
+
+    if (is.integer(old_val) && is.numeric(new_val)) {
+        new_val <- as.integer(new_val)
+    }
+
+    assign(match_var, new_val, envir = globalenv())
+    message("[dp_global main_cpp.R] Overriding ", match_var, " = ", as.character(new_val))
+}
+
+# Backwards-compatibility aliases removed. Use canonical ALL-CAPS variables (e.g., WHICH_TAG, INPUT_FILE) everywhere; update scripts that relied on lowercase globals.
+
+# Post-override validation: Check a few key options for allowed values and types
+if (!DP_MODE %in% c("none", "marginals", "marginals+bins", "map")) {
+    stop("Invalid DP_MODE: ", DP_MODE, ". Allowed: 'none','marginals','marginals+bins','map'.")
+}
+if (!POSTERIOR_SAMPLES_FORMAT %in% c("rds", "feather", "csv")) {
+    stop("Invalid POSTERIOR_SAMPLES_FORMAT: ", POSTERIOR_SAMPLES_FORMAT, ". Allowed: 'rds','feather','csv'.")
+}
+if (!is.null(POSTERIOR_SAMPLES) && (!is.numeric(POSTERIOR_SAMPLES) || as.integer(POSTERIOR_SAMPLES) < 0L)) {
+    stop("POSTERIOR_SAMPLES must be a non-negative integer or 0 to disable.")
+}
+if (!is.null(POSTERIOR_SAMPLE_SEED) && (!is.numeric(POSTERIOR_SAMPLE_SEED) || as.integer(POSTERIOR_SAMPLE_SEED) < 0L)) {
+    stop("POSTERIOR_SAMPLE_SEED must be a non-negative integer or NULL.")
+}
+
+# Recompute derived values that depend on overridable inputs so CLI overrides take effect
+# - MC_CORES depends on MANUAL_CORES and MANUAL_CORES_VALUE
+MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) {
+    as.integer(MANUAL_CORES_VALUE)
+} else if (requireNamespace("parallel", quietly = TRUE)) {
+    max(1L, parallel::detectCores(logical = TRUE) - 1L)
+} else {
+    1L
+}
+
+# Optional override: explicitly set project root (useful when running under different working dirs or job launchers)
+# Usage: --PROJECT_ROOT=/absolute/path/to/project
+if (exists("PROJECT_ROOT") && !is.null(PROJECT_ROOT) && nzchar(PROJECT_ROOT)) {
+    message("[dp_global main_cpp.R] Using PROJECT_ROOT override: ", PROJECT_ROOT)
+    base_out_dir <- normalizePath(file.path(PROJECT_ROOT, "dp_global", "output"), winslash = "/", mustWork = FALSE)
+    message("[dp_global main_cpp.R] base_out_dir overridden to: ", base_out_dir)
+}
 
 ############################################################
 ### Input file validation (must be explicit)
 ############################################################
 
-if (!exists("input_file") || is.null(input_file) || !nzchar(input_file)) {
+if (!exists("INPUT_FILE") || is.null(INPUT_FILE) || !nzchar(INPUT_FILE)) {
     stop(
-        "No input_file specified. ",
-        "Provide --input_file=... on the command line or define input_file explicitly."
+        "No INPUT_FILE specified. ",
+        "Provide --INPUT_FILE=... on the command line or define INPUT_FILE explicitly."
     )
 }
 
-if (!file.exists(input_file)) {
-    stop("input_file does not exist: ", input_file)
-}
+if (!file.exists(INPUT_FILE)) {
+    stop("INPUT_FILE does not exist: ", INPUT_FILE)
+} 
 
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
 ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
+# Not used by chunked runner; leave commented out to avoid confusion
+# RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
+# WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
+# MAKE_ALL_SWEEPS_PDF <- SENSITIVITY_MODE == "run+write+pdf"
 
 # Final output directory for this run (created at runtime in run_main())
 out_dir <- file.path(base_out_dir, build_out_dir_name())
@@ -266,6 +416,9 @@ message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
 DP_CSV_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.csv")
+DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
+DP_FEATHER_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.feather")
+DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
 
 # If posterior sampling is requested, provide the DP with the run's base out_dir.
 # The DP itself will create the 'posteriors/' subdirectory (avoids double-nesting).
@@ -292,13 +445,17 @@ source(here("dp_global", "R", "dp_global_main.R"))
 source(here("dp_global", "R", "sensitivity_transition_cost_bio.R"))
 source(here("dp_global", "R", "realism_calibration.R"))
 source(here("dp_global", "R", "k_tuning_viz.R"))
+# Helpers split out for clarity
+source(here("dp_global", "R", "naming_helpers.R"))
+# `naming_helpers.R` provides `encode_num()` and `build_out_dir_name()`
+
 
 ############################################################
-### 4) Helpers
+### 5) Helpers — utility functions
 ############################################################
 
 ############################################################
-### 4.1) Optional tuning / inspection helpers
+### 5.1) Optional tuning / inspection helpers
 ############################################################
 
 # Soft penalties vs hard guardrails (unit reminder)
@@ -328,7 +485,25 @@ source(here("dp_global", "R", "k_tuning_viz.R"))
 
 # soft_cost_from_k(delta_cm = seq(-10, 10, by = 1), k = 20, temperature = 1)
 
-# (using the ensure_dir helper defined near the top of this file)
+ensure_dir <- function(path) {
+    if (!dir.exists(path)) {
+        dir.create(path, recursive = TRUE)
+        message("[dp_global main_cpp.R] Created directory: ", path)
+    } else {
+        message("[dp_global main_cpp.R] Directory already exists: ", path)
+    }
+    invisible(path)
+}
+
+log_msg <- function(msg, level = "INFO") {
+    ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    full <- sprintf("[%s] %s: %s", ts, level, msg)
+    message(full)
+    if (exists("out_dir") && nzchar(out_dir)) {
+        tryCatch(write(full, file = file.path(out_dir, "run_log.txt"), append = TRUE), error = function(e) NULL)
+    }
+    invisible(full)
+}
 
 ensure_species_column <- function(x) {
     if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
@@ -423,25 +598,29 @@ attach_bio_columns <- function(xrun, bio_pars) {
 
 auto_dp_max_tracks <- function(xrun) {
     max_obs_any_tag_census <- xrun[
-        CensusID <= anchor_start_census & !is.na(DBH),
+        CensusID <= ANCHOR_START_CENSUS & !is.na(DBH),
         .N,
         by = .(Tag, CensusID)
     ][, max(N, na.rm = TRUE)]
     if (!is.finite(max_obs_any_tag_census)) max_obs_any_tag_census <- 0L
     as.integer(max_obs_any_tag_census + 1L)
-}
+} 
+
+############################################################
+### 6) Core DP functions — run helpers used by the pipeline
+############################################################
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
     match_stems_dp_global_backward_marginals_batch(
         tree_data = data.table::copy(dtg),
         min_growth = MAX_SHRINK_FIXED,
         max_growth = MAX_GROWTH_FIXED,
-        anchor_start = anchor_start_census,
+        anchor_start = ANCHOR_START_CENSUS,
         max_tracks = dp_max_tracks,
-        max_states = dp_max_states,
-        slack_tracks = dp_slack_tracks,
-        slack_require_anchor_recruitable = dp_slack_require_anchor_recruitable,
-        slack_require_anchor_eps = dp_slack_require_anchor_eps,
+        max_states = DP_MAX_STATES,
+        slack_tracks = DP_SLACK_TRACKS,
+        slack_require_anchor_recruitable = DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE,
+        slack_require_anchor_eps = DP_SLACK_REQUIRE_ANCHOR_EPS,
         temperature = 1,
         posterior_top_k = DP_POSTERIOR_TOP_K,
         # posterior sampling controls (disabled by default)
@@ -451,6 +630,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
         # prune controls
+        # NOTE: You can always define very wide based on the parameter data you have.
         prune_hard = TRUE,
         prune_min_growth = MAX_SHRINK_FIXED * 2.5, # very wide fixed bounds
         prune_max_growth = MAX_GROWTH_FIXED * 1.5, # very wide fixed bounds
@@ -475,14 +655,24 @@ maybe_add_posterior_bins <- function(out) {
 }
 
 ############################################################
-### 5) Main pipeline
+### 7) Main pipeline — run_main and writing outputs
 ############################################################
 run_main_chunked <- function() {
     ensure_dir(out_dir)
+    tryCatch(
+        {
+            writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
+        },
+        error = function(e) {
+            message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
+        }
+    )
+    log_msg("Started run")
 
     # Create posteriors subdirectory (DP writes its files into <base>/posteriors)
     if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
         ensure_dir(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))
+        log_msg(paste("Ensured posterior samples path:", file.path(POSTERIOR_SAMPLES_PATH, "posteriors")))
     }
 
     # Write a small startup marker so parallel runs can be observed immediately
@@ -497,7 +687,7 @@ run_main_chunked <- function() {
     )
 
     # 5.1 Load data
-    xraw <- data.table::fread(input_file)
+    xraw <- data.table::fread(INPUT_FILE)
     xraw <- ensure_species_column(xraw)
     xrun <- data.table::copy(xraw)
 
@@ -550,7 +740,7 @@ run_main_chunked <- function() {
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,
             recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
-            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.9999))
+            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.99))
         )
     }
 
@@ -562,6 +752,9 @@ run_main_chunked <- function() {
     params$TIMESTAMP <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     params$OUT_DIR <- out_dir
     params$GENERATED_DIR_NAME <- basename(out_dir)
+
+    # Add called parameters (command-line overrides)
+    params$CALLED_PARAMETERS <- overrides
 
     # Add tag values and unique tags/species in data
     params$UNIQUE_TAGS <- if (exists("xrun")) unique(xrun$Tag) else NA
@@ -607,9 +800,10 @@ run_main_chunked <- function() {
     # 5.3 Attach Bio_* columns (DP reads parameters from columns)
     xrun <- attach_bio_columns(xrun, bio_pars)
     # 5.4 DP meta settings
-    dp_max_tracks_local <- if (is.null(dp_max_tracks)) auto_dp_max_tracks(xrun) else as.integer(dp_max_tracks)
-    dp_max_tracks_local <- as.integer(dp_max_tracks_local)
+    dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)
+    dp_max_tracks_local <- as.integer(dp_max_tracks_local) 
 
+## Create chunks based on unique (Tag, species) groups
     if (!requireNamespace("parallel", quietly = TRUE)) stop("Package not available: parallel.")
     groups <- unique(xrun[, .(Tag, species)])
     data.table::setorder(groups, Tag, species)
@@ -719,9 +913,11 @@ run_main_chunked <- function() {
     tryCatch(
         {
             writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt"))
+            log_msg("Finished run")
         },
         error = function(e) {
-            message("[dp_global main_cpp_chunk.R] Warning writing run_finished marker: ", conditionMessage(e))
+            # message("[dp_global main_cpp_chunk.R] Warning writing run_finished marker: ", conditionMessage(e))
+            log_msg(sprintf("Warning writing run_finished marker: %s", conditionMessage(e)), "WARN")
         }
     )
 
