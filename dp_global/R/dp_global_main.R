@@ -20,15 +20,16 @@ check_pkg <- function(p) {
 check_pkg("data.table")
 check_pkg("igraph")
 check_pkg("Rcpp")
-check_pkg("here")
 
 ## ---- 2) C++ acceleration (optional, non-fatal) --------------------------
 # Source helper R wrappers (keeps the uncompiled fallback short-circuitable)
 # Ensure the R wrapper is defined in the top-level environment so callers can
 # access the wrapper regardless of how this loader is invoked.
-sys.source(here::here("dp_global", "src", "transition_cost_rcpp.R"), envir = globalenv())
+# Use project root rather than here() to construct file paths (CRAN-friendly style)
+root_dir <- getwd()
+sys.source(file.path(root_dir, "dp_global", "src", "transition_cost_rcpp.R"), envir = globalenv())
 tryCatch({
-  Rcpp::sourceCpp(here::here("dp_global", "src", "transition_cost_rcpp.cpp"))
+  Rcpp::sourceCpp(file.path(root_dir, "dp_global", "src", "transition_cost_rcpp.cpp"))
   message("[dp_global_main.R] C++ acceleration enabled.")
 }, error = function(e) {
   warning(sprintf("C++ compilation (transition_cost_rcpp.cpp) failed or is unavailable: %s. Continuing without compiled acceleration.", e$message))
@@ -61,7 +62,7 @@ attach_pkgs <- c("data.table", "MASS")
 
 ## ---- 4) Source modules with checks -------------------------------------
 for (f in r_files) {
-  fp <- here::here("dp_global", "R", f)
+  fp <- file.path(root_dir, "dp_global", "R", f)
   if (!file.exists(fp)) {
     stop(sprintf("Required file not found: %s", fp), call. = FALSE)
   }
