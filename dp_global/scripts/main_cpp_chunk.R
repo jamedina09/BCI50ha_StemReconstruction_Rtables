@@ -578,7 +578,7 @@ run_main_chunked <- function() {
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,
             recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
-            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) - 0.9999))
+            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.9999))
         )
     }
 

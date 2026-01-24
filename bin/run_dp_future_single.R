@@ -116,10 +116,10 @@ opt <- list(
   cfg_overrides = list(),
   dry_run = FALSE,
   no_blas_limit = FALSE,
-  posterior_samples = 0L,            # maps -> POSTERIOR_SAMPLES
-  posterior_format = NULL,           # maps -> POSTERIOR_SAMPLES_FORMAT
-  posterior_seed = NULL,             # maps -> POSTERIOR_SAMPLE_SEED
-  posterior_path = NULL              # maps -> POSTERIOR_SAMPLES_PATH
+  posterior_samples = 0L, # maps -> POSTERIOR_SAMPLES
+  posterior_format = NULL, # maps -> POSTERIOR_SAMPLES_FORMAT
+  posterior_seed = NULL, # maps -> POSTERIOR_SAMPLE_SEED
+  posterior_path = NULL # maps -> POSTERIOR_SAMPLES_PATH
 )
 
 extras <- c()
@@ -280,6 +280,10 @@ get_config_args <- function(cfg) {
   )
 }
 
+# Preflight check: ensure the dp_main driver exists and is reachable from the project root
+if (!file.exists(here("dp_global", "scripts", "main_cpp.R"))) {
+  stop("dp_global/scripts/main_cpp.R not found. Run this script from the project root or set PROJECT_ROOT accordingly.")
+}
 
 # Setup future plan
 plan(multisession, workers = opt$workers)
@@ -490,12 +494,15 @@ futures_list <- lapply(seq_along(commands), function(i) {
                 if (length(matched) > 0) {
                   m_info <- file.info(matched)$mtime
                   chosen <- matched[which.max(m_info)]
+                  main_out_dir <- chosen
                   run_log_path <- file.path(chosen, "run_log.txt")
                   if (file.exists(run_log_path)) {
                     cat(sprintf("FUTURE: including %s into %s\n", run_log_path, log_file), file = log_file, append = TRUE)
                     run_log_lines <- readLines(run_log_path, warn = FALSE)
                     if (length(run_log_lines) > 0) cat(paste0("\n--- run_log.txt (from main run) ---\n", paste(run_log_lines, collapse = "\n"), "\n--- end run_log.txt ---\n"), file = log_file, append = TRUE)
                   }
+                } else {
+                  main_out_dir <- NA_character_
                 }
               }
 
@@ -524,7 +531,7 @@ futures_list <- lapply(seq_along(commands), function(i) {
       cat(sprintf("[%s] DONE at %s (status=%d) log=%s\n", cfg, format(end, tz = "UTC"), exit_status, log_file))
       flush.console()
 
-      list(config = cfg, start = start, end = end, status = exit_status, log = log_file, cmd = cmd_str)
+      list(config = cfg, start = start, end = end, status = exit_status, log = log_file, cmd = cmd_str, main_out_dir = if (exists('main_out_dir')) main_out_dir else NA_character_)
     },
     seed = TRUE
   )
@@ -587,7 +594,6 @@ while (!all(completed)) {
   }
   if (!all(completed)) Sys.sleep(1)
 }
-
 
 # Write joblog CSV
 joblog_rows <- do.call(rbind, lapply(results, function(r) {
