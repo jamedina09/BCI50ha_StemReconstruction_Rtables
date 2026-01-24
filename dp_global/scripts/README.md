@@ -1,6 +1,10 @@
 # dp_global/scripts
 
-This document describes the `main_cpp.R` driver script (located at `dp_global/scripts/main_cpp.R`), what it does, how to run it, and the meaning and defaults of every major parameter and CLI flag. It also documents the chunking/resume behavior implemented to avoid out-of-memory issues when running reconstruction on large datasets.
+This document describes the current behavior of the `dp_global` driver scripts:
+- `dp_global/scripts/main_cpp.R` — the interactive/CLI driver for single-tag or targeted runs, and
+- `dp_global/scripts/main_cpp_chunk.R` — the chunked driver optimized for large runs.
+
+Both scripts accept command-line overrides of defaults using `--KEY=VALUE` flags. Keys are case-insensitive and may use `-` or `_` as separators.
 
 ---
 
@@ -26,56 +30,63 @@ You can run the script directly via Rscript or by using the provided orchestrato
 
 ## Important behavior notes ⚠️
 
-- By default the script runs in a single-tag mode (`RUN_ALL_TAGS = FALSE`). To run all tags, set `--RUN_ALL_TAGS=TRUE`.
-- Running `RUN_ALL_TAGS=TRUE` on very large datasets can cause out-of-memory (OOM) errors. To mitigate this, the script supports a **chunking** mode that processes groups (Tag + species) in chunks of `DP_CHUNK_SIZE` and writes chunk outputs to disk incrementally.
-- When chunking, the script will NOT assemble a full in-memory `out` table (to avoid OOM). Instead it:
-  - Appends each chunk's rows to the main CSV (`stem_reconstruction_dp_global_rcpp.csv`) so a single CSV on disk is produced incrementally, and
-  - Writes a per-chunk RDS file `stem_reconstruction_dp_global_rcpp_chunk_###.rds` for reproducibility and resume markers.
-- Posterior bin computation (`add_dp_posterior_bins`) is applied per-chunk in the chunking loop and for the non-chunking path it is applied after the full `out` is assembled. This avoids double-processing.
+- `main_cpp.R` defaults to single-tag mode (`RUN_ALL_TAGS = FALSE`). Use `--RUN_ALL_TAGS=TRUE` to run across all tags.
+- For large datasets, prefer `main_cpp_chunk.R` which divides groups (Tag + species) into chunks (`DP_CHUNK_SIZE`) and writes chunk outputs incrementally to disk to keep peak RAM low.
+- When chunking, the combined `out` is not assembled in memory. Instead:
+  - Each chunk is appended to `stem_reconstruction_dp_global_rcpp.csv` (if `WRITE_DP_CSV=TRUE`),
+  - Each chunk is saved as `stem_reconstruction_dp_global_rcpp_chunk_###.rds` (if `WRITE_DP_RDS=TRUE`) and serves as a resume/completion marker.
+- `maybe_add_posterior_bins()` is applied per-chunk when chunking; in non-chunked runs it is applied after assembling the full `out`.
+- The chunked driver disables or comments out features that are not applicable to chunked runs (for example: full-run sensitivity sweeps and realism report generation).
 
 ---
 
-## Key CLI flags & variables (with defaults) 🔧
+## Key CLI flags & defaults 🔧
 
-Below are the canonical keys exposed via the CLI and their defaults in the script. Keys are case-insensitive and accept `-`/`_` separators.
+Common flags used by both drivers (case-insensitive, but use capital letters to keep it clean):
 
-- `INPUT_FILE` (default: `data_simulation/data/simulated_data_1.csv`) — path to input CSV containing tree observations.
-- `FORCE_ONE_SPECIES_PARAMETERS` (default: `TRUE`) — if `TRUE`, all trees are treated as one species using `FORCED_SPECIES_LABEL`.
-- `FORCED_SPECIES_LABEL` (default: `"all"`) — species label used when forcing one species.
-- `SPECIES_COL` (default: `NULL`) — explicit species column name to use in input; otherwise the script attempts to find a candidate.
+- `INPUT_FILE` — default: `data_simulation/data/simulated_data_1.csv`.
+- `FORCE_ONE_SPECIES_PARAMETERS` — default: `TRUE`.
+- `FORCED_SPECIES_LABEL` — default: `"all"` (used when forcing one species label).
+- `SPECIES_COL` — default: `NULL` (auto-detected if not set).
+- `USE_MEASUREMENT_ERROR` — default: `TRUE`.
 
-DP / reconstruction options:
-- `DP_MODE` (default: `"marginals+bins"`) — DP mode. Allowed: `none`, `marginals`, `marginals+bins`, `map`.
-- `which_tag` (default: `19`) — Tag to process when not running all tags.
-- `anchor_start_census` (default: `7`) — census used as anchor start.
-- `DP_VERBOSE` (default: `TRUE`) — verbose DP logging.
-- `DP_POSTERIOR_TOP_K` (default: `2`) — top-k posterior reconstructions to track.
-- `dp_max_tracks` (default: `NULL`) — optionally force max tracks; if `NULL` auto-computed.
-- `dp_max_states` (default: `40000`) — limit DP max states to control memory/CPU.
-- `dp_slack_tracks` (default: `1`) — slack tracks allowed for DP.
-- `dp_slack_require_anchor_recruitable` (default: `TRUE`) — require anchor to be recruitable before granting slack.
-- `dp_slack_require_anchor_eps` (default: `1e-6`) — numerical tolerance for anchor recruitability checks.
+DP / reconstruction option
+- `DP_MODE` — default: `"marginals+bins"`. Allowed: 'none' 'marginals' 'marginals+bins' 'map'
+- `WHICH_TAG` — default in `main_cpp.R`: `20L` (used for single-tag runs);
+  note: `main_cpp_chunk.R` processes groups and therefore does not rely on `WHICH_TAG` for chunked processing.
+- `ANCHOR_START_CENSUS` — default: `7L`.
+- `DP_VERBOSE` — default: `TRUE`.
+- `DP_POSTERIOR_TOP_K` — default: `2L` - top=k posterioir reconstructions to track. 
+- `DP_MAX_TRACKS` — default: `NULL` (auto-computed per data when `NULL`) = optionlly force max tracks; if NULL auto-computed.
+- `DP_MAX_STATES` — default: `40000L` - limit DP max stated to control memory/CPU.
+- `DP_SLACK_TRACKS` — default: `1L` - slack (additional) tracks allowed for DP.
+- `DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE` — default: `TRUE` - require anchor to be recruitable (if DBH less than max recruitment size) before granting slack.
+- `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
 
 Posterior sampling:
-- `POSTERIOR_SAMPLES` (default: `200`) — number of full-path reconstructions to draw; `0` disables.
-- `POSTERIOR_SAMPLES_FORMAT` (default: `"csv"`) — `rds`,`feather`, or `csv`.
-- `POSTERIOR_SAMPLES_PATH` (default: `NULL`) — path for posterior sample files; default to `<out_dir>/posteriors` when sampling.
-- `POSTERIOR_SAMPLE_SEED` (default: `NULL`) — seed for reproducible posterior sampling.
+- `POSTERIOR_SAMPLES` — default: `200L` (set to `0` to disable sampling).
+- `POSTERIOR_SAMPLES_FORMAT` — default: `"csv"` (options: `rds`, `feather`, `csv`).
+- `POSTERIOR_SAMPLES_PATH` — default: `NULL` (defaults to the run `out_dir` when sampling).
+- `POSTERIOR_SAMPLE_SEED` — default: `NULL` (optional).
 
 Output controls:
-- `WRITE_DP_CSV` (default: `TRUE`) — write incremental/combined CSV output.
-- `WRITE_DP_RDS` (default: `TRUE`) — write per-chunk RDS (or combined RDS for non-chunk runs).
-- `WRITE_DP_FEATHER` (default: `FALSE`) — write per-chunk Feather files (`.feather`) for faster IO. Requires the **arrow** R package.
-- `WRITE_DP_PDF` (default: `TRUE`) — write PDF visualizations (`plot_tag_to_pdf`).
-- `DP_PDF_INCLUDE_REFERENCE` (default: `TRUE`) — include reference lines in PDF output.
+- `WRITE_DP_CSV` — default: `TRUE` - write incremental/combined CSV output - memory heavy.
+- `WRITE_DP_RDS` — default: `TRUE` - write per-chunk RDS or combined for non-chunk runs.
+- `WRITE_DP_FEATHER` — default: `FALSE` (requires the `arrow` package) - write per-chunk feather (.feather) files or combined for non-chunk runs.
+- `WRITE_DP_PDF` — default: `TRUE` - write pdf visualizations per tag - memory heavy.
+- `DP_PDF_INCLUDE_REFERENCE` — `main_cpp.R` default: `TRUE`; `main_cpp_chunk.R` default: `FALSE` - use when using simulated data to check wether this works or nor.
+- `WRITE_DP_PDF_PER_CHUNK` — default in `main_cpp_chunk.R`: `TRUE` (controls per-chunk PDFs).
 
-Parallel & chunking controls:
-- `RUN_ALL_TAGS` (default: `FALSE`) — run all tags instead of a single `which_tag`.
-- `MANUAL_CORES` (default: `TRUE`) — set to `TRUE` to use `MANUAL_CORES_VALUE`.
-- `MANUAL_CORES_VALUE` (default: `1`) — number of cores to use when `MANUAL_CORES=TRUE`.
-Note: There is a dedicated chunked driver script `dp_global/scripts/main_cpp_chunk.R` that implements chunked processing. It is a standalone script intended to be run manually (no CLI argument parsing); edit parameters at the top of `main_cpp_chunk.R` to change behavior, then run it via:
+Parallel & chunking controls (chunked runner specific):
+- `DP_CHUNK_SIZE` — default in `main_cpp_chunk.R`: `7L` (set `<= 0` to disable chunking behavior when applicable).
+- `DP_CHUNK_RESUME` — default: `TRUE` (skip chunks with existing RDS files) - allows to stop runs and continue later.
+- `DP_CHUNK_OVERWRITE` — default: `FALSE` (when `TRUE`, overwrite existing chunk RDS files).
+- `DP_CHUNK_START`, `DP_CHUNK_END` — default: `NULL` (limit chunk range for tests).
+- `RUN_ALL_TAGS` — default: `FALSE` (when `TRUE` run across all tags; chunking is recommended for large runs).
+- `MANUAL_CORES` & `MANUAL_CORES_VALUE` — default: `TRUE` and `1L` respectively.
 
-- `Rscript dp_global/scripts/main_cpp_chunk.R`
+Notes on CLI differences:
+- `main_cpp_chunk.R` exposes a reduced `CLI_REFERENCE` relative to `main_cpp.R` (it omits `WHICH_TAG` and leaves sensitivity/realism flags commented out) to reflect the chunked runner's intent; however it still accepts CLI overrides for many run-level parameters when invoked via Rscript.
 
 Helpful post-run utilities:
 - Merge chunk RDS/Feather files into a single CSV (run this in R or source the script and call the helper):
@@ -88,7 +99,7 @@ merge_chunks_to_csv("dp_global/output/<your_run_dir>")
 
 This streams each chunk file to a single CSV to avoid loading the full dataset into memory.
 
-For backwards compatibility, the original `main_cpp.R` runs the non-chunked workflow (single-tag or parallelized tags) and does not perform per-chunk writing.
+`main_cpp.R` runs the non-chunked workflow (single-tag or parallelized tags) and does not perform per-chunk writing.
 
 Misc:
 - `USE_MEASUREMENT_ERROR` (default: `TRUE`) — enable measurement-error-aware parameter estimation.
@@ -106,14 +117,16 @@ Files produced as run markers/logs:
 PDF & plotting controls:
 - `WRITE_DP_PDF` (default: `TRUE`) — control whether PDFs are generated via `plot_tag_to_pdf()`.
 - `DP_PDF_INCLUDE_REFERENCE` (default: `TRUE`) — include biologically-informed reference lines in PDFs.
-- `PLOT_PDF_ONE_TAG_ONLY` (default: `TRUE` when `RUN_ALL_TAGS=FALSE`) — when `TRUE` produce PDFs only for `which_tag` (useful for single-tag runs).
+- `PLOT_PDF_ONE_TAG_ONLY` (main: `TRUE` when `RUN_ALL_TAGS=FALSE`; not used by `main_cpp_chunk.R`) — when `TRUE` produce PDFs only for `which_tag` (useful for single-tag runs).
 
-Sensitivity & realism flags:
+Sensitivity & realism flags (available in `main_cpp.R`):
 - `SENSITIVITY_MODE` (default: `"none"`) — Options: `"none"`, `"run"`, `"run+write"`, `"run+write+pdf"`. Controls whether sensitivity sweeps are executed and if results are written.
 - `WRITE_OUTPUTS` (derived from `SENSITIVITY_MODE`) — internal flag to control writing sensitivity outputs when requested.
 - `MAKE_ALL_SWEEPS_PDF` (derived) — whether to render all sweeps to PDF when `SENSITIVITY_MODE="run+write+pdf"`.
 - `RUN_REALISM_REPORT` (default: `FALSE`) — when `TRUE` the script will generate a realism report for a representative species.
 - `RUN_K_SWEEP_DEMO` (default: `FALSE`) — optional demo mode for k-sweep visualizations.
+
+Note: the chunked runner (`main_cpp_chunk.R`) disables or comments out these options because per-chunk processing does not assemble a full `out` object for full-run sensitivity/realism processing.
 
 Biological realism settings (defaults in script):
 - `MAX_GROWTH_HARD_SOURCE = "data"`, `MAX_GROWTH_FIXED = 7.5`
@@ -125,8 +138,6 @@ Biological realism settings (defaults in script):
 Notes about chunking & downstream outputs:
 - When chunking is active (`DP_CHUNK_SIZE > 0`), the script processes and writes chunk outputs incrementally and intentionally sets the in-memory `out` object to `NULL` to avoid excessive memory use.
 - Because `out` is not assembled in memory for chunked runs, downstream steps that expect a combined `out` (e.g., writing a single combined RDS `stem_reconstruction_dp_global_rcpp.rds`, generating per-run PDFs from a combined `out`, or creating the realism report from `out`) will be skipped. Instead, you can work with the incremental CSV or per-chunk RDS files produced by the run.
-
-
 
 ---
 
@@ -165,21 +176,19 @@ Runner integration
 
 ## Example invocations
 
-- Run one tag (interactive):
+- Run a single tag interactively:
 
-```
-Rscript dp_global/scripts/main_cpp.R --INPUT_FILE=data_simulation/data/simulated_data_1.csv --WHICH_TAG=19
+```bash
+Rscript dp_global/scripts/main_cpp.R --INPUT_FILE=data_simulation/data/simulated_data_1.csv --WHICH_TAG=20
 ```
 
 - Run all tags with chunking (use the chunked driver):
 
-Note: `dp_global/scripts/main_cpp_chunk.R` is a **standalone, manual** chunk driver that intentionally does not parse the main CLI. Edit the configuration block at the top of `main_cpp_chunk.R` (e.g., `DP_CHUNK_SIZE`, `DP_CHUNK_START`, `DP_CHUNK_END`, `WRITE_DP_PDF_PER_CHUNK`, `POSTERIOR_SAMPLES`, `MANUAL_CORES_VALUE`) and then run it directly via:
+Note: `dp_global/scripts/main_cpp_chunk.R` is the chunked driver intended for large runs. You can edit configuration variables at the top of the file or pass overrides via CLI flags (e.g., `--DP_CHUNK_SIZE=7`) when invoking it with `Rscript`. Run it directly via:
 
 ```
 Rscript dp_global/scripts/main_cpp_chunk.R
 ```
-
-
 
 - Run all tags without chunking (not recommended for very large datasets):
 
