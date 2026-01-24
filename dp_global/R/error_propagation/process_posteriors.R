@@ -1,7 +1,11 @@
-# Minimal helpers used by `attach_paths_to_output_run.R`
-# This file intentionally contains only the small set of helpers needed to run
-# example attachment workflows: `parse_recon()`, `load_posterior_paths()` and
-# `attach_paths_to_output()`.
+# process_posteriors.R
+# ---------------------
+# Canonical parsing & posterior-processing helpers moved here (rename from
+# `reconstruct_and_propagate.R`). This file contains:
+# - `parse_recon()`
+# - `load_posterior_paths()`
+# - `attach_paths_to_output()`
+# - `expand_draws()` / `aggregate_draws()` helpers for drawing and aggregating per-observation samples
 
 stopifnot(requireNamespace("data.table", quietly = TRUE))
 
@@ -172,37 +176,56 @@ attach_paths_to_output <- function(paths, out, which = c("map", "top_n", "indice
     out_dt
 }
 
-# Draw Monte Carlo reconstructions from the posterior paths (useful to propagate uncertainty by simulation)
-#
-# paths_dt: data.table from `load_posterior_paths()`
-# n: number of draws (e.g., 1000)
-# Returns: data.table with columns Draw (1..n), path_sig, path_prob
-# Example:
-# draws <- sample_posterior_paths(paths_dt, n = 1000)
+# Expand draws from per-path summaries: sample N draws using the summary table
+# and convert compact 'recon' strings into long (Draw, ObsRowID, ReconstructedStemID)
+expand_draws <- function(summary_dt, paths_dt, N = 1000L) {
+    if (!all(c("Sample", "path_sig", "sample_prob") %in% names(summary_dt))) stop("summary_dt must contain Sample, path_sig, sample_prob")
+    picks <- sample(summary_dt$Sample, size = as.integer(N), replace = TRUE, prob = summary_dt$sample_prob)
+    draws <- summary_dt[J(picks), .(Draw = seq_len(N), Sample = picks, path_sig = path_sig), on = "Sample"]
+    draws_paths <- merge(draws, paths_dt[, .(path_sig, recon)], by = "path_sig", all.x = TRUE)
 
-sample_posterior_paths <- function(paths_dt, n = 1000) {
-    stopifnot(requireNamespace("data.table", quietly = TRUE))
-    if (!("path_prob" %in% names(paths_dt))) stop("paths_dt must contain path_prob")
-    probs <- paths_dt$path_prob
-    picks <- sample.int(nrow(paths_dt), size = n, replace = TRUE, prob = probs)
-    res <- data.table::data.table(Draw = seq_len(n), path_sig = paths_dt$path_sig[picks], path_prob = paths_dt$path_prob[picks])
-    res
+    # Use the global `parse_recon()` (defined above) to parse recon strings
+    res_list <- lapply(seq_len(nrow(draws_paths)), function(i) {
+        dt <- parse_recon(draws_paths$recon[i])
+        dt[, Draw := draws_paths$Draw[i]]
+        dt
+    })
+    rbindlist(res_list, use.names = TRUE, fill = TRUE)
 }
 
-# Sample posterior paths and compute growth per draw (Monte Carlo propagation)
-#
-# paths_dt: data.table returned by `load_posterior_paths()`
-# obs_dt: observed data table
-# n: number of Monte Carlo draws
-# Returns: data.table with columns Draw, path_sig, path_prob, mean_growth, total_growth
-sample_apply_growth <- function(paths_dt, obs_dt, n = 1000) {
-    stopifnot(requireNamespace("data.table", quietly = TRUE))
-    # compute per-path growth metrics (this returns per-path table and expected values)
-    res <- apply_paths_compute_growth(paths_dt, obs_dt)
-    per_path_dt <- res$paths_summary
-    # sample draws according to path_prob
-    draws <- sample_posterior_paths(paths_dt, n = n)
-    draws <- merge(draws, per_path_dt[, .(path_sig, mean_growth, total_growth)], by = "path_sig", all.x = TRUE)
-    # Some sampled paths may have NA growth (unmatched); keep as NA to reflect uncertainty
-    draws
+# Aggregate expanded draws into per-observation probabilities
+aggregate_draws <- function(res_dt) {
+    agg <- res_dt[, .(count = .N), by = .(ObsRowID, ReconstructedStemID)]
+    agg[, prob := count / sum(count), by = ObsRowID]
+    agg[order(ObsRowID, -prob)]
+}
+
+# Diagnostic: does the MAP joint path occur among sampled unique paths?
+check_map_in_paths <- function(paths_dt, out_dt) {
+    dp_rows <- out_dt[ReconstructionMethod == "dp"]
+    if (nrow(dp_rows) == 0) return(list(found = FALSE, reason = "no dp rows"))
+
+    sig <- paste0(dp_rows[order(obs_row_id), ReconstructedStemID], collapse = "-")
+    which_match <- which(paths_dt$path_sig == sig)
+    if (length(which_match) > 0) return(list(found = TRUE, idx = which_match[1], path_sig = sig))
+
+    # compute best partial match for diagnostics
+    main_map <- dp_rows[, .(ObsRowID = obs_row_id, ReconstructedStemID = ReconstructedStemID)]
+    best <- NULL
+    for (i in seq_len(nrow(paths_dt))) {
+        recon_dt <- paths_dt$recon_parsed[[i]]
+        common <- intersect(main_map$ObsRowID, recon_dt$ObsRowID)
+        if (length(common) == 0) {
+            frac <- 0
+        } else {
+            mm <- setNames(main_map$ReconstructedStemID, main_map$ObsRowID)
+            rm <- setNames(recon_dt$ReconstructedStemID, recon_dt$ObsRowID)
+            matches <- sum(vapply(common, function(k) mm[as.character(k)] == rm[as.character(k)], logical(1)))
+            frac <- matches / length(common)
+        }
+        if (is.null(best) || frac > best$frac || (frac == best$frac && paths_dt$path_prob[i] > best$prob)) {
+            best <- list(idx = i, frac = frac, prob = paths_dt$path_prob[i], path_sig = paths_dt$path_sig[i])
+        }
+    }
+    list(found = FALSE, best = best)
 }
