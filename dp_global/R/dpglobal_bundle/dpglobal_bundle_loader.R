@@ -73,6 +73,45 @@ if (file.exists(rcpp_wrapper)) {
 save(list = ls(envir = dpglobal_env), file = here::here("dp_global", "R", "dpglobal_bundle", "dpglobal_bundle.RData"), envir = dpglobal_env)
 message(sprintf("[dpglobal_bundle_loader] Saved %d objects to dpglobal_bundle.RData", length(ls(envir = dpglobal_env))))
 
+# 5) Record a small manifest with package requirements and C++ status
+bundle_manifest <- list(
+    r_files = if (exists("r_files", envir = dpglobal_env)) get("r_files", envir = dpglobal_env) else NULL,
+    required_pkgs_by_file = if (exists("required_pkgs_by_file", envir = dpglobal_env)) get("required_pkgs_by_file", envir = dpglobal_env) else NULL,
+    attach_pkgs = if (exists("attach_pkgs", envir = dpglobal_env)) get("attach_pkgs", envir = dpglobal_env) else NULL,
+    compiled_acceleration_available = (
+        exists("transition_cost_tracks_bio_batch_rcpp_cpp", envir = dpglobal_env, mode = "function") ||
+        exists("transition_cost_tracks_bio_batch_rcpp_cpp", envir = globalenv(), mode = "function")
+    )
+)
+tryCatch(
+    {
+        saveRDS(bundle_manifest, file = here::here("dp_global", "R", "dpglobal_bundle", "dpglobal_bundle_manifest.rds"))
+        message("[dpglobal_bundle_loader] Wrote dpglobal_bundle_manifest.rds")
+    },
+    error = function(e) {
+        warning(sprintf("[dpglobal_bundle_loader] Failed to write manifest: %s", e$message))
+    }
+)
+
+# Print quick summary to help users of the bundle
+pkgs_needed <- NULL
+if (!is.null(bundle_manifest$required_pkgs_by_file)) {
+    pkgs_needed <- unique(unlist(bundle_manifest$required_pkgs_by_file))
+    pkgs_needed <- pkgs_needed[!is.na(pkgs_needed) & pkgs_needed != ""]
+}
+if (!is.null(pkgs_needed) && length(pkgs_needed) > 0) {
+    message(sprintf("[dpglobal_bundle_loader] Required packages (per manifest): %s", paste(pkgs_needed, collapse = ", ")))
+} else {
+    message("[dpglobal_bundle_loader] No per-file package requirements detected in the manifest.")
+}
+if (bundle_manifest$compiled_acceleration_available) {
+    message("[dpglobal_bundle_loader] NOTE: C++ acceleration was available in this session. On target systems, run 'install_transition_cost_rcpp.R' to compile the C++ sources before using Rcpp-backed functions.")
+} else {
+    message("[dpglobal_bundle_loader] NOTE: C++ acceleration was NOT available in this session. If you want faster execution on target systems, run 'install_transition_cost_rcpp.R' after installing 'Rcpp' and a build toolchain.")
+}
+
 # Usage:
-# 1. Run this script to create dpglobal_bundle.RData
-# 2. On another system, load("dpglobal_bundle.RData") to access all functions/objects
+# 1. Run this script to create dpglobal_bundle.RData and dpglobal_bundle_manifest.rds
+# 2. On another system, load("dpglobal_bundle.RData") to access functions/objects
+# 3. If compiled acceleration is required, run the helper script `install_transition_cost_rcpp.R` in this directory to compile the C++ sources
+
