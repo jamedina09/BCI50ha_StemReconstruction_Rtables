@@ -484,7 +484,6 @@ run_main_chunked <- function() {
     if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
         ensure_dir(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))
     }
-    #xf
 
     # Write a small startup marker so parallel runs can be observed immediately
     # (helps verify jobs start concurrently before heavy computation)
