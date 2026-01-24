@@ -526,7 +526,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Backward recursion p = anchor_pos-1 .. 1 (maps to CensusID via census_range)
     vcat(prefix, "Backward pass (log-sum-exp + Viterbi) starting ...")
     for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
-        # p: position in census_range (for testing only)
+        # p <- 5L #position in census_range (for testing only)
         cc <- census_range[p]
         next_cc <- census_range[p + 1L]
         mat_cc <- state_mats[[p]]
@@ -602,6 +602,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         pair_interval <- resolve_interval_years_pair(tree_data)
         # Interval (years) between cc and next_cc (computed once for this census pair)
         interval_val <- (as.numeric(pair_interval[[as.character(next_cc)]]) - as.numeric(pair_interval[[as.character(cc)]])) / 365.25
+        vcat(prefix, "  Interval years between CensusID ", cc, " and ", next_cc, ": ", interval_val, sep = "")
         if (!is.finite(interval_val) || interval_val <= 0) {
             # fallback safe default; if invalid, growth-based pruning will be skipped
             interval_val <- NA_real_
