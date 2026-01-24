@@ -119,6 +119,7 @@ SPECIES_COL <- NULL
 ### 3.1 Parameter estimation settings
 ############################################################
 # All settings related to parameter estimation and biological realism
+# NOTE: Ypu can define them with parameter data from your specie(s) of interest
 USE_MEASUREMENT_ERROR <- TRUE
 MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_GROWTH_FIXED <- 7.5
@@ -135,7 +136,7 @@ RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) - 0.9999
 ### 3.2 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-WHICH_TAG <- 1L
+WHICH_TAG <- 20L
 ANCHOR_START_CENSUS <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
@@ -611,6 +612,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
         # prune controls
+        # NOTE: You can always define very wide based on the parameter data you have.
         prune_hard = TRUE,
         prune_min_growth = MAX_SHRINK_FIXED * 2.5, # very wide fixed bounds
         prune_max_growth = MAX_GROWTH_FIXED * 1.5, # very wide fixed bounds
