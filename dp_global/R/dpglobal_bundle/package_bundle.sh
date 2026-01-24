@@ -61,15 +61,13 @@ if [ -f "${SCRIPT_DIR}/verify_bundle.R" ]; then cp -v "${SCRIPT_DIR}/verify_bund
 
 # Copy R wrapper and C++ source from the primary dp_global/src location (keep bundle lean)
 if [ -f "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" ]; then
-  # copy wrapper both to archive root (convenience) and to the bundle subfolder used by README
-  cp -v "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" "${STAGE_DIR}/"
-  cp -v "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" "${STAGE_DIR}/dp_global/R/dpglobal_bundle/transition_cost_rcpp.R" || true
+  # copy wrapper only to the bundle subfolder used by README (avoid duplicating at archive root)
+  mkdir -p "${STAGE_DIR}/dp_global/R/dpglobal_bundle"
+  cp -v "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" "${STAGE_DIR}/dp_global/R/dpglobal_bundle/transition_cost_rcpp.R"
 else
   echo "[package_bundle] NOTE: transition_cost_rcpp.R not found in dp_global/src; skipping"
 fi
 mkdir -p "${STAGE_DIR}/dp_global/R/dpglobal_bundle/src"
-# ensure the bundle subdir exists before copying wrapper
-mkdir -p "${STAGE_DIR}/dp_global/R/dpglobal_bundle"
 if [ -f "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.cpp" ]; then
   cp -v "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.cpp" "${STAGE_DIR}/dp_global/R/dpglobal_bundle/src/"
 else
