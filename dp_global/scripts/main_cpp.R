@@ -692,11 +692,14 @@ maybe_add_posterior_bins <- function(out) {
 ############################################################
 run_main <- function() {
     ensure_dir(out_dir)
-    tryCatch({
-        writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
-    }, error = function(e) {
-        message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
-    })
+    tryCatch(
+        {
+            writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
+        },
+        error = function(e) {
+            message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
+        }
+    )
     log_msg("Started run")
 
     # Create posteriors directory if requested (POSTERIOR_SAMPLES > 0)
@@ -770,7 +773,7 @@ run_main <- function() {
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,
             recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
-            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = 5))
+            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.99))
         )
     }
 
@@ -867,33 +870,42 @@ run_main <- function() {
 
     # 5.6 Optional: write DP outputs
     if (isTRUE(WRITE_DP_CSV) && !is.null(out)) {
-        tryCatch({
-            data.table::fwrite(out, file = DP_CSV_FILE)
-            log_msg(sprintf("Wrote CSV: %s (nrow=%d)", DP_CSV_FILE, nrow(out)))
-        }, error = function(e) {
-            log_msg(sprintf("Failed to write CSV %s: %s", DP_CSV_FILE, conditionMessage(e)), "ERROR")
-        })
+        tryCatch(
+            {
+                data.table::fwrite(out, file = DP_CSV_FILE)
+                log_msg(sprintf("Wrote CSV: %s (nrow=%d)", DP_CSV_FILE, nrow(out)))
+            },
+            error = function(e) {
+                log_msg(sprintf("Failed to write CSV %s: %s", DP_CSV_FILE, conditionMessage(e)), "ERROR")
+            }
+        )
     }
     if (isTRUE(WRITE_DP_RDS) && !is.null(out)) {
-        tryCatch({
-            saveRDS(out, file = DP_RDS_FILE)
-            log_msg(sprintf("Wrote RDS: %s", DP_RDS_FILE))
-        }, error = function(e) {
-            log_msg(sprintf("Failed to write RDS %s: %s", DP_RDS_FILE, conditionMessage(e)), "ERROR")
-        })
+        tryCatch(
+            {
+                saveRDS(out, file = DP_RDS_FILE)
+                log_msg(sprintf("Wrote RDS: %s", DP_RDS_FILE))
+            },
+            error = function(e) {
+                log_msg(sprintf("Failed to write RDS %s: %s", DP_RDS_FILE, conditionMessage(e)), "ERROR")
+            }
+        )
     }
     if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
-        tryCatch({
-            plot_tag_to_pdf(
-                out,
-                pdf_file = DP_PDF_FILE,
-                include_reference = DP_PDF_INCLUDE_REFERENCE,
-                tag = if (isTRUE(PLOT_PDF_ONE_TAG_ONLY)) which_tag else NULL
-            )
-            log_msg(sprintf("Wrote PDF: %s", DP_PDF_FILE))
-        }, error = function(e) {
-            log_msg(sprintf("Failed to write PDF %s: %s", DP_PDF_FILE, conditionMessage(e)), "ERROR")
-        })
+        tryCatch(
+            {
+                plot_tag_to_pdf(
+                    out,
+                    pdf_file = DP_PDF_FILE,
+                    include_reference = DP_PDF_INCLUDE_REFERENCE,
+                    tag = if (isTRUE(PLOT_PDF_ONE_TAG_ONLY)) which_tag else NULL
+                )
+                log_msg(sprintf("Wrote PDF: %s", DP_PDF_FILE))
+            },
+            error = function(e) {
+                log_msg(sprintf("Failed to write PDF %s: %s", DP_PDF_FILE, conditionMessage(e)), "ERROR")
+            }
+        )
     }
 
     # 5.7 Optional: realism report
