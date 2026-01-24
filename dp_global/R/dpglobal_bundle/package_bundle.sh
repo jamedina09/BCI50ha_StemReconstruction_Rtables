@@ -102,7 +102,8 @@ fi
 mkdir -p "${STAGE_DIR}/bin"
 cp -v "${PROJECT_ROOT}/bin/run_dp_future_single.R" "${STAGE_DIR}/bin/" || true
 cp -v "${PROJECT_ROOT}/bin/run_dp_future.R" "${STAGE_DIR}/bin/" || true
-cp -v "${PROJECT_ROOT}/Makefile" "${STAGE_DIR}/" || true
+# Skipping copying Makefile by default (not needed now)
+# cp -v "${PROJECT_ROOT}/Makefile" "${STAGE_DIR}/" || true
 
 # Sanity checks: ensure main driver exists in staged copy
 if [ ! -f "${STAGE_DIR}/dp_global/scripts/main_cpp.R" ]; then
@@ -125,7 +126,7 @@ Files included (relative to the archive root):
 - dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp
 - bin/                      (run helpers such as run_dp_future_single.R and run_dp_future.R)
 - data_simulation/data/      (example input files)
-- Makefile
+- Makefile                  [NOT INCLUDED BY DEFAULT]
 
 Quick install & run (from the extracted directory):
 
