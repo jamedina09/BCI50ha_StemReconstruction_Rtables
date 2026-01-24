@@ -124,6 +124,12 @@ DP_POSTERIOR_TOP_K <- 2L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
 dp_slack_tracks <- 1L
+# Chunking to limit peak memory when running all tags: set to e.g. 80 (reduce to 40 or 30 if still crashes)
+DP_CHUNK_SIZE <- 80L
+# Resume behavior: if TRUE, skip chunks that have already been completed (detected by per-chunk RDS file)
+DP_CHUNK_RESUME <- TRUE
+# Overwrite behavior: if TRUE, recompute and overwrite existing chunk outputs (RDS)
+DP_CHUNK_OVERWRITE <- FALSE
 # NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
 # (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.
 dp_slack_require_anchor_recruitable <- TRUE
@@ -313,6 +319,9 @@ CLI_REFERENCE <- list(
     PROJECT_ROOT = "PROJECT_ROOT",
     BATCH_TS = "BATCH_TS",
     CONFIG_NAME = "CONFIG_NAME",
+    DP_CHUNK_SIZE = "DP_CHUNK_SIZE",
+    DP_CHUNK_RESUME = "DP_CHUNK_RESUME",
+    DP_CHUNK_OVERWRITE = "DP_CHUNK_OVERWRITE",
     USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR"
 )
 
@@ -325,7 +334,7 @@ RUN_K_SWEEP_DEMO <- FALSE
 ############################################################
 ### 2.6 Realism report settings
 ############################################################
-RUN_REALISM_REPORT <- FALSE
+
 
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
@@ -662,7 +671,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         verbose = isTRUE(DP_VERBOSE)
     )
 }
-# [dp_global_batch]  Done. Total elapsed  117.22s 
+# [dp_global_batch]  Done. Total elapsed  117.22s
 
 maybe_add_posterior_bins <- function(out) {
     if (isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
@@ -828,20 +837,88 @@ run_main <- function() {
             if (!requireNamespace("parallel", quietly = TRUE)) {
                 stop("Package not available: parallel. (It normally ships with R.)")
             }
+            # Chunk groups to limit peak memory usage
             groups <- unique(xrun[, .(Tag, species)])
             data.table::setorder(groups, Tag, species)
 
-            res_list <- parallel::mclapply(seq_len(nrow(groups)), function(i) {
-                data.table::setDTthreads(1L)
-                g <- groups[i]
-                dtg <- xrun[Tag == g$Tag & species == g$species]
-                run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
-            }, mc.cores = MC_CORES)
+            # If DP_CHUNK_SIZE is not set or <= 0, fall back to original behavior (no chunking)
+            if (is.null(DP_CHUNK_SIZE) || !is.numeric(DP_CHUNK_SIZE) || as.integer(DP_CHUNK_SIZE) <= 0L) {
+                res_list <- parallel::mclapply(seq_len(nrow(groups)), function(i) {
+                    data.table::setDTthreads(1L)
+                    g <- groups[i]
+                    dtg <- xrun[Tag == g$Tag & species == g$species]
+                    run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
+                }, mc.cores = MC_CORES)
+                out <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
+                # Add DP posterior bins (non-chunked path)
+                out <- maybe_add_posterior_bins(out)
+            } else {
+                group_idx <- seq_len(nrow(groups))
+                chunks <- split(group_idx, ceiling(seq_along(group_idx) / as.integer(DP_CHUNK_SIZE)))
+                # Determine whether to write header (first write) based on whether file exists already
+                first_chunk <- !file.exists(DP_CSV_FILE)
+                message("[dp_global main_cpp.R] Processing ", length(chunks), " chunks (DP_CHUNK_SIZE=", as.integer(DP_CHUNK_SIZE), ")")
 
-            out <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
+                for (ci in seq_along(chunks)) {
+                    chunk_rds <- file.path(out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.rds", ci))
+
+                    # Resume/skip logic: if a chunk RDS exists and resume is enabled and overwrite is FALSE, skip
+                    if (isTRUE(DP_CHUNK_RESUME) && file.exists(chunk_rds) && !isTRUE(DP_CHUNK_OVERWRITE)) {
+                        message(sprintf("[dp_global main_cpp.R] Skipping chunk %d/%d — chunk RDS exists (resume enabled)", ci, length(chunks)))
+                        # Ensure first_chunk reflects whether CSV file exists already
+                        first_chunk <- !file.exists(DP_CSV_FILE)
+                        next
+                    }
+
+                    inds <- chunks[[ci]]
+                    groups_ci <- groups[inds]
+                    message(sprintf("[dp_global main_cpp.R] Chunk %d/%d — %d groups", ci, length(chunks), nrow(groups_ci)))
+
+                    res <- parallel::mclapply(seq_len(nrow(groups_ci)), function(j) {
+                        data.table::setDTthreads(1L)
+                        g <- groups_ci[j]
+                        dtg <- xrun[Tag == g$Tag & species == g$species]
+                        run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
+                    }, mc.cores = MC_CORES)
+
+                    out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
+
+                    if (nrow(out_chunk) > 0L) {
+                        out_chunk[, DP_Chunk := ci]
+                        out_chunk <- maybe_add_posterior_bins(out_chunk)
+                        out_chunk[, out_dir := basename(out_dir)]
+
+                        # Write CSV incrementally (append after first write)
+                        if (isTRUE(WRITE_DP_CSV)) {
+                            data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)
+                        }
+
+                        # Write per-chunk RDS for reproducibility (overwrites if DP_CHUNK_OVERWRITE=TRUE)
+                        if (isTRUE(WRITE_DP_RDS)) {
+                            saveRDS(out_chunk, file = chunk_rds)
+                        }
+                    } else {
+                        message(sprintf("[dp_global main_cpp.R] Chunk %d returned no rows.", ci))
+                        # Still write an empty RDS marker so resume recognizes it
+                        if (isTRUE(WRITE_DP_RDS)) {
+                            saveRDS(out_chunk, file = chunk_rds)
+                        }
+                    }
+
+                    first_chunk <- FALSE
+                    rm(res, out_chunk, groups_ci)
+                    invisible(gc())
+                }
+
+                # Do not assemble full 'out' in memory to avoid OOM; downstream steps that require full 'out' will be skipped.
+                out <- NULL
+            }
         }
     }
-    out <- maybe_add_posterior_bins(out)
+
+    # Posterior bins are already added per-chunk inside the chunk loop, and for
+    # non-chunked runs they were added above immediately after assembling `out`.
+    # (This avoids double-processing or unnecessary work when chunking.)
 
     # Add output directory name as a column for reference
     if (!is.null(out)) {
