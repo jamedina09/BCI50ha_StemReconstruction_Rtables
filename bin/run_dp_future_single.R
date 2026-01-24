@@ -464,6 +464,41 @@ futures_list <- lapply(seq_along(commands), function(i) {
             {
               logs <- readLines(temp_log, warn = FALSE)
               if (length(logs) > 0) cat(paste0(logs, collapse = "\n"), file = log_file, sep = "\n", append = TRUE, useBytes = TRUE)
+
+              # Parse main script timestamps if the log contains standardized messages
+              main_start <- NA
+              main_end <- NA
+              started_lines <- grep("Started run", logs, value = TRUE)
+              if (length(started_lines) > 0) {
+                ts_str <- sub("^\\[(.*?)\\].*$", "\\1", started_lines[[1]])
+                main_start <- tryCatch(as.POSIXct(ts_str, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"), error = function(e) NA)
+                if (!is.na(main_start)) cat(sprintf("FUTURE: detected main 'Started run' at %s\n", format(main_start, tz = "UTC")), file = log_file, append = TRUE)
+              }
+              finished_lines <- grep("Finished run", logs, value = TRUE)
+              if (length(finished_lines) > 0) {
+                ts_str2 <- sub("^\\[(.*?)\\].*$", "\\1", finished_lines[[1]])
+                main_end <- tryCatch(as.POSIXct(ts_str2, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"), error = function(e) NA)
+                if (!is.na(main_end)) cat(sprintf("FUTURE: detected main 'Finished run' at %s\n", format(main_end, tz = "UTC")), file = log_file, append = TRUE)
+              }
+
+              # If main wrote an output dir with our BATCH_TS and config name, try to include its run_log.txt
+              out_base <- file.path(here::here(), "dp_global", "output")
+              if (dir.exists(out_base)) {
+                pattern <- paste0(BATCH_TS, ".*", entry$config)
+                dirs <- list.dirs(out_base, full.names = TRUE, recursive = FALSE)
+                matched <- dirs[grepl(pattern, basename(dirs))]
+                if (length(matched) > 0) {
+                  m_info <- file.info(matched)$mtime
+                  chosen <- matched[which.max(m_info)]
+                  run_log_path <- file.path(chosen, "run_log.txt")
+                  if (file.exists(run_log_path)) {
+                    cat(sprintf("FUTURE: including %s into %s\n", run_log_path, log_file), file = log_file, append = TRUE)
+                    run_log_lines <- readLines(run_log_path, warn = FALSE)
+                    if (length(run_log_lines) > 0) cat(paste0("\n--- run_log.txt (from main run) ---\n", paste(run_log_lines, collapse = "\n"), "\n--- end run_log.txt ---\n"), file = log_file, append = TRUE)
+                  }
+                }
+              }
+
               unlink(temp_log)
               cat("FUTURE: appended temp_log to log_file and unlinked temp_log\n", file = log_file, append = TRUE)
             },
@@ -474,9 +509,18 @@ futures_list <- lapply(seq_along(commands), function(i) {
         }
 
         exit_status <- as.integer(status)
+        # Prefer timestamps reported by the main run (if detected in logs) for accuracy
+        if (exists("main_start") && !is.na(main_start)) {
+          start <- main_start
+        }
+        if (exists("main_end") && !is.na(main_end)) {
+          end_override <- main_end
+        } else {
+          end_override <- NULL
+        }
       }
 
-      end <- Sys.time()
+      end <- if (!is.null(end_override)) end_override else Sys.time()
       cat(sprintf("[%s] DONE at %s (status=%d) log=%s\n", cfg, format(end, tz = "UTC"), exit_status, log_file))
       flush.console()
 

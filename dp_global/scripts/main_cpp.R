@@ -102,34 +102,28 @@ SPECIES_COL <- NULL
 ############################################################
 # All settings related to parameter estimation and biological realism
 USE_MEASUREMENT_ERROR <- TRUE
-MAX_GROWTH_HARD_SOURCE <- "data"
+MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_GROWTH_FIXED <- 7.5
-MAX_SHRINK_HARD_SOURCE <- "data"
+MAX_SHRINK_HARD_SOURCE <- "fixed"
 MAX_SHRINK_FIXED <- -0.5
-K_SHRINK_SOURCE <- "data"
+K_SHRINK_SOURCE <- "fixed"
 K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
-K_GROWTH_SOURCE <- "data"
+K_GROWTH_SOURCE <- "fixed"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
 RECRUIT_MAX_SOURCE <- "fixed"
-RECRUIT_MAX_FIXED <- 5
+RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) - 0.9999
 
 ############################################################
 ### 2.3 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-which_tag <- 19L # 20 to compare outputs
+which_tag <- 19L
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
 dp_max_tracks <- NULL # auto (computed from data)
 dp_max_states <- 40000L
 dp_slack_tracks <- 1L
-# Chunking to limit peak memory when running all tags: set to e.g. 80 (reduce to 40 or 30 if still crashes)
-DP_CHUNK_SIZE <- 80L
-# Resume behavior: if TRUE, skip chunks that have already been completed (detected by per-chunk RDS file)
-DP_CHUNK_RESUME <- TRUE
-# Overwrite behavior: if TRUE, recompute and overwrite existing chunk outputs (RDS)
-DP_CHUNK_OVERWRITE <- FALSE
 # NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
 # (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.
 dp_slack_require_anchor_recruitable <- TRUE
@@ -319,9 +313,6 @@ CLI_REFERENCE <- list(
     PROJECT_ROOT = "PROJECT_ROOT",
     BATCH_TS = "BATCH_TS",
     CONFIG_NAME = "CONFIG_NAME",
-    DP_CHUNK_SIZE = "DP_CHUNK_SIZE",
-    DP_CHUNK_RESUME = "DP_CHUNK_RESUME",
-    DP_CHUNK_OVERWRITE = "DP_CHUNK_OVERWRITE",
     USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR"
 )
 
@@ -334,7 +325,7 @@ RUN_K_SWEEP_DEMO <- FALSE
 ############################################################
 ### 2.6 Realism report settings
 ############################################################
-
+RUN_REALISM_REPORT <- FALSE
 
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
@@ -541,6 +532,16 @@ ensure_dir <- function(path) {
     invisible(path)
 }
 
+log_msg <- function(msg, level = "INFO") {
+    ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    full <- sprintf("[%s] %s: %s", ts, level, msg)
+    message(full)
+    if (exists("out_dir") && nzchar(out_dir)) {
+        tryCatch(write(full, file = file.path(out_dir, "run_log.txt"), append = TRUE), error = function(e) NULL)
+    }
+    invisible(full)
+}
+
 ensure_species_column <- function(x) {
     if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
         x[, species := FORCED_SPECIES_LABEL]
@@ -663,8 +664,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
         # prune controls
         prune_hard = TRUE,
-        prune_min_growth = -5, # very wide fixed bounds
-        prune_max_growth = 15, # very wide fixed bounds
+        prune_min_growth = -2.5, # very wide fixed bounds
+        prune_max_growth = 10, # very wide fixed bounds
         prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
         prune_recruit_max_dbh = 10 * 5, # very high recruit max dbh
         prune_use_bio_recruit = FALSE, # use fixed recruit max dbh instead of biological one
@@ -691,10 +692,17 @@ maybe_add_posterior_bins <- function(out) {
 ############################################################
 run_main <- function() {
     ensure_dir(out_dir)
+    tryCatch({
+        writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
+    }, error = function(e) {
+        message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
+    })
+    log_msg("Started run")
 
     # Create posteriors directory if requested (POSTERIOR_SAMPLES > 0)
     if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
         ensure_dir(POSTERIOR_SAMPLES_PATH)
+        log_msg(paste("Ensured posterior samples path:", POSTERIOR_SAMPLES_PATH))
     }
 
     # Write a small startup marker so parallel runs can be observed immediately
@@ -837,88 +845,20 @@ run_main <- function() {
             if (!requireNamespace("parallel", quietly = TRUE)) {
                 stop("Package not available: parallel. (It normally ships with R.)")
             }
-            # Chunk groups to limit peak memory usage
             groups <- unique(xrun[, .(Tag, species)])
             data.table::setorder(groups, Tag, species)
 
-            # If DP_CHUNK_SIZE is not set or <= 0, fall back to original behavior (no chunking)
-            if (is.null(DP_CHUNK_SIZE) || !is.numeric(DP_CHUNK_SIZE) || as.integer(DP_CHUNK_SIZE) <= 0L) {
-                res_list <- parallel::mclapply(seq_len(nrow(groups)), function(i) {
-                    data.table::setDTthreads(1L)
-                    g <- groups[i]
-                    dtg <- xrun[Tag == g$Tag & species == g$species]
-                    run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
-                }, mc.cores = MC_CORES)
-                out <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
-                # Add DP posterior bins (non-chunked path)
-                out <- maybe_add_posterior_bins(out)
-            } else {
-                group_idx <- seq_len(nrow(groups))
-                chunks <- split(group_idx, ceiling(seq_along(group_idx) / as.integer(DP_CHUNK_SIZE)))
-                # Determine whether to write header (first write) based on whether file exists already
-                first_chunk <- !file.exists(DP_CSV_FILE)
-                message("[dp_global main_cpp.R] Processing ", length(chunks), " chunks (DP_CHUNK_SIZE=", as.integer(DP_CHUNK_SIZE), ")")
+            res_list <- parallel::mclapply(seq_len(nrow(groups)), function(i) {
+                data.table::setDTthreads(1L)
+                g <- groups[i]
+                dtg <- xrun[Tag == g$Tag & species == g$species]
+                run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
+            }, mc.cores = MC_CORES)
 
-                for (ci in seq_along(chunks)) {
-                    chunk_rds <- file.path(out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.rds", ci))
-
-                    # Resume/skip logic: if a chunk RDS exists and resume is enabled and overwrite is FALSE, skip
-                    if (isTRUE(DP_CHUNK_RESUME) && file.exists(chunk_rds) && !isTRUE(DP_CHUNK_OVERWRITE)) {
-                        message(sprintf("[dp_global main_cpp.R] Skipping chunk %d/%d — chunk RDS exists (resume enabled)", ci, length(chunks)))
-                        # Ensure first_chunk reflects whether CSV file exists already
-                        first_chunk <- !file.exists(DP_CSV_FILE)
-                        next
-                    }
-
-                    inds <- chunks[[ci]]
-                    groups_ci <- groups[inds]
-                    message(sprintf("[dp_global main_cpp.R] Chunk %d/%d — %d groups", ci, length(chunks), nrow(groups_ci)))
-
-                    res <- parallel::mclapply(seq_len(nrow(groups_ci)), function(j) {
-                        data.table::setDTthreads(1L)
-                        g <- groups_ci[j]
-                        dtg <- xrun[Tag == g$Tag & species == g$species]
-                        run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
-                    }, mc.cores = MC_CORES)
-
-                    out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
-
-                    if (nrow(out_chunk) > 0L) {
-                        out_chunk[, DP_Chunk := ci]
-                        out_chunk <- maybe_add_posterior_bins(out_chunk)
-                        out_chunk[, out_dir := basename(out_dir)]
-
-                        # Write CSV incrementally (append after first write)
-                        if (isTRUE(WRITE_DP_CSV)) {
-                            data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)
-                        }
-
-                        # Write per-chunk RDS for reproducibility (overwrites if DP_CHUNK_OVERWRITE=TRUE)
-                        if (isTRUE(WRITE_DP_RDS)) {
-                            saveRDS(out_chunk, file = chunk_rds)
-                        }
-                    } else {
-                        message(sprintf("[dp_global main_cpp.R] Chunk %d returned no rows.", ci))
-                        # Still write an empty RDS marker so resume recognizes it
-                        if (isTRUE(WRITE_DP_RDS)) {
-                            saveRDS(out_chunk, file = chunk_rds)
-                        }
-                    }
-
-                    first_chunk <- FALSE
-                    rm(res, out_chunk, groups_ci)
-                    invisible(gc())
-                }
-
-                # Do not assemble full 'out' in memory to avoid OOM; downstream steps that require full 'out' will be skipped.
-                out <- NULL
-            }
+            out <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
         }
     }
-
-    # Posterior bins are already added per-chunk inside the chunk loop, and for
-    # non-chunked runs they were added above immediately after assembling `out`.
-    # (This avoids double-processing or unnecessary work when chunking.)
+    out <- maybe_add_posterior_bins(out)
 
     # Add output directory name as a column for reference
     if (!is.null(out)) {
@@ -927,18 +867,33 @@ run_main <- function() {
 
     # 5.6 Optional: write DP outputs
     if (isTRUE(WRITE_DP_CSV) && !is.null(out)) {
-        data.table::fwrite(out, file = DP_CSV_FILE)
+        tryCatch({
+            data.table::fwrite(out, file = DP_CSV_FILE)
+            log_msg(sprintf("Wrote CSV: %s (nrow=%d)", DP_CSV_FILE, nrow(out)))
+        }, error = function(e) {
+            log_msg(sprintf("Failed to write CSV %s: %s", DP_CSV_FILE, conditionMessage(e)), "ERROR")
+        })
     }
     if (isTRUE(WRITE_DP_RDS) && !is.null(out)) {
-        saveRDS(out, file = DP_RDS_FILE)
+        tryCatch({
+            saveRDS(out, file = DP_RDS_FILE)
+            log_msg(sprintf("Wrote RDS: %s", DP_RDS_FILE))
+        }, error = function(e) {
+            log_msg(sprintf("Failed to write RDS %s: %s", DP_RDS_FILE, conditionMessage(e)), "ERROR")
+        })
     }
     if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
-        plot_tag_to_pdf(
-            out,
-            pdf_file = DP_PDF_FILE,
-            include_reference = DP_PDF_INCLUDE_REFERENCE,
-            tag = if (isTRUE(PLOT_PDF_ONE_TAG_ONLY)) which_tag else NULL
-        )
+        tryCatch({
+            plot_tag_to_pdf(
+                out,
+                pdf_file = DP_PDF_FILE,
+                include_reference = DP_PDF_INCLUDE_REFERENCE,
+                tag = if (isTRUE(PLOT_PDF_ONE_TAG_ONLY)) which_tag else NULL
+            )
+            log_msg(sprintf("Wrote PDF: %s", DP_PDF_FILE))
+        }, error = function(e) {
+            log_msg(sprintf("Failed to write PDF %s: %s", DP_PDF_FILE, conditionMessage(e)), "ERROR")
+        })
     }
 
     # 5.7 Optional: realism report
@@ -1022,9 +977,10 @@ run_main <- function() {
     tryCatch(
         {
             writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt"))
+            log_msg("Finished run")
         },
         error = function(e) {
-            message("[dp_global main_cpp.R] Warning writing run_finished marker: ", conditionMessage(e))
+            log_msg(sprintf("Warning writing run_finished marker: %s", conditionMessage(e)), "WARN")
         }
     )
 
@@ -1091,9 +1047,21 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
     }
 }
 
-source(here("dp_global", "R", "check_functions.r"))
-export_bio_pars_report(res$bio_pars,
-    species = NULL,
-    interval_years = 5,
-    out_file = file.path(out_dir, "bio_pars_report.pdf")
-)
+# Export bio-parameter report if `res` and `res$bio_pars` are available.
+if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
+    source(here("dp_global", "R", "check_functions.r"))
+    tryCatch(
+        {
+            export_bio_pars_report(res$bio_pars,
+                species = NULL,
+                interval_years = 5,
+                out_file = file.path(out_dir, "bio_pars_report.pdf")
+            )
+        },
+        error = function(e) {
+            message("[dp_global main_cpp.R] Warning exporting bio_pars_report: ", conditionMessage(e))
+        }
+    )
+} else {
+    message("[dp_global main_cpp.R] Skipping bio_pars report: 'res$bio_pars' not available (chunked run or earlier error).")
+}

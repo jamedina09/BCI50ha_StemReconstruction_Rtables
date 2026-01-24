@@ -65,6 +65,7 @@ Posterior sampling:
 Output controls:
 - `WRITE_DP_CSV` (default: `TRUE`) — write incremental/combined CSV output.
 - `WRITE_DP_RDS` (default: `TRUE`) — write per-chunk RDS (or combined RDS for non-chunk runs).
+- `WRITE_DP_FEATHER` (default: `FALSE`) — write per-chunk Feather files (`.feather`) for faster IO. Requires the **arrow** R package.
 - `WRITE_DP_PDF` (default: `TRUE`) — write PDF visualizations (`plot_tag_to_pdf`).
 - `DP_PDF_INCLUDE_REFERENCE` (default: `TRUE`) — include reference lines in PDF output.
 
@@ -72,9 +73,22 @@ Parallel & chunking controls:
 - `RUN_ALL_TAGS` (default: `FALSE`) — run all tags instead of a single `which_tag`.
 - `MANUAL_CORES` (default: `TRUE`) — set to `TRUE` to use `MANUAL_CORES_VALUE`.
 - `MANUAL_CORES_VALUE` (default: `1`) — number of cores to use when `MANUAL_CORES=TRUE`.
-- `DP_CHUNK_SIZE` (default: `80`) — number of Tag+species groups processed per chunk when `RUN_ALL_TAGS=TRUE`. Reduce to `40` or `30` if you still get OOM.
-- `DP_CHUNK_RESUME` (default: `TRUE`) — if `TRUE`, skip chunks where `stem_reconstruction_dp_global_rcpp_chunk_###.rds` already exists (useful for resuming long runs).
-- `DP_CHUNK_OVERWRITE` (default: `FALSE`) — if `TRUE`, recompute and overwrite existing per-chunk RDS files even if they exist.
+Note: There is a dedicated chunked driver script `dp_global/scripts/main_cpp_chunk.R` that implements chunked processing. It is a standalone script intended to be run manually (no CLI argument parsing); edit parameters at the top of `main_cpp_chunk.R` to change behavior, then run it via:
+
+- `Rscript dp_global/scripts/main_cpp_chunk.R`
+
+Helpful post-run utilities:
+- Merge chunk RDS/Feather files into a single CSV (run this in R or source the script and call the helper):
+
+```r
+# from R in project root
+source("dp_global/scripts/main_cpp_chunk.R")
+merge_chunks_to_csv("dp_global/output/<your_run_dir>")
+```
+
+This streams each chunk file to a single CSV to avoid loading the full dataset into memory.
+
+For backwards compatibility, the original `main_cpp.R` runs the non-chunked workflow (single-tag or parallelized tags) and does not perform per-chunk writing.
 
 Misc:
 - `USE_MEASUREMENT_ERROR` (default: `TRUE`) — enable measurement-error-aware parameter estimation.
@@ -152,10 +166,10 @@ This ensures posterior-bin computation is done while memory per-chunk is small a
 Rscript dp_global/scripts/main_cpp.R --INPUT_FILE=data_simulation/data/simulated_data_1.csv --which_tag=19
 ```
 
-- Run all tags with chunking, 4 cores and resume enabled:
+- Run all tags with chunking (use the chunked driver), 4 cores and resume enabled:
 
 ```
-Rscript dp_global/scripts/main_cpp.R --RUN_ALL_TAGS=TRUE --DP_CHUNK_SIZE=80 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=4 --DP_CHUNK_RESUME=TRUE
+Rscript dp_global/scripts/main_cpp_chunk.R --RUN_ALL_TAGS=TRUE --DP_CHUNK_SIZE=80 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=4 --DP_CHUNK_RESUME=TRUE
 ```
 
 - Run all tags without chunking (not recommended for very large datasets):
