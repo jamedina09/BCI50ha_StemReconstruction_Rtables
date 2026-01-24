@@ -906,7 +906,7 @@ We separate pruning thresholds from the biological (`Bio_*`) parameters so you c
   where `user_min` = `prune_min_growth` if provided else `min_growth`, and similarly for `user_max`.
   If `prune_use_bio_bounds = FALSE` the `eff_*` values equal `user_*` directly.
 - `prune_recruit_max_dbh` (numeric | NULL): override for the recruit-size cut used during pruning. If `NULL` the biological `Bio_Recruit_MaxDBH_unit` is used. If `prune_use_bio_recruit = TRUE` (default) and both are finite, we use the more conservative value `min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)`; otherwise the explicit override is used.
-- `prune_use_bio_recruit` (logical, default TRUE): controls whether the biological recruit bound should be intersected with `prune_recruit_max_dbh`.
+- `prune_use_bio_recruit` (logical, default TRUE): controls whether the biological recruit bound should be intersected with `prune_recruit_max_dbh`. If TRUE, the maximum recruitment parameter DBH is icnreased by 20%. Then, we select the minimum as min(prune_recruit_max_dbh, (maximum recruitment dbh * 1.2))—very conservative.
 
 Notes:
 - These pruning parameters affect only the *pre-filtering* step (they do not change the transition cost function or post-hoc diagnostics beyond recording the effective prune values).
