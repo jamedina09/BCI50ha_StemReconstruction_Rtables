@@ -48,7 +48,7 @@ library(here)
 ### 1) Minimal config for chunk profiling
 ############################################################
 
-input_file <- here("data_simulation", "data", "simulated_data_1.csv")
+INPUT_FILE <- here("data_simulation", "data", "simulated_data_1.csv")
 
 # Chunking controls (small test chunk)
 DP_CHUNK_SIZE <- 2L
@@ -71,8 +71,8 @@ POSTERIOR_SAMPLE_SEED <- if (nzchar(Sys.getenv("POSTERIOR_SAMPLE_SEED", ""))) as
 
 
 # DP controls
-which_tag <- 1L
-anchor_start_census <- 7L
+WHICH_TAG <- 1L
+ANCHOR_START_CENSUS <- 7L
 min_annual_growth <- -0.5
 max_annual_growth <- 5
 DP_POSTERIOR_TEMPERATURE <- 1.0
@@ -88,11 +88,11 @@ MANUAL_CORES <- TRUE
 MANUAL_CORES_VALUE <- 1L
 MC_CORES <- as.integer(MANUAL_CORES_VALUE)
 
-dp_max_tracks <- NULL
+DP_MAX_TRACKS <- NULL
 
-dp_max_states <- 40000L
+DP_MAX_STATES <- 40000L
 
-dp_slack_tracks <- 1L
+DP_SLACK_TRACKS <- 1L
 
 # Profiling controls
 RUN_PROFILE <- TRUE
@@ -179,8 +179,8 @@ attach_bio_columns <- function(xrun, bio_pars) {
     xrun
 }
 
-message("[profiling_chunk_code] Loading data: ", input_file)
-xraw <- data.table::fread(input_file)
+message("[profiling_chunk_code] Loading data: ", INPUT_FILE)
+xraw <- data.table::fread(INPUT_FILE)
 # force single-species for profiling convenience
 xraw[, species := "all"]
 
@@ -214,7 +214,7 @@ xrun <- attach_bio_columns(xrun, bio_pars)
 # auto_dp_max_tracks helper (copied locally)
 auto_dp_max_tracks <- function(xrun) {
     max_obs_any_tag_census <- xrun[
-        CensusID <= anchor_start_census & !is.na(DBH),
+        CensusID <= ANCHOR_START_CENSUS & !is.na(DBH),
         .N,
         by = .(Tag, CensusID)
     ][, max(N, na.rm = TRUE)]
@@ -222,7 +222,8 @@ auto_dp_max_tracks <- function(xrun) {
     as.integer(max_obs_any_tag_census + 1L)
 }
 
-dp_max_tracks_local <- if (is.null(dp_max_tracks)) auto_dp_max_tracks(xrun) else as.integer(dp_max_tracks)
+# Use canonical DP_MAX_TRACKS
+dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)
 
 groups <- unique(xrun[, .(Tag, species)])
 setorder(groups, Tag, species)
@@ -275,10 +276,10 @@ run_one_chunk <- function() {
             tree_data = data.table::copy(dtg),
             min_growth = min_annual_growth,
             max_growth = max_annual_growth,
-            anchor_start = anchor_start_census,
+            anchor_start = ANCHOR_START_CENSUS,
             max_tracks = dp_max_tracks_local,
-            max_states = dp_max_states,
-            slack_tracks = dp_slack_tracks,
+            max_states = DP_MAX_STATES,
+            slack_tracks = DP_SLACK_TRACKS,
             slack_require_anchor_recruitable = TRUE,
             temperature = DP_POSTERIOR_TEMPERATURE,
             posterior_top_k = DP_POSTERIOR_TOP_K,
