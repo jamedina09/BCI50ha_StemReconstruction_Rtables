@@ -117,7 +117,7 @@ RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) - 0.9999
 ### 2.3 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-which_tag <- 19L
+which_tag <- 1L
 anchor_start_census <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
@@ -467,11 +467,14 @@ DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
 DP_FEATHER_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.feather")
 DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
 
-# If posterior sampling is requested, set sensible defaults inside the run-specific out_dir
+# If posterior sampling is requested, provide the DP with the run's base out_dir.
+# The DP itself will create the 'posteriors/' subdirectory (avoids double-nesting).
 # These defaults can still be overridden via CLI (e.g., --POSTERIOR_SAMPLES_PATH=... or --POSTERIOR_SAMPLE_SEED=...)
 if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
     if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
-        POSTERIOR_SAMPLES_PATH <- file.path(out_dir, "posteriors")
+        # Provide the DP with the run's base out_dir; the DP will create the
+        # 'posteriors/' subdirectory itself, avoiding double-nesting.
+        POSTERIOR_SAMPLES_PATH <- out_dir
     }
     # normalize path for consistency; don't require it to exist yet (created in run_main)
     POSTERIOR_SAMPLES_PATH <- normalizePath(POSTERIOR_SAMPLES_PATH, winslash = "/", mustWork = FALSE)
@@ -705,10 +708,10 @@ run_main <- function() {
     )
     log_msg("Started run")
 
-    # Create posteriors directory if requested (POSTERIOR_SAMPLES > 0)
+    # Create posteriors subdirectory (DP writes its files into <base>/posteriors)
     if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
-        ensure_dir(POSTERIOR_SAMPLES_PATH)
-        log_msg(paste("Ensured posterior samples path:", POSTERIOR_SAMPLES_PATH))
+        ensure_dir(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))
+        log_msg(paste("Ensured posterior samples path:", file.path(POSTERIOR_SAMPLES_PATH, "posteriors")))
     }
 
     # Write a small startup marker so parallel runs can be observed immediately
