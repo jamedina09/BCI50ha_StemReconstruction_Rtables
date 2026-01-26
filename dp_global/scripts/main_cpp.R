@@ -397,27 +397,65 @@ out_dir <- file.path(base_out_dir, build_out_dir_name())
 message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
-DP_CSV_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.csv")
-DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
-DP_FEATHER_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.feather")
-DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
+# Centralized DP naming and path helpers 🔧
+DP_BASE <- "stem_reconstruction_dp_global_rcpp"
+make_out_path <- function(base = DP_BASE, ext = "csv", dir = out_dir) {
+    file.path(dir, paste0(base, ".", ext))
+}
+out_path <- function(target, ext = NULL) {
+    if (!is.null(ext) && nzchar(ext)) {
+        ext_use <- ext
+    } else {
+        ext_use <- "csv"
+    }
+    switch(target,
+        dp = make_out_path(DP_BASE, ext_use),
+        dp_csv = make_out_path(DP_BASE, "csv"),
+        dp_rds = make_out_path(DP_BASE, "rds"),
+        dp_feather = make_out_path(DP_BASE, "feather"),
+        dp_pdf = make_out_path(DP_BASE, "pdf"),
+        posteriors = file.path(out_dir, "posteriors"),
+        stop("Unknown out_path target: ", target)
+    )
+}
 
-# If posterior sampling is requested, provide the DP with the run's base out_dir.
-# The DP itself will create the 'posteriors/' subdirectory (avoids double-nesting).
-# These defaults can still be overridden via CLI (e.g., --POSTERIOR_SAMPLES_PATH=... or --POSTERIOR_SAMPLE_SEED=...)
+maybe_write <- function(flag, path, write_expr, msg = NULL) {
+    if (!isTRUE(flag)) return(invisible(FALSE))
+    ensure_dir(dirname(path))
+    tryCatch({
+        write_expr()
+        log_msg(sprintf("Wrote %s: %s", if (!is.null(msg)) msg else basename(path), path))
+        TRUE
+    }, error = function(e) {
+        log_msg(sprintf("Failed to write %s: %s", path, conditionMessage(e)), "ERROR")
+        FALSE
+    })
+}
+
+# If posterior sampling is requested, default to the run base `out_dir` so the
+# DP can create a single `posteriors/` subdirectory. If users supply a path
+# that already ends in 'posteriors', strip that suffix to avoid double-nesting.
 if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
     if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
         # Provide the DP with the run's base out_dir; the DP will create the
         # 'posteriors/' subdirectory itself, avoiding double-nesting.
         POSTERIOR_SAMPLES_PATH <- out_dir
     }
-    # normalize path for consistency; don't require it to exist yet (created in run_main)
+    # If user supplied a path that ends in 'posteriors', remove that suffix so
+    # DP's internal creation of '<base>/posteriors' doesn't create nested folders.
+    if (basename(POSTERIOR_SAMPLES_PATH) == "posteriors") {
+        POSTERIOR_SAMPLES_PATH <- dirname(POSTERIOR_SAMPLES_PATH)
+    }
+
+    # normalize path for consistency; don't create it yet (created when needed)
     POSTERIOR_SAMPLES_PATH <- normalizePath(POSTERIOR_SAMPLES_PATH, winslash = "/", mustWork = FALSE)
     if (is.null(POSTERIOR_SAMPLE_SEED)) {
         POSTERIOR_SAMPLE_SEED <- as.integer(123L)
     } else {
         POSTERIOR_SAMPLE_SEED <- as.integer(POSTERIOR_SAMPLE_SEED)
     }
+} else {
+    POSTERIOR_SAMPLES_PATH <- NULL
 }
 
 ############################################################
@@ -653,8 +691,9 @@ run_main <- function() {
 
     # Create posteriors subdirectory (DP writes its files into <base>/posteriors)
     if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
-        ensure_dir(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))
-        log_msg(paste("Ensured posterior samples path:", file.path(POSTERIOR_SAMPLES_PATH, "posteriors")))
+        ensured <- file.path(POSTERIOR_SAMPLES_PATH, "posteriors")
+        ensure_dir(ensured)
+        log_msg(paste("Ensured posterior samples path:", ensured))
     }
 
     # Write a small startup marker so parallel runs can be observed immediately
@@ -817,62 +856,36 @@ run_main <- function() {
         out[, out_dir := basename(out_dir)]
     }
 
-    # 5.6 Optional: write DP outputs
-    if (isTRUE(WRITE_DP_CSV) && !is.null(out)) {
-        tryCatch(
-            {
-                data.table::fwrite(out, file = DP_CSV_FILE)
-                log_msg(sprintf("Wrote CSV: %s (nrow=%d)", DP_CSV_FILE, nrow(out)))
-            },
-            error = function(e) {
-                log_msg(sprintf("Failed to write CSV %s: %s", DP_CSV_FILE, conditionMessage(e)), "ERROR")
-            }
-        )
-    }
-    if (isTRUE(WRITE_DP_RDS) && !is.null(out)) {
-        tryCatch(
-            {
-                saveRDS(out, file = DP_RDS_FILE)
-                log_msg(sprintf("Wrote RDS: %s", DP_RDS_FILE))
-            },
-            error = function(e) {
-                log_msg(sprintf("Failed to write RDS %s: %s", DP_RDS_FILE, conditionMessage(e)), "ERROR")
-            }
-        )
-    }
+    # 5.6 Optional: write DP outputs (centralized helpers)
+    maybe_write(isTRUE(WRITE_DP_CSV) && !is.null(out), out_path("dp_csv"),
+        function() data.table::fwrite(out, out_path("dp_csv")),
+        "DP CSV"
+    )
 
-    if (isTRUE(WRITE_DP_FEATHER) && !is.null(out)) {
-        tryCatch(
-            {
-                if (!requireNamespace("arrow", quietly = TRUE)) {
-                    log_msg("'arrow' package not available; skipping feather output", "WARN")
-                } else {
-                    arrow::write_feather(out, DP_FEATHER_FILE)
-                    log_msg(sprintf("Wrote Feather: %s", DP_FEATHER_FILE))
-                }
-            },
-            error = function(e) {
-                log_msg(sprintf("Failed to write Feather %s: %s", DP_FEATHER_FILE, conditionMessage(e)), "ERROR")
-            }
-        )
-    }
+    maybe_write(isTRUE(WRITE_DP_RDS) && !is.null(out), out_path("dp_rds"),
+        function() saveRDS(out, file = out_path("dp_rds")),
+        "DP RDS"
+    )
 
-    if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
-        tryCatch(
-            {
-                plot_tag_to_pdf(
-                    out,
-                    pdf_file = DP_PDF_FILE,
-                    include_reference = DP_PDF_INCLUDE_REFERENCE,
-                    tag = if (isTRUE(PLOT_PDF_ONE_TAG_ONLY)) WHICH_TAG else NULL
-                )
-                log_msg(sprintf("Wrote PDF: %s", DP_PDF_FILE))
-            },
-            error = function(e) {
-                log_msg(sprintf("Failed to write PDF %s: %s", DP_PDF_FILE, conditionMessage(e)), "ERROR")
-            }
-        )
-    }
+    maybe_write(isTRUE(WRITE_DP_FEATHER) && !is.null(out), out_path("dp_feather"),
+        function() {
+            if (!requireNamespace("arrow", quietly = TRUE)) stop("'arrow' package not available; skipping feather output")
+            arrow::write_feather(out, out_path("dp_feather"))
+        },
+        "DP Feather"
+    )
+
+    maybe_write(isTRUE(WRITE_DP_PDF) && !is.null(out), out_path("dp_pdf"),
+        function() {
+            plot_tag_to_pdf(
+                out,
+                pdf_file = out_path("dp_pdf"),
+                include_reference = DP_PDF_INCLUDE_REFERENCE,
+                tag = if (isTRUE(PLOT_PDF_ONE_TAG_ONLY)) WHICH_TAG else NULL
+            )
+        },
+        "DP PDF"
+    )
 
     # 5.7 Optional: realism report
     if (isTRUE(RUN_REALISM_REPORT) && !is.null(out)) {
@@ -889,9 +902,22 @@ run_main <- function() {
         rep0$by_group[, out_dir := basename(out_dir)]
         rep0$suggestions[, out_dir := basename(out_dir)]
 
-        data.table::fwrite(rep0$summary, file = file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_summary_rcpp.csv")))
-        data.table::fwrite(rep0$by_group, file = file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_by_tag_rcpp.csv")))
-        data.table::fwrite(rep0$suggestions, file = file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_tuning_suggestions_rcpp.csv")))
+        # Write realism outputs via maybe_write for consistent logs and directory creation
+        sum_path <- file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_summary_rcpp.csv"))
+        by_path <- file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_by_tag_rcpp.csv"))
+        sug_path <- file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_tuning_suggestions_rcpp.csv"))
+
+        maybe_write(isTRUE(RUN_REALISM_REPORT), sum_path, function() {
+            data.table::fwrite(rep0$summary, file = sum_path)
+        }, "Realism summary")
+
+        maybe_write(isTRUE(RUN_REALISM_REPORT), by_path, function() {
+            data.table::fwrite(rep0$by_group, file = by_path)
+        }, "Realism by-tag")
+
+        maybe_write(isTRUE(RUN_REALISM_REPORT), sug_path, function() {
+            data.table::fwrite(rep0$suggestions, file = sug_path)
+        }, "Realism tuning suggestions")
     }
 
     # 5.8 Optional: sensitivity sweeps
@@ -934,21 +960,42 @@ run_main <- function() {
         # }
 
         if (isTRUE(WRITE_OUTPUTS)) {
-            saveRDS(all_sweeps, file = file.path(out_dir, "simulated_all_transition_cost_sweeps_rcpp.rds"))
-            # data.table::fwrite(dt_all, file = file.path(out_dir, "simulated_all_transition_cost_sweeps.csv"))
-            data.table::fwrite(dt_jumps, file = file.path(out_dir, "simulated_all_transition_cost_sweep_jumps_rcpp.csv"))
-            saveRDS(dt_jumps, file = file.path(out_dir, "simulated_all_transition_cost_jumps_rcpp.rds"))
-            data.table::fwrite(dt_jumps, file = file.path(out_dir, "simulated_all_transition_cost_jumps_rcpp.csv"))
+            sweeps_rds <- file.path(out_dir, "simulated_all_transition_cost_sweeps_rcpp.rds")
+            sweeps_csv <- file.path(out_dir, "simulated_all_transition_cost_sweeps.csv")
+            jumps_csv <- file.path(out_dir, "simulated_all_transition_cost_sweep_jumps_rcpp.csv")
+            jumps_rds <- file.path(out_dir, "simulated_all_transition_cost_jumps_rcpp.rds")
+            jumps_csv2 <- file.path(out_dir, "simulated_all_transition_cost_jumps_rcpp.csv")
+
+            maybe_write(isTRUE(WRITE_OUTPUTS), sweeps_rds, function() {
+                saveRDS(all_sweeps, file = sweeps_rds)
+            }, "Sensitivity sweeps (RDS)")
+
+            # Optionally write the combined sweep table if desired (was commented out previously)
+            maybe_write(isTRUE(WRITE_OUTPUTS), sweeps_csv, function() {
+                data.table::fwrite(dt_all, file = sweeps_csv)
+            }, "Sensitivity sweeps (CSV)")
+
+            maybe_write(isTRUE(WRITE_OUTPUTS), jumps_csv, function() {
+                data.table::fwrite(dt_jumps, file = jumps_csv)
+            }, "Sensitivity jump summaries (CSV)")
+
+            maybe_write(isTRUE(WRITE_OUTPUTS), jumps_rds, function() {
+                saveRDS(dt_jumps, file = jumps_rds)
+            }, "Sensitivity jump summaries (RDS)")
+
+            maybe_write(isTRUE(WRITE_OUTPUTS), jumps_csv2, function() {
+                data.table::fwrite(dt_jumps, file = jumps_csv2)
+            }, "Sensitivity jump summaries (CSV alt)")
         }
 
-        if (isTRUE(MAKE_ALL_SWEEPS_PDF)) {
+        maybe_write(isTRUE(MAKE_ALL_SWEEPS_PDF), file.path(out_dir, "simulated_all_transition_cost_sweeps_rcpp.pdf"), function() {
             plot_all_sweeps_to_pdf(
                 all_sweeps,
                 pdf_file = file.path(out_dir, "simulated_all_transition_cost_sweeps_rcpp.pdf"),
                 y_scale = "delta",
                 subtitle = basename(out_dir)
             )
-        }
+        }, "Sensitivity sweeps PDF")
     }
 
     # Write a small finished marker so users and wrappers can detect job completion
@@ -1043,3 +1090,6 @@ if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
 } else {
     message("[dp_global main_cpp.R] Skipping bio_pars report: 'res$bio_pars' not available (chunked run or earlier error).")
 }
+
+
+# Rscript dp_global/scripts/main_cpp.R --POSTERIOR_SAMPLES=20 --POSTERIOR_SAMPLES_FORMAT=csv --POSTERIOR_SAMPLE_SEED=123 --RUN_REALISM_REPORT=TRUE --SENSITIVITY_MODE=run+write+pdf --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_PDF=TRUE

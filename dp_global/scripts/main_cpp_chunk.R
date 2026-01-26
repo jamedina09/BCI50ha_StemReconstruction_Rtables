@@ -415,10 +415,67 @@ out_dir <- file.path(base_out_dir, build_out_dir_name())
 message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
-DP_CSV_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.csv")
-DP_RDS_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.rds")
-DP_FEATHER_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.feather")
-DP_PDF_FILE <- file.path(out_dir, "stem_reconstruction_dp_global_rcpp.pdf")
+# Filesystem/logging helpers (defined early so chunk runner can use them before other definitions)
+ensure_dir <- function(path) {
+    if (!dir.exists(path)) {
+        dir.create(path, recursive = TRUE)
+        message("[dp_global main_cpp.R] Created directory: ", path)
+    } else {
+        message("[dp_global main_cpp.R] Directory already exists: ", path)
+    }
+    invisible(path)
+}
+
+log_msg <- function(msg, level = "INFO") {
+    ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    full <- sprintf("[%s] %s: %s", ts, level, msg)
+    message(full)
+    if (exists("out_dir") && nzchar(out_dir)) {
+        tryCatch(write(full, file = file.path(out_dir, "run_log.txt"), append = TRUE), error = function(e) NULL)
+    }
+    invisible(full)
+}
+
+# Centralized DP naming and path helpers (same helpers as main_cpp.R)
+DP_BASE <- "stem_reconstruction_dp_global_rcpp"
+make_out_path <- function(base = DP_BASE, ext = "csv", dir = out_dir) {
+    file.path(dir, paste0(base, ".", ext))
+}
+out_path <- function(target, ext = NULL) {
+    if (!is.null(ext) && nzchar(ext)) {
+        ext_use <- ext
+    } else {
+        ext_use <- "csv"
+    }
+    switch(target,
+        dp = make_out_path(DP_BASE, ext_use),
+        dp_csv = make_out_path(DP_BASE, "csv"),
+        dp_rds = make_out_path(DP_BASE, "rds"),
+        dp_feather = make_out_path(DP_BASE, "feather"),
+        dp_pdf = make_out_path(DP_BASE, "pdf"),
+        posteriors = file.path(out_dir, "posteriors"),
+        stop("Unknown out_path target: ", target)
+    )
+}
+
+maybe_write <- function(flag, path, write_expr, msg = NULL) {
+    if (!isTRUE(flag)) return(invisible(FALSE))
+    ensure_dir(dirname(path))
+    tryCatch({
+        write_expr()
+        log_msg(sprintf("Wrote %s: %s", if (!is.null(msg)) msg else basename(path), path))
+        TRUE
+    }, error = function(e) {
+        log_msg(sprintf("Failed to write %s: %s", path, conditionMessage(e)), "ERROR")
+        FALSE
+    })
+}
+
+DP_CSV_FILE <- out_path("dp_csv")
+DP_RDS_FILE <- out_path("dp_rds")
+DP_FEATHER_FILE <- out_path("dp_feather")
+DP_PDF_FILE <- out_path("dp_pdf")
+# Note: chunk-level per-file outputs (per-chunk RDS/Feather/PDF) still use chunk-specific names; these top-level globals point to the combined run-level names.
 
 # If posterior sampling is requested, provide the DP with the run's base out_dir.
 # The DP itself will create the 'posteriors/' subdirectory (avoids double-nesting).
@@ -429,6 +486,11 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
         # 'posteriors/' subdirectory itself, avoiding double-nesting.
         POSTERIOR_SAMPLES_PATH <- out_dir
     }
+    # If user supplied a path that ends in 'posteriors', remove that suffix so
+    # DP's internal creation of '<base>/posteriors' doesn't create nested folders.
+    if (basename(POSTERIOR_SAMPLES_PATH) == "posteriors") {
+        POSTERIOR_SAMPLES_PATH <- dirname(POSTERIOR_SAMPLES_PATH)
+    }
     # normalize path for consistency; don't require it to exist yet (created in run_main)
     POSTERIOR_SAMPLES_PATH <- normalizePath(POSTERIOR_SAMPLES_PATH, winslash = "/", mustWork = FALSE)
     if (is.null(POSTERIOR_SAMPLE_SEED)) {
@@ -436,7 +498,10 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
     } else {
         POSTERIOR_SAMPLE_SEED <- as.integer(POSTERIOR_SAMPLE_SEED)
     }
-}
+} else {
+    # Ensure disabled sampling leaves a NULL path to avoid accidental writes
+    POSTERIOR_SAMPLES_PATH <- NULL
+} 
 
 ############################################################
 ### 3) Source project code
@@ -485,25 +550,7 @@ source(here("dp_global", "R", "naming_helpers.R"))
 
 # soft_cost_from_k(delta_cm = seq(-10, 10, by = 1), k = 20, temperature = 1)
 
-ensure_dir <- function(path) {
-    if (!dir.exists(path)) {
-        dir.create(path, recursive = TRUE)
-        message("[dp_global main_cpp.R] Created directory: ", path)
-    } else {
-        message("[dp_global main_cpp.R] Directory already exists: ", path)
-    }
-    invisible(path)
-}
-
-log_msg <- function(msg, level = "INFO") {
-    ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-    full <- sprintf("[%s] %s: %s", ts, level, msg)
-    message(full)
-    if (exists("out_dir") && nzchar(out_dir)) {
-        tryCatch(write(full, file = file.path(out_dir, "run_log.txt"), append = TRUE), error = function(e) NULL)
-    }
-    invisible(full)
-}
+# `ensure_dir()` and `log_msg()` are defined earlier; duplicate definitions removed.
 
 ensure_species_column <- function(x) {
     if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
@@ -837,7 +884,7 @@ run_main_chunked <- function() {
         if (ci < start_ci || ci > end_ci) {
             next
         }
-        chunk_rds <- file.path(out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.rds", ci))
+        chunk_rds <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.rds"), ci))
 
         if (isTRUE(DP_CHUNK_RESUME) && file.exists(chunk_rds) && !isTRUE(DP_CHUNK_OVERWRITE)) {
             log_msg(sprintf("Skipping chunk %d/%d — chunk RDS exists (resume enabled)", ci, length(chunks)))
@@ -866,39 +913,44 @@ run_main_chunked <- function() {
                 out_chunk[, run_out_dir := basename(out_dir)]
 
                 if (isTRUE(WRITE_DP_CSV)) {
-                    data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)
-                    log_msg(sprintf("Wrote CSV for chunk %d (nrow=%d)", ci, nrow(out_chunk)))
+                    maybe_write(isTRUE(WRITE_DP_CSV), DP_CSV_FILE, function() {
+                        data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)
+                    }, sprintf("DP CSV chunk %d", ci))
                 }
 
                 if (isTRUE(WRITE_DP_FEATHER)) {
-                    if (!requireNamespace("arrow", quietly = TRUE)) {
-                        log_msg("'arrow' package not available; skipping feather output", "WARN")
-                    } else {
-                        arrow::write_feather(out_chunk, file.path(out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.feather", ci)))
-                        log_msg(sprintf("Wrote Feather for chunk %d", ci))
-                    }
+                    feather_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.feather"), ci))
+                    maybe_write(isTRUE(WRITE_DP_FEATHER), feather_path, function() {
+                        if (!requireNamespace("arrow", quietly = TRUE)) stop("'arrow' package not available; skipping feather output")
+                        arrow::write_feather(out_chunk, feather_path)
+                    }, sprintf("Feather for chunk %d", ci))
                 }
 
                 if (isTRUE(WRITE_DP_RDS)) {
-                    saveRDS(out_chunk, file = chunk_rds)
-                    log_msg(sprintf("Wrote RDS for chunk %d", ci))
+                    maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
+                        saveRDS(out_chunk, file = chunk_rds)
+                    }, sprintf("RDS chunk %d", ci))
                 }
 
                 if (isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF)) {
-                    tryCatch({
-                        plot_tag_to_pdf(out_chunk, pdf_file = file.path(out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d.pdf", ci)), include_reference = DP_PDF_INCLUDE_REFERENCE)
-                        log_msg(sprintf("Wrote PDF for chunk %d", ci))
-                    }, error = function(e) log_msg(sprintf("Failed to write PDF for chunk %d: %s", ci, conditionMessage(e)), "ERROR"))
+                    pdf_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.pdf"), ci))
+                    maybe_write(isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF), pdf_path, function() {
+                        plot_tag_to_pdf(out_chunk, pdf_file = pdf_path, include_reference = DP_PDF_INCLUDE_REFERENCE)
+                    }, sprintf("PDF chunk %d", ci))
                 }
             } else {
                 log_msg(sprintf("Chunk %d returned no rows.", ci))
-                if (isTRUE(WRITE_DP_RDS)) saveRDS(out_chunk, file = chunk_rds)
+                if (isTRUE(WRITE_DP_RDS)) {
+                    maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
+                        saveRDS(out_chunk, file = chunk_rds)
+                    }, sprintf("RDS chunk %d (empty)", ci))
+                }
             }
 
             TRUE
         }, error = function(e) {
             # Write a small error marker for the chunk and continue
-            err_file <- file.path(out_dir, sprintf("stem_reconstruction_dp_global_rcpp_chunk_%03d_failed.txt", ci))
+            err_file <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d_failed.txt"), ci))
             writeLines(conditionMessage(e), con = err_file)
             log_msg(sprintf("Chunk %d failed: %s", ci, conditionMessage(e)), "ERROR")
             FALSE
@@ -925,8 +977,8 @@ run_main_chunked <- function() {
 }
 
 # Merge helpers: combine per-chunk RDS or Feather files into a single CSV
-merge_chunk_rds_to_csv <- function(out_dir, out_csv = file.path(out_dir, "stem_reconstruction_dp_global_rcpp_merged.csv")) {
-    files <- list.files(out_dir, pattern = "stem_reconstruction_dp_global_rcpp_chunk_\\d{3}\\.rds$", full.names = TRUE)
+merge_chunk_rds_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(DP_BASE, "_merged.csv"))) {
+    files <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.rds$"), full.names = TRUE)
     if (length(files) == 0L) stop("No chunk RDS files found in ", out_dir)
     first <- TRUE
     for (f in sort(files)) {
@@ -934,21 +986,21 @@ merge_chunk_rds_to_csv <- function(out_dir, out_csv = file.path(out_dir, "stem_r
         dt <- readRDS(f)
         if (nrow(dt) == 0L) next
         if (first) {
-            data.table::fwrite(dt, file = out_csv)
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv), sprintf("Merged RDS first write: %s", basename(out_csv)))
             first <- FALSE
         } else {
-            data.table::fwrite(dt, file = out_csv, append = TRUE)
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv, append = TRUE), sprintf("Merged RDS append: %s", basename(out_csv)))
         }
         rm(dt)
         invisible(gc())
     }
     log_msg(paste("Merged", length(files), "RDS chunks to", out_csv))
     out_csv
-}
+} 
 
-merge_chunk_feathers_to_csv <- function(out_dir, out_csv = file.path(out_dir, "stem_reconstruction_dp_global_rcpp_merged.csv")) {
+merge_chunk_feathers_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(DP_BASE, "_merged.csv"))) {
     if (!requireNamespace("arrow", quietly = TRUE)) stop("arrow package required to read feather files")
-    files <- list.files(out_dir, pattern = "stem_reconstruction_dp_global_rcpp_chunk_\\d{3}\\.feather$", full.names = TRUE)
+    files <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.feather$"), full.names = TRUE)
     if (length(files) == 0L) stop("No chunk Feather files found in ", out_dir)
     first <- TRUE
     for (f in sort(files)) {
@@ -956,10 +1008,10 @@ merge_chunk_feathers_to_csv <- function(out_dir, out_csv = file.path(out_dir, "s
         dt <- as.data.table(arrow::read_feather(f))
         if (nrow(dt) == 0L) next
         if (first) {
-            data.table::fwrite(dt, file = out_csv)
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv), sprintf("Merged Feather first write: %s", basename(out_csv)))
             first <- FALSE
         } else {
-            data.table::fwrite(dt, file = out_csv, append = TRUE)
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv, append = TRUE), sprintf("Merged Feather append: %s", basename(out_csv)))
         }
         rm(dt)
         invisible(gc())
@@ -971,12 +1023,12 @@ merge_chunk_feathers_to_csv <- function(out_dir, out_csv = file.path(out_dir, "s
 merge_chunks_to_csv <- function(out_dir, prefer = c("rds", "feather")) {
     prefer <- match.arg(prefer)
     if (prefer == "feather") {
-        chars <- list.files(out_dir, pattern = "stem_reconstruction_dp_global_rcpp_chunk_\\d{3}\\.feather$", full.names = TRUE)
+        chars <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.feather$"), full.names = TRUE)
         if (length(chars) > 0L) return(merge_chunk_feathers_to_csv(out_dir))
         return(merge_chunk_rds_to_csv(out_dir))
     }
     # prefer rds
-    rds <- list.files(out_dir, pattern = "stem_reconstruction_dp_global_rcpp_chunk_\\d{3}\\.rds$", full.names = TRUE)
+    rds <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.rds$"), full.names = TRUE)
     if (length(rds) > 0L) return(merge_chunk_rds_to_csv(out_dir))
     return(merge_chunk_feathers_to_csv(out_dir))
 }
@@ -991,3 +1043,6 @@ if (sys.nframe() == 0L) {
     message("[dp_global main_cpp_chunk.R] Starting chunked run_main_chunked()")
     run_main_chunked()
 }
+
+
+# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=1 --DP_CHUNK_END=2 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=FALSE --POSTERIOR_SAMPLES=10
