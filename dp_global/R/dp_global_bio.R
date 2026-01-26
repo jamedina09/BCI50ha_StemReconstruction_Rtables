@@ -66,7 +66,18 @@ estimate_bio_pars <- function(
   k_shrink_source = c("data", "fixed"),
   k_shrink_fixed = 50,
   # Recruitment max DBH (upper bound for recruits)
-  recruit_max_quantile = 0.999 # ,
+  recruit_max_quantile = 0.999,
+  # -----------------------------------------------------------------
+  # Optional enforcement of user-specified growth/recruit bounds
+  # Units: growth bounds in cm/year; recruit max in cm.
+  # If 'enforce_growth_bounds' is TRUE, observations outside the provided fixed
+  # bounds ('growth_min_fixed' and/or 'growth_max_fixed') are dropped before estimation.
+  enforce_growth_bounds = FALSE,
+  growth_min_fixed = NA_real_,
+  growth_max_fixed = NA_real_,
+  # If 'enforce_recruit_max' is TRUE, recruits with DBH > 'recruit_max_fixed' are dropped
+  # before fitting the recruitment-size lognormal.
+  enforce_recruit_max = FALSE
 ) {
     # =====================================================================
     # estimate_bio_pars()
@@ -144,9 +155,17 @@ estimate_bio_pars <- function(
     # recruit_max_quantile
     #   Upper quantile of observed recruits used as a guardrail for recruit size.
     #   Larger values make recruit_max_dbh more permissive.
-
-    ### SETUP & LIBRARIES
-    library(data.table)
+#
+# enforce_growth_bounds
+#   Logical: if TRUE, drop observed annual increments outside the provided
+#   bounds (growth_min_fixed, growth_max_fixed) before estimating growth
+#   mean and variance. Units: cm/year.
+#
+# growth_min_fixed, growth_max_fixed
+#   Numeric scalar bounds in cm/year. Either may be NA to perform one-sided bound.
+#
+# enforce_recruit_max
+#   Logical: if TRUE, drop recruits with DBH > recruit_max_fixed (cm) prior to fitting recruit size.
     library(MASS)
 
     # =========================================================================
@@ -336,6 +355,27 @@ estimate_bio_pars <- function(
         d1_all <- c(d1_all, d1)
         var_meas_g_all <- c(var_meas_g_all, v_meas_g)
         pairs_candidate_count <- pairs_candidate_count + length(g)
+    }
+
+    # Optional: enforce user-specified growth bounds (units: cm/year)
+    if (isTRUE(enforce_growth_bounds)) {
+        has_min <- is.finite(growth_min_fixed)
+        has_max <- is.finite(growth_max_fixed)
+        if (!has_min && !has_max) {
+            stop("enforce_growth_bounds = TRUE requires at least one finite 'growth_min_fixed' or 'growth_max_fixed'.", call. = FALSE)
+        }
+        keep_idx <- rep(TRUE, length(g_all))
+        if (has_min) keep_idx <- keep_idx & (g_all >= growth_min_fixed)
+        if (has_max) keep_idx <- keep_idx & (g_all <= growth_max_fixed)
+        n_drop <- sum(!keep_idx)
+        if (n_drop > 0) {
+            warning(sprintf("Dropped %d growth observations outside [%s, %s] cm/yr before estimation", n_drop, ifelse(has_min, as.character(growth_min_fixed), "-Inf"), ifelse(has_max, as.character(growth_max_fixed), "Inf")))
+            g_all <- g_all[keep_idx]
+            d0_all <- d0_all[keep_idx]
+            d1_all <- d1_all[keep_idx]
+            var_meas_g_all <- var_meas_g_all[keep_idx]
+            T_all <- T_all[keep_idx]
+        }
     }
 
     if (length(g_all) < 5) {
@@ -562,6 +602,20 @@ estimate_bio_pars <- function(
         n_rec <- n_rec + sum(rec)
     }
     recruit_dbh <- recruit_dbh[is.finite(recruit_dbh) & recruit_dbh > 0]
+
+    # Optional: enforce recruitment max DBH (units: cm)
+    if (isTRUE(enforce_recruit_max)) {
+        if (!is.finite(recruit_max_fixed) || recruit_max_fixed <= 0) {
+            stop("enforce_recruit_max = TRUE requires a positive finite 'recruit_max_fixed'.", call. = FALSE)
+        }
+        before_n <- length(recruit_dbh)
+        recruit_dbh <- recruit_dbh[recruit_dbh <= recruit_max_fixed]
+        n_dropped <- before_n - length(recruit_dbh)
+        if (n_dropped > 0) {
+            warning(sprintf("Dropped %d recruits with DBH > %g cm (recruit_max_fixed) before fitting", n_dropped, recruit_max_fixed))
+        }
+    }
+
     # Bookkeeping for recruitment missing intervals
     # (we tracked contributions to total_time_at_risk above)
 
@@ -851,6 +905,10 @@ estimate_bio_pars <- function(
             mu = mu_hat,
             sigma0 = sigma0_hat,
             sigma1 = sigma1_hat,
+            # Optional enforced growth bounds (units: cm/year)
+            growth_min_fixed = growth_min_fixed,
+            growth_max_fixed = growth_max_fixed,
+            enforce_growth_bounds = enforce_growth_bounds,
             # Extreme-growth guardrails
             max_growth_soft = max_growth_soft_hat,
             max_growth = max_growth_hat,
@@ -907,6 +965,7 @@ estimate_bio_pars <- function(
             recruit_max_dbh = recruit_max_dbh,
             recruit_max_source = recruit_max_source,
             recruit_max_fixed = recruit_max_fixed,
+            enforce_recruit_max = enforce_recruit_max,
             lambda = lambda_hat
         ),
         shrinkage = list(
@@ -958,7 +1017,11 @@ estimate_bio_pars <- function(
             p_big = meas_p_big
         ),
         settings = list(
-            use_measurement_error = use_measurement_error
+            use_measurement_error = use_measurement_error,
+            enforce_growth_bounds = enforce_growth_bounds,
+            growth_min_fixed = growth_min_fixed,
+            growth_max_fixed = growth_max_fixed,
+            enforce_recruit_max = enforce_recruit_max
         ),
         interval = list(
             # inferred_interval_years = interval_years,
