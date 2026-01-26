@@ -713,9 +713,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
             # Batch compute all transition costs from this current assignment
             # log diagnostic about feasibility before calling into C++
-            vcat(prefix, "    feasible_n=", feasible_n, " length(feasible_tdbh1)=", length(feasible_tdbh1))
+            # vcat(prefix, "    feasible_n=", feasible_n, " length(feasible_tdbh1)=", length(feasible_tdbh1))
             # Time the C++ batch transition-cost call for profiling
-            vcat(prefix, "    Bio params: mu=", Bio_Mu_Growth_unit, " sigma0=", Bio_Sigma0_unit, " recruit_max=", Bio_Recruit_MaxDBH_unit, " interval=", interval_val)
+            # vcat(prefix, "    Bio params: mu=", Bio_Mu_Growth_unit, " sigma0=", Bio_Sigma0_unit, " recruit_max=", Bio_Recruit_MaxDBH_unit, " interval=", interval_val)
 
             t_tc0 <- tic()
             c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
