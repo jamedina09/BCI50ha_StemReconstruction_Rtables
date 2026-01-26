@@ -52,8 +52,7 @@ Common flags used by both drivers (case-insensitive, but use capital letters to 
 
 DP / reconstruction option
 - `DP_MODE` — default: `"marginals+bins"`. Allowed: 'none' 'marginals' 'marginals+bins' 'map'
-- `WHICH_TAG` — default in `main_cpp.R`: `20L` (used for single-tag runs);
-  note: `main_cpp_chunk.R` processes groups and therefore does not rely on `WHICH_TAG` for chunked processing.
+- `WHICH_TAG` — used for single-tag runs (relevant to `main_cpp.R`); the chunked runner processes groups (`Tag`, `species`) and does not rely on `WHICH_TAG`.
 - `ANCHOR_START_CENSUS` — default: `7L`.
 - `DP_VERBOSE` — default: `TRUE`.
 - `DP_POSTERIOR_TOP_K` — default: `2L` - top=k posterioir reconstructions to track. 
@@ -64,17 +63,19 @@ DP / reconstruction option
 - `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
 
 Posterior sampling:
-- `POSTERIOR_SAMPLES` — default: `200L` (set to `0` to disable sampling).
+- `POSTERIOR_SAMPLES` — default: `200L` (set to `0` to disable sampling). When `>0`, the DP engine will draw full-path posterior samples and write them into a per-run `posteriors/` subdirectory.
 - `POSTERIOR_SAMPLES_FORMAT` — default: `"csv"` (options: `rds`, `feather`, `csv`).
-- `POSTERIOR_SAMPLES_PATH` — default: `NULL` (defaults to the run `out_dir` when sampling).
-- `POSTERIOR_SAMPLE_SEED` — default: `NULL` (optional).
+- `POSTERIOR_SAMPLES_PATH` — default: `NULL`. If `NULL` the run's `out_dir` is used and the DP writes to `<out_dir>/posteriors/`. If you supply a path that itself ends in `posteriors`, the script strips that suffix to avoid creating nested `posteriors/posteriors` folders (the DP will create the `posteriors/` subdirectory itself).
+- `POSTERIOR_SAMPLE_SEED` — default: `NULL`. If sampling is enabled and the seed is unset, the chunked runner defaults the seed to `123L` to improve reproducibility; you can override this with `--POSTERIOR_SAMPLE_SEED=<int>`.
+
+Example posterior output files (per tag/run): `tag_11_posterior_samples__summary.csv`, `tag_11_posterior_samples__paths.csv`.
 
 Output controls:
 - `WRITE_DP_CSV` — default: `TRUE` - write incremental/combined CSV output - memory heavy.
 - `WRITE_DP_RDS` — default: `TRUE` - write per-chunk RDS or combined for non-chunk runs.
 - `WRITE_DP_FEATHER` — default: `FALSE` (requires the `arrow` package) - write per-chunk feather (.feather) files or combined for non-chunk runs.
 - `WRITE_DP_PDF` — default: `TRUE` - write pdf visualizations per tag - memory heavy.
-- `DP_PDF_INCLUDE_REFERENCE` — `main_cpp.R` default: `TRUE`; `main_cpp_chunk.R` default: `FALSE` - use when using simulated data to check wether this works or nor.
+- `DP_PDF_INCLUDE_REFERENCE` — `main_cpp.R` default: `TRUE`; `main_cpp_chunk.R` default: `FALSE` — include biologically-informed reference lines in PDFs (useful with simulated data).
 - `WRITE_DP_PDF_PER_CHUNK` — default in `main_cpp_chunk.R`: `TRUE` (controls per-chunk PDFs).
 
 Parallel & chunking controls (chunked runner specific):
@@ -113,6 +114,7 @@ Output directory & naming:
 Files produced as run markers/logs:
 - `run_started.txt` and `run_finished.txt` — small timestamp files written at start and finish to allow job watchers to detect progress.
 - `run_parameters_full.txt` — text file capturing all important run-level variables for reproducibility.
+- `run_log.txt` — appended by `log_msg()` throughout the run; writes performed via `maybe_write()` ensure directories exist and the script records success/failure messages here (for example: `Wrote RDS chunk 2: <path>`).
 
 PDF & plotting controls:
 - `WRITE_DP_PDF` (default: `TRUE`) — control whether PDFs are generated via `plot_tag_to_pdf()`.
@@ -200,7 +202,9 @@ Rscript dp_global/scripts/main_cpp.R --RUN_ALL_TAGS=TRUE --DP_CHUNK_SIZE=0
 
 ## Post-run: combining chunk files or troubleshooting
 
-- To merge per-chunk RDS files into a single RDS (only do this on a machine with enough RAM):
+- By default, the merge helpers write to `stem_reconstruction_dp_global_rcpp_merged.csv` in the run `out_dir`. They locate chunk files matching `stem_reconstruction_dp_global_rcpp_chunk_\\d{3}\\.rds` or `stem_reconstruction_dp_global_rcpp_chunk_\\d{3}\\.feather` (you can use `prefer = 'feather'` with `merge_chunks_to_csv()` to prefer Feather sources).
+
+To merge per-chunk RDS files into a single RDS (only do this on a machine with enough RAM):
 
 ```r
 library(data.table)
