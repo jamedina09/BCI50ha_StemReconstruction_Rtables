@@ -653,6 +653,23 @@ Fits `lm(sd_proc_hat ~ d0_all)` with constraints:
 Final model:
 $\sigma(D_0) = \sigma_0 + \sigma_1 D_0$
 
+### Optional enforcement: user-specified growth bounds
+You can optionally enforce user-specified annual growth bounds in `estimate_bio_pars()` to remove extreme increments prior to parameter estimation. These options are independent of the guardrails returned by the function and affect only the *data used to fit* the growth mean and variance.
+
+- `enforce_growth_bounds` (logical, default `FALSE`): when `TRUE`, observations with annualized growth $g$ (cm/year) outside the provided bounds will be dropped before fitting the mean and variance models.
+- `growth_min_fixed`, `growth_max_fixed` (numeric, cm/year): one-sided bounds are allowed (set one of them to `NA` to have only a single-sided filter).
+
+Behavior:
+- Dropped observations produce a warning stating how many points were removed.
+- If enforcing the bounds causes too few growth observations to remain (the function requires at least 5 total growth observations), `estimate_bio_pars()` will raise an error.
+
+Example (enforce growth between -0.5 and 7.5 cm/year):
+
+```r
+estimate_bio_pars(x, enforce_growth_bounds = TRUE, growth_min_fixed = -0.5, growth_max_fixed = 7.5)
+```
+
+
 ### Penalty Parameter Estimation
 
 #### Soft Shrinkage Penalty ($k_{\text{shrink}}$)
@@ -826,6 +843,18 @@ Upper quantile guardrail (default 99.9%):
 `recruit_max_dbh` = Q_{0.999}(D_recruited)
 
 Fallback: 5 cm
+
+**Optional enforcement: recruit max DBH**
+`estimate_bio_pars()` supports an optional pre-fit filter for recruit sizes:
+
+- `enforce_recruit_max` (logical, default `FALSE`): when `TRUE`, recruits with DBH strictly greater than `recruit_max_fixed` (cm) are removed from the sample prior to fitting the lognormal recruit-size distribution.
+- When `enforce_recruit_max = TRUE`, you must provide a positive finite `recruit_max_fixed` value. The function will warn if any recruits were dropped.
+
+Example (enforce a 37.5 cm recruit cap):
+
+```r
+estimate_bio_pars(x, enforce_recruit_max = TRUE, recruit_max_source = "fixed", recruit_max_fixed = 37.5)
+```
 
 **Recruitment rate:**
 
@@ -1221,6 +1250,23 @@ source("dp_global/R/dp_global_biol.R")
 source("dp_global/R/sensitivity_transition_cost_bio.R")
 # Run parameter sweeps on costs
 ```
+
+### Example: enforce growth/recruit bounds
+Units: growth bounds are **cm/year**; recruit caps are **cm**.
+
+```r
+# Enforce growth bounds (0.05 - 0.75 cm/yr) and cap recruits at 37.5 cm
+bio <- estimate_bio_pars(
+  x,
+  enforce_growth_bounds = TRUE,
+  growth_min_fixed = 0.05,
+  growth_max_fixed = 0.75,
+  enforce_recruit_max = TRUE,
+  recruit_max_source = "fixed",
+  recruit_max_fixed = 37.5
+)
+```
+
 
 ### Realism Report Only
 
