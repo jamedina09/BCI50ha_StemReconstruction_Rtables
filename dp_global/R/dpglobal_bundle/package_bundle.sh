@@ -107,48 +107,18 @@ fi
 # Build INSTALL.txt (auto-generated to explain how to run main_cpp.R)
 INSTALL_FILE="${STAGE_DIR}/INSTALL.txt"
 cat > "${INSTALL_FILE}" <<'EOF'
-DP_GLOBAL Bundle - INSTALL
+DP_GLOBAL Bundle - Quick RUN
 
-This archive contains a full copy of the project's runtime files required to run `scripts/main_cpp.R`.
+This archive contains a compact copy of the project's runtime files required to run `scripts/main_cpp.R`.
 
-Files included (relative to the archive root):
-- dp_global/                (full project R code and scripts, excluding heavy outputs)
-- dp_global/R/dpglobal_bundle/dpglobal_bundle.RData
-- dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds
-- dp_global/R/dpglobal_bundle/README.md
-- dp_global/R/dpglobal_bundle/transition_cost_rcpp.R
-- dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp
-- bin/                      (run helpers such as run_dp_future_single.R and run_dp_future.R)
-- data_simulation/data/      (example input files)
-- Makefile                  [NOT INCLUDED BY DEFAULT]
+Quick start (recommended):
 
-Quick install & run (from the extracted directory):
-
-1) Install required R packages (non-interactive one-liner):
-Rscript -e "manifest <- readRDS('dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds'); pkgs <- unique(unlist(manifest$required_pkgs_by_file)); pkgs <- pkgs[!pkgs %in% installed.packages()[, 'Package']]; if (length(pkgs)) install.packages(pkgs)"
-
-2) Build/compile the C++ acceleration (recommended for speed):
-# from the extracted archive root (uses source in dp_global/src packaged in dp_global/R/dpglobal_bundle/src/)
-Rscript -e "Rcpp::sourceCpp('dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp')"
-
-3) Load the bundle functions (example):
-Rscript -e "load('dp_global/R/dpglobal_bundle/dpglobal_bundle.RData')"
-
-4) Verify quickly using a dry-run with the provided runner (recommended):
-# Print the Rscript commands that would run without executing
-./bin/run_dp_future_single.R --workers 1 --cores-per-job 1 -- --DRY_RUN
-
-5) Run main driver (example; adapt flags as needed):
-# Example: run tag 2 in a single-process mode
-Rscript dp_global/scripts/main_cpp.R --WHICH_TAG=2 --RUN_ALL_TAGS=TRUE --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1
+1) Run the main entrypoint from R using a temporary working directory (keeps your session unchanged):
+   # interactive R example
+   withr::with_dir('/path/to/extracted_bundle', source(file.path('dp_global', 'R', 'dp_global_main.R')))
 
 Notes:
-- The compiled shared object is platform- and R-version-specific. Compile on the target machine using Rcpp::sourceCpp().
-- If a function is missing after loading, rebuild the bundle on the source machine using:
-  Rscript -e "source('./dp_global/R/dpglobal_bundle/dpglobal_bundle_loader.R')"
-
-- To let the packaging script build the `dpglobal_bundle.RData` for you before packaging, run:
-  sh dp_global/R/dpglobal_bundle/package_bundle.sh --build-bundle
+- The bundle may include a small manifest at `dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds` listing suggested packages to install.
 
 EOF
 
