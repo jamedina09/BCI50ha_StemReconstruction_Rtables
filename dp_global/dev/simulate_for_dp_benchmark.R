@@ -27,7 +27,7 @@ BIO_VALS <- list(
 
 # Threshold for stopping (TransitionComputations)
 TC_STOP <- 2e6
-MAX_STEMS <- 200L
+MAX_STEMS <- 7L
 
 # Helper: compute transition computations for tags (copied logic)
 compute_transition_table <- function(xs, anchor_start = ANCHOR_START) {
@@ -95,7 +95,8 @@ for (n_stems in seq_len(MAX_STEMS)) {
   # find TC for this tag
   tc_val <- tc_tab[Tag == tag, TransitionComputations]
   results[[length(results) + 1]] <- list(Tag = tag, NStems = n_stems, TransitionComputations = tc_val)
-  if (length(results) > 0 && !is.na(tc_val) && tc_val >= TC_STOP) break
+  # Stop when we have generated up to the requested max stems
+  if (n_stems >= MAX_STEMS) break
 }
 
 # Final dataset: attach bio vals and write
