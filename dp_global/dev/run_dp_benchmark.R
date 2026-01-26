@@ -27,7 +27,14 @@ suppressWarnings(suppressMessages(sys.source(dp_main, envir = globalenv())))
 if (!file.exists(INPUT_FILE)) stop("Simulated dataset not found: ", INPUT_FILE)
 xs_all <- fread(INPUT_FILE)
 
-# compute TC table (reuse function from simulation or inline)
+# compute_transition_table(...) - Compute per-Tag TransitionComputations used as a proxy
+# for DP computational load. For each Tag we count observations per census up to the
+# anchor, compute the number of injective assignment states (P(K, n) = K!/(K-n)!) for
+# each census where n is the number of observations and K is approximated by the max
+# observed across censuses (plus slack, if applicable). TransitionComputations is the
+# sum over adjacent census transitions of (n_states_t * n_states_t+1), an estimate of the
+# number of state-pair transition cost evaluations the DP would need in the worst case.
+# Returns a data.table(Tag, TransitionComputations).
 compute_transition_table <- function(xs, anchor_start = ANCHOR_START) {
   xs <- copy(xs)
   setDT(xs)
@@ -66,12 +73,27 @@ res_tab <- compute_transition_table(xs_all, anchor_start = ANCHOR_START)
 res_tab <- res_tab[TransitionComputations <= 3e6]
 setorder(res_tab, TransitionComputations)
 
-# Helper to run DP and time it
+# time_tag_run(tag_val) - Run DP for a single tag and measure elapsed time.
+# - Performs one warmup run (to exercise compilation/initialization) and then n_rep timed runs.
+# - Uses R.utils::withTimeout() to abort runs that exceed TIMEOUT_SEC and records NA for failures.
+# - Passes pruning parameters (PRUNE_*) into the DP function so timings reflect the
+#   pruning configuration you selected above.
+# - Returns: list(tag, times (vector), median (median of valid times or NA), n_valid, errors)
+#
+# Note: warmup errors are recorded but do not stop timing; individual runs that error
+#       produce NA and are excluded from the median calculation.
+#
+# Usage example:
+#   r <- time_tag_run('nstem_3', n_rep = 3, timeout = 300)
+#   r$median  # median runtime in seconds (or NA)
+
 time_tag_run <- function(tag_val, n_rep = N_REP, timeout = TIMEOUT_SEC) {
   td <- xs_all[Tag == tag_val]
   td <- as.data.table(td)
   errors <- character(0)
+  # Warmup: run once (silently) to trigger any compilation or setup overhead
   tryCatch(R.utils::withTimeout(match_stems_dp_global_backward_marginals_batch(td, anchor_start = ANCHOR_START, prune_hard = PRUNE_HARD, prune_min_growth = PRUNE_MIN_GROWTH, prune_max_growth = PRUNE_MAX_GROWTH, prune_recruit_max_dbh = PRUNE_RECRUIT_MAX_DBH, verbose = FALSE), timeout = timeout, onTimeout = "error"), error = function(e) { errors <<- c(errors, e$message); return(NA) })
+
   times <- numeric(0)
   for (i in seq_len(n_rep)) {
     t <- tryCatch(R.utils::withTimeout({ st <- proc.time()[[3]]; out <- match_stems_dp_global_backward_marginals_batch(td, anchor_start = ANCHOR_START, prune_hard = PRUNE_HARD, prune_min_growth = PRUNE_MIN_GROWTH, prune_max_growth = PRUNE_MAX_GROWTH, prune_recruit_max_dbh = PRUNE_RECRUIT_MAX_DBH, verbose = FALSE); en <- proc.time()[[3]]; en - st }, timeout = timeout, onTimeout = "error"), error = function(e) { errors <<- c(errors, e$message); NA_real_ })
@@ -96,7 +118,6 @@ res_meas <- merge(res_meas, res_tab, by = "Tag", all.x = TRUE)
 setorder(res_meas, TransitionComputations)
 
 fwrite(res_meas, file = OUT_MEAS)
-
 
 m0 <- lm(log10(MedianSec) ~ log10(TransitionComputations), data = res_meas)
 
@@ -146,16 +167,28 @@ lines(
     lwd = 2
 )
 
-
-
-predict_time <- function(N) {
+# predict_time(N, unit = c("sec","min","hour")) - Predict runtime from TransitionComputations.
+# - N: numeric scalar or vector of TransitionComputations
+# - unit: one of "sec" (seconds), "min" (minutes), or "hour" (hours). Default is "sec".
+predict_time <- function(N, unit = c("sec", "min", "hour")) {
+    unit <- match.arg(unit)
     logN <- log10(N)
     logT <- -1.45817 +
         (-0.07313 * logN) +
         (0.14164 * logN^2)
-    10^logT
+    secs <- 10^logT
+    out <- switch(unit,
+        sec = secs,
+        min = secs / 60,
+        hour = secs / 3600
+    )
+    out
 }
 
-predict_time(1000)
-predict_time(1e6)
-predict_time(c(10, 100, 1000, 1e5, 1e6, 1e7))
+# Examples: predictions in seconds, minutes, and hours
+predict_time(1000, "sec")
+predict_time(1000, "min")
+predict_time(1e6, "hour")
+round(predict_time(c(10, 100, 1000, 1e5, 1e6, 1e7), "min"), 4)
+
+round(predict_time(c(10, 100, 1000, 1e5, 1e6, 1e7), "hour"), 4)
