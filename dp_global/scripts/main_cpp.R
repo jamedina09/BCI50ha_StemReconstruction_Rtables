@@ -420,16 +420,21 @@ out_path <- function(target, ext = NULL) {
 }
 
 maybe_write <- function(flag, path, write_expr, msg = NULL) {
-    if (!isTRUE(flag)) return(invisible(FALSE))
+    if (!isTRUE(flag)) {
+        return(invisible(FALSE))
+    }
     ensure_dir(dirname(path))
-    tryCatch({
-        write_expr()
-        log_msg(sprintf("Wrote %s: %s", if (!is.null(msg)) msg else basename(path), path))
-        TRUE
-    }, error = function(e) {
-        log_msg(sprintf("Failed to write %s: %s", path, conditionMessage(e)), "ERROR")
-        FALSE
-    })
+    tryCatch(
+        {
+            write_expr()
+            log_msg(sprintf("Wrote %s: %s", if (!is.null(msg)) msg else basename(path), path))
+            TRUE
+        },
+        error = function(e) {
+            log_msg(sprintf("Failed to write %s: %s", path, conditionMessage(e)), "ERROR")
+            FALSE
+        }
+    )
 }
 
 # If posterior sampling is requested, default to the run base `out_dir` so the
@@ -761,7 +766,18 @@ run_main <- function() {
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,
             recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
-            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.99))
+            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.99)),
+            # -----------------------------------------------------------------
+            # Optional enforcement of user-specified growth/recruit bounds
+            # Units: growth bounds in cm/year; recruit max in cm.
+            # If 'enforce_growth_bounds' is TRUE, observations outside the provided fixed
+            # bounds ('growth_min_fixed' and/or 'growth_max_fixed') are dropped before estimation.
+            enforce_growth_bounds = TRUE,
+            growth_min_fixed = -0.5,
+            growth_max_fixed = 7.5,
+            # If 'enforce_recruit_max' is TRUE, recruits with DBH > 'recruit_max_fixed' are dropped
+            # before fitting the recruitment-size lognormal.
+            enforce_recruit_max = TRUE
         )
     }
 
@@ -857,17 +873,20 @@ run_main <- function() {
     }
 
     # 5.6 Optional: write DP outputs (centralized helpers)
-    maybe_write(isTRUE(WRITE_DP_CSV) && !is.null(out), out_path("dp_csv"),
+    maybe_write(
+        isTRUE(WRITE_DP_CSV) && !is.null(out), out_path("dp_csv"),
         function() data.table::fwrite(out, out_path("dp_csv")),
         "DP CSV"
     )
 
-    maybe_write(isTRUE(WRITE_DP_RDS) && !is.null(out), out_path("dp_rds"),
+    maybe_write(
+        isTRUE(WRITE_DP_RDS) && !is.null(out), out_path("dp_rds"),
         function() saveRDS(out, file = out_path("dp_rds")),
         "DP RDS"
     )
 
-    maybe_write(isTRUE(WRITE_DP_FEATHER) && !is.null(out), out_path("dp_feather"),
+    maybe_write(
+        isTRUE(WRITE_DP_FEATHER) && !is.null(out), out_path("dp_feather"),
         function() {
             if (!requireNamespace("arrow", quietly = TRUE)) stop("'arrow' package not available; skipping feather output")
             arrow::write_feather(out, out_path("dp_feather"))
@@ -875,7 +894,8 @@ run_main <- function() {
         "DP Feather"
     )
 
-    maybe_write(isTRUE(WRITE_DP_PDF) && !is.null(out), out_path("dp_pdf"),
+    maybe_write(
+        isTRUE(WRITE_DP_PDF) && !is.null(out), out_path("dp_pdf"),
         function() {
             plot_tag_to_pdf(
                 out,

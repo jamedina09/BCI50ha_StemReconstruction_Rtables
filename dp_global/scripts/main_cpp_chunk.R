@@ -261,7 +261,7 @@ CLI_REFERENCE <- list(
     BATCH_TS = "BATCH_TS",
     CONFIG_NAME = "CONFIG_NAME",
     USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR"
-) 
+)
 
 ############################################################
 ### 2.5 Sensitivity analysis settings
@@ -400,7 +400,7 @@ if (!exists("INPUT_FILE") || is.null(INPUT_FILE) || !nzchar(INPUT_FILE)) {
 
 if (!file.exists(INPUT_FILE)) {
     stop("INPUT_FILE does not exist: ", INPUT_FILE)
-} 
+}
 
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
@@ -459,16 +459,21 @@ out_path <- function(target, ext = NULL) {
 }
 
 maybe_write <- function(flag, path, write_expr, msg = NULL) {
-    if (!isTRUE(flag)) return(invisible(FALSE))
+    if (!isTRUE(flag)) {
+        return(invisible(FALSE))
+    }
     ensure_dir(dirname(path))
-    tryCatch({
-        write_expr()
-        log_msg(sprintf("Wrote %s: %s", if (!is.null(msg)) msg else basename(path), path))
-        TRUE
-    }, error = function(e) {
-        log_msg(sprintf("Failed to write %s: %s", path, conditionMessage(e)), "ERROR")
-        FALSE
-    })
+    tryCatch(
+        {
+            write_expr()
+            log_msg(sprintf("Wrote %s: %s", if (!is.null(msg)) msg else basename(path), path))
+            TRUE
+        },
+        error = function(e) {
+            log_msg(sprintf("Failed to write %s: %s", path, conditionMessage(e)), "ERROR")
+            FALSE
+        }
+    )
 }
 
 DP_CSV_FILE <- out_path("dp_csv")
@@ -501,7 +506,7 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
 } else {
     # Ensure disabled sampling leaves a NULL path to avoid accidental writes
     POSTERIOR_SAMPLES_PATH <- NULL
-} 
+}
 
 ############################################################
 ### 3) Source project code
@@ -651,7 +656,7 @@ auto_dp_max_tracks <- function(xrun) {
     ][, max(N, na.rm = TRUE)]
     if (!is.finite(max_obs_any_tag_census)) max_obs_any_tag_census <- 0L
     as.integer(max_obs_any_tag_census + 1L)
-} 
+}
 
 ############################################################
 ### 6) Core DP functions — run helpers used by the pipeline
@@ -787,9 +792,21 @@ run_main_chunked <- function() {
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,
             recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
-            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.99))
+            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.99)),
+            # -----------------------------------------------------------------
+            # Optional enforcement of user-specified growth/recruit bounds
+            # Units: growth bounds in cm/year; recruit max in cm.
+            # If 'enforce_growth_bounds' is TRUE, observations outside the provided fixed
+            # bounds ('growth_min_fixed' and/or 'growth_max_fixed') are dropped before estimation.
+            enforce_growth_bounds = TRUE,
+            growth_min_fixed = -0.5,
+            growth_max_fixed = 7.5,
+            # If 'enforce_recruit_max' is TRUE, recruits with DBH > 'recruit_max_fixed' are dropped
+            # before fitting the recruitment-size lognormal.
+            enforce_recruit_max = TRUE
         )
     }
+
 
     # Write a small text file recording the parameters used to build the
     # run-specific output directory name so runs are reproducible.
@@ -856,9 +873,9 @@ run_main_chunked <- function() {
     xrun <- attach_bio_columns(xrun, bio_pars)
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)
-    dp_max_tracks_local <- as.integer(dp_max_tracks_local) 
+    dp_max_tracks_local <- as.integer(dp_max_tracks_local)
 
-## Create chunks based on unique (Tag, species) groups
+    ## Create chunks based on unique (Tag, species) groups
     if (!requireNamespace("parallel", quietly = TRUE)) stop("Package not available: parallel.")
     groups <- unique(xrun[, .(Tag, species)])
     data.table::setorder(groups, Tag, species)
@@ -873,7 +890,12 @@ run_main_chunked <- function() {
     # Handle edge cases: empty chunk list or out-of-range values
     if (length(chunks) == 0L) {
         log_msg("No groups/chunks to process — exiting.")
-        tryCatch({ writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt")) }, error = function(e) NULL)
+        tryCatch(
+            {
+                writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt"))
+            },
+            error = function(e) NULL
+        )
         return(invisible(list(xrun = xrun, bio_pars = bio_pars)))
     }
 
@@ -882,10 +904,12 @@ run_main_chunked <- function() {
     end_ci <- max(1L, min(length(chunks), end_ci))
 
     if (start_ci > end_ci) {
-        stop(sprintf("Invalid chunk range: DP_CHUNK_START=%s, DP_CHUNK_END=%s after clamping => start=%d > end=%d", 
-                     if (exists("DP_CHUNK_START") && !is.null(DP_CHUNK_START)) as.character(DP_CHUNK_START) else "NULL",
-                     if (exists("DP_CHUNK_END") && !is.null(DP_CHUNK_END)) as.character(DP_CHUNK_END) else "NULL",
-                     start_ci, end_ci))
+        stop(sprintf(
+            "Invalid chunk range: DP_CHUNK_START=%s, DP_CHUNK_END=%s after clamping => start=%d > end=%d",
+            if (exists("DP_CHUNK_START") && !is.null(DP_CHUNK_START)) as.character(DP_CHUNK_START) else "NULL",
+            if (exists("DP_CHUNK_END") && !is.null(DP_CHUNK_END)) as.character(DP_CHUNK_END) else "NULL",
+            start_ci, end_ci
+        ))
     }
 
     for (ci in seq_len(length(chunks))) {
@@ -904,65 +928,68 @@ run_main_chunked <- function() {
         log_msg(sprintf("Chunk %d/%d — %d groups", ci, length(chunks), nrow(groups_ci)))
 
         # Run chunk with error isolation so one bad chunk doesn't kill the run
-        status <- tryCatch({
-            res <- parallel::mclapply(seq_len(nrow(groups_ci)), function(j) {
-                data.table::setDTthreads(1L)
-                g <- groups_ci[j]
-                dtg <- xrun[Tag == g$Tag & species == g$species]
-                run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
-            }, mc.cores = MC_CORES)
+        status <- tryCatch(
+            {
+                res <- parallel::mclapply(seq_len(nrow(groups_ci)), function(j) {
+                    data.table::setDTthreads(1L)
+                    g <- groups_ci[j]
+                    dtg <- xrun[Tag == g$Tag & species == g$species]
+                    run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
+                }, mc.cores = MC_CORES)
 
-            out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
+                out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
 
-            if (nrow(out_chunk) > 0L) {
-                out_chunk[, DP_Chunk := ci]
-                out_chunk <- maybe_add_posterior_bins(out_chunk)
-                # Record run output directory (basename) in each row to avoid variable/column name collision
-                out_chunk[, run_out_dir := basename(out_dir)]
+                if (nrow(out_chunk) > 0L) {
+                    out_chunk[, DP_Chunk := ci]
+                    out_chunk <- maybe_add_posterior_bins(out_chunk)
+                    # Record run output directory (basename) in each row to avoid variable/column name collision
+                    out_chunk[, run_out_dir := basename(out_dir)]
 
-                if (isTRUE(WRITE_DP_CSV)) {
-                    maybe_write(isTRUE(WRITE_DP_CSV), DP_CSV_FILE, function() {
-                        data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)
-                    }, sprintf("DP CSV chunk %d", ci))
+                    if (isTRUE(WRITE_DP_CSV)) {
+                        maybe_write(isTRUE(WRITE_DP_CSV), DP_CSV_FILE, function() {
+                            data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)
+                        }, sprintf("DP CSV chunk %d", ci))
+                    }
+
+                    if (isTRUE(WRITE_DP_FEATHER)) {
+                        feather_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.feather"), ci))
+                        maybe_write(isTRUE(WRITE_DP_FEATHER), feather_path, function() {
+                            if (!requireNamespace("arrow", quietly = TRUE)) stop("'arrow' package not available; skipping feather output")
+                            arrow::write_feather(out_chunk, feather_path)
+                        }, sprintf("Feather for chunk %d", ci))
+                    }
+
+                    if (isTRUE(WRITE_DP_RDS)) {
+                        maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
+                            saveRDS(out_chunk, file = chunk_rds)
+                        }, sprintf("RDS chunk %d", ci))
+                    }
+
+                    if (isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF)) {
+                        pdf_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.pdf"), ci))
+                        maybe_write(isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF), pdf_path, function() {
+                            plot_tag_to_pdf(out_chunk, pdf_file = pdf_path, include_reference = DP_PDF_INCLUDE_REFERENCE)
+                        }, sprintf("PDF chunk %d", ci))
+                    }
+                } else {
+                    log_msg(sprintf("Chunk %d returned no rows.", ci))
+                    if (isTRUE(WRITE_DP_RDS)) {
+                        maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
+                            saveRDS(out_chunk, file = chunk_rds)
+                        }, sprintf("RDS chunk %d (empty)", ci))
+                    }
                 }
 
-                if (isTRUE(WRITE_DP_FEATHER)) {
-                    feather_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.feather"), ci))
-                    maybe_write(isTRUE(WRITE_DP_FEATHER), feather_path, function() {
-                        if (!requireNamespace("arrow", quietly = TRUE)) stop("'arrow' package not available; skipping feather output")
-                        arrow::write_feather(out_chunk, feather_path)
-                    }, sprintf("Feather for chunk %d", ci))
-                }
-
-                if (isTRUE(WRITE_DP_RDS)) {
-                    maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
-                        saveRDS(out_chunk, file = chunk_rds)
-                    }, sprintf("RDS chunk %d", ci))
-                }
-
-                if (isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF)) {
-                    pdf_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.pdf"), ci))
-                    maybe_write(isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF), pdf_path, function() {
-                        plot_tag_to_pdf(out_chunk, pdf_file = pdf_path, include_reference = DP_PDF_INCLUDE_REFERENCE)
-                    }, sprintf("PDF chunk %d", ci))
-                }
-            } else {
-                log_msg(sprintf("Chunk %d returned no rows.", ci))
-                if (isTRUE(WRITE_DP_RDS)) {
-                    maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
-                        saveRDS(out_chunk, file = chunk_rds)
-                    }, sprintf("RDS chunk %d (empty)", ci))
-                }
+                TRUE
+            },
+            error = function(e) {
+                # Write a small error marker for the chunk and continue
+                err_file <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d_failed.txt"), ci))
+                writeLines(conditionMessage(e), con = err_file)
+                log_msg(sprintf("Chunk %d failed: %s", ci, conditionMessage(e)), "ERROR")
+                FALSE
             }
-
-            TRUE
-        }, error = function(e) {
-            # Write a small error marker for the chunk and continue
-            err_file <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d_failed.txt"), ci))
-            writeLines(conditionMessage(e), con = err_file)
-            log_msg(sprintf("Chunk %d failed: %s", ci, conditionMessage(e)), "ERROR")
-            FALSE
-        })
+        )
 
         first_chunk <- FALSE
         rm(res, out_chunk, groups_ci)
@@ -1004,7 +1031,7 @@ merge_chunk_rds_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(
     }
     log_msg(paste("Merged", length(files), "RDS chunks to", out_csv))
     out_csv
-} 
+}
 
 merge_chunk_feathers_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(DP_BASE, "_merged.csv"))) {
     if (!requireNamespace("arrow", quietly = TRUE)) stop("arrow package required to read feather files")
@@ -1032,12 +1059,16 @@ merge_chunks_to_csv <- function(out_dir, prefer = c("rds", "feather")) {
     prefer <- match.arg(prefer)
     if (prefer == "feather") {
         chars <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.feather$"), full.names = TRUE)
-        if (length(chars) > 0L) return(merge_chunk_feathers_to_csv(out_dir))
+        if (length(chars) > 0L) {
+            return(merge_chunk_feathers_to_csv(out_dir))
+        }
         return(merge_chunk_rds_to_csv(out_dir))
     }
     # prefer rds
     rds <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.rds$"), full.names = TRUE)
-    if (length(rds) > 0L) return(merge_chunk_rds_to_csv(out_dir))
+    if (length(rds) > 0L) {
+        return(merge_chunk_rds_to_csv(out_dir))
+    }
     return(merge_chunk_feathers_to_csv(out_dir))
 }
 
@@ -1053,4 +1084,4 @@ if (sys.nframe() == 0L) {
 }
 
 
-# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=1 --DP_CHUNK_END=2 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=FALSE --POSTERIOR_SAMPLES=10
+# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=1 --DP_CHUNK_END=2 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10
