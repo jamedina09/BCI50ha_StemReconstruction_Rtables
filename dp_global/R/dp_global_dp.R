@@ -469,6 +469,33 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     Bio_Recruit_MaxDBH_unit <- unique(tree_data$Bio_Recruit_MaxDBH_unit)
     Bio_Recruitment_lambda <- unique(tree_data$Bio_Recruitment_lambda)
 
+    # Fail-fast checks for required biological params (must be present and scalar)
+    required_bio <- c(
+        "Bio_Mu_Growth",
+        "Bio_Sigma0_Growth",
+        "Bio_Sigma1_Growth",
+        "Bio_H0_Mortality",
+        "Bio_Beta_Mortality",
+        "Bio_Recruit_Meanlog",
+        "Bio_Recruit_Sdlog",
+        "Bio_Recruit_MaxDBH_unit",
+        "Bio_Recruitment_lambda",
+        "Bio_Max_Shrink",
+        "Bio_K_Shrink"
+    )
+    missing_bio <- setdiff(required_bio, names(tree_data))
+    bad_bio <- character(0)
+    for (nm in intersect(required_bio, names(tree_data))) {
+        u <- tryCatch(unique(tree_data[[nm]]), error = function(e) NA)
+        if (length(u) != 1L || any(is.na(u))) bad_bio <- c(bad_bio, nm)
+    }
+    if (length(missing_bio) > 0L || length(bad_bio) > 0L) {
+        msg_parts <- character(0)
+        if (length(missing_bio) > 0L) msg_parts <- c(msg_parts, paste0("missing required bio columns: ", paste(missing_bio, collapse = ", ")))
+        if (length(bad_bio) > 0L) msg_parts <- c(msg_parts, paste0("non-scalar or NA bio columns: ", paste(bad_bio, collapse = ", ")))
+        stop(prefix, "Required biological parameters missing or invalid: ", paste(msg_parts, collapse = "; "))
+    }
+
     # --- Determine effective pruning bounds (separate from biological min/max)
     user_min <- if (!is.null(prune_min_growth)) prune_min_growth else min_growth
     user_max <- if (!is.null(prune_max_growth)) prune_max_growth else max_growth
@@ -607,17 +634,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         pair_interval <- resolve_interval_years_pair(tree_data)
         # Interval (years) between cc and next_cc (computed once for this census pair)
-        interval_val <- (as.numeric(pair_interval[[as.character(next_cc)]]) - as.numeric(pair_interval[[as.character(cc)]])) / 365.25
-        vcat(prefix, "  Interval years between CensusID ", cc, " and ", next_cc, ": ", interval_val, sep = "")
-        if (!is.finite(interval_val) || interval_val <= 0) {
-            # fallback safe default; if invalid, growth-based pruning will be skipped
+        val_next <- pair_interval[[as.character(next_cc)]]
+        val_cc   <- pair_interval[[as.character(cc)]]
+        if (is.null(val_next) || length(val_next) == 0 || is.null(val_cc) || length(val_cc) == 0) {
             interval_val <- NA_real_
+        } else {
+            interval_val <- (as.numeric(val_next) - as.numeric(val_cc)) / 365.25
+            if (!is.finite(interval_val) || interval_val <= 0) {
+                # fallback safe default; if invalid, growth-based pruning will be skipped
+                interval_val <- NA_real_
+            }
         }
+        vcat(prefix, "  Interval years between CensusID ", cc, " and ", next_cc, ": ", interval_val, sep = "")
 
         for (i in seq_len(n_states_cc)) {
             # i <- 1L # For testing only
             tdbh0 <- track_dbh_by_state[[p]][[i]]
             assign0 <- mat_cc[i, ]
+            vcat(prefix, "  processing assignment i=", i, " tdbh0_len=", length(tdbh0), " assign0_len=", length(assign0))
 
             # Collect all feasible next states (based on phase constraints) for this current assignment
             feasible_n <- 0L
@@ -649,7 +683,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                 }
                             } else if (is.na(v0) && !is.na(v1)) {
                                 # recruit size guard
-                                if (!is.na(eff_recruit_max) && is.finite(eff_recruit_max) && (v1 > eff_recruit_max)) {
+                                # Protect against NA logicals by explicitly checking v1 and eff_recruit_max
+                                if (isTRUE(!is.na(eff_recruit_max) && is.finite(eff_recruit_max) && !is.na(v1) && (v1 > eff_recruit_max))) {
                                     candidate_ok <- FALSE
                                     break
                                 }
@@ -677,7 +712,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             feasible_tdbh1 <- feasible_tdbh1[seq_len(feasible_n)]
 
             # Batch compute all transition costs from this current assignment
+            # log diagnostic about feasibility before calling into C++
+            vcat(prefix, "    feasible_n=", feasible_n, " length(feasible_tdbh1)=", length(feasible_tdbh1))
             # Time the C++ batch transition-cost call for profiling
+            vcat(prefix, "    Bio params: mu=", Bio_Mu_Growth_unit, " sigma0=", Bio_Sigma0_unit, " recruit_max=", Bio_Recruit_MaxDBH_unit, " interval=", interval_val)
+
             t_tc0 <- tic()
             c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
                 track_dbh_t = tdbh0,
