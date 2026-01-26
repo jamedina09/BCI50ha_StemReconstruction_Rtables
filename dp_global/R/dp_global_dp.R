@@ -651,7 +651,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # i <- 1L # For testing only
             tdbh0 <- track_dbh_by_state[[p]][[i]]
             assign0 <- mat_cc[i, ]
-            vcat(prefix, "  processing assignment i=", i, " tdbh0_len=", length(tdbh0), " assign0_len=", length(assign0))
+            # vcat(prefix, "  processing assignment i=", i, " tdbh0_len=", length(tdbh0), " assign0_len=", length(assign0))
 
             # Collect all feasible next states (based on phase constraints) for this current assignment
             feasible_n <- 0L
