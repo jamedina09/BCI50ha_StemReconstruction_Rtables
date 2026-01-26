@@ -799,6 +799,14 @@ run_main_chunked <- function() {
     params$TIMESTAMP <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     params$OUT_DIR <- out_dir
     params$GENERATED_DIR_NAME <- basename(out_dir)
+    # Record BATCH_TS explicitly: use provided BATCH_TS if present; otherwise
+    # extract the timestamp prefix used in the generated directory name (YYYYmmdd_HHMMSS)
+    if (exists("BATCH_TS") && nzchar(BATCH_TS)) {
+        params$BATCH_TS <- BATCH_TS
+    } else {
+        m <- regexpr("^[0-9]{8}_[0-9]{6}", basename(out_dir))
+        params$BATCH_TS <- if (m[1] == -1) "" else regmatches(basename(out_dir), m)
+    }
 
     # Add called parameters (command-line overrides)
     params$CALLED_PARAMETERS <- overrides
