@@ -4,23 +4,37 @@
 ############################################################
 
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
-                                                                min_growth = -Inf,
-                                                                max_growth = Inf,
-                                                                interval_years = NULL,
-                                                                anchor_start,
-                                                                max_tracks = 30L,
-                                                                slack_tracks = 1L,
-                                                                max_states = 50000L,
-                                                                temperature = 1.0,
-                                                                posterior_top_k = 2L,
-                                                                eps_tiebreak = 1e-6,
-                                                                # --- measurement error (optional) ---
-                                                                use_measurement_error = FALSE,
-                                                                meas_sd1_a = 0.0062,
-                                                                meas_sd1_b = 0.0904,
-                                                                meas_sd2 = 4.64,
-                                                                meas_p_big = 0.05,
-                                                                verbose = FALSE) {
+                                                           min_growth = -Inf,
+                                                           max_growth = Inf,
+                                                           anchor_start,
+                                                           max_tracks = 30L,
+                                                           slack_tracks = 1L,
+                                                           slack_require_anchor_recruitable = FALSE,
+                                                           slack_require_anchor_eps = 1e-6,
+                                                           max_states = 50000L,
+                                                           temperature = 1.0,
+                                                           posterior_top_k = 2L,
+                                                           eps_tiebreak = 1e-6,
+                                                           # --- measurement error (optional) ---
+                                                           use_measurement_error = FALSE,
+                                                           meas_sd1_a = 0.0062,
+                                                           meas_sd1_b = 0.0904,
+                                                           meas_sd2 = 4.64,
+                                                           meas_p_big = 0.05,
+                                                           # --- posterior sampling options ---
+                                                           posterior_samples = 0L,
+                                                           posterior_samples_format = c("rds", "feather", "csv"),
+                                                           posterior_samples_path = NULL,
+                                                           posterior_sample_seed = NULL,
+                                                           # --- pruning options (conservative hard guards) ---
+                                                           prune_hard = TRUE,
+                                                           prune_min_growth = NULL,
+                                                           prune_max_growth = NULL,
+                                                           prune_use_bio_bounds = TRUE,
+                                                           prune_recruit_max_dbh = NULL,
+                                                           # NOTE: Check the TODO in the code about possibly adding a margin when using biological recruit max DBH
+                                                           prune_use_bio_recruit = TRUE,
+                                                           verbose = FALSE) {
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
     if (!is.finite(posterior_top_k) || is.na(posterior_top_k) || posterior_top_k < 1L) {
@@ -42,6 +56,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
     tic <- function() as.numeric(proc.time()[[3L]])
     t_start <- tic()
+
+    # Compute profiling accumulators
+    transition_cost_time <- 0
+    transition_cost_calls <- 0L
 
     tag_val <- tryCatch(
         {
@@ -128,10 +146,20 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (!(is.numeric(dt$DP_PosteriorReconstructedProb))) dt[, DP_PosteriorReconstructedProb := as.numeric(DP_PosteriorReconstructedProb)]
         if (!(is.numeric(dt$DP_PosteriorUnlinkedProb))) dt[, DP_PosteriorUnlinkedProb := as.numeric(DP_PosteriorUnlinkedProb)]
 
+        # Add a stable per-row identifier useful for posterior matching (preserve existing if present)
+        if (!("obs_row_id" %in% names(dt))) {
+            dt[, obs_row_id := seq_len(.N)]
+        } else {
+            # ensure integer type
+            if (!is.integer(dt$obs_row_id)) dt[, obs_row_id := as.integer(obs_row_id)]
+        }
+        # Return the data.table (explicit)
         dt
     }
 
+    # Ensure tree_data has posterior columns and obs_row_id assigned
     tree_data <- ensure_posterior_columns(tree_data)
+    vcat(prefix, "Ensured posterior columns; obs_row_id present (or created)")
 
     # Preserve any provided TrueStemID as hard values in output.
     tree_data[!is.na(TrueStemID), `:=`(
@@ -139,49 +167,122 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         ReconstructionMethod = "given"
     )]
 
-    # Observed-stem counts up to anchor (for state-space diagnostics)
-    # tree_data[, .(CensusID, Tag, DBH)]
-    ## it counts the non-NA DBH observations per census up to anchor_start
-    # FIXME: Anchor doesn't has to be 7, it can be 7, if not, then the last census with observations
+    # Observed-stem counts over census interval from first observed census up to anchor (for state-space diagnostics)
+    # Determine the first census with any DBH observation at or before the anchor
+    census_ids_up_to_anchor <- sort(unique(tree_data$CensusID[tree_data$CensusID <= anchor_start]))
+    first_obs_census <- if (length(census_ids_up_to_anchor) > 0L) {
+        tmp <- tree_data[CensusID <= anchor_start & !is.na(DBH), CensusID]
+        if (length(tmp) > 0L) min(tmp) else NA_integer_
+    } else {
+        NA_integer_
+    }
+    if (is.na(first_obs_census)) {
+        vcat(prefix, "Cannot find any observations up to anchor_start. Falling back to igraph.")
+        K_used <- as.integer(min(0L, max_tracks))
+        tree_data[, `:=`(
+            DP_KUsed = K_used,
+            DP_MaxStatesPerCensus = 0L,
+            DP_MaxStatesCensusID = NA_integer_
+        )]
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
+        return(out)
+    }
+    census_range <- seq.int(from = first_obs_census, to = anchor_start)
+    n_census <- length(census_range)
+    vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
     obs_counts <- vapply(
-        seq_len(anchor_start),
+        census_range,
         function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
         integer(1L)
     )
     max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
 
+    # Initialize conservative hard-pruning diagnostics (per transition between adjacent censuses)
+    prune_hard <- isTRUE(prune_hard)
+
+    # Normalize pruning parameters
+    if (!is.null(prune_min_growth)) prune_min_growth <- as.numeric(prune_min_growth)
+    if (!is.null(prune_max_growth)) prune_max_growth <- as.numeric(prune_max_growth)
+    prune_use_bio_bounds <- isTRUE(prune_use_bio_bounds)
+    if (!is.null(prune_recruit_max_dbh)) prune_recruit_max_dbh <- as.numeric(prune_recruit_max_dbh)
+    prune_use_bio_recruit <- isTRUE(prune_use_bio_recruit)
+
+    prune_stats <- list(
+        total_examined = 0L,
+        total_pruned = 0L,
+        per_census = setNames(integer(max(0, n_census - 1L)), as.character(if (n_census > 1L) census_range[-length(census_range)] else integer(0)))
+    )
+
     # Need a fully-anchored endpoint
+    # If the requested anchor census is missing entirely or all rows at that census
+    # have both NA DBH and NA TrueStemID, prefer the most recent earlier census
+    # that has at least one row with non-NA DBH and non-NA TrueStemID and use that
+    # as the anchor instead of immediately falling back to the igraph matcher.
+    anchor_rows_all <- tree_data[CensusID == anchor_start]
+    if (nrow(anchor_rows_all) == 0L || (all(is.na(anchor_rows_all$DBH)) && all(is.na(anchor_rows_all$TrueStemID)))) {
+        cand_census <- sort(unique(tree_data$CensusID[tree_data$CensusID < anchor_start & !is.na(tree_data$DBH) & !is.na(tree_data$TrueStemID)]))
+        if (length(cand_census) > 0L) {
+            new_anchor <- as.integer(max(cand_census))
+            vcat(prefix, "Requested anchor census=", anchor_start, " had no DBH/TrueStemID; using earlier anchor census=", new_anchor)
+            anchor_start <- new_anchor
+            census_range <- seq.int(from = first_obs_census, to = anchor_start)
+            n_census <- length(census_range)
+            vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
+            obs_counts <- vapply(
+                census_range,
+                function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
+                integer(1L)
+            )
+            max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+        } else {
+            vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+            K_used <- as.integer(min(max_obs, max_tracks))
+            n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+            tree_data[, `:=`(
+                DP_KUsed = K_used,
+                DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+                DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+            )]
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
+            return(out)
+        }
+    }
+
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
-    # FIXME: match_stems_optimal_backward uses time too
-     if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
-         vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
-         K_used <- as.integer(min(max_obs, max_tracks))
-         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
-         tree_data[, `:=`(
-             DP_KUsed = K_used,
-             DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-             DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
-         )]
-         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
-         out <- ensure_posterior_columns(out)
-         return(out)
-     }
+    if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
+        vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+        K_used <- as.integer(min(max_obs, max_tracks))
+        n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+        tree_data[, `:=`(
+            DP_KUsed = K_used,
+            DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+            DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+        )]
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
+        return(out)
+    }
     anchor_ids <- sort(unique(anchor_obs$TrueStemID))
     anchor_ids <- anchor_ids[!is.na(anchor_ids)]
-    # FIXME: match_stems_optimal_backward uses time too
-     if (length(anchor_ids) == 0L) {
-         vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
-         K_used <- as.integer(min(max_obs, max_tracks))
-         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
-         tree_data[, `:=`(
-             DP_KUsed = K_used,
-             DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-             DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
-         )]
-         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
-         out <- ensure_posterior_columns(out)
-         return(out)
-     }
+
+    if (length(anchor_ids) == 0L) {
+        vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
+        K_used <- as.integer(min(max_obs, max_tracks))
+        n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+        tree_data[, `:=`(
+            DP_KUsed = K_used,
+            DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+            DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+        )]
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        return(out)
+    }
 
     # Choose K (tracks) same logic as the MAP DP
     births_needed <- if (length(obs_counts) >= 2L) sum(pmax(0L, diff(obs_counts))) else 0L
@@ -192,10 +293,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!is.finite(slack_tracks) || is.na(slack_tracks) || slack_tracks < 0L) {
         slack_tracks <- 0L
     }
-    K_target <- K_base
-    if (slack_tracks > 0L && K_base == max_obs) {
-        K_target <- K_base + slack_tracks
+
+    # Optionally require that an anchor DBH be recruitable before granting slack.
+    anchor_ok <- TRUE
+    if (isTRUE(slack_require_anchor_recruitable)) {
+        eps <- suppressWarnings(as.numeric(slack_require_anchor_eps))
+        if (!is.finite(eps) || is.na(eps)) eps <- 0
+        anchor_ok <- any(
+            !is.na(anchor_obs$DBH) &
+                !is.na(anchor_obs$Bio_Recruit_MaxDBH_unit) &
+                (anchor_obs$DBH <= (anchor_obs$Bio_Recruit_MaxDBH_unit + eps))
+        )
+        if (!anchor_ok) {
+            vcat(prefix, "slack requested but not granted: no anchor DBH <= recruit_max_dbh (eps=", eps, ")")
+        }
     }
+
+    # Apply slack only when requested and when anchor_ok (if required).
+    K_target <- K_base + ifelse(slack_tracks > 0L && isTRUE(anchor_ok), slack_tracks, 0L)
     K <- min(K_target, max_tracks)
 
     # Report theoretical worst-case state count
@@ -203,13 +318,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     tree_data[, `:=`(
         DP_KUsed = as.integer(K),
         DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-        DP_MaxStatesCensusID = as.integer(which.max(n_states_by_census))
+        DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
     )]
-    # FIXME: match_stems_optimal_backward uses time too
+
     if (K < max(obs_counts)) {
         vcat(prefix, "K too small for observed counts (K=", K, ", max_obs=", max(obs_counts), "). Falling back to igraph.")
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
         return(out)
     }
 
@@ -220,24 +336,26 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!is.finite(current_max)) current_max <- 0
     track_ids <- c(anchor_ids, if (n_extra > 0L) seq.int(from = current_max + 1L, length.out = n_extra) else integer(0))
 
-    # Pre-enumerate assignment states (injective obs->track) for each census
-    obs_dbh <- vector("list", anchor_start)
-    state_mats <- vector("list", anchor_start)
-    state_keys <- vector("list", anchor_start)
-    for (cc in seq_len(anchor_start)) {
+    # Pre-enumerate assignment states (injective obs->track) for each census in census_range
+    obs_dbh <- vector("list", n_census)
+    state_mats <- vector("list", n_census)
+    state_keys <- vector("list", n_census)
+    for (p in seq_len(n_census)) {
+        cc <- census_range[p]
         obs <- tree_data[CensusID == cc & !is.na(DBH)]
-        obs_dbh[[cc]] <- obs$DBH
-        n_obs <- length(obs_dbh[[cc]])
+        obs_dbh[[p]] <- obs$DBH
+        n_obs <- length(obs_dbh[[p]])
         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
-        # FIXME: match_stems_optimal_backward uses time too
+
         if (is.null(mat)) {
             vcat(prefix, "State enumeration exceeded max_states at CensusID=", cc, " (n_obs=", n_obs, "). Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
-        state_mats[[cc]] <- mat
-        state_keys[[cc]] <- apply(mat, 1L, state_key)
+        state_mats[[p]] <- mat
+        state_keys[[p]] <- apply(mat, 1L, state_key)
 
         vcat(prefix, "Enumerated CensusID=", cc, ": n_obs=", n_obs, ", n_states=", nrow(mat))
     }
@@ -245,11 +363,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Anchor state assignment (pins endpoint)
     anchor_obs_ordered <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     anchor_track_idx <- match(anchor_obs_ordered$TrueStemID, track_ids)
-    # FIXME: match_stems_optimal_backward uses time too
+
     if (any(is.na(anchor_track_idx))) {
         vcat(prefix, "Anchor TrueStemID not found in track_ids. Falling back to igraph.")
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
         return(out)
     }
 
@@ -316,7 +435,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
         phase_t
     }
-    # FIXME: Check if the extracted parameters are the right ones
+
     # Bio params (same extraction logic as MAP DP)
     Bio_Mu_Growth_unit <- unique(tree_data$Bio_Mu_Growth)
     Bio_Gamma_Growth_unit <- if ("Bio_Gamma_Growth" %in% names(tree_data)) {
@@ -350,69 +469,129 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     Bio_Recruit_MaxDBH_unit <- unique(tree_data$Bio_Recruit_MaxDBH_unit)
     Bio_Recruitment_lambda <- unique(tree_data$Bio_Recruitment_lambda)
 
+    # Fail-fast checks for required biological params (must be present and scalar)
+    required_bio <- c(
+        "Bio_Mu_Growth",
+        "Bio_Sigma0_Growth",
+        "Bio_Sigma1_Growth",
+        "Bio_H0_Mortality",
+        "Bio_Beta_Mortality",
+        "Bio_Recruit_Meanlog",
+        "Bio_Recruit_Sdlog",
+        "Bio_Recruit_MaxDBH_unit",
+        "Bio_Recruitment_lambda",
+        "Bio_Max_Shrink",
+        "Bio_K_Shrink"
+    )
+    missing_bio <- setdiff(required_bio, names(tree_data))
+    bad_bio <- character(0)
+    for (nm in intersect(required_bio, names(tree_data))) {
+        u <- tryCatch(unique(tree_data[[nm]]), error = function(e) NA)
+        if (length(u) != 1L || any(is.na(u))) bad_bio <- c(bad_bio, nm)
+    }
+    if (length(missing_bio) > 0L || length(bad_bio) > 0L) {
+        msg_parts <- character(0)
+        if (length(missing_bio) > 0L) msg_parts <- c(msg_parts, paste0("missing required bio columns: ", paste(missing_bio, collapse = ", ")))
+        if (length(bad_bio) > 0L) msg_parts <- c(msg_parts, paste0("non-scalar or NA bio columns: ", paste(bad_bio, collapse = ", ")))
+        stop(prefix, "Required biological parameters missing or invalid: ", paste(msg_parts, collapse = "; "))
+    }
+
+    # --- Determine effective pruning bounds (separate from biological min/max)
+    user_min <- if (!is.null(prune_min_growth)) prune_min_growth else min_growth
+    user_max <- if (!is.null(prune_max_growth)) prune_max_growth else max_growth
+    if (isTRUE(prune_use_bio_bounds)) {
+        eff_min_grow <- max(user_min, Bio_max_shrink_unit)
+        eff_max_grow <- min(user_max, Bio_max_growth_unit)
+    } else {
+        eff_min_grow <- user_min
+        eff_max_grow <- user_max
+    }
+
+    if (!is.null(prune_recruit_max_dbh)) {
+        if (isTRUE(prune_use_bio_recruit) && is.finite(Bio_Recruit_MaxDBH_unit)) {
+            # TODO: probably should add a margin here - e.g., Bio_Recruit_MaxDBH_unit * 1.2
+            eff_recruit_max <- min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)
+        } else {
+            eff_recruit_max <- prune_recruit_max_dbh
+        }
+    } else {
+        eff_recruit_max <- Bio_Recruit_MaxDBH_unit
+    }
+
+    prune_stats$eff_min_growth <- as.numeric(eff_min_grow)
+    prune_stats$eff_max_growth <- as.numeric(eff_max_grow)
+    prune_stats$eff_recruit_max <- as.numeric(eff_recruit_max)
+
+    vcat(prefix, "Pruning effective bounds: min=", eff_min_grow, ", max=", eff_max_grow, ", recruit_max=", eff_recruit_max)
+
     # Precompute track-wise DBH vectors for each *assignment* state (phase doesn't matter for costs)
-    track_dbh_by_state <- vector("list", anchor_start)
-    for (cc in seq_len(anchor_start)) {
-        mat <- state_mats[[cc]]
+    track_dbh_by_state <- vector("list", n_census)
+    for (p in seq_len(n_census)) {
+        mat <- state_mats[[p]]
         n_states <- nrow(mat)
         tdbh_list <- vector("list", n_states)
         for (i in seq_len(n_states)) {
-            tdbh_list[[i]] <- state_to_track_dbh(mat[i, ], obs_dbh[[cc]], K)
+            tdbh_list[[i]] <- state_to_track_dbh(mat[i, ], obs_dbh[[p]], K)
         }
-        track_dbh_by_state[[cc]] <- tdbh_list
+        track_dbh_by_state[[p]] <- tdbh_list
     }
 
     # Backward tables (sum-product) and Viterbi backpointers
-    keys_full <- vector("list", anchor_start)
-    assign_full <- vector("list", anchor_start)
-    logB <- vector("list", anchor_start)
-    vit_cost <- vector("list", anchor_start)
-    vit_ptr <- vector("list", anchor_start)
-    edges <- vector("list", anchor_start)
+    keys_full <- vector("list", n_census)
+    assign_full <- vector("list", n_census)
+    logB <- vector("list", n_census)
+    vit_cost <- vector("list", n_census)
+    vit_ptr <- vector("list", n_census)
+    edges <- vector("list", n_census)
 
-    # Initialize at anchor census: only one allowed full-state
+    # Initialize at anchor census: only one allowed full-state (use position index)
+    anchor_pos <- which(census_range == anchor_start)
     phase_anchor <- rep.int(2L, K)
     phase_anchor[anchor_track_idx] <- 1L
     anchor_full_key <- encode_full_key(anchor_track_idx, phase_anchor)
-    keys_full[[anchor_start]] <- anchor_full_key
-    assign_full[[anchor_start]] <- list(as.integer(anchor_track_idx))
-    logB[[anchor_start]] <- 0
-    vit_cost[[anchor_start]] <- 0
-    vit_ptr[[anchor_start]] <- integer(0)
-    edges[[anchor_start]] <- NULL
+    keys_full[[anchor_pos]] <- anchor_full_key
+    assign_full[[anchor_pos]] <- list(as.integer(anchor_track_idx))
+    logB[[anchor_pos]] <- 0
+    vit_cost[[anchor_pos]] <- 0
+    vit_ptr[[anchor_pos]] <- integer(0)
+    edges[[anchor_pos]] <- NULL
 
-    # Backward recursion cc = anchor_start-1 .. 1
+    # Backward recursion p = anchor_pos-1 .. 1 (maps to CensusID via census_range)
     vcat(prefix, "Backward pass (log-sum-exp + Viterbi) starting ...")
-    for (cc in seq.int(anchor_start - 1L, 1L, by = -1L)) {
-        # cc <- 6L # For testing only
-        mat_cc <- state_mats[[cc]]
+    for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
+        # p <- 5L #position in census_range (for testing only)
+        cc <- census_range[p]
+        next_cc <- census_range[p + 1L]
+        mat_cc <- state_mats[[p]]
         n_states_cc <- nrow(mat_cc)
 
         t_cc0 <- tic()
-        vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[cc + 1L]]))
+        vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[p + 1L]]))
 
-        next_keys <- keys_full[[cc + 1L]]
+        next_keys <- keys_full[[p + 1L]]
         n_next <- length(next_keys)
         if (n_next == 0L) {
-            vcat(prefix, "No reachable next full-states at CensusID=", cc + 1L, ". Falling back to igraph.")
+            vcat(prefix, "No reachable next full-states at CensusID=", next_cc, ". Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         next_index <- seq_len(n_next)
         names(next_index) <- next_keys
-        logB_next <- as.numeric(logB[[cc + 1L]])
-        vit_next <- as.numeric(vit_cost[[cc + 1L]])
+        logB_next <- as.numeric(logB[[p + 1L]])
+        vit_next <- as.numeric(vit_cost[[p + 1L]])
 
         # Fast lookup for next assignment DBHs via assignment key
-        next_assign_list <- assign_full[[cc + 1L]]
+        next_assign_list <- assign_full[[p + 1L]]
         # Build assignment-key -> state index for next census (since phase differs but assignment cost uses assignment)
         next_assign_key <- vapply(next_assign_list, state_key, character(1L))
-        next_assign_row_idx <- match(next_assign_key, state_keys[[cc + 1L]])
+        next_assign_row_idx <- match(next_assign_key, state_keys[[p + 1L]])
         if (any(is.na(next_assign_row_idx))) {
             # Should not happen; indicates mismatch in state enumeration.
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
 
@@ -423,7 +602,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
         tdbh1_by_next <- vector("list", n_next)
         for (j in seq_len(n_next)) {
-            tdbh1_by_next[[j]] <- track_dbh_by_state[[cc + 1L]][[next_assign_row_idx[[j]]]]
+            tdbh1_by_next[[j]] <- track_dbh_by_state[[p + 1L]][[next_assign_row_idx[[j]]]]
         }
 
         # Preallocate edge arrays (worst-case: every (assignment_state, next_full_state) is feasible)
@@ -454,11 +633,25 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         pair_interval <- resolve_interval_years_pair(tree_data)
+        # Interval (years) between cc and next_cc (computed once for this census pair)
+        val_next <- pair_interval[[as.character(next_cc)]]
+        val_cc   <- pair_interval[[as.character(cc)]]
+        if (is.null(val_next) || length(val_next) == 0 || is.null(val_cc) || length(val_cc) == 0) {
+            interval_val <- NA_real_
+        } else {
+            interval_val <- (as.numeric(val_next) - as.numeric(val_cc)) / 365.25
+            if (!is.finite(interval_val) || interval_val <= 0) {
+                # fallback safe default; if invalid, growth-based pruning will be skipped
+                interval_val <- NA_real_
+            }
+        }
+        vcat(prefix, "  Interval years between CensusID ", cc, " and ", next_cc, ": ", interval_val, sep = "")
 
         for (i in seq_len(n_states_cc)) {
             # i <- 1L # For testing only
-            tdbh0 <- track_dbh_by_state[[cc]][[i]]
+            tdbh0 <- track_dbh_by_state[[p]][[i]]
             assign0 <- mat_cc[i, ]
+            # vcat(prefix, "  processing assignment i=", i, " tdbh0_len=", length(tdbh0), " assign0_len=", length(assign0))
 
             # Collect all feasible next states (based on phase constraints) for this current assignment
             feasible_n <- 0L
@@ -473,6 +666,39 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 phase_t <- derive_phase_prev(phase_tp1, tdbh0, tdbh1)
                 if (is.null(phase_t)) next
 
+                # Conservative hard-pruning: cheap vectorized checks before expensive cost evaluation
+                if (isTRUE(prune_hard)) {
+                    prune_stats$total_examined <- prune_stats$total_examined + 1L
+                    candidate_ok <- TRUE
+                    # Use precomputed effective prune bounds (eff_min_grow/eff_max_grow/eff_recruit_max)
+                    if (is.finite(interval_val)) {
+                        for (k in seq_len(K)) {
+                            v0 <- tdbh0[k]
+                            v1 <- tdbh1[k]
+                            if (!is.na(v0) && !is.na(v1)) {
+                                g <- (v1 - v0) / interval_val
+                                if (g < eff_min_grow || g > eff_max_grow) {
+                                    candidate_ok <- FALSE
+                                    break
+                                }
+                            } else if (is.na(v0) && !is.na(v1)) {
+                                # recruit size guard
+                                # Protect against NA logicals by explicitly checking v1 and eff_recruit_max
+                                if (isTRUE(!is.na(eff_recruit_max) && is.finite(eff_recruit_max) && !is.na(v1) && (v1 > eff_recruit_max))) {
+                                    candidate_ok <- FALSE
+                                    break
+                                }
+                            }
+                        }
+                    }
+
+                    if (!candidate_ok) {
+                        prune_stats$total_pruned <- prune_stats$total_pruned + 1L
+                        prune_stats$per_census[[as.character(cc)]] <- prune_stats$per_census[[as.character(cc)]] + 1L
+                        next
+                    }
+                }
+
                 feasible_n <- feasible_n + 1L
                 feasible_j[[feasible_n]] <- j
                 feasible_key[[feasible_n]] <- encode_full_key(assign0, phase_t)
@@ -485,9 +711,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             feasible_key <- feasible_key[seq_len(feasible_n)]
             feasible_tdbh1 <- feasible_tdbh1[seq_len(feasible_n)]
 
-            interval_val <- (as.numeric(pair_interval[[as.character(cc + 1L)]]) - as.numeric(pair_interval[[as.character(cc)]])) / 365.25
-            # print(interval_val)
             # Batch compute all transition costs from this current assignment
+            # log diagnostic about feasibility before calling into C++
+            # vcat(prefix, "    feasible_n=", feasible_n, " length(feasible_tdbh1)=", length(feasible_tdbh1))
+            # Time the C++ batch transition-cost call for profiling
+            # vcat(prefix, "    Bio params: mu=", Bio_Mu_Growth_unit, " sigma0=", Bio_Sigma0_unit, " recruit_max=", Bio_Recruit_MaxDBH_unit, " interval=", interval_val)
+
+            t_tc0 <- tic()
             c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
                 track_dbh_t = tdbh0,
                 track_dbh_tp1 = feasible_tdbh1,
@@ -518,6 +748,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 recruit_lambda = Bio_Recruitment_lambda,
                 eps_tiebreak = eps_tiebreak
             )
+            t_tc1 <- tic()
+            transition_cost_time <- transition_cost_time + (t_tc1 - t_tc0)
+            transition_cost_calls <- transition_cost_calls + 1L
 
             for (e in seq_len(feasible_n)) {
                 j <- feasible_j[[e]]
@@ -559,28 +792,30 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vcat(prefix, "DP produced no states at CensusID=", cc, ". Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
 
-        keys_full[[cc]] <- unlist(curr_keys_list, use.names = FALSE)
-        assign_full[[cc]] <- curr_assign_list
-        logB[[cc]] <- curr_logB
-        vit_cost[[cc]] <- curr_vit
-        vit_ptr[[cc]] <- curr_ptr
+        keys_full[[p]] <- unlist(curr_keys_list, use.names = FALSE)
+        assign_full[[p]] <- curr_assign_list
+        logB[[p]] <- curr_logB
+        vit_cost[[p]] <- curr_vit
+        vit_ptr[[p]] <- curr_ptr
 
         if (used_edges == 0L) {
             vcat(prefix, "No feasible edges at CensusID=", cc, ". Falling back to igraph.")
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
-        edges[[cc]] <- data.table::data.table(
+        edges[[p]] <- data.table::data.table(
             from_idx = from_idx[seq_len(used_edges)],
             to_idx = to_idx[seq_len(used_edges)],
             logw = logw[seq_len(used_edges)]
         )
 
-        vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[cc]]), ", edges=", used_edges, ", dt=", sprintf("%.2fs", tic() - t_cc0))
+        vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[p]]), ", edges=", used_edges, ", dt=", sprintf("%.2fs", tic() - t_cc0))
     }
 
     # -----------------
@@ -591,27 +826,31 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (length(start_idx) == 0L || !is.finite(vit_cost[[1L]][start_idx])) {
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
         return(out)
     }
-    map_idx <- integer(anchor_start)
+    map_idx <- integer(n_census)
     map_idx[1L] <- start_idx
-    for (cc in seq_len(anchor_start - 1L)) {
-        nxt <- vit_ptr[[cc]][map_idx[cc]]
+    for (p in seq_len(n_census - 1L)) {
+        nxt <- vit_ptr[[p]][map_idx[p]]
         if (!is.finite(nxt) || is.na(nxt) || nxt < 1L) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
-        map_idx[cc + 1L] <- nxt
+        map_idx[p + 1L] <- nxt
     }
 
-    for (cc in seq_len(anchor_start)) {
+    for (p in seq_len(n_census)) {
+        cc <- census_range[p]
         obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
         if (length(obs_idx) == 0L) next
-        sv <- assign_full[[cc]][[map_idx[cc]]]
+        sv <- assign_full[[p]][[map_idx[p]]]
         if (length(sv) != length(obs_idx)) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         tree_data[obs_idx, ReconstructedStemID := track_ids[sv]]
@@ -626,36 +865,38 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # -----------------
     vcat(prefix, "Forward pass starting ...")
     # Start distribution: uniform over all reachable states at census 1.
-    logalpha <- vector("list", anchor_start)
+    logalpha <- vector("list", n_census)
     logalpha[[1L]] <- rep.int(0, length(keys_full[[1L]]))
 
-    for (cc in seq_len(anchor_start - 1L)) {
-        ed <- edges[[cc]]
+    for (p in seq_len(n_census - 1L)) {
+        ed <- edges[[p]]
         if (is.null(ed) || nrow(ed) == 0L) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
-        la_from <- logalpha[[cc]][ed$from_idx]
+        la_from <- logalpha[[p]][ed$from_idx]
         vals <- la_from + ed$logw
         dt <- data.table::data.table(to_idx = ed$to_idx, v = vals)
         dt <- dt[is.finite(v)]
         if (nrow(dt) == 0L) {
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
         la_next_dt <- dt[, .(logalpha = log_sum_exp(v)), by = to_idx]
-        la_next <- rep.int(-Inf, length(keys_full[[cc + 1L]]))
+        la_next <- rep.int(-Inf, length(keys_full[[p + 1L]]))
         la_next[la_next_dt$to_idx] <- la_next_dt$logalpha
-        logalpha[[cc + 1L]] <- la_next
+        logalpha[[p + 1L]] <- la_next
 
-        vcat(prefix, "Forward step CensusID=", cc + 1L, ": reached ", sum(is.finite(la_next)), " / ", length(la_next), " states")
+        vcat(prefix, "Forward step CensusID=", census_range[p + 1L], ": reached ", sum(is.finite(la_next)), " / ", length(la_next), " states")
     }
 
     # Partition function Z = total weight of all paths ending at the fixed anchor state.
     # At anchor_start there is exactly one state.
-    logZ <- logalpha[[anchor_start]][1L]
+    logZ <- logalpha[[anchor_pos]][1L]
     if (!is.finite(logZ)) {
         # Fallback: compute from backward at census 1.
         logZ <- log_sum_exp(logB[[1L]])
@@ -669,19 +910,20 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     anchor_set <- anchor_ids
     is_anchor_track <- track_ids %in% anchor_set
 
-    for (cc in seq_len(anchor_start)) {
+    for (p in seq_len(n_census)) {
+        cc <- census_range[p]
         obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
         if (length(obs_idx) == 0L) next
 
         # State posterior weights at this census
-        lg <- logalpha[[cc]] + logB[[cc]] - logZ
+        lg <- logalpha[[p]] + logB[[p]] - logZ
         # Normalize defensively
         lg <- lg - log_sum_exp(lg)
         w <- exp(lg)
 
         n_obs <- length(obs_idx)
         prob_mat <- matrix(0, nrow = n_obs, ncol = K)
-        st_assign <- assign_full[[cc]]
+        st_assign <- assign_full[[p]]
         for (s in seq_along(st_assign)) {
             ww <- w[s]
             if (!is.finite(ww) || ww <= 0) next
@@ -700,7 +942,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         # MAP assignment for DP_PosteriorReconstructedProb
-        map_assign <- assign_full[[cc]][[map_idx[cc]]]
+        map_assign <- assign_full[[p]][[map_idx[p]]]
 
         # Prepare containers for top-K posterior summaries
         Ktop <- max(1L, as.integer(posterior_top_k))
@@ -711,23 +953,23 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         p_unlinked <- numeric(n_obs)
 
         for (j in seq_len(n_obs)) {
-            p <- prob_mat[j, ]
+            pvec <- prob_mat[j, ]
             # numeric stability
-            p[p < 0] <- 0
-            sp <- sum(p)
-            if (sp > 0) p <- p / sp
-            ord <- order(p, decreasing = TRUE)
+            pvec[pvec < 0] <- 0
+            sp <- sum(pvec)
+            if (sp > 0) pvec <- pvec / sp
+            ord <- order(pvec, decreasing = TRUE)
             m <- min(length(ord), Ktop)
             if (m >= 1L) {
                 for (kk in seq_len(m)) {
                     idxk <- ord[kk]
                     top_id_mat[j, kk] <- track_ids[idxk]
-                    top_p_mat[j, kk] <- p[idxk]
+                    top_p_mat[j, kk] <- pvec[idxk]
                 }
             }
-            entropy[j] <- -sum(ifelse(p > 0, p * log(p), 0))
-            p_map[j] <- p[map_assign[j]]
-            p_unlinked[j] <- sum(p[!is_anchor_track])
+            entropy[j] <- -sum(ifelse(pvec > 0, pvec * log(pvec), 0))
+            p_map[j] <- pvec[map_assign[j]]
+            p_unlinked[j] <- sum(pvec[!is_anchor_track])
         }
 
         # Build named list for data.table assignment
@@ -752,8 +994,235 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         max_growth = max_growth,
         pair_interval = pair_interval
     )
-    # FIXME: Maybe add a key to fallback_igraph = TRUE or FALSE
+
+    # ------------------------------
+    # Optional: posterior sampling of full reconstructions
+    # ------------------------------
+    posterior_samples <- as.integer(posterior_samples)
+    if (!is.null(posterior_samples) && posterior_samples > 0L) {
+        fmt <- match.arg(posterior_samples_format)
+        out_dir_local <- if (!is.null(posterior_samples_path)) posterior_samples_path else get0("out_dir", ifnotfound = NULL)
+        if (is.null(out_dir_local) || (is.character(out_dir_local) && nzchar(out_dir_local) == FALSE)) {
+            out_dir_local <- getwd()
+        }
+        if (is.null(out_dir_local) || !nzchar(out_dir_local)) out_dir_local <- tempdir()
+
+        # Fallback for Tag if not present in tree_data
+        tag_local <- if (!is.na(tag_val)) tag_val else get0("WHICH_TAG", ifnotfound = NA_integer_)
+
+        # Collect simple sampling CPU/memory metrics and attach them to the returned object
+        sampling_profile <- list(posterior_samples = posterior_samples, started = Sys.time())
+        t_sampling_start <- tic()
+
+        # Build adjacency lookup for quick sampling
+        t_adj_start <- tic()
+        adj_by_p <- vector("list", n_census - 1L)
+        for (p in seq_len(n_census - 1L)) {
+            ed <- edges[[p]]
+            # rows grouped by to_idx
+            to_idxs <- unique(ed$to_idx)
+            m <- vector("list", length(ed$to_idx))
+            lookup <- vector("list", max(to_idxs))
+            for (r in seq_len(nrow(ed))) {
+                j <- ed$to_idx[r]
+                if (is.null(lookup[[j]])) lookup[[j]] <- integer(0)
+                lookup[[j]] <- c(lookup[[j]], r)
+            }
+            adj_by_p[[p]] <- lookup
+        }
+        sampling_profile$adj_build_time <- tic() - t_adj_start
+
+        # sampler: backwards sampling from anchor_pos to census 1
+        if (!is.null(posterior_sample_seed)) set.seed(as.integer(posterior_sample_seed))
+        t_gen_start <- tic()
+        samples_list <- vector("list", posterior_samples)
+        for (m in seq_len(posterior_samples)) {
+            sampled_idx <- integer(n_census)
+            sampled_idx[anchor_pos] <- 1L # anchor position has single full-state at index 1
+            logp <- 0
+            # sample backwards
+            for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
+                j <- sampled_idx[p + 1L]
+                rows <- adj_by_p[[p]][[j]]
+                # rows are indices into edges[[p]]
+                from_idx <- edges[[p]]$from_idx[rows]
+                logw <- edges[[p]]$logw[rows]
+                loga <- logalpha[[p]][from_idx]
+                L <- loga + logw
+                # normalize to probabilities
+                Lmax <- max(L)
+                probs <- exp(L - Lmax)
+                probs <- probs / sum(probs)
+                k <- sample.int(length(probs), size = 1L, prob = probs)
+                chosen_row <- rows[k]
+                sampled_idx[p] <- edges[[p]]$from_idx[chosen_row]
+                logp <- logp + log(probs[k])
+            }
+            # Convert sampled full-state indices to ReconstructedStemID per census
+            sample_dt <- data.table::data.table(Tag = tag_local, Sample = m, CensusID = integer(0), ReconstructedStemID = integer(0), ObsRowID = integer(0))
+            for (p in seq_len(n_census)) {
+                cc <- census_range[p]
+                assign_vec <- assign_full[[p]][[sampled_idx[p]]]
+                track_ids_loc <- track_ids[assign_vec]
+                # attach as multiple rows (one per observed tree)
+                obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+                if (length(obs_idx) > 0) {
+                    obs_row_ids <- tree_data$obs_row_id[obs_idx]
+                    sample_dt <- rbind(sample_dt, data.table::data.table(Tag = tag_local, Sample = m, CensusID = rep(cc, length(obs_idx)), ReconstructedStemID = track_ids_loc, ObsRowID = obs_row_ids))
+                }
+            }
+            sample_dt[, logp := logp]
+            samples_list[[m]] <- sample_dt
+        }
+        sampling_profile$sample_generation_time <- tic() - t_gen_start
+        sampling_profile$samples_list_size_bytes <- as.numeric(object.size(samples_list))
+
+        samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
+        # Ensure rows are ordered for signature construction
+        samples_dt <- samples_dt[order(Sample, CensusID)]
+        sampling_profile$samples_dt_size_bytes <- as.numeric(object.size(samples_dt))
+        sampling_profile$after_samples_time <- tic() - t_sampling_start
+
+        # Collate per-sample path signature and counts (useful diagnostics)
+        sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")), by = Sample]
+        path_counts <- sample_sigs[, .N, by = path_sig]
+        sample_sigs <- merge(sample_sigs, path_counts, by = "path_sig")
+        setnames(sample_sigs, "N", "path_count")
+        samples_dt <- merge(samples_dt, sample_sigs, by = "Sample", all.x = TRUE)
+
+        # Normalize sample weights from logp using per-Sample unique logp
+        sample_logp <- unique(samples_dt[, .(Sample, logp)])
+        maxlp <- max(sample_logp$logp, na.rm = TRUE)
+        sample_logp[, sample_weight := exp(logp - maxlp)]
+        sample_logp[, sample_prob := sample_weight / sum(sample_weight)]
+        samples_dt <- merge(samples_dt, sample_logp[, .(Sample, sample_weight, sample_prob)], by = "Sample", all.x = TRUE)
+
+        # Diagnostic summary
+        n_unique_paths <- uniqueN(sample_sigs$path_sig)
+        vcat(prefix, sprintf("Posterior sampling: generated %d samples (%d unique paths)", posterior_samples, n_unique_paths))
+        if (uniqueN(sample_logp$logp) == 1L) {
+            vcat(prefix, sprintf("Warning: all sampled logp identical (logp=%f); posterior may be degenerate or sampling explored equivalent paths", sample_logp$logp[1]))
+        }
+
+        # Export samples: prefer feather via arrow for speed if available
+        ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
+        out_dir_post <- file.path(out_dir_local, "posteriors")
+        if (!dir.exists(out_dir_post)) dir.create(out_dir_post, recursive = TRUE, showWarnings = FALSE)
+        out_path_base <- file.path(out_dir_post, paste0("tag_", ifelse(is.na(tag_local), "NA", tag_local), "_posterior_samples", "_", ts_local))
+
+        # Prepare summary tables useful for downstream uncertainty propagation
+        # Attach per-sample ObsRowID list when available (semicolon-separated string of ObsRowIDs in sample order)
+        if ("ObsRowID" %in% names(samples_dt)) {
+            sample_obsids <- samples_dt[, .(ObsRowIDs = paste0(ObsRowID, collapse = ";")), by = Sample]
+        } else {
+            sample_obsids <- data.table::data.table(Sample = integer(0), ObsRowIDs = character(0))
+        }
+        samples_summary <- unique(samples_dt[, .(Sample, Tag, logp, path_sig, path_count, sample_weight, sample_prob)])
+        if (nrow(sample_obsids) > 0) samples_summary <- merge(samples_summary, sample_obsids, by = "Sample", all.x = TRUE)
+        # per-path aggregated probabilities
+        paths_summary <- samples_summary[, .(path_count = sum(path_count, na.rm = TRUE), path_prob = sum(sample_prob, na.rm = TRUE)), by = path_sig]
+        # also create a compact per-path reconstruction mapping (one row per path)
+        # Enforce ObsRowID-based reconstructions only (legacy CensusID encoding removed).
+        if (!("ObsRowID" %in% names(samples_dt))) {
+            stop("Posterior sampling must include ObsRowID values; regenerate with posterior_samples that preserve observation row identifiers")
+        }
+        recon_by_path <- samples_dt[, .(recon = paste0(ObsRowID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
+        # take first recon per path_sig (they are identical across samples with same path_sig)
+        recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
+        paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
+
+        # Export samples and summaries: prefer feather via arrow for speed if available
+        sampling_profile$export_paths <- character(0)
+        sampling_profile$export_time_seconds <- 0
+        if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
+            # Full long-format samples export intentionally disabled to reduce I/O and runtime.
+            # arrow::write_feather(samples_dt, paste0(out_path_base, ".feather"))
+            p1 <- paste0(out_path_base, "_summary.feather")
+            t0 <- tic()
+            arrow::write_feather(samples_summary, p1)
+            t1 <- tic()
+            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            p2 <- paste0(out_path_base, "_paths.feather")
+            t0 <- tic()
+            arrow::write_feather(paths_summary, p2)
+            t1 <- tic()
+            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1, p2)
+            vcat(prefix, "Wrote posterior samples summary to: ", p1)
+            vcat(prefix, "Wrote posterior paths summary to: ", p2)
+        } else if (fmt == "csv") {
+            # Full long-format samples export intentionally disabled to reduce I/O and runtime.
+            # data.table::fwrite(samples_dt, paste0(out_path_base, ".csv"))
+            p1 <- paste0(out_path_base, "_summary.csv")
+            t0 <- tic()
+            data.table::fwrite(samples_summary, p1)
+            t1 <- tic()
+            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            p2 <- paste0(out_path_base, "_paths.csv")
+            t0 <- tic()
+            data.table::fwrite(paths_summary, p2)
+            t1 <- tic()
+            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1, p2)
+            vcat(prefix, "Wrote posterior samples summary to: ", p1)
+            vcat(prefix, "Wrote posterior paths summary to: ", p2)
+        } else {
+            # Save only aggregated results (no full long-format samples)
+            p1 <- paste0(out_path_base, ".rds")
+            t0 <- tic()
+            saveRDS(list(summary = samples_summary, paths = paths_summary), file = p1)
+            t1 <- tic()
+            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
+            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1)
+            vcat(prefix, "Wrote posterior samples summary to: ", p1)
+        }
+
+        sampling_profile$export_total_size_bytes <- if (length(sampling_profile$export_paths) > 0) sum(file.size(sampling_profile$export_paths)) else 0L
+        sampling_profile$finished <- Sys.time()
+
+        # Attach sampling profile to the returned data.table for external inspection
+        attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
+    }
+
+    # Attach pruning diagnostics
+    attr(tree_data, "DP_PruneInfo") <- prune_stats
+    if (prune_stats$total_examined > 0L) {
+        vcat(prefix, "Prune summary: removed", prune_stats$total_pruned, "of", prune_stats$total_examined, "candidate transitions; per-census:", paste(names(prune_stats$per_census), prune_stats$per_census, sep = ":", collapse = ","))
+    }
+
+    # Attach compute profiling (transition cost timing)
+    compute_profile <- list(
+        transition_cost_total_seconds = as.numeric(transition_cost_time),
+        transition_cost_calls = as.integer(transition_cost_calls),
+        transition_cost_avg_seconds = if (transition_cost_calls > 0L) as.numeric(transition_cost_time) / as.integer(transition_cost_calls) else NA_real_
+    )
+    attr(tree_data, "DP_Compute_Profile") <- compute_profile
+
+    # If a sampling profile exists (posterior sampling was requested), embed compute_profile into it for convenience
+    if (exists("sampling_profile", inherits = FALSE) && is.list(sampling_profile)) {
+        sampling_profile$transition_cost_total_seconds <- compute_profile$transition_cost_total_seconds
+        sampling_profile$transition_cost_calls <- compute_profile$transition_cost_calls
+        sampling_profile$transition_cost_avg_seconds <- compute_profile$transition_cost_avg_seconds
+        attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
+    }
 
     vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
     return(tree_data)
 }
+
+# Summary of what's available in posteriors
+
+# Full long-format samples file (one row per observed reconstructed tree per sample):
+# Example: posteriors/tag_20_posterior_samples_<ts>.csv
+# Per-sample summary (one row per sampled full-reconstruction):
+# posteriors/tag_20_posterior_samples_<ts>_summary.csv
+# Columns: Sample, Tag, logp, path_sig, path_count, sample_weight, sample_prob
+# sample_prob is normalized over all drawn samples and can be used as sampling weight for downstream propagation.
+# Per-path aggregated summary (unique reconstructions):
+# posteriors/tag_20_posterior_samples_<ts>_paths.csv
+# Columns: path_sig, path_count, path_prob, recon (compact reconstruction mapping like "<ObsRowID>:<ReconstructedStemID>;..." — ObsRowID is enforced)
+
+# How to use these for error propagation (suggestions)
+# Use paths.csv directly: each row is a unique reconstruction with probability path_prob (sums to 1 across unique paths) — convenient for expectation of downstream metrics without resampling.
+# Or sample reconstructions according to sample_prob in the summary file to create Monte Carlo realizations for error propagation; then expand each sample using the full long file if needed to attach per-census reconstructed IDs.
+# The recon column in paths.csv is handy to quickly apply a mapping (parse "ObsRowID:ReconstructedStemID" pairs).

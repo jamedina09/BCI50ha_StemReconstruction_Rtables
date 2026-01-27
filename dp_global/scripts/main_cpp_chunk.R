@@ -1,5 +1,5 @@
 ############################################################
-### main.R — dp_global driver
+### main_cpp_chunk.R — dp_global driver
 ############################################################
 # Goal
 #   One place to run the DP_GLOBAL workflow end-to-end
@@ -136,7 +136,7 @@ RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) - 0.9999
 ### 3.2 DP running settings
 ############################################################
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-WHICH_TAG <- 20L
+WHICH_TAG <- 0L
 ANCHOR_START_CENSUS <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
@@ -160,6 +160,15 @@ POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "csv" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
 POSTERIOR_SAMPLE_SEED <- NULL
+
+# Chunk-specific defaults
+DP_CHUNK_SIZE <- 7L
+DP_CHUNK_RESUME <- TRUE
+DP_CHUNK_OVERWRITE <- FALSE
+# Optional: limit chunks to a specific range for testing (NULL means all)
+DP_CHUNK_START <- NULL
+DP_CHUNK_END <- NULL
+
 
 ############################################################
 ### 3.3 Parallel & output settings
@@ -198,14 +207,17 @@ CONFIG_NAME <- NULL
 WRITE_DP_CSV <- TRUE
 WRITE_DP_RDS <- TRUE
 WRITE_DP_FEATHER <- FALSE
-WRITE_DP_PDF <- TRUE
-DP_PDF_INCLUDE_REFERENCE <- TRUE
+WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- TRUE
+## when no simulated data, this needs to be FALSE to avoid errors
+DP_PDF_INCLUDE_REFERENCE <- FALSE
 
-if (!isTRUE(RUN_ALL_TAGS)) {
-    PLOT_PDF_ONE_TAG_ONLY <- TRUE
-} else {
-    PLOT_PDF_ONE_TAG_ONLY <- FALSE
-}
+# Per-tag PDF plotting control is part of the full runner but not used in
+# the chunked DP runner. Leave commented to avoid confusion.
+# if (!isTRUE(RUN_ALL_TAGS)) {
+#     PLOT_PDF_ONE_TAG_ONLY <- TRUE
+# } else {
+#     PLOT_PDF_ONE_TAG_ONLY <- FALSE
+# }
 
 # Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
 PROJECT_ROOT <- here::here()
@@ -227,7 +239,7 @@ CLI_REFERENCE <- list(
     INPUT_FILE = "INPUT_FILE",
     FORCE_ONE_SPECIES_PARAMETERS = "FORCE_ONE_SPECIES_PARAMETERS",
     DP_MODE = "DP_MODE",
-    WHICH_TAG = "WHICH_TAG",
+    # WHICH_TAG = "WHICH_TAG",
     ANCHOR_START_CENSUS = "ANCHOR_START_CENSUS",
     DP_VERBOSE = "DP_VERBOSE",
     RUN_ALL_TAGS = "RUN_ALL_TAGS",
@@ -254,13 +266,18 @@ CLI_REFERENCE <- list(
 ############################################################
 ### 2.5 Sensitivity analysis settings
 ############################################################
-SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
-RUN_K_SWEEP_DEMO <- FALSE
+# Sensitivity analysis options are defined here in the full runner but are not
+# used by the chunked DP runner. Commented out to reduce clutter and avoid
+# confusion when running chunked DP.
+# SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
+# RUN_K_SWEEP_DEMO <- FALSE
 
 ############################################################
 ### 2.6 Realism report settings
 ############################################################
-RUN_REALISM_REPORT <- FALSE
+# Realism report generation is not used by the chunked DP runner; keep disabled
+# and commented out here to avoid suggesting it affects chunked runs.
+# RUN_REALISM_REPORT <- FALSE
 
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
@@ -388,16 +405,38 @@ if (!file.exists(INPUT_FILE)) {
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
 ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
-RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
-WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
-MAKE_ALL_SWEEPS_PDF <- SENSITIVITY_MODE == "run+write+pdf"
+# Not used by chunked runner; leave commented out to avoid confusion
+# RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
+# WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
+# MAKE_ALL_SWEEPS_PDF <- SENSITIVITY_MODE == "run+write+pdf"
 
 # Final output directory for this run (created at runtime in run_main())
 out_dir <- file.path(base_out_dir, build_out_dir_name())
 message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
-# Centralized DP naming and path helpers 🔧
+# Filesystem/logging helpers (defined early so chunk runner can use them before other definitions)
+ensure_dir <- function(path) {
+    if (!dir.exists(path)) {
+        dir.create(path, recursive = TRUE)
+        message("[dp_global main_cpp.R] Created directory: ", path)
+    } else {
+        message("[dp_global main_cpp.R] Directory already exists: ", path)
+    }
+    invisible(path)
+}
+
+log_msg <- function(msg, level = "INFO") {
+    ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    full <- sprintf("[%s] %s: %s", ts, level, msg)
+    message(full)
+    if (exists("out_dir") && nzchar(out_dir)) {
+        tryCatch(write(full, file = file.path(out_dir, "run_log.txt"), append = TRUE), error = function(e) NULL)
+    }
+    invisible(full)
+}
+
+# Centralized DP naming and path helpers (same helpers as main_cpp.R)
 DP_BASE <- "stem_reconstruction_dp_global_rcpp"
 make_out_path <- function(base = DP_BASE, ext = "csv", dir = out_dir) {
     file.path(dir, paste0(base, ".", ext))
@@ -437,9 +476,15 @@ maybe_write <- function(flag, path, write_expr, msg = NULL) {
     )
 }
 
-# If posterior sampling is requested, default to the run base `out_dir` so the
-# DP can create a single `posteriors/` subdirectory. If users supply a path
-# that already ends in 'posteriors', strip that suffix to avoid double-nesting.
+DP_CSV_FILE <- out_path("dp_csv")
+DP_RDS_FILE <- out_path("dp_rds")
+DP_FEATHER_FILE <- out_path("dp_feather")
+DP_PDF_FILE <- out_path("dp_pdf")
+# Note: chunk-level per-file outputs (per-chunk RDS/Feather/PDF) still use chunk-specific names; these top-level globals point to the combined run-level names.
+
+# If posterior sampling is requested, provide the DP with the run's base out_dir.
+# The DP itself will create the 'posteriors/' subdirectory (avoids double-nesting).
+# These defaults can still be overridden via CLI (e.g., --POSTERIOR_SAMPLES_PATH=... or --POSTERIOR_SAMPLE_SEED=...)
 if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
     if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
         # Provide the DP with the run's base out_dir; the DP will create the
@@ -451,8 +496,7 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
     if (basename(POSTERIOR_SAMPLES_PATH) == "posteriors") {
         POSTERIOR_SAMPLES_PATH <- dirname(POSTERIOR_SAMPLES_PATH)
     }
-
-    # normalize path for consistency; don't create it yet (created when needed)
+    # normalize path for consistency; don't require it to exist yet (created in run_main)
     POSTERIOR_SAMPLES_PATH <- normalizePath(POSTERIOR_SAMPLES_PATH, winslash = "/", mustWork = FALSE)
     if (is.null(POSTERIOR_SAMPLE_SEED)) {
         POSTERIOR_SAMPLE_SEED <- as.integer(123L)
@@ -460,6 +504,7 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
         POSTERIOR_SAMPLE_SEED <- as.integer(POSTERIOR_SAMPLE_SEED)
     }
 } else {
+    # Ensure disabled sampling leaves a NULL path to avoid accidental writes
     POSTERIOR_SAMPLES_PATH <- NULL
 }
 
@@ -510,25 +555,7 @@ source(here("dp_global", "R", "naming_helpers.R"))
 
 # soft_cost_from_k(delta_cm = seq(-10, 10, by = 1), k = 20, temperature = 1)
 
-ensure_dir <- function(path) {
-    if (!dir.exists(path)) {
-        dir.create(path, recursive = TRUE)
-        message("[dp_global main_cpp.R] Created directory: ", path)
-    } else {
-        message("[dp_global main_cpp.R] Directory already exists: ", path)
-    }
-    invisible(path)
-}
-
-log_msg <- function(msg, level = "INFO") {
-    ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-    full <- sprintf("[%s] %s: %s", ts, level, msg)
-    message(full)
-    if (exists("out_dir") && nzchar(out_dir)) {
-        tryCatch(write(full, file = file.path(out_dir, "run_log.txt"), append = TRUE), error = function(e) NULL)
-    }
-    invisible(full)
-}
+# `ensure_dir()` and `log_msg()` are defined earlier; duplicate definitions removed.
 
 ensure_species_column <- function(x) {
     if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
@@ -682,7 +709,7 @@ maybe_add_posterior_bins <- function(out) {
 ############################################################
 ### 7) Main pipeline — run_main and writing outputs
 ############################################################
-run_main <- function() {
+run_main_chunked <- function() {
     ensure_dir(out_dir)
     tryCatch(
         {
@@ -696,9 +723,8 @@ run_main <- function() {
 
     # Create posteriors subdirectory (DP writes its files into <base>/posteriors)
     if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
-        ensured <- file.path(POSTERIOR_SAMPLES_PATH, "posteriors")
-        ensure_dir(ensured)
-        log_msg(paste("Ensured posterior samples path:", ensured))
+        ensure_dir(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))
+        log_msg(paste("Ensured posterior samples path:", file.path(POSTERIOR_SAMPLES_PATH, "posteriors")))
     }
 
     # Write a small startup marker so parallel runs can be observed immediately
@@ -781,6 +807,7 @@ run_main <- function() {
         )
     }
 
+
     # Write a small text file recording the parameters used to build the
     # run-specific output directory name so runs are reproducible.
     # Gather all parameters in the environment for full run context
@@ -789,6 +816,14 @@ run_main <- function() {
     params$TIMESTAMP <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     params$OUT_DIR <- out_dir
     params$GENERATED_DIR_NAME <- basename(out_dir)
+    # Record BATCH_TS explicitly: use provided BATCH_TS if present; otherwise
+    # extract the timestamp prefix used in the generated directory name (YYYYmmdd_HHMMSS)
+    if (exists("BATCH_TS") && nzchar(BATCH_TS)) {
+        params$BATCH_TS <- BATCH_TS
+    } else {
+        m <- regexpr("^[0-9]{8}_[0-9]{6}", basename(out_dir))
+        params$BATCH_TS <- if (m[1] == -1) "" else regmatches(basename(out_dir), m)
+    }
 
     # Add called parameters (command-line overrides)
     params$CALLED_PARAMETERS <- overrides
@@ -840,182 +875,125 @@ run_main <- function() {
     dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)
     dp_max_tracks_local <- as.integer(dp_max_tracks_local)
 
-    # 5.5 DP reconstruction
-    out <- NULL
-    if (isTRUE(RUN_DP)) {
-        if (!isTRUE(RUN_ALL_TAGS)) {
-            if (!(WHICH_TAG %in% unique(xrun$Tag))) {
-                stop("Requested WHICH_TAG=", WHICH_TAG, " not found in data. Set WHICH_TAG to an existing Tag or enable RUN_ALL_TAGS=TRUE.")
-            }
-            out <- xrun[Tag == WHICH_TAG, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
-        } else {
-            if (!requireNamespace("parallel", quietly = TRUE)) {
-                stop("Package not available: parallel. (It normally ships with R.)")
-            }
-            groups <- unique(xrun[, .(Tag, species)])
-            data.table::setorder(groups, Tag, species)
+    ## Create chunks based on unique (Tag, species) groups
+    if (!requireNamespace("parallel", quietly = TRUE)) stop("Package not available: parallel.")
+    groups <- unique(xrun[, .(Tag, species)])
+    data.table::setorder(groups, Tag, species)
+    group_idx <- seq_len(nrow(groups))
+    chunks <- split(group_idx, ceiling(seq_along(group_idx) / as.integer(DP_CHUNK_SIZE)))
+    first_chunk <- !file.exists(DP_CSV_FILE)
 
-            res_list <- parallel::mclapply(seq_len(nrow(groups)), function(i) {
-                data.table::setDTthreads(1L)
-                g <- groups[i]
-                dtg <- xrun[Tag == g$Tag & species == g$species]
-                run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
-            }, mc.cores = MC_CORES)
+    # Optionally limit to a subset of chunks for testing
+    start_ci <- if (exists("DP_CHUNK_START") && !is.null(DP_CHUNK_START)) as.integer(DP_CHUNK_START) else 1L
+    end_ci <- if (exists("DP_CHUNK_END") && !is.null(DP_CHUNK_END)) as.integer(DP_CHUNK_END) else length(chunks)
 
-            out <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
+    # Handle edge cases: empty chunk list or out-of-range values
+    if (length(chunks) == 0L) {
+        log_msg("No groups/chunks to process — exiting.")
+        tryCatch(
+            {
+                writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt"))
+            },
+            error = function(e) NULL
+        )
+        return(invisible(list(xrun = xrun, bio_pars = bio_pars)))
+    }
+
+    # Clamp values to valid range
+    start_ci <- max(1L, min(length(chunks), start_ci))
+    end_ci <- max(1L, min(length(chunks), end_ci))
+
+    if (start_ci > end_ci) {
+        stop(sprintf(
+            "Invalid chunk range: DP_CHUNK_START=%s, DP_CHUNK_END=%s after clamping => start=%d > end=%d",
+            if (exists("DP_CHUNK_START") && !is.null(DP_CHUNK_START)) as.character(DP_CHUNK_START) else "NULL",
+            if (exists("DP_CHUNK_END") && !is.null(DP_CHUNK_END)) as.character(DP_CHUNK_END) else "NULL",
+            start_ci, end_ci
+        ))
+    }
+
+    for (ci in seq_len(length(chunks))) {
+        if (ci < start_ci || ci > end_ci) {
+            next
         }
-    }
-    out <- maybe_add_posterior_bins(out)
+        chunk_rds <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.rds"), ci))
 
-    # Add output directory name as a column for reference
-    if (!is.null(out)) {
-        out[, out_dir := basename(out_dir)]
-    }
+        if (isTRUE(DP_CHUNK_RESUME) && file.exists(chunk_rds) && !isTRUE(DP_CHUNK_OVERWRITE)) {
+            log_msg(sprintf("Skipping chunk %d/%d — chunk RDS exists (resume enabled)", ci, length(chunks)))
+            first_chunk <- !file.exists(DP_CSV_FILE)
+            next
+        }
 
-    # 5.6 Optional: write DP outputs (centralized helpers)
-    maybe_write(
-        isTRUE(WRITE_DP_CSV) && !is.null(out), out_path("dp_csv"),
-        function() data.table::fwrite(out, out_path("dp_csv")),
-        "DP CSV"
-    )
+        groups_ci <- groups[chunks[[ci]]]
+        log_msg(sprintf("Chunk %d/%d — %d groups", ci, length(chunks), nrow(groups_ci)))
 
-    maybe_write(
-        isTRUE(WRITE_DP_RDS) && !is.null(out), out_path("dp_rds"),
-        function() saveRDS(out, file = out_path("dp_rds")),
-        "DP RDS"
-    )
+        # Run chunk with error isolation so one bad chunk doesn't kill the run
+        status <- tryCatch(
+            {
+                res <- parallel::mclapply(seq_len(nrow(groups_ci)), function(j) {
+                    data.table::setDTthreads(1L)
+                    g <- groups_ci[j]
+                    dtg <- xrun[Tag == g$Tag & species == g$species]
+                    run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
+                }, mc.cores = MC_CORES)
 
-    maybe_write(
-        isTRUE(WRITE_DP_FEATHER) && !is.null(out), out_path("dp_feather"),
-        function() {
-            if (!requireNamespace("arrow", quietly = TRUE)) stop("'arrow' package not available; skipping feather output")
-            arrow::write_feather(out, out_path("dp_feather"))
-        },
-        "DP Feather"
-    )
+                out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
 
-    maybe_write(
-        isTRUE(WRITE_DP_PDF) && !is.null(out), out_path("dp_pdf"),
-        function() {
-            plot_tag_to_pdf(
-                out,
-                pdf_file = out_path("dp_pdf"),
-                include_reference = DP_PDF_INCLUDE_REFERENCE,
-                tag = if (isTRUE(PLOT_PDF_ONE_TAG_ONLY)) WHICH_TAG else NULL
-            )
-        },
-        "DP PDF"
-    )
+                if (nrow(out_chunk) > 0L) {
+                    out_chunk[, DP_Chunk := ci]
+                    out_chunk <- maybe_add_posterior_bins(out_chunk)
+                    # Record run output directory (basename) in each row to avoid variable/column name collision
+                    out_chunk[, run_out_dir := basename(out_dir)]
 
-    # 5.7 Optional: realism report
-    if (isTRUE(RUN_REALISM_REPORT) && !is.null(out)) {
-        sp0 <- unique(out$species)
-        sp0 <- sp0[!is.na(sp0) & nzchar(sp0)]
-        sp0 <- if (length(sp0) > 0L) sp0[[1L]] else FORCED_SPECIES_LABEL
+                    if (isTRUE(WRITE_DP_CSV)) {
+                        maybe_write(isTRUE(WRITE_DP_CSV), DP_CSV_FILE, function() {
+                            data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)
+                        }, sprintf("DP CSV chunk %d", ci))
+                    }
 
-        base_args0 <- bio_pars_to_transition_args(bio_pars[[sp0]])
-        #* TODO: Define interval_years per row if needed
-        rep0 <- realism_report_from_reconstruction(out, interval_years = 5, base_args = base_args0)
+                    if (isTRUE(WRITE_DP_FEATHER)) {
+                        feather_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.feather"), ci))
+                        maybe_write(isTRUE(WRITE_DP_FEATHER), feather_path, function() {
+                            if (!requireNamespace("arrow", quietly = TRUE)) stop("'arrow' package not available; skipping feather output")
+                            arrow::write_feather(out_chunk, feather_path)
+                        }, sprintf("Feather for chunk %d", ci))
+                    }
 
-        # Add out_dir to realism outputs
-        rep0$summary[, out_dir := basename(out_dir)]
-        rep0$by_group[, out_dir := basename(out_dir)]
-        rep0$suggestions[, out_dir := basename(out_dir)]
+                    if (isTRUE(WRITE_DP_RDS)) {
+                        maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
+                            saveRDS(out_chunk, file = chunk_rds)
+                        }, sprintf("RDS chunk %d", ci))
+                    }
 
-        # Write realism outputs via maybe_write for consistent logs and directory creation
-        sum_path <- file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_summary_rcpp.csv"))
-        by_path <- file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_by_tag_rcpp.csv"))
-        sug_path <- file.path(out_dir, paste0("tag_", WHICH_TAG, "_realism_tuning_suggestions_rcpp.csv"))
+                    if (isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF)) {
+                        pdf_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.pdf"), ci))
+                        maybe_write(isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF), pdf_path, function() {
+                            plot_tag_to_pdf(out_chunk, pdf_file = pdf_path, include_reference = DP_PDF_INCLUDE_REFERENCE)
+                        }, sprintf("PDF chunk %d", ci))
+                    }
+                } else {
+                    log_msg(sprintf("Chunk %d returned no rows.", ci))
+                    if (isTRUE(WRITE_DP_RDS)) {
+                        maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
+                            saveRDS(out_chunk, file = chunk_rds)
+                        }, sprintf("RDS chunk %d (empty)", ci))
+                    }
+                }
 
-        maybe_write(isTRUE(RUN_REALISM_REPORT), sum_path, function() {
-            data.table::fwrite(rep0$summary, file = sum_path)
-        }, "Realism summary")
-
-        maybe_write(isTRUE(RUN_REALISM_REPORT), by_path, function() {
-            data.table::fwrite(rep0$by_group, file = by_path)
-        }, "Realism by-tag")
-
-        maybe_write(isTRUE(RUN_REALISM_REPORT), sug_path, function() {
-            data.table::fwrite(rep0$suggestions, file = sug_path)
-        }, "Realism tuning suggestions")
-    }
-
-    # 5.8 Optional: sensitivity sweeps
-    if (isTRUE(RUN_SENSITIVITY)) {
-        sp_sens <- unique(xrun$species)
-        sp_sens <- sp_sens[!is.na(sp_sens) & nzchar(sp_sens)]
-        sp_sens <- if (length(sp_sens) > 0L) sp_sens[[1L]] else FORCED_SPECIES_LABEL
-
-        base <- bio_pars_to_transition_args(bio_pars[[sp_sens]])
-        #* TODO: Define interval_years per row if needed
-        sc <- make_demo_scenarios(base, interval_years = 5)
-        param_grids <- default_param_grids(base, n = 200)
-
-        all_sweeps <- build_all_sweeps(
-            scenarios = sc,
-            #* TODO: Define interval_years per row if needed
-            interval_years = 5,
-            base_args = base,
-            grids = param_grids,
-            abs_jump = 1000
+                TRUE
+            },
+            error = function(e) {
+                # Write a small error marker for the chunk and continue
+                err_file <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d_failed.txt"), ci))
+                writeLines(conditionMessage(e), con = err_file)
+                log_msg(sprintf("Chunk %d failed: %s", ci, conditionMessage(e)), "ERROR")
+                FALSE
+            }
         )
 
-        dts <- all_sweeps$dts
-        dt_all <- all_sweeps$all
-        dt_jumps <- all_sweeps$jumps
-
-        # Add out_dir to sensitivity outputs
-        dt_jumps[, out_dir := basename(out_dir)]
-        dt_all[, out_dir := basename(out_dir)]
-        for (key in names(dts)) {
-            dts[[key]][, out_dir := basename(out_dir)]
-        }
-        # Update all_sweeps with modified components
-        all_sweeps$dts <- dts
-        all_sweeps$all <- dt_all
-
-        # example_key <- "growth_ok__sigma1"
-        # if (example_key %in% names(dts)) {
-        #     print(plot_sweep_components(dts[[example_key]]), yscale = "delta")
-        # }
-
-        if (isTRUE(WRITE_OUTPUTS)) {
-            sweeps_rds <- file.path(out_dir, "simulated_all_transition_cost_sweeps_rcpp.rds")
-            sweeps_csv <- file.path(out_dir, "simulated_all_transition_cost_sweeps.csv")
-            jumps_csv <- file.path(out_dir, "simulated_all_transition_cost_sweep_jumps_rcpp.csv")
-            jumps_rds <- file.path(out_dir, "simulated_all_transition_cost_jumps_rcpp.rds")
-            jumps_csv2 <- file.path(out_dir, "simulated_all_transition_cost_jumps_rcpp.csv")
-
-            maybe_write(isTRUE(WRITE_OUTPUTS), sweeps_rds, function() {
-                saveRDS(all_sweeps, file = sweeps_rds)
-            }, "Sensitivity sweeps (RDS)")
-
-            # Optionally write the combined sweep table if desired (was commented out previously)
-            maybe_write(isTRUE(WRITE_OUTPUTS), sweeps_csv, function() {
-                data.table::fwrite(dt_all, file = sweeps_csv)
-            }, "Sensitivity sweeps (CSV)")
-
-            maybe_write(isTRUE(WRITE_OUTPUTS), jumps_csv, function() {
-                data.table::fwrite(dt_jumps, file = jumps_csv)
-            }, "Sensitivity jump summaries (CSV)")
-
-            maybe_write(isTRUE(WRITE_OUTPUTS), jumps_rds, function() {
-                saveRDS(dt_jumps, file = jumps_rds)
-            }, "Sensitivity jump summaries (RDS)")
-
-            maybe_write(isTRUE(WRITE_OUTPUTS), jumps_csv2, function() {
-                data.table::fwrite(dt_jumps, file = jumps_csv2)
-            }, "Sensitivity jump summaries (CSV alt)")
-        }
-
-        maybe_write(isTRUE(MAKE_ALL_SWEEPS_PDF), file.path(out_dir, "simulated_all_transition_cost_sweeps_rcpp.pdf"), function() {
-            plot_all_sweeps_to_pdf(
-                all_sweeps,
-                pdf_file = file.path(out_dir, "simulated_all_transition_cost_sweeps_rcpp.pdf"),
-                y_scale = "delta",
-                subtitle = basename(out_dir)
-            )
-        }, "Sensitivity sweeps PDF")
+        first_chunk <- FALSE
+        rm(res, out_chunk, groups_ci)
+        invisible(gc())
     }
 
     # Write a small finished marker so users and wrappers can detect job completion
@@ -1025,91 +1003,85 @@ run_main <- function() {
             log_msg("Finished run")
         },
         error = function(e) {
+            # message("[dp_global main_cpp_chunk.R] Warning writing run_finished marker: ", conditionMessage(e))
             log_msg(sprintf("Warning writing run_finished marker: %s", conditionMessage(e)), "WARN")
         }
     )
 
-    invisible(list(out = out, xrun = xrun, bio_pars = bio_pars))
+    invisible(list(xrun = xrun, bio_pars = bio_pars))
+}
+
+# Merge helpers: combine per-chunk RDS or Feather files into a single CSV
+merge_chunk_rds_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(DP_BASE, "_merged.csv"))) {
+    files <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.rds$"), full.names = TRUE)
+    if (length(files) == 0L) stop("No chunk RDS files found in ", out_dir)
+    first <- TRUE
+    for (f in sort(files)) {
+        log_msg(paste("Merging RDS", basename(f)))
+        dt <- readRDS(f)
+        if (nrow(dt) == 0L) next
+        if (first) {
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv), sprintf("Merged RDS first write: %s", basename(out_csv)))
+            first <- FALSE
+        } else {
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv, append = TRUE), sprintf("Merged RDS append: %s", basename(out_csv)))
+        }
+        rm(dt)
+        invisible(gc())
+    }
+    log_msg(paste("Merged", length(files), "RDS chunks to", out_csv))
+    out_csv
+}
+
+merge_chunk_feathers_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(DP_BASE, "_merged.csv"))) {
+    if (!requireNamespace("arrow", quietly = TRUE)) stop("arrow package required to read feather files")
+    files <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.feather$"), full.names = TRUE)
+    if (length(files) == 0L) stop("No chunk Feather files found in ", out_dir)
+    first <- TRUE
+    for (f in sort(files)) {
+        log_msg(paste("Merging Feather", basename(f)))
+        dt <- as.data.table(arrow::read_feather(f))
+        if (nrow(dt) == 0L) next
+        if (first) {
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv), sprintf("Merged Feather first write: %s", basename(out_csv)))
+            first <- FALSE
+        } else {
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv, append = TRUE), sprintf("Merged Feather append: %s", basename(out_csv)))
+        }
+        rm(dt)
+        invisible(gc())
+    }
+    log_msg(paste("Merged", length(files), "Feather chunks to", out_csv))
+    out_csv
+}
+
+merge_chunks_to_csv <- function(out_dir, prefer = c("rds", "feather")) {
+    prefer <- match.arg(prefer)
+    if (prefer == "feather") {
+        chars <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.feather$"), full.names = TRUE)
+        if (length(chars) > 0L) {
+            return(merge_chunk_feathers_to_csv(out_dir))
+        }
+        return(merge_chunk_rds_to_csv(out_dir))
+    }
+    # prefer rds
+    rds <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.rds$"), full.names = TRUE)
+    if (length(rds) > 0L) {
+        return(merge_chunk_rds_to_csv(out_dir))
+    }
+    return(merge_chunk_feathers_to_csv(out_dir))
 }
 
 ############################################################
-### 8) Entrypoint — execute when invoked via Rscript
+### 6) Script entrypoint
 ############################################################
 
 # When you run this file with Rscript, sys.nframe()==0 and we execute.
 # When you source() this file from another script/session, we only define helpers.
 if (sys.nframe() == 0L) {
-    res <- run_main()
-}
-
-############################################################
-### EOptional demo: k sweep join-vs-split analysis
-############################################################
-# Usage (run after run_main() so that `bio_pars` exists):
-
-if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
-    xrun <- res$xrun
-    bio_pars <- res$bio_pars
-    sp0 <- if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
-        FORCED_SPECIES_LABEL
-    } else {
-        # Prefer keys from `bio_pars` (guaranteed to be valid list indices)
-        nms <- names(bio_pars)
-        if (length(nms) > 0L && nzchar(nms[[1L]])) nms[[1L]] else unique(as.character(xrun$species))[[1L]]
-    }
-    dt_sweep <- k_sweep_join_vs_split(
-        scenarios = data.frame(
-            d0 = c(20, 20, 40, 40, 10, 10, 50, 30, 30),
-            d1 = c(18, 10, 45, 70, 9, 30, 55, 32, 28),
-            label = c(
-                "small shrink", "big shrink", "normal growth",
-                "extreme growth", "small tree shrink", "small tree extreme growth",
-                "large tree growth", "moderate growth", "moderate shrink"
-            )
-        ),
-        #* TODO: Define interval_years per row if needed
-        interval_years = 5,
-        bio = bio_pars[[sp0]],
-        temperature = 1L,
-        which_k = "auto",
-        # optional: include candidate-pruning bounds from the DP enumerator
-        prune_min_annual_growth = MAX_SHRINK_FIXED,
-        prune_max_annual_growth = MAX_GROWTH_FIXED,
-        subtitle = basename(out_dir)
-    )
-
-    print(k_sweep_crosspoints(dt_sweep))
-
-    if (requireNamespace("ggplot2", quietly = TRUE)) {
-        pp <- plot_k_sweep_join_vs_split(
-            dt_sweep,
-            k_max = 1000,
-            out_path = here(out_dir, "k_sweep_join_vs_split_demo_rcpp.pdf"),
-            subtitle = basename(out_dir)
-        )
-    } else {
-        message("ggplot2 not available; install ggplot2 to visualize k sweeps.")
-    }
-}
-
-# Export bio-parameter report if `res` and `res$bio_pars` are available.
-if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
-    source(here("dp_global", "R", "check_functions.r"))
-    tryCatch(
-        {
-            export_bio_pars_report(res$bio_pars,
-                species = NULL,
-                interval_years = 5,
-                out_file = file.path(out_dir, "bio_pars_report.pdf")
-            )
-        },
-        error = function(e) {
-            message("[dp_global main_cpp.R] Warning exporting bio_pars_report: ", conditionMessage(e))
-        }
-    )
-} else {
-    message("[dp_global main_cpp.R] Skipping bio_pars report: 'res$bio_pars' not available (chunked run or earlier error).")
+    message("[dp_global main_cpp_chunk.R] Starting chunked run_main_chunked()")
+    run_main_chunked()
 }
 
 
-# Rscript dp_global/scripts/main_cpp.R --POSTERIOR_SAMPLES=20 --POSTERIOR_SAMPLES_FORMAT=csv --POSTERIOR_SAMPLE_SEED=123 --RUN_REALISM_REPORT=TRUE --SENSITIVITY_MODE=run+write+pdf --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_PDF=TRUE
+# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=1 --DP_CHUNK_END=2 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10

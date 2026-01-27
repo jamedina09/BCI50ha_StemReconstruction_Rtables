@@ -251,7 +251,7 @@ for (i in seq_len(nrow(species_table))) {
 }
 dt <- rbindlist(dt_list)
 
-dt <- dt[,.(Species, Tag, OriginalStemID, TrueStemID, CensusID, DBH_true, CensusInterval, CensusDate)][order(Species, Tag, OriginalStemID, CensusID)]
+dt <- dt[,.(Species, Tag, OriginalStemID, TrueStemID, CensusID, DBH_true, CensusDate)][order(Species, Tag, OriginalStemID, CensusID)]
 dt[, DBH := DBH_true]
 dt[, DBH_true := NULL]
 dt[CensusID < 7, TrueStemID := NA_integer_]
@@ -279,7 +279,71 @@ dt[, .(Species, Tag, OriginalStemID, TrueStemID, CensusID, ExactDate, DBH)][orde
 # params_filename <- here("data_simulation", "data", sprintf("simulation_params_%s.txt", scaling_indicator))
 # capture.output(str(params), file = params_filename)
 
-fwrite(dt, here("data_simulation", "data", "simulated_data_1.csv"))
+################################################################################
+### INCLUDE POTENTIAL PROBLEMATIC STEMS FOR TESTING
+################################################################################
+
+setorder(dt, Species, Tag, OriginalStemID, CensusID)
+
+## add a main stem from census 6 to 9 only
+problematic_stem <- data.table(
+    Species = "sp1",
+    Tag = max(dt$Tag) + 1L,
+    OriginalStemID = 1L,
+    TrueStemID = 1L,
+    CensusID = 6:9,
+    ExactDate = as.Date("1980-01-01") + round(c(25, 30, 35, 40) * 365.25),
+    DBH = c(30, 35, 40, 45)
+)
+problematic_stem <- problematic_stem[CensusID < params$mask$anchor_start_census, TrueStemID := NA_integer_]
+
+## add a main stem with census 1 to 5 only
+problematic_stem2 <- data.table(
+    Species = "sp2",
+    Tag = max(dt$Tag) + 2L,
+    OriginalStemID = 1L,
+    TrueStemID = 1L,
+    CensusID = 1:5,
+    ExactDate = as.Date("1980-01-01") + round(c(0, 5, 10, 15, 20) * 365.25),
+    DBH = c(10, 15, 20, 25, 30)
+)
+problematic_stem2 <- problematic_stem2[CensusID < params$mask$anchor_start_census, TrueStemID := NA_integer_]
+
+### add a tag with multiple OriginalStemID from census 6 to 9 only
+problematic_stem3 <- data.table(
+    Species = "sp3",
+    Tag = max(dt$Tag) + 3L,
+    OriginalStemID = rep(1:2, each = 4),
+    TrueStemID = rep(1:2, each = 4),
+    CensusID = rep(6:9, times = 2),
+    ExactDate = as.Date("1980-01-01") + round(rep(c(25, 30, 35, 40), times = 2) * 365.25),
+    DBH = c(20, 25, 30, 35, 15, 20, 25, 30)
+)
+problematic_stem3 <- problematic_stem3[CensusID < params$mask$anchor_start_census, TrueStemID := NA_integer_]
+
+## add a tag with multiple stems from census 1 to 5 only
+problematic_stem4 <- data.table(
+    Species = "sp1",
+    Tag = max(dt$Tag) + 4L,
+    OriginalStemID = rep(1:2, each = 5),
+    TrueStemID = rep(1:2, each = 5),
+    CensusID = rep(1:5, times = 2), 
+    ExactDate = as.Date("1980-01-01") + round(rep(c(0, 5, 10, 15, 20), times = 2) * 365.25),
+    DBH = c(12, 18, 24, 30, 36, 8, 14, 20, 26, 32)
+)
+problematic_stem4 <- problematic_stem4[CensusID < params$mask$anchor_start_census, TrueStemID := NA_integer_]
+
+# Combine problematic stems with main dataset
+dt_complete <- rbind(dt,
+    problematic_stem,
+    problematic_stem2,
+    problematic_stem3,
+    problematic_stem4,
+    use.names = TRUE
+)
+
+
+fwrite(dt_complete, here("data_simulation", "data", "simulated_data_1.csv"))
 # Apply stem ID masking to simulate ForestGEO protocol
 # In early censuses, stem identities are not trusted (TrueStemID = NA)
 
@@ -302,11 +366,11 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
     pdf(pdf_file_species, width = 8, height = 6)
 
     # Get unique species
-    species_list <- unique(dt$Species)
+    species_list <- unique(dt_complete$Species)
 
     # Create one plot per species (all tags)
     for (species_name in species_list) {
-        species_data <- dt[Species == species_name]
+        species_data <- dt_complete[Species == species_name]
 
         gg <- ggplot2::ggplot(
             species_data,
@@ -341,8 +405,8 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
     pdf(pdf_file_tags, width = 8, height = 6)
 
     # Create one plot per tag
-    for (tag_id in unique(dt$Tag)) {
-        tag_data <- dt[Tag == tag_id]
+    for (tag_id in unique(dt_complete$Tag)) {
+        tag_data <- dt_complete[Tag == tag_id]
         species_name <- unique(tag_data$Species)
 
         gg <- ggplot2::ggplot(

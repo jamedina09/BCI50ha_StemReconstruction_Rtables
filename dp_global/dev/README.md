@@ -1,16 +1,23 @@
 # dp_global dev
 
-This folder contains development tools for the dp_global stem-matching algorithm, including regression tests, benchmarks, profiling scripts, and output files. dp_global is a dynamic programming-based approach for matching tree stems across multiple censuses in forest ecology datasets, accounting for biological processes like growth, mortality, and recruitment.
+Development tools (tests, benchmarks, profiling) for the dp_global stem-matching workflow.
 
 Notes:
 - For per-pair interval handling in tests and examples, prefer `interval_years = NULL` (this enables detection of per-row interval columns like `Bio_IntervalYears`) or pass an explicit scalar `interval_years` when needed.
 - Use `--WRITE_DP_RDS=TRUE` to produce `.rds` artifacts alongside CSV/PDF outputs for R-native validation in tests.
 
+## Quickstart
+
+Run the main tests (from project root):
+
+```bash
+Rscript dp_global/dev/test_transition_cost_tracks_bio_batch.R
+Rscript dp_global/dev/test_match_stems_dp_global_backward_marginals_batch.R
+```
+
 ## Prerequisites
 
-- R environment with required packages: `data.table`, `Rcpp` (optional for C++ acceleration)
-- Access to the project root directory for relative paths
-- Synthetic data from `data_simulation/data/` for profiling
+R (packages: `data.table`, `Rcpp`); access to project root and synthetic data in `data_simulation/data/` for profiling.
 
 ## Scripts Overview
 
@@ -84,5 +91,3 @@ PROFILE_VARIANT=cpp Rscript --vanilla dp_global/dev/profiling_code.R
 - Benchmarks measure execution time; profiling identifies bottlenecks.
 - Synthetic data ensures reproducible testing without relying on real datasets.
 - If tests fail, check for missing dependencies or incorrect column names in synthetic data.
-
-<!-- pandoc README.md --standalone --mathml --embed-resources -o README_offline.html -->

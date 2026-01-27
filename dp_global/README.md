@@ -18,45 +18,31 @@
 9. [Outputs & Diagnostics](#outputs--diagnostics)
 10. [Parameter Estimation](#parameter-estimation)
 11. [Fallback Mechanisms](#fallback-mechanisms)
-12. [Workflows & Usage Patterns](#workflows--usage-patterns)
-13. [Implementation Reference](#implementation-reference)
+12. [Pruning & Conservative Guards](#pruning--conservative-guards)
+13. [Workflows & Usage Patterns](#workflows--usage-patterns)
+14. [Implementation Reference](#implementation-reference)
 
 ---
 
 ## Overview
 
-### What This Solves
-
-For each (Tag, species) group in forest census data, this system reconstructs stable stem identities in early censuses by finding the **globally optimal** set of stem identity assignments. The solution is consistent with:
-
-- A biological transition model (growth, recruitment, mortality)
-- Explicit life-cycle constraints (birth→alive→death, no resurrection)
-- Optional exact posterior uncertainty quantification via probabilistic DP
-
-### Why Global DP?
-
-**Problem with stepwise matching:** Local one-step matches can appear optimal but cause identity swaps when considering the full multi-census history.
-
-**DP solution:** Optimizes the *entire multi-census trajectory* simultaneously, using a track-based state space representation where each "track" represents a potential stem identity slot that can be occupied or empty across censuses.
+Reconstruct stable stem identities across censuses using a biologically informed global dynamic programming solver that enforces life-cycle constraints and provides uncertainty quantification.
 
 ### Key Features
 
-- **Global optimization** across all censuses simultaneously
-- **Biological realism** through parametric growth, mortality, and recruitment models
+- **Global optimization** across multiple censuses
+- **Biological realism** (growth, mortality, recruitment)
 - **Measurement error handling** following Chave et al. (2004)
 - **Exact uncertainty quantification** via posterior marginals
-- **Life-cycle constraints** preventing impossible transitions
-- **High-performance C++ acceleration** reducing computation time by 10-50x compared to pure R implementation
-- **Automatic fallback** to stepwise matching when DP becomes intractable
+- **C++ acceleration** for performance and fallbacks when DP is intractable
 
 ---
 
-## Installation & Quickstart
+## Quickstart
 
-### Requirements
+### Prerequisites
 
-**Required packages:** `data.table`, `igraph`  
-**Optional:** `ggplot2`, `cowplot`
+R (packages: `data.table`, `igraph`; optional: `ggplot2`, `cowplot`) 
 
 ### Running the Code
 
@@ -121,12 +107,8 @@ Forest census measurements track multiple stems per tree over time:
 - Measurement error complicates growth assessment
 - Local greedy matching can trap in suboptimal solutions
 
-### TODO:
-The code assumes that HOM (height of measurement) is the same for all stems.
-Include HOM column, and for those that are not the same (e.g., HOM != 1.3), 
-predict the DBH at the common HOM (1.3 m) and proceed.
-
-Now, the user needs to include DBH measurements at 1.3m.
+Note on measurement heights (HOM):
+If DBH measurements were taken at differing heights, include a `HOM` column and convert DBH to a common reference height (1.3 m) prior to running the workflow. If conversion is not possible, document measurement heights; preprocessing may be required.
 
 ---
 
@@ -244,6 +226,36 @@ When running `match_stems_dp_global_backward_marginals()`:
 - `DP_PosteriorReconstructedProb`
 - `DP_PosteriorUnlinkedProb`
 - `DP_PosteriorBin` (if using `add_dp_posterior_bins()`)
+
+Posterior path summaries (`*_paths.csv`) encode the `recon` column as `ObsRowID:ReconstructedStemID` pairs. The attachment helpers expect ObsRowID-based encodings.
+
+### MAP vs posterior-sampled paths 🔀
+
+**What these two outputs represent**
+
+
+- **`ReconstructedStemID` (main output)** is the *MAP joint assignment* (MAP — Maximum a posteriori) decoded by the DP (a deterministic Viterbi-style backtrace of the most probable full path). This is written per-observation in the main `stem_reconstruction_*.csv` as the best joint reconstruction under the model.
+
+- **Per-path posterior summary (`*_paths.csv`)** is an *empirical* summary of full reconstructions produced by the posterior sampler (only generated when `posterior_samples > 0`). Each row is a unique path observed among draws and `path_prob` is the normalized sampling weight for that unique path (sums to 1 across sampled unique paths).
+
+**Why they can differ**
+
+- Posterior sampling is finite and stochastic: the MAP joint path may have non-zero posterior mass yet still not be drawn among the finite samples. Consequently, the concatenation of per-row MAPs (`ReconstructedStemID`) may *not* appear as any `path_sig` in the `*_paths.csv` file.
+
+**Practical recommendations**
+
+- Increase `posterior_samples` to raise the chance the MAP path is drawn and therefore present in `*_paths.csv`.
+- If you require the MAP path to be represented in per-path summaries, you can either (a) explicitly insert the MAP signature into `paths_summary` after sampling (and mark it), or (b) attach it directly to your main output using the `attach_paths_to_output()` helper (see `dp_global/R/error_propagation/process_posteriors.R`).
+
+**Quick check example (R)**
+
+```r
+library(data.table)
+dp <- fread("dp_global/output/.../stem_reconstruction_dp_global_rcpp.csv")
+sig <- paste0(dp[ReconstructionMethod == "dp", ReconstructedStemID], collapse = "-")
+paths <- fread("dp_global/output/.../posteriors/..._paths.csv")
+paths[path_sig == sig]  # empty => MAP path wasn't sampled
+```
 
 ---
 
@@ -477,6 +489,7 @@ Default: $\varepsilon_{\text{tiebreak}} = 10^{-6}$
 
 The probabilistic solver defines a Gibbs-like posterior:
 
+**Posterior samples (optional):** If `POSTERIOR_SAMPLES` > 0, the DP can draw full-path posterior samples and write them to disk. Use `POSTERIOR_SAMPLES_FORMAT` to select `rds`, `feather` (arrow), or `csv`. By default, samples are written into a `posteriors/` subdirectory under the DP output directory (or to `POSTERIOR_SAMPLES_PATH` if that option is supplied).
 $$P(\text{path}) \propto \exp\left(-\frac{\text{TotalCost}(\text{path})}{\tau}\right)$$
 
 where $\tau$ is the temperature parameter:
@@ -639,6 +652,23 @@ Fits `lm(sd_proc_hat ~ d0_all)` with constraints:
 
 Final model:
 $\sigma(D_0) = \sigma_0 + \sigma_1 D_0$
+
+### Optional enforcement: user-specified growth bounds
+You can optionally enforce user-specified annual growth bounds in `estimate_bio_pars()` to remove extreme increments prior to parameter estimation. These options are independent of the guardrails returned by the function and affect only the *data used to fit* the growth mean and variance.
+
+- `enforce_growth_bounds` (logical, default `FALSE`): when `TRUE`, observations with annualized growth $g$ (cm/year) outside the provided bounds will be dropped before fitting the mean and variance models.
+- `growth_min_fixed`, `growth_max_fixed` (numeric, cm/year): one-sided bounds are allowed (set one of them to `NA` to have only a single-sided filter).
+
+Behavior:
+- Dropped observations produce a warning stating how many points were removed.
+- If enforcing the bounds causes too few growth observations to remain (the function requires at least 5 total growth observations), `estimate_bio_pars()` will raise an error.
+
+Example (enforce growth between -0.5 and 7.5 cm/year):
+
+```r
+estimate_bio_pars(x, enforce_growth_bounds = TRUE, growth_min_fixed = -0.5, growth_max_fixed = 7.5)
+```
+
 
 ### Penalty Parameter Estimation
 
@@ -814,6 +844,18 @@ Upper quantile guardrail (default 99.9%):
 
 Fallback: 5 cm
 
+**Optional enforcement: recruit max DBH**
+`estimate_bio_pars()` supports an optional pre-fit filter for recruit sizes:
+
+- `enforce_recruit_max` (logical, default `FALSE`): when `TRUE`, recruits with DBH strictly greater than `recruit_max_fixed` (cm) are removed from the sample prior to fitting the lognormal recruit-size distribution.
+- When `enforce_recruit_max = TRUE`, you must provide a positive finite `recruit_max_fixed` value. The function will warn if any recruits were dropped.
+
+Example (enforce a 37.5 cm recruit cap):
+
+```r
+estimate_bio_pars(x, enforce_recruit_max = TRUE, recruit_max_source = "fixed", recruit_max_fixed = 37.5)
+```
+
 **Recruitment rate:**
 
 Poisson rate per empty slot per year:
@@ -849,6 +891,9 @@ The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 3. K insufficient ($K < \max$ observed stems)
 4. DP recursion yields no feasible keys
 
+#### Anchor fallback behavior
+If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back to the igraph matcher. If no such earlier census exists, the algorithm falls back to `match_stems_optimal_backward()`.
+
 ### Fallback Method: `match_stems_optimal_backward()`
 
 **Algorithm:**
@@ -861,6 +906,66 @@ The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 **Marking:** Rows assigned by fallback have `ReconstructionMethod="igraph"`
 
 **Important:** `min_growth` and `max_growth` constraints affect **only** the fallback method and post-hoc diagnostics, not the DP objective.
+
+## Pruning & Conservative Guards
+
+### Motivation — factorial growth of the state space
+The DP enumerates injective assignment states per census. For a census with `n_obs` observed stems and `K` tracks the number of assignment states is the falling-permutation
+
+```
+P(K, n_obs) = K × (K-1) × ... × (K - n_obs + 1)
+```
+
+The total number of full-paths (and candidate transitions between adjacent census assignment states) grows multiplicatively across censuses, which quickly becomes intractable (factorial-like explosion). To keep the DP practical, we apply *conservative, cheap* pre-filters that remove biologically impossible or extremely implausible candidate transitions before evaluating the full (expensive) transition cost.
+
+These filters are intentionally conservative: they are meant to remove clearly impossible candidates (hard physical/biological limits) while preserving borderline cases for the full cost evaluation.
+
+### Where pruning runs
+- Pruning happens in the backward recursion immediately *before* calling `transition_cost_tracks_bio_batch_rcpp` for a candidate transition. This avoids the costly likelihood evaluation for obviously impossible transitions.
+- Pruning is only applied when `prune_hard = TRUE` (default). If `prune_hard = FALSE`, no pre-filtering is performed and all candidate transitions are passed to the cost routine (slower but conservative).
+
+### Parameters & exact semantics
+We separate pruning thresholds from the biological (`Bio_*`) parameters so you can control pruning behaviour without changing the biological model used in the transition-cost calculations.
+
+- `prune_min_growth` (numeric | NULL): explicit lower bound (cm/year) used for pruning. If `NULL` the value `min_growth` passed to the DP is used.
+- `prune_max_growth` (numeric | NULL): explicit upper bound (cm/year) used for pruning. If `NULL` the value `max_growth` passed to the DP is used.
+- `prune_use_bio_bounds` (logical, default TRUE): whether to intersect the user-specified prune bounds with the biological hard bounds found in the data (`Bio_Max_Shrink`, `Bio_Max_Growth`). If TRUE (default):
+  - eff_min_grow = max(user_min, Bio_Max_Shrink)
+  - eff_max_grow = min(user_max, Bio_Max_Growth)
+  where `user_min` = `prune_min_growth` if provided else `min_growth`, and similarly for `user_max`.
+  If `prune_use_bio_bounds = FALSE` the `eff_*` values equal `user_*` directly.
+- `prune_recruit_max_dbh` (numeric | NULL): override for the recruit-size cut used during pruning. If `NULL` the biological `Bio_Recruit_MaxDBH_unit` is used. If `prune_use_bio_recruit = TRUE` (default) and both are finite, we use the more conservative value `min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)`; otherwise the explicit override is used.
+- `prune_use_bio_recruit` (logical, default TRUE): controls whether the biological recruit bound should be intersected with `prune_recruit_max_dbh`. If TRUE, we select the minimum as min(prune_recruit_max_dbh, maximum recruitment dbh). Note: maximum recruitment dbh could be either the 0.999 quantile of recruitment DBH or a fixed value defined earlier when estimating the parameters.
+
+Notes:
+- These pruning parameters affect only the *pre-filtering* step (they do not change the transition cost function or post-hoc diagnostics beyond recording the effective prune values).
+- If interval length between censuses is invalid or not finite for a pair, growth-based pruning is skipped for that pair and only recruit-size pruning (if applicable) is used.
+- You can always define extra margins for these parameters. For example:
+
+```r
+prune_min_growth = MAX_SHRINK_FIXED * 2.5 # very wide fixed bounds
+prune_max_growth = MAX_GROWTH_FIXED * 1.5 # very wide fixed bounds
+prune_use_bio_bounds = FALSE # use fixed prune bounds instead of biological ones
+prune_recruit_max_dbh = RECRUIT_MAX_FIXED * 1.2 # very high recruit max dbh
+prune_use_bio_recruit = FALSE# use fixed prune bounds instead of biological ones
+```
+
+### Diagnostics & reproducibility
+- The DP exposes `attr(out, "DP_PruneInfo")` with:
+  - `total_examined`, `total_pruned` (counts)
+  - `per_census` (count per census pair)
+  - `eff_min_growth`, `eff_max_growth`, `eff_recruit_max` (the effective thresholds used)
+- The effective prune bounds are also `vcat`-logged at the start of the backward pass for transparency.
+
+### Practical guidance and examples
+- Default behaviour (safe): leave `prune_min_growth = NULL` and `prune_max_growth = NULL`. The code will use `user_min = min_growth`, `user_max = max_growth` and intersect them with `Bio_*` values. This preserves biological hard limits while letting you set study-level `min_growth`/`max_growth` if you want to narrow behaviour across the run.
+- If you want *wider* pruning (less aggressive rejection) than the biological bounds allow (e.g., because you trust the DP cost to handle edge cases), set `prune_use_bio_bounds = FALSE` and set `prune_min_growth`/`prune_max_growth` to the desired wide range (e.g., `-10`..`25`).
+- If you want *stricter* recruit-size pruning, provide a small `prune_recruit_max_dbh` (and set `prune_use_bio_recruit = FALSE` if you want to use it without intersecting the biological bound).
+- Beware of overly tight pruning: if pruning removes all feasible transitions at a census the DP will fallback to the `igraph` matcher (or produce no DP states). If you see frequent fallbacks for reasonable data, relax the prune bounds or set `prune_hard = FALSE` for a diagnostic run.
+
+### Why this approach?
+- The combinatorial nature of injective assignments makes per-census state counts grow factorially with `n_obs`. Pruning cheaply removes impossibilities and reduces the number of pairwise assignment evaluations from `O(n_states_cc × n_states_{cc+1})` to a manageable number while retaining feasible candidates for the full probabilistic scoring.
+- Because pruning is conservative and logged, it is auditable: you can use `DP_PruneInfo` to quantify how many candidate transitions were removed and where.
 
 ---
 
@@ -883,7 +988,7 @@ input_file="../data_simulation/data/simulated_data_1.csv"
 FORCE_ONE_SPECIES_PARAMETERS=FALSE
 
 # Census configuration
-which_tag=1
+WHICH_TAG=1
 anchor_start_census=7
 interval_years=5  # scalar interval; set to NULL to detect per-pair values from data (e.g., via Bio_IntervalYears), or pass --interval_years=5
 
@@ -1044,7 +1149,7 @@ bin/run_dp_full.sh --config=data_hard_soft
 
 **Override specific parameters:**
 ```bash
-bin/run_dp_full.sh --which_tag=2 --MC_CORES=8
+bin/run_dp_full.sh --WHICH_TAG=2 --MC_CORES=8
 ```
 
 ### Output Organization
@@ -1145,6 +1250,23 @@ source("dp_global/R/dp_global_biol.R")
 source("dp_global/R/sensitivity_transition_cost_bio.R")
 # Run parameter sweeps on costs
 ```
+
+### Example: enforce growth/recruit bounds
+Units: growth bounds are **cm/year**; recruit caps are **cm**.
+
+```r
+# Enforce growth bounds (0.05 - 0.75 cm/yr) and cap recruits at 37.5 cm
+bio <- estimate_bio_pars(
+  x,
+  enforce_growth_bounds = TRUE,
+  growth_min_fixed = 0.05,
+  growth_max_fixed = 0.75,
+  enforce_recruit_max = TRUE,
+  recruit_max_source = "fixed",
+  recruit_max_fixed = 37.5
+)
+```
+
 
 ### Realism Report Only
 
@@ -1278,12 +1400,80 @@ out_marginal <- add_dp_posterior_bins(
 | Transition costs | `transition_cost_tracks_bio()` | `dp_global_biol.R` |
 | Cost breakdown (debug) | `transition_cost_tracks_bio_components()` | `dp_global_biol.R` |
 | MAP/Viterbi DP | `match_stems_dp_global_backward()` | `dp_global_biol.R` |
-| Posterior marginals | `match_stems_dp_global_backward_marginals()` | `dp_global_biol.R` |
+| Posterior marginals (single-tag) | `match_stems_dp_global_backward_marginals()` | `dp_global_biol.R` |
+| Posterior marginals (batch / production) | `match_stems_dp_global_backward_marginals_batch()` | `dp_global/R/dp_global_dp.R` |
 | Posterior binning | `add_dp_posterior_bins()` | `dp_global_biol.R` |
 | Fallback matcher | `match_stems_optimal_backward()` | `dp_global_biol.R` |
 | Parameter estimation | `estimate_bio_pars()` | `dp_global_biol.R` |
 | Plotting | `plot_tag_to_pdf()` | `dp_global_biol.R` |
 | Driver/wiring | `scripts/main.R` | `scripts/main.R` |
+
+### match_stems_dp_global_backward_marginals_batch — Function reference (implementation details)
+
+This implementation is the production-grade, batch-capable marginal DP solver. Below are the key computations, helper functions it uses, and the semantics of important parameters (including the new pruning controls).
+
+Key computations and helpers:
+
+- Anchor selection
+  - If requested `anchor_start` has no DBH/TrueStemID, the function searches backward for the most recent census with at least one row having non-NA DBH and non-NA TrueStemID and uses that as the anchor. If none found, it falls back to `match_stems_optimal_backward()`.
+
+- State enumeration
+  - `enumerate_states_injective(K, n_obs, max_states)` enumerates injective assignments (permutation-based states). If enumeration exceeds `max_states` it falls back to igraph.
+  - `count_injective_states(K, n_obs)` computes theoretical counts used for diagnostics.
+
+- Track DBH vectors
+  - `state_to_track_dbh(assign_vec, obs_dbh, K)` constructs length-K DBH vectors for each state used in cost evaluation.
+
+- Phase constraints
+  - `derive_phase_prev(phase_tp1, tdbh_t, tdbh_tp1)` computes the feasible phase vector at t given the next phase and DBH presence/absence; used to enforce life-cycle feasibility (prebirth, alive, dead).
+
+- Interval computation
+  - Uses per-census mean `ExactDate` to compute `interval_val` (years) between census pairs. If `interval_val` is NA or non-finite, growth-based pruning is skipped for that pair.
+
+- Conservative pruning (pre-filters)
+  - Controlled by: `prune_hard` (logical); `prune_min_growth`, `prune_max_growth`, `prune_use_bio_bounds`, `prune_recruit_max_dbh`, `prune_use_bio_recruit`.
+  - Effective pruning thresholds computed as
+
+    user_min = prune_min_growth (if given) else min_growth
+
+    user_max = prune_max_growth (if given) else max_growth
+
+    if prune_use_bio_bounds:
+      eff_min_grow = max(user_min, Bio_Max_Shrink)
+      eff_max_grow = min(user_max, Bio_Max_Growth)
+    else:
+      eff_min_grow = user_min
+      eff_max_grow = user_max
+
+    eff_recruit_max chosen from `prune_recruit_max_dbh` and `Bio_Recruit_MaxDBH_unit` depending on flags.
+
+  - For each candidate (assignment-state pair) and each track with DBH at both times compute
+
+    g = (D_{t+1} - D_t) / Δt
+
+    and prune if g ∉ [eff_min_grow, eff_max_grow]; for recruits (NA→DBH) prune if DBH > eff_recruit_max.
+
+  - Pruning updates `prune_stats` and avoids calling the expensive `transition_cost_tracks_bio_batch_rcpp()` for pruned candidates.
+
+- Transition cost computation
+  - `transition_cost_tracks_bio_batch_rcpp(track_dbh_t, track_dbh_tp1, interval_years, ...)` computes per-candidate cost (sum across tracks) including growth likelihood, mortality, recruitment, and hard-penalties (1e6) for impossible transitions.
+
+- Backward recursion & Viterbi
+  - Uses log-sum-exp (`log_add_exp` / `log_sum_exp`) to accumulate marginal weights and a Viterbi update to compute MAP path (per-step `vit_cost`, `vit_ptr` arrays).
+
+- Forward pass & posterior marginals
+  - Builds per-observation posterior distributions (`DP_PosteriorTopK*` columns) via normalized state weights.
+
+- Posterior sampling
+  - Optional sample drawing from the DP graph (`posterior_samples`), with backward sampling and per-sample `logp` weights converted to `sample_prob`.
+
+- Diagnostics & fallbacks
+  - `attr(out, "DP_PruneInfo")` contains pruning diagnostics (counts and effective thresholds). The function falls back to `match_stems_optimal_backward()` on anchor failures, enumeration exhaustion, K insufficiency or if DP produces no feasible states after pruning. These fallback return values always include `DP_PruneInfo`.
+
+Notes:
+- `min_growth`/`max_growth` still primarily control the **fallback matcher** and post-hoc `ConstraintViolation` checks. They can be defined as `Bio_Max_Shrink`/`Bio_Max_Growth`. 
+
+---
 
 ### Key Implementation Details
 
@@ -1473,19 +1663,4 @@ Chave, J., Condit, R., Aguilar, S., Hernandez, A., Lao, S., & Perez, R. (2004). 
 
 ## Building This Documentation
 
-**Fully offline HTML (recommended):**
-```bash
-pandoc README.md --standalone --mathml \
-  --embed-resources -o README.html
-```
-
-**MathJax HTML (requires internet):**
-```bash
-pandoc README.md --standalone --mathjax \
-  --embed-resources -o README.html
-```
-
-**Automated build:**
-```bash
-bash dev/build_readme_html.sh
-```
+Use `pandoc` (if available) to render `README.md` to HTML. An automated build script is provided (`dev/build_readme_html.sh`) that wraps common rendering steps.
