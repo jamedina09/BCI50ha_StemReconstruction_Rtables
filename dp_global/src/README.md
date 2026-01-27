@@ -1,6 +1,6 @@
 # Rcpp Acceleration for DP Global Stem Tracking
 
-This directory contains an optimized C++ implementation of the transition cost computation for the DP global stem tracking algorithm.
+C++ implementation and R wrapper for Rcpp-accelerated transition-cost computations used by the DP workflow.
 
 ## Files
 
@@ -13,17 +13,9 @@ This directory contains an optimized C++ implementation of the transition cost c
 
 ### Prerequisites
 
-1. Install the `Rcpp` package:
-   ```r
-   install.packages("Rcpp")
-   ```
+R (packages: `Rcpp`; optional for benchmarking: `microbenchmark`) 
 
-2. For performance testing, also install `microbenchmark`:
-   ```r
-   install.packages("microbenchmark")
-   ```
-
-### Quick Usage & API
+### Quickstart & API
 
 Load and call from R (project root):
 
@@ -81,9 +73,7 @@ The dev tests compare outputs and report discrepancies; use these to validate th
 - Use the `dp_global/dev/` test suite to validate the C++ implementation and to exercise end-to-end behavior through `main_cpp.R` when needed.
 - When running end-to-end checks, pass `--WRITE_DP_RDS=TRUE` to the run command to ensure `.rds` outputs are produced and inspected by R-based tests (preferred over parsing CSVs for validation).
 
-## Recent changes
-
-- The C++ implementation and the R wrapper were recently updated to improve performance and fix corner-case behavior. If you edit the C++ or wrapper, re-run the dev validation test and the profiler to ensure correctness and to inspect performance.
+If you edit the C++ implementation or the R wrapper, re-run the dev validation tests and the profiler to ensure correctness and to check performance.
 
 ## Troubleshooting
 

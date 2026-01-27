@@ -2,41 +2,41 @@
 
 **IMPORTANT: DRY_RUN first ✅**
 
-- Always verify constructed commands and logging paths before running real experiments. Use the `-- --DRY_RUN` flag to print the fully sanitized Rscript invocations and write per-config dry logs. Examples:
+- Use the `-- --DRY_RUN` flag to print the fully constructed Rscript invocations and write per-config dry logs (no execution). Examples:
 
   ```bash
   ./bin/run_dp_future.R --workers 1 --cores-per-job 1 --configs "fixed" -- --DRY_RUN
   ./bin/run_dp_future_single.R --workers 1 --cores-per-job 1 -- --DRY_RUN
   ```
 
-Purpose
+## Overview
 
 - Recommended entrypoints for running experiments on a single machine:
   - `bin/run_dp_future.R` — concurrent runner using `future` + `progressr` (preferred for multi-config runs).
   - `bin/run_dp_future_single.R` — helper to run a fixed configuration set with the same concurrent/future orchestration semantics (useful for testing or single-config experiments).
 - For single-config serial execution, use `bin/run_dp_future_single.R` or run `run_dp_future.R` with `--workers 1` for equivalent behavior and consistent logging.
 
-Quick start
+## Quickstart
 
-1. Dry-run (fast; no heavy computation):
+Dry-run the runner to verify commands (no execution):
 
-   ```bash
-   ./bin/run_dp_future.R --workers 2 --cores-per-job 4 --configs "fixed data_hard" -- --DRY_RUN
-   ```
+```bash
+./bin/run_dp_future.R --workers 2 --cores-per-job 4 --configs "fixed data_hard" -- --DRY_RUN
+```
 
-2. Real run (executes configs concurrently):
+Run configs concurrently:
 
-   ```bash
-   ./bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_soft"
-   ```
+```bash
+./bin/run_dp_future.R --workers 4 --cores-per-job 4 --configs "fixed data_hard data_soft"
+```
 
-3. Single-config runner (dry-run or real):
+Run a single config (serial or via helper):
 
-   ```bash
-   ./bin/run_dp_future_single.R --workers 1 --cores-per-job 4 -- --DRY_RUN
-   ```
+```bash
+./bin/run_dp_future_single.R --workers 1 --cores-per-job 4 -- --DRY_RUN
+```
 
-Flags & options
+## Options
 
 - `--config=<name>`        : run a single config (e.g., `--config=fixed`) (used by serial helpers; for `run_dp_future.R` use `--configs`)
 - `--DRY_RUN`               : prints Rscript invocations instead of executing them (pass after `--` to forward to `main_cpp.R`)
@@ -67,11 +67,9 @@ Concurrent runs with `future` + `progressr` (working)
 - Purpose: Run multiple named experiment configs concurrently in a robust, observable way.
 - Script: `bin/run_dp_future.R` (R script using `future`, `future.apply` and `progressr`).
 
-Installation (if needed)
+## Prerequisites
 
-```r
-install.packages(c("future", "future.apply", "progressr"))
-```
+R (packages: `future`, `future.apply`, `progressr`) 
 
 Usage examples
 
@@ -99,8 +97,8 @@ Options
 Behavior & outputs
 
 - Oversubscription safety: script checks `workers * cores_per_job <= available logical CPUs` and will abort unless `--force` used.
-- Per-config logs: `tests/parallel_future_logs/<config>.log` (created if not present)
-- Joblog CSV: (default) `parallel_future.log` summarizing start/end, exit status, and log file path
+- Per-config logs: `tests/parallel_future_logs/<config>.log` (created if not present). When the orchestrator can detect the DP run output directory, it will include the main run `run_log.txt` in the per-config worker log.
+- Joblog CSV: (default) `parallel_future.log` summarizing start/end, exit status, and log file path. The joblog may contain a `main_out_dir` column pointing to the main run output directory when it can be detected.
 - Progress: displayed with `progressr` (text progress bar by default)
 
 Caveats & tips

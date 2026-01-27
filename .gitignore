@@ -1,5 +1,7 @@
 # Ignore output directories and large artifacts
 dp_global/output/
+dp_global/examples/
+posteriors/
 tests/
 *.log
 *.rds

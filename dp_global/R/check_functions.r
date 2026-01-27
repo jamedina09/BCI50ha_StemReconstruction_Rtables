@@ -418,7 +418,7 @@ plot_recruitment_pdf_curve <- function(bio_pars, species = NULL, dbh_range = c(0
             xlab("DBH") +
             ylab("Density") +
             ggtitle("Recruit DBH density (lognormal)") +
-            geom_vline(aes(xintercept = recruit_max_dbh, color = species), linetype = "dashed", size = 0.1) +
+            geom_vline(aes(xintercept = recruit_max_dbh, color = species), linetype = "dashed", linewidth = 0.1) +
             labs(subtitle = "dashed line = recruit_max_dbh; lambda (recruit rate) printed in legend")
 
         # Add lambda to legend by modifying species labels
