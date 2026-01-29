@@ -54,13 +54,18 @@ DP / reconstruction option
 - `DP_MODE` — default: `"marginals+bins"`. Allowed: 'none' 'marginals' 'marginals+bins' 'map'
 - `WHICH_TAG` — used for single-tag runs (relevant to `main_cpp.R`); the chunked runner processes groups (`Tag`, `species`) and does not rely on `WHICH_TAG`.
 - `ANCHOR_START_CENSUS` — default: `7L`.
+- `ALLOW_PROVISIONAL_DP_ANCHOR` — default: `TRUE` — when `TRUE` the DP can assign provisional anchor IDs at the last observed DBH census if the requested anchor census lacks `TrueStemID` but has DBH; set to `FALSE` to require an explicit anchored census or to fall back to the igraph matcher.
 - `DP_VERBOSE` — default: `TRUE`.
-- `DP_POSTERIOR_TOP_K` — default: `2L` - top=k posterioir reconstructions to track. 
-- `DP_MAX_TRACKS` — default: `NULL` (auto-computed per data when `NULL`) = optionlly force max tracks; if NULL auto-computed.
-- `DP_MAX_STATES` — default: `40000L` - limit DP max stated to control memory/CPU.
+- `DP_POSTERIOR_TOP_K` — default: `2L` - top=k posterior reconstructions to track. 
+- `DP_MAX_TRACKS` — default: `NULL` (auto-computed per data when `NULL`) — optionally force max tracks; if `NULL` auto-computed.
+- `DP_MAX_STATES` — default: `40000L` - limit DP max states to control memory/CPU.
 - `DP_SLACK_TRACKS` — default: `1L` - slack (additional) tracks allowed for DP.
 - `DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE` — default: `TRUE` - require anchor to be recruitable (if DBH less than max recruitment size) before granting slack.
 - `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
+
+**Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was used by the DP are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows without DP assignments receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and observed `TrueStemID` values are treated as `given` while other rows are labeled `none_after_anchor`.
+
+**Provisional anchor behavior:** When a requested anchor census lacks `TrueStemID` but contains DBH observations and `ALLOW_PROVISIONAL_DP_ANCHOR=TRUE`, the DP will assign provisional anchor IDs at the last-observed DBH census and mark those anchor rows with `ReconstructionMethod = "provisional_dp"`. If the DP cannot anchor or a fallback is used, an igraph fallback can assign provisional IDs and mark them with `ReconstructionMethod = "provisional_igraph"`.
 
 Posterior sampling:
 - `POSTERIOR_SAMPLES` — default: `200L` (set to `0` to disable sampling). When `>0`, the DP engine will draw full-path posterior samples and write them into a per-run `posteriors/` subdirectory.

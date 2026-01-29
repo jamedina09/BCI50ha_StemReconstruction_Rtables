@@ -49,15 +49,14 @@ Short actionable items to stabilize the DP and posterior-attachment workflow and
 - **Add a convenience alias `ObsRowID` → `obs_row_id` on final outputs** to simplify joins with posterior `paths.csv` (which use `ObsRowID`). Keep `obs_row_id` as the canonical internal name; create `ObsRowID` before export and add a unit test to assert equality.
 
 - **Convert dev scripts into formal tests (testthat) and add to CI**:
-  - Convert `dp_global/dev/test_anchor_scoping.R` into test(s) that cover anchor-scoping semantics (anchor at first census, anchor > last observed census, post-anchor preservation).
-  - Add tests for `dp_global/R/error_propagation/process_posteriors.R` and `attach_paths_to_output()` to check ObsRowID mapping, legacy recon formats, expand/aggregate correctness, and failure modes.
+  - `dp_global/dev/test_anchor_scoping.R` validates anchor-scoping semantics (anchor at first census, anchor > last observed census, post-anchor preservation, and provisional anchor behavior). Run it with `Rscript dp_global/dev/test_anchor_scoping.R` to exercise these cases.
+  - Add tests for `dp_global/R/error_propagation/process_posteriors.R` and `attach_paths_to_output()` to check `ObsRowID` mapping, alternative reconstruction formats, expand/aggregate correctness, and failure modes.
   - Add a regression test asserting the `DP_PruneInfo` attribute exists (defensive init) and that early-return branches do not error.
 
 - **Add a small integration smoke test** that runs a small chunk, generates posterior `paths.csv` for a tag (e.g., Tag 41), runs the attach/expand workflow, and verifies the merged CSV contains `DP_ReconstructedStemID_*` columns and `ObsRowID` alias.
 
-- **Document `obs_row_id`/`ObsRowID` expectations** in `dp_global/README.md` (how posterior reconstructions map back to output rows) and add a short compatibility note in this top-level README.
+- **Document `obs_row_id`/`ObsRowID` expectations** in `dp_global/README.md` (how posterior reconstructions map back to output rows).
 
 - **Other improvements / robustness**:
   - Ensure posterior sampling output (feather/csv/rds) preserves `ObsRowID` when requested.
   - Consider adding tests for pruning diagnostics and timing under realistic small examples.
-  - Add a short "Backwards compatibility" note for future renames or convenience aliases.

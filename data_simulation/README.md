@@ -168,6 +168,8 @@ events = list(
 - `anchor_start_census`: Censuses from this point have trusted IDs (7)
 - Earlier censuses have `TrueStemID = NA`
 
+Note: The DP workflow includes an option to use a provisional anchor when the requested anchor census lacks `TrueStemID` but has DBH observations. This behavior is controlled by `allow_provisional_anchor` in the DP API (and `ALLOW_PROVISIONAL_DP_ANCHOR` at the CLI level) and defaults to `TRUE`. When enabled, the DP can assign provisional anchor IDs at the last observed DBH census and proceed with reconstruction; those provisional anchors are annotated with `ReconstructionMethod = "provisional_dp"` in outputs.
+
 ### Visualization
 - `make_plot`: Generate trajectory plots (TRUE)
 

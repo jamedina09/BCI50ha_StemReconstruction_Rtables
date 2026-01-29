@@ -210,11 +210,16 @@ All parameters must be present in the dataset before running DP. These are typic
 | Column | Description |
 |--------|-------------|
 | `ReconstructedStemID` | Assigned stem identity |
-| `ReconstructionMethod` | `"given"`, `"dp"`, or `"igraph"` |
+| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"igraph"`, `"provisional_dp"`, `"provisional_igraph"`, `"none_after_anchor"` — see notes below |
 | `ConstraintViolation` | Post-hoc diagnostic flag |
 | `DP_KUsed` | Number of tracks used |
 | `DP_MaxStatesPerCensus` | Largest state space encountered |
 | `DP_MaxStatesCensusID` | Census with largest state space |
+
+Notes on post-anchor output semantics:
+- When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was actually used by the DP will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
+- Remaining post-anchor rows without a DP assignment are labeled `ReconstructionMethod = "none_after_anchor"` and keep `ReconstructedStemID = NA`.
+- If no anchored census with `TrueStemID` exists, and `allow_provisional_anchor = TRUE` (default), the DP can assign provisional anchor IDs at the last observed DBH census; those anchor rows are labeled `"provisional_dp"` and treated as anchors for the reconstruction. If DP falls back to the igraph matcher and assigns provisional IDs, those are labeled `"provisional_igraph"`.
 
 ### Posterior Uncertainty Columns (Optional)
 
@@ -960,9 +965,9 @@ prune_use_bio_recruit = FALSE# use fixed prune bounds instead of biological ones
 - The effective prune bounds are also `vcat`-logged at the start of the backward pass for transparency.
 
 ### Practical guidance and examples
-- Default behaviour (safe): leave `prune_min_growth = NULL` and `prune_max_growth = NULL`. The code will use `user_min = min_growth`, `user_max = max_growth` and intersect them with `Bio_*` values. This preserves biological hard limits while letting you set study-level `min_growth`/`max_growth` if you want to narrow behaviour across the run.
-- If you want *wider* pruning (less aggressive rejection) than the biological bounds allow (e.g., because you trust the DP cost to handle edge cases), set `prune_use_bio_bounds = FALSE` and set `prune_min_growth`/`prune_max_growth` to the desired wide range (e.g., `-10`..`25`).
-- If you want *stricter* recruit-size pruning, provide a small `prune_recruit_max_dbh` (and set `prune_use_bio_recruit = FALSE` if you want to use it without intersecting the biological bound).
+- Default behaviour (safe): leave `prune_min_growth = NULL` and `prune_max_growth = NULL`. The code will use `user_min = min_growth`, `user_max = max_growth` and intersect them with `Bio_*` values. This preserves biological hard limits while letting you set study-level `min_growth`/`max_growth` to narrow behaviour across the run.
+- To apply *wider* pruning (less aggressive rejection) than the biological bounds allow (for example, when the DP cost model is trusted to handle extreme cases), set `prune_use_bio_bounds = FALSE` and set `prune_min_growth`/`prune_max_growth` to the desired wide range (e.g., `-10`..`25`).
+- To apply *stricter* recruit-size pruning, provide a small `prune_recruit_max_dbh` (and set `prune_use_bio_recruit = FALSE` to use it without intersecting the biological bound).
 - Beware of overly tight pruning: if pruning removes all feasible transitions at a census the DP will fallback to the `igraph` matcher (or produce no DP states). If you see frequent fallbacks for reasonable data, relax the prune bounds or set `prune_hard = FALSE` for a diagnostic run.
 
 ### Why this approach?

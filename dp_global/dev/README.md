@@ -36,12 +36,16 @@ These scripts validate the correctness and functionality of the dp_global implem
   - **Purpose**: Validates that the full batch DP algorithm executes without errors on synthetic data.
 
 - **`test_estimate_bio_pars_intervals.R`**:
-  - **Purpose**: Tests `estimate_bio_pars()` interval handling (scalar vs per-row/per-pair interval columns), verifies inference and diagnostic outputs, and writes per-pair interval diagnostics for inspection.
+  - **Purpose**: Tests `estimate_bio_pars()` interval handling (scalar vs per-row/per-pair interval columns) and verifies inference and diagnostic outputs.
   - **Usage**: `Rscript dp_global/dev/test_estimate_bio_pars_intervals.R`
   - **Tests**: Runs the DP on minimal synthetic tree data. Tests both R and C++ implementations (if available).
   - **Inputs**: Synthetic `tree_data` with multiple censuses, anchor census, and populated biological parameters.
   - **Outputs**: Success messages for R and C++ versions; errors if the DP fails to run.
   - **Usage**: `Rscript dp_global/dev/test_match_stems_dp_global_backward_marginals_batch.R`
+
+- **`test_anchor_scoping.R`**:
+  - **Purpose**: Validates anchor-scoping semantics including: (a) scoping when observations exist after a requested anchor, (b) returning original rows annotated when no pre-anchor observations exist, and (c) provisional anchor assignment behavior (provisional DP anchors and their `ReconstructionMethod` labeling).
+  - **Usage**: `Rscript dp_global/dev/test_anchor_scoping.R`
 
 ### Benchmarking and Profiling
 
