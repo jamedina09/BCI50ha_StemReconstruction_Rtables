@@ -1092,4 +1092,4 @@ if (sys.nframe() == 0L) {
     run_main_chunked()
 }
 
-# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=8 --DP_CHUNK_END=9 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10
+# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=7 --DP_CHUNK_END=9 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10
