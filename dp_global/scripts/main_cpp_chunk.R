@@ -934,10 +934,23 @@ run_main_chunked <- function() {
                     data.table::setDTthreads(1L)
                     g <- groups_ci[j]
                     dtg <- xrun[Tag == g$Tag & species == g$species]
+
+                    # Skip invalid groups (missing DBH/CensusID or all NA)
+                    if (!("DBH" %in% names(dtg)) || !("CensusID" %in% names(dtg)) || all(is.na(dtg$DBH)) || all(is.na(dtg$CensusID))) {
+                        log_msg(sprintf("Skipping Tag=%s species=%s in chunk %d: missing or all NA DBH/CensusID", g$Tag, g$species, ci), "WARN")
+                        return(NULL)
+                    }
+
                     run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
                 }, mc.cores = MC_CORES)
 
-                out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
+                # Remove NULLs (skipped groups) before binding
+                res <- Filter(Negate(is.null), res)
+                if (length(res) == 0L) {
+                    out_chunk <- data.table::data.table()
+                } else {
+                    out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
+                }
 
                 if (nrow(out_chunk) > 0L) {
                     out_chunk[, DP_Chunk := ci]
