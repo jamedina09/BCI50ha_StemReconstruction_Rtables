@@ -140,7 +140,7 @@ ANCHOR_START_CENSUS <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
 DP_MAX_TRACKS <- NULL # auto (computed from data)
-DP_MAX_STATES <- 40000L
+DP_MAX_STATES <- 150L
 DP_SLACK_TRACKS <- 1L
 # NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
 # (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.

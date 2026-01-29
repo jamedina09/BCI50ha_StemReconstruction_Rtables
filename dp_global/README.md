@@ -912,6 +912,42 @@ Note: In addition, when the requested anchor census contains DBH observations bu
 
 **Marking:** Rows assigned by fallback have `ReconstructionMethod="igraph"`
 
+### DP fallback reason codes (`DP_FallbackReason`)
+
+To aid diagnostics the DP sets a `DP_FallbackReason` string on returned rows when the solver falls back to the igraph matcher. Common codes and suggested remedies:
+
+| Code | Meaning | Suggested action |
+|------|---------|------------------|
+| `no_obs_up_to_anchor` | No DBH observations exist at or prior to the requested anchor. | Check `anchor_start` or ensure DBH observations exist before the anchor. |
+| `anchor_missing_truestem` | Anchor census missing `TrueStemID` values and no earlier anchor found. | Supply `TrueStemID` or enable `allow_provisional_anchor=TRUE`. |
+| `anchor_missing_obs` | Anchor census has no DBH observations. | Ensure DBH at anchor or select a different `anchor_start`. |
+| `anchor_missing_truestem_prov_disabled` | Anchor has DBH but `TrueStemID` missing and provisional anchors are disabled. | Set `allow_provisional_anchor=TRUE` or provide `TrueStemID`. |
+| `provisional_igraph_anchor_assigned` | The igraph matcher assigned provisional anchor IDs at the last observed census. | Verify provisional assignments or provide true anchors. |
+| `anchor_ids_missing` | No anchor IDs were found after attempting to locate an anchor census. | Inspect data or supply anchor IDs. |
+| `K_too_small` | Chosen `K` is smaller than the maximum per-census observed stems. | Increase `max_tracks` or `slack_tracks`. |
+| `enum_exceeded` | State enumeration exceeded `max_states` for a census (too many injective assignments). | Increase `max_states` or reduce `K`. |
+| `anchor_truestem_not_found` | Anchor `TrueStemID` values could not be mapped to track indices. | Check for unexpected `TrueStemID` values or duplicates. |
+| `next_assign_row_mismatch` | Internal mismatch mapping assignment keys to enumerated rows. | Likely internal error — reproduce and report with a minimal example. |
+| `no_reachable_next_states` | No reachable next full-states in the backward recursion (all pruned/filtered). | Relax pruning bounds (`prune_hard=FALSE`, widen `prune_*`) or check data. |
+| `no_states_produced` | No DP states produced at a census after pruning/constraints. | Relax pruning or widen growth bounds. |
+| `no_feasible_edges` | No feasible edges found between states after pruning/cost checks. | Relax pruning and growth bounds. |
+| `decode_failure` | Failed to obtain a valid MAP start index. | Check pruning/parameter choices; report if persistent. |
+| `viterbi_decode_failure` | Invalid pointer during Viterbi backtrace. | Likely a bug — reproduce and report. |
+| `assign_mismatch` | MAP assignment length does not match observed rows. | Reproduce and report (enumeration bug). |
+| `forward_edges_missing` | Missing edges during forward pass (unexpected). | Check edge construction and pruning. |
+| `forward_no_alpha` | No finite forward alpha (numerical underflow or fully pruned transitions). | Relax pruning, adjust temperature, or report. |
+| `no_dbh` | (matcher) No DBH observations present; nothing to assign. | Ensure DBH data are present for the Tag. |
+| `igraph_assigned` | (matcher) Rows explicitly assigned by the igraph fallback. | None — indicates fallback assignment occurred. |
+
+> Note: When DP is scoped to pre-anchor censuses and post-anchor rows are appended, any `DP_FallbackReason` present on the DP output will be propagated to matching post-anchor rows. If multiple reasons apply, they will be concatenated with `;` in the propagated column.
+
+**How to check for fallback reasons (R example):**
+
+```r
+res <- match_stems_dp_global_backward_marginals_batch(dt, anchor_start = 5, ...)
+unique(na.omit(res$DP_FallbackReason))
+```
+
 **Important:** `min_growth` and `max_growth` constraints affect **only** the fallback method and post-hoc diagnostics, not the DP objective.
 
 ## Pruning & Conservative Guards
