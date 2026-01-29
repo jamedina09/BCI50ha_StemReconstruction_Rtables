@@ -252,6 +252,8 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
     if (!("ConstraintViolation" %in% names(tree_data))) {
         tree_data[, ConstraintViolation := NA]
     }
+    # Add a DP_FallbackReason column to capture why DP fell back to igraph (if applicable)
+    if (!("DP_FallbackReason" %in% names(tree_data))) tree_data[, DP_FallbackReason := NA_character_]
     tree_data[!is.na(TrueStemID), `:=`(
         ReconstructedStemID = as.integer(TrueStemID),
         ReconstructionMethod = "given"
@@ -275,6 +277,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
             idx_to_mark <- idx_to_mark[is.na(tree_data$TrueStemID[idx_to_mark])]
             if (length(idx_to_mark) > 0L) {
                 tree_data$ReconstructionMethod[idx_to_mark] <<- "igraph"
+                tree_data$DP_FallbackReason[idx_to_mark] <<- "igraph_assigned"
             }
             next_new_id <<- next_new_id + n
         }
@@ -289,6 +292,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
         obs_cens <- sort(unique(tree_data$CensusID[!is.na(tree_data$DBH)]))
         if (length(obs_cens) == 0L) {
             message("[match_stems_optimal_backward] No observations with DBH; nothing to assign.")
+            tree_data[, DP_FallbackReason := "no_dbh"]
             return(tree_data)
         }
 
@@ -298,6 +302,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
 
         if (length(anchor_idx) == 0L) {
             # No DBH at the provisional anchor (shouldn't happen since obs_cens was built from DBH), but guard anyway
+            tree_data[, DP_FallbackReason := "no_dbh"]
             return(tree_data)
         }
 
@@ -305,6 +310,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
         tree_data$ReconstructedStemID[anchor_idx] <- as.integer(seq.int(from = next_new_id, length.out = length(anchor_idx)))
         tree_data$ReconstructionMethod[anchor_idx] <- "provisional_igraph"
         tree_data$ConstraintViolation[anchor_idx] <- FALSE
+        tree_data$DP_FallbackReason[anchor_idx] <- "provisional_igraph_anchor_assigned"
         next_new_id <- next_new_id + as.integer(length(anchor_idx))
 
         message(sprintf("[match_stems_optimal_backward] No TrueStemID present — assigned %d provisional ID(s) at CensusID=%d and will attempt igraph linking.", length(anchor_idx), provisional_anchor))

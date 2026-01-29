@@ -169,6 +169,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Ensure tree_data has posterior columns and obs_row_id assigned
     tree_data <- ensure_posterior_columns(tree_data)
     vcat(prefix, "Ensured posterior columns; obs_row_id present (or created)")
+    # Defensive: add `DP_FallbackReason` column so downstream early-returns can set it
+    if (!("DP_FallbackReason" %in% names(tree_data))) tree_data[, DP_FallbackReason := NA_character_]
 
     # Defensive initialization: ensure core tracking columns exist with correct types
     if (!("TrueStemID" %in% names(tree_data))) tree_data[, TrueStemID := as.integer(NA_integer_)]
@@ -216,6 +218,15 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             if (nrow(post) > 0L) {
                 used_ids <- unique(out$ReconstructedStemID[!is.na(out$ReconstructedStemID)])
                 post <- propagate_post_anchor_given(post, used_ids)
+                # Propagate DP_FallbackReason to post rows when present on out
+                if (("DP_FallbackReason" %in% names(out))) {
+                    fb <- unique(na.omit(out$DP_FallbackReason))
+                    if (length(fb) == 1L) {
+                        post[, DP_FallbackReason := fb]
+                    } else if (length(fb) > 1L) {
+                        post[, DP_FallbackReason := paste(unique(fb), collapse = ";")]
+                    }
+                }
                 out <- data.table::rbindlist(list(out, post), use.names = TRUE, fill = TRUE)
             }
         }
@@ -283,6 +294,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     if (is.na(first_obs_census)) {
         vcat(prefix, "Cannot find any observations up to anchor_start. Falling back to igraph.")
+        fallback_reason <- "no_obs_up_to_anchor"
         K_used <- as.integer(min(0L, max_tracks))
         tree_data[, `:=`(
             DP_KUsed = K_used,
@@ -291,6 +303,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         )]
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+        out[, DP_FallbackReason := fallback_reason]
         attr(out, "DP_PruneInfo") <- prune_stats
         return(finalize_out(out))
     }
@@ -380,6 +394,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
             } else {
                 vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+                fallback_reason <- "anchor_missing_truestem"
                 K_used <- as.integer(min(max_obs, max_tracks))
                 n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
                 tree_data[, `:=`(
@@ -389,6 +404,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 )]
                 out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
                 out <- ensure_posterior_columns(out)
+                if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+                out[, DP_FallbackReason := fallback_reason]
                 attr(out, "DP_PruneInfo") <- prune_stats
                 return(finalize_out(out))
             }
@@ -398,6 +415,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     if (nrow(anchor_obs) == 0L) {
         vcat(prefix, "Cannot anchor DP (missing anchor observations). Falling back to igraph.")
+        fallback_reason <- "anchor_missing_obs"
         K_used <- as.integer(min(max_obs, max_tracks))
         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
         tree_data[, `:=`(
@@ -407,6 +425,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         )]
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+        out[, DP_FallbackReason := fallback_reason]
         attr(out, "DP_PruneInfo") <- prune_stats
         return(finalize_out(out))
     }
@@ -429,6 +449,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             anchor_ids <- anchor_ids[!is.na(anchor_ids)]
         } else {
             vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+            fallback_reason <- "anchor_missing_truestem_prov_disabled"
             K_used <- as.integer(min(max_obs, max_tracks))
             n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
             tree_data[, `:=`(
@@ -438,6 +459,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             )]
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -447,6 +470,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     if (length(anchor_ids) == 0L) {
         vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
+        fallback_reason <- "anchor_ids_missing"
         K_used <- as.integer(min(max_obs, max_tracks))
         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
         tree_data[, `:=`(
@@ -456,6 +480,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         )]
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+        out[, DP_FallbackReason := fallback_reason]
         return(finalize_out(out))
     }
 
@@ -498,8 +524,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     if (K < max(obs_counts)) {
         vcat(prefix, "K too small for observed counts (K=", K, ", max_obs=", max(obs_counts), "). Falling back to igraph.")
+        fallback_reason <- "K_too_small"
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+        out[, DP_FallbackReason := fallback_reason]
         attr(out, "DP_PruneInfo") <- prune_stats
         return(finalize_out(out))
     }
@@ -524,8 +553,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         if (is.null(mat)) {
             vcat(prefix, "State enumeration exceeded max_states at CensusID=", cc, " (n_obs=", n_obs, "). Falling back to igraph.")
+            fallback_reason <- "enum_exceeded"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -541,8 +573,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     if (any(is.na(anchor_track_idx))) {
         vcat(prefix, "Anchor TrueStemID not found in track_ids. Falling back to igraph.")
+        fallback_reason <- "anchor_truestem_not_found"
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+        out[, DP_FallbackReason := fallback_reason]
         attr(out, "DP_PruneInfo") <- prune_stats
         return(finalize_out(out))
     }
@@ -751,8 +786,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         n_next <- length(next_keys)
         if (n_next == 0L) {
             vcat(prefix, "No reachable next full-states at CensusID=", next_cc, ". Falling back to igraph.")
+            fallback_reason <- "no_reachable_next_states"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -768,8 +806,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         next_assign_row_idx <- match(next_assign_key, state_keys[[p + 1L]])
         if (any(is.na(next_assign_row_idx))) {
             # Should not happen; indicates mismatch in state enumeration.
+            fallback_reason <- "next_assign_row_mismatch"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -969,8 +1010,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         if (length(curr_keys_list) == 0L) {
             vcat(prefix, "DP produced no states at CensusID=", cc, ". Falling back to igraph.")
+            fallback_reason <- "no_states_produced"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -983,8 +1027,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         if (used_edges == 0L) {
             vcat(prefix, "No feasible edges at CensusID=", cc, ". Falling back to igraph.")
+            fallback_reason <- "no_feasible_edges"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -1004,8 +1051,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     vcat(prefix, "Decoding MAP path and writing ReconstructedStemID ...")
     start_idx <- which.min(vit_cost[[1L]])
     if (length(start_idx) == 0L || !is.finite(vit_cost[[1L]][start_idx])) {
+        fallback_reason <- "decode_failure"
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
+        if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+        out[, DP_FallbackReason := fallback_reason]
         attr(out, "DP_PruneInfo") <- prune_stats
         return(finalize_out(out))
     }
@@ -1014,8 +1064,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     for (p in seq_len(n_census - 1L)) {
         nxt <- vit_ptr[[p]][map_idx[p]]
         if (!is.finite(nxt) || is.na(nxt) || nxt < 1L) {
+            fallback_reason <- "viterbi_decode_failure"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -1028,8 +1081,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (length(obs_idx) == 0L) next
         sv <- assign_full[[p]][[map_idx[p]]]
         if (length(sv) != length(obs_idx)) {
+            fallback_reason <- "assign_mismatch"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -1051,8 +1107,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     for (p in seq_len(n_census - 1L)) {
         ed <- edges[[p]]
         if (is.null(ed) || nrow(ed) == 0L) {
+            fallback_reason <- "forward_edges_missing"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
@@ -1061,8 +1120,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         dt <- data.table::data.table(to_idx = ed$to_idx, v = vals)
         dt <- dt[is.finite(v)]
         if (nrow(dt) == 0L) {
+            fallback_reason <- "forward_no_alpha"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
             attr(out, "DP_PruneInfo") <- prune_stats
             return(finalize_out(out))
         }
