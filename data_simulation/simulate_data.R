@@ -251,7 +251,7 @@ for (i in seq_len(nrow(species_table))) {
 }
 dt <- rbindlist(dt_list)
 
-dt <- dt[,.(Species, Tag, OriginalStemID, TrueStemID, CensusID, DBH_true, CensusDate)][order(Species, Tag, OriginalStemID, CensusID)]
+dt <- dt[, .(Species, Tag, OriginalStemID, TrueStemID, CensusID, DBH_true, CensusDate)][order(Species, Tag, OriginalStemID, CensusID)]
 dt[, DBH := DBH_true]
 dt[, DBH_true := NULL]
 dt[CensusID < 7, TrueStemID := NA_integer_]
@@ -327,7 +327,7 @@ problematic_stem4 <- data.table(
     Tag = max(dt$Tag) + 4L,
     OriginalStemID = rep(1:2, each = 5),
     TrueStemID = rep(1:2, each = 5),
-    CensusID = rep(1:5, times = 2), 
+    CensusID = rep(1:5, times = 2),
     ExactDate = as.Date("1980-01-01") + round(rep(c(0, 5, 10, 15, 20), times = 2) * 365.25),
     DBH = c(12, 18, 24, 30, 36, 8, 14, 20, 26, 32)
 )
@@ -365,7 +365,7 @@ tag_44 <- data.table(
 )
 
 tag_45 <- data.table(
-    Species = "sp1", 
+    Species = "sp1",
     Tag = 45L,
     OriginalStemID = 1L,
     TrueStemID = c(1L, NA, NA),
@@ -375,7 +375,7 @@ tag_45 <- data.table(
 )
 
 tag_46 <- data.table(
-    Species = "sp1", 
+    Species = "sp1",
     Tag = 46L,
     OriginalStemID = 1L,
     TrueStemID = c(1L, 1L, NA),
@@ -385,7 +385,7 @@ tag_46 <- data.table(
 )
 
 tag_47 <- data.table(
-    Species = "sp1", 
+    Species = "sp1",
     Tag = 47L,
     OriginalStemID = 1L,
     TrueStemID = c(1L, 1L, 1L),
@@ -438,8 +438,8 @@ tag_49 <- data.table(
     TrueStemID = c("1", "1", "1", "1", "1", "1", "1", "1", NA_character_),
     CensusID = c(1, 1, 1, 1, 1, 1, 1, 1, 2),
     ExactDate = as.Date(c(
-        "1980-01-01", "1980-01-01","1980-01-01","1980-01-01",
-        "1980-01-01","1980-01-01","1980-01-01","1980-01-01", "1984-09-08"
+        "1980-01-01", "1980-01-01", "1980-01-01", "1980-01-01",
+        "1980-01-01", "1980-01-01", "1980-01-01", "1980-01-01", "1984-09-08"
     )),
     DBH = c(3, 3, 2, 2, 1, 1, 1, 1, NA_real_)
 )
@@ -474,7 +474,50 @@ tag_50 <- data.table(
     DBH = c(3, NA_real_, 3, 2, 2, 1, 1, 1, 1)
 )
 
-fwrite(rbind(dt_complete, tag_43, tag_44, tag_45, tag_46, tag_47, tag_48, tag_49, tag_50), here("data_simulation", "data", "simulated_data_1.csv"))
+tag_51 <- data.table(
+    Species = "sp2",
+    Tag = 51L,
+    OriginalStemID = rep(NA_character_, 9),
+    TrueStemID = rep(NA_character_, 9),
+    CensusID = 1:9,
+    ExactDate = as.Date(c(
+        "1980-01-01", "1984-09-08", "1989-09-18", "1994-09-08",
+        "1999-07-09", "2004-07-29", "2009-08-15", "2014-08-02", "2019-07-20"
+    )),
+    DBH = c(NA_real_, NA_real_, 1, 1, 1, 1, 1, 1, 1)
+)
+
+tag_52 <- data.table(
+    Species = "sp2",
+    Tag = 52L,
+    OriginalStemID = rep(NA_character_, 9),
+    TrueStemID = rep(NA_character_, 9),
+    CensusID = 1:9,
+    ExactDate = as.Date(c(
+        "1980-01-01", "1984-09-08", "1989-09-18", "1994-09-08",
+        "1999-07-09", "2004-07-29", "2009-08-15", "2014-08-02", "2019-07-20"
+    )),
+    DBH = c(NA_real_, NA_real_, 1, 1, 1, 1, NA_real_, NA_real_, NA_real_)
+)
+
+tag_53 <- data.table(
+    Species = "sp2",
+    Tag = 53L,
+    OriginalStemID = rep(NA_character_, 9),
+    TrueStemID = rep(NA_character_, 9),
+    CensusID = 1:9,
+    ExactDate = as.Date(c(
+        "1980-01-01", "1984-09-08", "1989-09-18", "1994-09-08",
+        "1999-07-09", "2004-07-29", "2009-08-15", "2014-08-02", "2019-07-20"
+    )),
+    DBH = c(1, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_)
+)
+
+fwrite(rbind(
+    dt_complete, tag_43, tag_44, tag_45, tag_46,
+    tag_47, tag_48, tag_49, tag_50,
+    tag_51, tag_52, tag_53
+), here("data_simulation", "data", "simulated_data_1.csv"))
 # Apply stem ID masking to simulate ForestGEO protocol
 # In early censuses, stem identities are not trusted (TrueStemID = NA)
 
