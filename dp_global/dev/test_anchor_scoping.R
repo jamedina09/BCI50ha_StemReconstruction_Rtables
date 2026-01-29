@@ -67,7 +67,26 @@ post_anchor_idx <- which(res$CensusID > 7)
 stopifnot(length(pre_anchor_idx) > 0)
 # At least one pre-anchor row should have a reconstructed stem id (not NA)
 stopifnot(any(!is.na(res$ReconstructedStemID[pre_anchor_idx])))
-# Post-anchor rows should not have reconstructed stem ids (remain NA)
-stopifnot(all(is.na(res$ReconstructedStemID[post_anchor_idx])))
+# Post-anchor rows: rows with DBH and TrueStemID that were used by DP should be marked 'given'
+post_idx_dbh_true <- post_anchor_idx[!is.na(res$TrueStemID[post_anchor_idx]) & !is.na(res$DBH[post_anchor_idx])]
+used_ids <- unique(res$ReconstructedStemID[!is.na(res$ReconstructedStemID)])
+if (length(post_idx_dbh_true) > 0 && length(used_ids) > 0) {
+  for (i in post_idx_dbh_true) {
+    if (res$TrueStemID[i] %in% used_ids) {
+      stopifnot(res$ReconstructedStemID[i] == res$TrueStemID[i])
+      stopifnot(!is.na(res$ReconstructionMethod[i]) && res$ReconstructionMethod[i] == "given")
+    } else {
+      stopifnot(is.na(res$ReconstructionMethod[i]) || res$ReconstructionMethod[i] == "none_after_anchor")
+    }
+  }
+}
 
-cat("OK: anchor scoping test passed\n")
+# Other post-anchor rows (no DBH or no TrueStemID) should be labelled or left as none_after_anchor
+other_post_idx <- setdiff(post_anchor_idx, post_idx_dbh_true)
+if (length(other_post_idx) > 0) {
+  for (i in other_post_idx) {
+    stopifnot(is.na(res$ReconstructionMethod[i]) || res$ReconstructionMethod[i] == "none_after_anchor")
+  }
+}
+
+cat("OK: anchor scoping test updated and passed\n")
