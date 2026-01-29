@@ -29,7 +29,6 @@
 # Use the numbered sections to quickly scan the file. Each section contains a
 # short header and concise responsibilities to make navigation quick and clear.
 
-
 ############################################################
 ### 0) Housekeeping
 ############################################################
@@ -168,7 +167,6 @@ DP_CHUNK_OVERWRITE <- FALSE
 # Optional: limit chunks to a specific range for testing (NULL means all)
 DP_CHUNK_START <- NULL
 DP_CHUNK_END <- NULL
-
 
 ############################################################
 ### 3.3 Parallel & output settings
@@ -519,7 +517,6 @@ source(here("dp_global", "R", "k_tuning_viz.R"))
 source(here("dp_global", "R", "naming_helpers.R"))
 # `naming_helpers.R` provides `encode_num()` and `build_out_dir_name()`
 
-
 ############################################################
 ### 5) Helpers — utility functions
 ############################################################
@@ -806,7 +803,6 @@ run_main_chunked <- function() {
             enforce_recruit_max = TRUE
         )
     }
-
 
     # Write a small text file recording the parameters used to build the
     # run-specific output directory name so runs are reproducible.
@@ -1096,5 +1092,4 @@ if (sys.nframe() == 0L) {
     run_main_chunked()
 }
 
-
-# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=1 --DP_CHUNK_END=2 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10
+# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=6 --DP_CHUNK_END=7 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10

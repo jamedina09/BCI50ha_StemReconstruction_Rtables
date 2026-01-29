@@ -176,6 +176,15 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     } else {
         NA_integer_
     }
+
+    # Ensure a defensive `prune_stats` exists so any early-return branches can
+    # safely attach it to outputs without failing when pruning hasn't run.
+    prune_stats <- list(
+        total_examined = 0L,
+        total_pruned = 0L,
+        per_census = integer(0)
+    )
+
     if (is.na(first_obs_census)) {
         vcat(prefix, "Cannot find any observations up to anchor_start. Falling back to igraph.")
         K_used <- as.integer(min(0L, max_tracks))
@@ -198,6 +207,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         integer(1L)
     )
     max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+
+    # Defensive initialization for prune diagnostics so early-return branches can safely set attributes
+    prune_stats <- list(
+        total_examined = 0L,
+        total_pruned = 0L,
+        per_census = integer(0)
+    )
 
     # Initialize conservative hard-pruning diagnostics (per transition between adjacent censuses)
     prune_hard <- isTRUE(prune_hard)
