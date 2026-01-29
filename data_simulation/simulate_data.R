@@ -374,7 +374,27 @@ tag_45 <- data.table(
     DBH = c(1.1, NA, NA)
 )
 
-fwrite(rbind(dt_complete, tag_43, tag_44, tag_45), here("data_simulation", "data", "simulated_data_1.csv"))
+tag_46 <- data.table(
+    Species = "sp1", 
+    Tag = 46L,
+    OriginalStemID = 1L,
+    TrueStemID = c(1L, 1L, NA),
+    CensusID = 7:9,
+    ExactDate = as.Date(c("2010-01-18", "2015-02-10", "2022-02-15")),
+    DBH = c(1.1, 2.1, NA)
+)
+
+tag_47 <- data.table(
+    Species = "sp1", 
+    Tag = 47L,
+    OriginalStemID = 1L,
+    TrueStemID = c(1L, 1L, 1L),
+    CensusID = 7:9,
+    ExactDate = as.Date(c("2010-01-18", "2015-02-10", "2022-02-15")),
+    DBH = c(1.1, 2.1, 3.1)
+)
+
+fwrite(rbind(dt_complete, tag_43, tag_44, tag_45, tag_46, tag_47), here("data_simulation", "data", "simulated_data_1.csv"))
 # Apply stem ID masking to simulate ForestGEO protocol
 # In early censuses, stem identities are not trusted (TrueStemID = NA)
 
