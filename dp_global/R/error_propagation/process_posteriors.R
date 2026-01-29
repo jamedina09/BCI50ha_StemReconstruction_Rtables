@@ -54,8 +54,8 @@ load_posterior_paths <- function(paths_file) {
         dt <- as.data.table(arrow::read_feather(paths_file))
     } else if (ext %in% c("rds")) {
         x <- readRDS(paths_file)
-        if (is.list(x) && !is.data.table(x)) {
-            if (is.data.table(x$paths)) dt <- x$paths else stop("rds file structure not recognized")
+        if (is.list(x) && !data.table::is.data.table(x)) {
+            if (data.table::is.data.table(x$paths)) dt <- x$paths else stop("rds file structure not recognized")
         } else if (is.data.frame(x)) {
             dt <- as.data.table(x)
         } else {
@@ -86,7 +86,7 @@ attach_paths_to_output <- function(paths, out, which = c("map", "top_n", "indice
     # load paths if a filename provided
     if (is.character(paths) && length(paths) == 1 && file.exists(paths)) {
         paths_dt <- load_posterior_paths(paths)
-    } else if (is.data.table(paths) || is.data.frame(paths)) {
+    } else if (data.table::is.data.table(paths) || is.data.frame(paths)) {
         paths_dt <- data.table::as.data.table(paths)
         if (!("recon_parsed" %in% names(paths_dt))) {
             if ("recon" %in% names(paths_dt)) {
@@ -103,7 +103,7 @@ attach_paths_to_output <- function(paths, out, which = c("map", "top_n", "indice
     if (is.character(out) && length(out) == 1 && file.exists(out)) {
         out_dt <- data.table::fread(out)
         out_was_path <- TRUE
-    } else if (is.data.table(out) || is.data.frame(out)) {
+    } else if (data.table::is.data.table(out) || is.data.frame(out)) {
         out_dt <- data.table::as.data.table(out)
     } else {
         stop("Unsupported 'out' input: provide file path or data.table")
@@ -135,22 +135,25 @@ attach_paths_to_output <- function(paths, out, which = c("map", "top_n", "indice
 
         # Primary behavior: prefer explicit ObsRowID for matching
         if ("ObsRowID" %in% names(recon_dt_copy)) {
+            # Map ObsRowID to the output obs_row_id column name to make the join explicit.
             matches <- match(as.character(recon_dt_copy$ObsRowID), as.character(out_dt[[obs_row_id_col]]))
+            new_recon_col <- paste0("DP_ReconstructedStemID_", k)
+            new_sig_col <- paste0("DP_PathSig_", k)
+            # initialize columns first (ensures they exist even if no matches)
+            out_dt[, (new_recon_col) := as.integer(NA)]
+            out_dt[, (new_sig_col) := path_sig]
+
             if (any(!is.na(matches))) {
                 map_dt <- recon_dt_copy[!is.na(ObsRowID), .(ObsRowID = as.integer(as.character(ObsRowID)), ReconstructedStemID = ReconstructedStemID)]
+                # rename to match the output key column for an explicit key-based join
+                if (obs_row_id_col != "ObsRowID") {
+                    data.table::setnames(map_dt, "ObsRowID", obs_row_id_col)
+                }
                 data.table::setkeyv(out_dt, obs_row_id_col)
-                data.table::setkeyv(map_dt, "ObsRowID")
-                new_recon_col <- paste0("DP_ReconstructedStemID_", k)
-                new_sig_col <- paste0("DP_PathSig_", k)
-                out_dt[, (new_recon_col) := as.integer(NA)]
+                data.table::setkeyv(map_dt, obs_row_id_col)
                 out_dt[map_dt, (new_recon_col) := i.ReconstructedStemID]
-                out_dt[, (new_sig_col) := path_sig]
             } else {
-                new_recon_col <- paste0("DP_ReconstructedStemID_", k)
-                new_sig_col <- paste0("DP_PathSig_", k)
-                out_dt[, (new_recon_col) := as.integer(NA)]
-                out_dt[, (new_sig_col) := path_sig]
-                warning(sprintf("Path %s did not contain ObsRowID matches; column %s filled with NA", path_sig, new_recon_col))
+                warning(sprintf("Path %s did not contain ObsRowID matches; column %s left as NA", path_sig, new_recon_col))
             }
         } else {
             # Enforce ObsRowID-only reconstructions. Legacy CensusID-based reconstructions
@@ -190,7 +193,7 @@ expand_draws <- function(summary_dt, paths_dt, N = 1000L) {
         dt[, Draw := draws_paths$Draw[i]]
         dt
     })
-    rbindlist(res_list, use.names = TRUE, fill = TRUE)
+    data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
 }
 
 # Aggregate expanded draws into per-observation probabilities
