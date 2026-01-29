@@ -73,4 +73,4 @@ Files in this directory
 - `process_posteriors.R` — canonical implementation with parsing, loading, attaching, and expansion helpers.
 - `attach_paths_to_output_run.R` — interactive runner demonstrating attachment and optional draw expansion (`run_attach_and_expand()`).
 
-Note: `reconstruct_and_propagate.R` was renamed to `process_posteriors.R` and the old compatibility shim has been removed — update any scripts that source the old filename.
+The canonical implementation is `process_posteriors.R`. Ensure workflows source this file to use the official posteriors attachment helpers.

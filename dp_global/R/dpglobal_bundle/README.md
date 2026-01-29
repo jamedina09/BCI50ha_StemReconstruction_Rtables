@@ -30,7 +30,7 @@ withr::with_dir('/path/to/extracted_bundle', source(file.path('dp_global', 'R', 
 Notes:
 - The packaged `INSTALL.txt` contains this same minimal example (the packaging script writes this quick-run snippet).
 - `withr::with_dir()` temporarily sets the working directory for the sourced code and automatically restores your original working directory after the call.
-- `dpglobal_bundle.RData` may be loaded if you want quick access to pre-sourced helper objects, but it is not required to run the code.
+- `dpglobal_bundle.RData` may be loaded to provide quick access to pre-sourced helper objects, but it is not required to run the code.
 
 Optional: compile C++ acceleration for speed (recommended if you need performance)
 
@@ -214,7 +214,7 @@ Package the project (full package) and create checksum
 # Create a full package (includes a copy of dp_global/ excluding outputs)
 sh dp_global/R/dpglobal_bundle/package_bundle.sh
 
-# Create a full package and build dpglobal_bundle.RData first (if you want the RData included)
+# Create a full package and build `dpglobal_bundle.RData` first to include the RData
 sh dp_global/R/dpglobal_bundle/package_bundle.sh --build-bundle
 
 # The tarball and checksum are written to:
@@ -235,7 +235,7 @@ Below is a comprehensive walkthrough — follow these steps when preparing a bun
 
 1. Prerequisites (source machine):
    - R (>= your project's R version). Recommended: same or similar R minor version on target systems for reproducibility.
-   - Development toolchain (macOS): `xcode-select --install` (required if you want to compile Rcpp locally on this machine).
+   - Development toolchain (macOS): `xcode-select --install` (required to compile Rcpp locally on this machine).
    - R packages: `Rcpp`, `here`, and any packages used by the project (the manifest will list per-file requirements, e.g., `data.table`, `igraph`, `MASS`).
 
 2. Generate the bundle artifacts (from project root):
@@ -286,14 +286,14 @@ if (length(missing)) install.packages(missing)
 # Create package (does not auto-build dpglobal_bundle.RData unless it exists)
 sh dp_global/R/dpglobal_bundle/package_bundle.sh
 
-# Create package and build dpglobal_bundle.RData first (if you want the RData included)
+# Create package and build `dpglobal_bundle.RData` first to include the RData
 sh dp_global/R/dpglobal_bundle/package_bundle.sh --build-bundle
 
 # result: dp_global/R/dpglobal_bundle/dist/dpglobal_bundle_full_YYYYMMDD_HHMMSS.tar.gz
 # and a checksum file next to it
 ```
 
-4. Compile the C++ acceleration (if you want the speedups):
+4. Compile the C++ acceleration to obtain runtime speedups:
 
 ```bash
 # From project root (recommended):
