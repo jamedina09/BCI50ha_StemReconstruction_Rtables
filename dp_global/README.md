@@ -894,6 +894,8 @@ The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 #### Anchor fallback behavior
 If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back to the igraph matcher. If no such earlier census exists, the algorithm falls back to `match_stems_optimal_backward()`.
 
+Note: In addition, when the requested anchor census contains DBH observations but lacks `TrueStemID` values, setting the `ALLOW_PROVISIONAL_DP_ANCHOR` flag (default: `TRUE` in the chunk runner and the DP function) allows the DP to assign provisional `TrueStemID`/`ReconstructedStemID` values at the last-observed DBH census (marked with `ReconstructionMethod = "provisional_dp"`) and proceed with the DP instead of falling back to the igraph matcher.
+
 ### Fallback Method: `match_stems_optimal_backward()`
 
 **Algorithm:**
