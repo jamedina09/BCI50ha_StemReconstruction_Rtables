@@ -342,8 +342,29 @@ dt_complete <- rbind(dt,
     use.names = TRUE
 )
 
+dt_complete
 
-fwrite(dt_complete, here("data_simulation", "data", "simulated_data_1.csv"))
+tag_43 <- data.table(
+    Species = "sp2",
+    Tag = 43L,
+    OriginalStemID = NA_integer_,
+    TrueStemID = NA_integer_,
+    CensusID = NA_integer_,
+    ExactDate = as.Date("2020-03-09"),
+    DBH = NA_real_
+)
+
+tag_44 <- data.table(
+    Species = "sp3",
+    Tag = 44L,
+    OriginalStemID = 1L,
+    TrueStemID = 1L,
+    CensusID = 9L,
+    ExactDate = as.Date("2020-03-09"),
+    DBH = 4
+)
+
+fwrite(rbind(dt_complete, tag_43, tag_44), here("data_simulation", "data", "simulated_data_1.csv"))
 # Apply stem ID masking to simulate ForestGEO protocol
 # In early censuses, stem identities are not trusted (TrueStemID = NA)
 
