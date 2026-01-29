@@ -280,6 +280,39 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
         }
     }
 
+    # --- Provisional anchor behavior ---
+    # If there are no TrueStemID values anywhere, create provisional IDs at the
+    # last-observed DBH census (most informative) so igraph can run backward
+    # and propagate IDs to earlier censuses where possible. This covers the
+    # common case of multi-census observations with no anchors.
+    if (all(is.na(tree_data$TrueStemID))) {
+        obs_cens <- sort(unique(tree_data$CensusID[!is.na(tree_data$DBH)]))
+        if (length(obs_cens) == 0L) {
+            message("[match_stems_optimal_backward] No observations with DBH; nothing to assign.")
+            return(tree_data)
+        }
+
+        # Choose the last observed census as the provisional anchor
+        provisional_anchor <- as.integer(max(obs_cens))
+        anchor_idx <- which(tree_data$CensusID == provisional_anchor & !is.na(tree_data$DBH))
+
+        if (length(anchor_idx) == 0L) {
+            # No DBH at the provisional anchor (shouldn't happen since obs_cens was built from DBH), but guard anyway
+            return(tree_data)
+        }
+
+        # Assign provisional IDs and mark method clearly
+        tree_data$ReconstructedStemID[anchor_idx] <- as.integer(seq.int(from = next_new_id, length.out = length(anchor_idx)))
+        tree_data$ReconstructionMethod[anchor_idx] <- "provisional_igraph"
+        tree_data$ConstraintViolation[anchor_idx] <- FALSE
+        next_new_id <- next_new_id + as.integer(length(anchor_idx))
+
+        message(sprintf("[match_stems_optimal_backward] No TrueStemID present — assigned %d provisional ID(s) at CensusID=%d and will attempt igraph linking.", length(anchor_idx), provisional_anchor))
+
+        # Update anchor_start so the main loop will run backward from the provisional anchor
+        anchor_start <- provisional_anchor
+    }
+
     compute_edge_weights <- function(dist_mat, curr_dbh, fut_dbh, valid_ij, n_curr, n_fut) {
         # Helper: deterministic edge weights for max_bipartite_match().
         #
@@ -344,6 +377,11 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
     }
 
     pair_interval <- resolve_interval_years_pair(tree_data)
+
+    # If anchor_start <= 1 there are no earlier censuses to process; return early.
+    if (anchor_start <= 1L) {
+        return(tree_data)
+    }
 
     for (c in seq.int(from = anchor_start - 1L, to = 1L, by = -1L)) {
         # Work backward one census at a time (c <- c+1).
