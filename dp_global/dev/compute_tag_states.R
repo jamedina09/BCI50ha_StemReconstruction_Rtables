@@ -37,5 +37,7 @@ predict_time <- function(N, unit = c("sec", "min", "hour")) {
 res[, PredictedSec := round(predict_time(TransitionComputations, unit = "hour"), 4)]
 
 print(res)
-write.csv(res, file = file.path("..", "..", "dp_global", "dev", "tag_state_summary.csv"), row.names = FALSE)
-message("Wrote tag_state_summary.csv")
+out_path <- file.path("dp_global", "dev", "tag_state_summary.csv")
+dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+fwrite(res, file = out_path)
+message("Wrote ", out_path)
