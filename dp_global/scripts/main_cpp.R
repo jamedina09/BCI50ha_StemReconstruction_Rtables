@@ -130,7 +130,7 @@ K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
 K_GROWTH_SOURCE <- "fixed"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
 RECRUIT_MAX_SOURCE <- "fixed"
-RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) - 0.9999
+RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 
 ############################################################
 ### 3.2 DP running settings
