@@ -574,15 +574,19 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     # Backward recursion p = anchor_pos-1 .. 1 (maps to CensusID via census_range)
     vcat(prefix, "Backward pass (log-sum-exp + Viterbi) starting ...")
-    for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
-        # p <- 5L #position in census_range (for testing only)
-        cc <- census_range[p]
-        next_cc <- census_range[p + 1L]
-        mat_cc <- state_mats[[p]]
-        n_states_cc <- nrow(mat_cc)
+    # Guard: some tags only have the anchor census (anchor_pos == 1). In that case
+    # there are no earlier censuses and calling seq.int(anchor_pos - 1L, 1L, by = -1L)
+    # would error with "wrong sign in 'by' argument". Skip the loop when anchor_pos == 1.
+    if (anchor_pos > 1L) {
+        for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
+            # p <- 5L #position in census_range (for testing only)
+            cc <- census_range[p]
+            next_cc <- census_range[p + 1L]
+            mat_cc <- state_mats[[p]]
+            n_states_cc <- nrow(mat_cc)
 
-        t_cc0 <- tic()
-        vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[p + 1L]]))
+            t_cc0 <- tic()
+            vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[p + 1L]]))
 
         next_keys <- keys_full[[p + 1L]]
         n_next <- length(next_keys)
@@ -833,6 +837,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[p]]), ", edges=", used_edges, ", dt=", sprintf("%.2fs", tic() - t_cc0))
     }
+    }
 
     # -----------------
     # Decode MAP path
@@ -1057,22 +1062,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             sampled_idx[anchor_pos] <- 1L # anchor position has single full-state at index 1
             logp <- 0
             # sample backwards
-            for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
-                j <- sampled_idx[p + 1L]
-                rows <- adj_by_p[[p]][[j]]
-                # rows are indices into edges[[p]]
-                from_idx <- edges[[p]]$from_idx[rows]
-                logw <- edges[[p]]$logw[rows]
-                loga <- logalpha[[p]][from_idx]
-                L <- loga + logw
-                # normalize to probabilities
-                Lmax <- max(L)
-                probs <- exp(L - Lmax)
-                probs <- probs / sum(probs)
-                k <- sample.int(length(probs), size = 1L, prob = probs)
-                chosen_row <- rows[k]
-                sampled_idx[p] <- edges[[p]]$from_idx[chosen_row]
-                logp <- logp + log(probs[k])
+            if (anchor_pos > 1L) {
+                for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
+                    j <- sampled_idx[p + 1L]
+                    rows <- adj_by_p[[p]][[j]]
+                    # rows are indices into edges[[p]]
+                    from_idx <- edges[[p]]$from_idx[rows]
+                    logw <- edges[[p]]$logw[rows]
+                    loga <- logalpha[[p]][from_idx]
+                    L <- loga + logw
+                    # normalize to probabilities
+                    Lmax <- max(L)
+                    probs <- exp(L - Lmax)
+                    probs <- probs / sum(probs)
+                    k <- sample.int(length(probs), size = 1L, prob = probs)
+                    chosen_row <- rows[k]
+                    sampled_idx[p] <- edges[[p]]$from_idx[chosen_row]
+                    logp <- logp + log(probs[k])
+                }
             }
             # Convert sampled full-state indices to ReconstructedStemID per census
             sample_dt <- data.table::data.table(Tag = tag_local, Sample = m, CensusID = integer(0), ReconstructedStemID = integer(0), ObsRowID = integer(0))
