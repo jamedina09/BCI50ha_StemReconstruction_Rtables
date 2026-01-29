@@ -47,6 +47,10 @@ These scripts validate the correctness and functionality of the dp_global implem
   - **Purpose**: Validates anchor-scoping semantics including: (a) scoping when observations exist after a requested anchor, (b) returning original rows annotated when no pre-anchor observations exist, and (c) provisional anchor assignment behavior (provisional DP anchors and their `ReconstructionMethod` labeling).
   - **Usage**: `Rscript dp_global/dev/test_anchor_scoping.R`
 
+- **`test_integration_post_anchor_given.R`**:
+  - **Purpose**: Integration-level test that verifies post-anchor preservation and the `"given"` propagation semantics for post-anchor rows with `DBH` and a `TrueStemID` that were used by the DP.
+  - **Usage**: `Rscript dp_global/dev/test_integration_post_anchor_given.R`
+
 ### Benchmarking and Profiling
 
 - **`profiling_code.R`**:
