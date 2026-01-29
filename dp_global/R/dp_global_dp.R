@@ -176,22 +176,46 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!("ReconstructionMethod" %in% names(tree_data))) tree_data[, ReconstructionMethod := NA_character_]
     if (!("ConstraintViolation" %in% names(tree_data))) tree_data[, ConstraintViolation := as.logical(rep(NA, .N))]
 
+    # Helper: mark post-anchor rows as 'given' when appropriate and normalize post rows
+    propagate_post_anchor_given <- function(post, used_ids = NULL) {
+        # used_ids: NULL => treat any TrueStemID+DBH as given (no DP performed)
+        if (!("ReconstructedStemID" %in% names(post))) post[, ReconstructedStemID := as.integer(NA_integer_)]
+        if (!("ReconstructionMethod" %in% names(post))) post[, ReconstructionMethod := NA_character_]
+        if (!("ConstraintViolation" %in% names(post))) post[, ConstraintViolation := as.logical(NA)]
+
+        if (is.null(used_ids)) {
+            # No DP output available; treat observed TrueStemID as given
+            post[!is.na(TrueStemID) & !is.na(DBH), `:=`(
+                ReconstructedStemID = as.integer(TrueStemID),
+                ReconstructionMethod = "given"
+            )]
+        } else {
+            if (length(used_ids) > 0L) {
+                post[!is.na(TrueStemID) & !is.na(DBH) & (TrueStemID %in% used_ids), `:=`(
+                    ReconstructedStemID = as.integer(TrueStemID),
+                    ReconstructionMethod = "given"
+                )]
+            }
+        }
+        # Default remaining post-anchor rows to none_after_anchor
+        post[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]
+        post <- ensure_posterior_columns(post)
+        post[, `:=`(
+            DP_KUsed = NA_integer_,
+            DP_MaxStatesPerCensus = NA_real_,
+            DP_MaxStatesCensusID = NA_integer_
+        )]
+        post
+    }
+
     # Helper: finalize output by appending post-anchor rows (if DP was scoped)
     finalize_out <- function(out) {
         out <- ensure_posterior_columns(out)
         if (isTRUE(dp_scoped_to_pre_anchor)) {
             post <- original_tree_data[CensusID > anchor_start]
             if (nrow(post) > 0L) {
-                if (!("ReconstructedStemID" %in% names(post))) post[, ReconstructedStemID := as.integer(NA_integer_)]
-                if (!("ReconstructionMethod" %in% names(post))) post[, ReconstructionMethod := NA_character_]
-                post[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]
-                if (!("ConstraintViolation" %in% names(post))) post[, ConstraintViolation := as.logical(NA)]
-                post <- ensure_posterior_columns(post)
-                post[, `:=`(
-                    DP_KUsed = NA_integer_,
-                    DP_MaxStatesPerCensus = NA_real_,
-                    DP_MaxStatesCensusID = NA_integer_
-                )]
+                used_ids <- unique(out$ReconstructedStemID[!is.na(out$ReconstructedStemID)])
+                post <- propagate_post_anchor_given(post, used_ids)
                 out <- data.table::rbindlist(list(out, post), use.names = TRUE, fill = TRUE)
             }
         }
@@ -226,15 +250,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (nrow(tree_data) == 0L) {
             vcat(prefix, "No pre-anchor observations after scoping; returning original rows annotated with ReconstructionMethod='none_after_anchor'.")
             out <- data.table::copy(original_tree_data)
-            if (!("ReconstructedStemID" %in% names(out))) out[, ReconstructedStemID := as.integer(NA_integer_)]
-            out[, ReconstructionMethod := "none_after_anchor"]
-            if (!("ConstraintViolation" %in% names(out))) out[, ConstraintViolation := as.logical(NA)]
-            out <- ensure_posterior_columns(out)
-            out[, `:=`(
-                DP_KUsed = NA_integer_,
-                DP_MaxStatesPerCensus = NA_real_,
-                DP_MaxStatesCensusID = NA_integer_
-            )]
+            # Use helper to normalize post-anchor rows: no DP performed, so treat observed TrueStemID as given
+            out <- propagate_post_anchor_given(out, used_ids = NULL)
             attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
@@ -439,7 +456,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         )]
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
-        return(out)
+        return(finalize_out(out))
     }
 
     # Choose K (tracks) same logic as the MAP DP
@@ -1363,6 +1380,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (length(missing_in_post) > 0L) {
             for (c in missing_in_post) post_rows[, (c) := NA]
         }
+        # Propagate "given" ReconstructedStemID for post-anchor rows when DP actually used those IDs
+        used_ids <- unique(processed$ReconstructedStemID[!is.na(processed$ReconstructedStemID)])
+        if (length(used_ids) > 0L) {
+            post_rows[!is.na(TrueStemID) & !is.na(DBH) & (TrueStemID %in% used_ids), `:=`(
+                ReconstructedStemID = as.integer(TrueStemID),
+                ReconstructionMethod = "given"
+            )]
+        }
+        # Default remaining post-anchor rows to 'none_after_anchor' if not already set
+        if (!("ReconstructionMethod" %in% names(post_rows))) post_rows[, ReconstructionMethod := NA_character_]
+        post_rows[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]
+        if (!("ConstraintViolation" %in% names(post_rows))) post_rows[, ConstraintViolation := as.logical(NA)]
+        post_rows <- ensure_posterior_columns(post_rows)
+        post_rows[, `:=`(
+            DP_KUsed = NA_integer_,
+            DP_MaxStatesPerCensus = NA_real_,
+            DP_MaxStatesCensusID = NA_integer_
+        )]
         tree_data <- data.table::rbindlist(list(processed, post_rows), use.names = TRUE, fill = TRUE)
         # Restore original input order using obs_row_id
         if ("obs_row_id" %in% names(tree_data)) setorder(tree_data, obs_row_id)
