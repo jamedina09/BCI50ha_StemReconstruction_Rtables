@@ -32,3 +32,5 @@ Files included:
 - `track_cost_timeseries.R` : per-track cost time series
 - `run_synthetic_diagnostics.R` : convenience runner (single run)
 
+Note: ad-hoc or one-off diagnostic/debug scripts were removed during cleanup. Use the scripts listed above for reproducible diagnostics and regression checks.
+

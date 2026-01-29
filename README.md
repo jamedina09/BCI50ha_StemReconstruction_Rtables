@@ -53,7 +53,7 @@ Short actionable items to stabilize the DP and posterior-attachment workflow and
   - Add tests for `dp_global/R/error_propagation/process_posteriors.R` and `attach_paths_to_output()` to check `ObsRowID` mapping, alternative reconstruction formats, expand/aggregate correctness, and failure modes.
   - Add a regression test asserting the `DP_PruneInfo` attribute exists (defensive init) and that early-return branches do not error.
 
-- **Add a small integration smoke test** that runs a small chunk, generates posterior `paths.csv` for a tag (e.g., Tag 41), runs the attach/expand workflow, and verifies the merged CSV contains `DP_ReconstructedStemID_*` columns and `ObsRowID` alias.
+- **Integration smoke test (added)**: a small integration test now exists (`dp_global/dev/test_integration_post_anchor_given.R`) that verifies post-anchor preservation and `ReconstructionMethod == "given"` propagation for post-anchor rows used by the DP. The project no longer includes ad-hoc, one-off dev scripts; use the canonical tests in `dp_global/dev/` for reproducible checks.
 
 - **Document `obs_row_id`/`ObsRowID` expectations** in `dp_global/README.md` (how posterior reconstructions map back to output rows).
 
