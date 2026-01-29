@@ -59,6 +59,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     tic <- function() as.numeric(proc.time()[[3L]])
     t_start <- tic()
 
+    # Defensive early prune_stats so finalize_out (used by early returns) can always attach a value
+    prune_stats <- list(
+        total_examined = 0L,
+        total_pruned = 0L,
+        per_census = integer(0)
+    )
+
     # Compute profiling accumulators
     transition_cost_time <- 0
     transition_cost_calls <- 0L
@@ -169,6 +176,30 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!("ReconstructionMethod" %in% names(tree_data))) tree_data[, ReconstructionMethod := NA_character_]
     if (!("ConstraintViolation" %in% names(tree_data))) tree_data[, ConstraintViolation := as.logical(rep(NA, .N))]
 
+    # Helper: finalize output by appending post-anchor rows (if DP was scoped)
+    finalize_out <- function(out) {
+        out <- ensure_posterior_columns(out)
+        if (isTRUE(dp_scoped_to_pre_anchor)) {
+            post <- original_tree_data[CensusID > anchor_start]
+            if (nrow(post) > 0L) {
+                if (!("ReconstructedStemID" %in% names(post))) post[, ReconstructedStemID := as.integer(NA_integer_)]
+                if (!("ReconstructionMethod" %in% names(post))) post[, ReconstructionMethod := NA_character_]
+                post[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]
+                if (!("ConstraintViolation" %in% names(post))) post[, ConstraintViolation := as.logical(NA)]
+                post <- ensure_posterior_columns(post)
+                post[, `:=`(
+                    DP_KUsed = NA_integer_,
+                    DP_MaxStatesPerCensus = NA_real_,
+                    DP_MaxStatesCensusID = NA_integer_
+                )]
+                out <- data.table::rbindlist(list(out, post), use.names = TRUE, fill = TRUE)
+            }
+        }
+        # Attach prune stats if available (some early returns may occur before prune_stats is initialized)
+        attr(out, "DP_PruneInfo") <- if (exists("prune_stats")) prune_stats else list()
+        out
+    }
+
     # Preserve original dataset in case we scope DP to only pre-anchor censuses
     original_tree_data <- data.table::copy(tree_data)
     anchor_requested <- anchor_start
@@ -189,6 +220,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         dp_scoped_to_pre_anchor <- TRUE
         # restrict tree_data to pre-anchor censuses for DP computation
         tree_data <- original_tree_data[CensusID <= anchor_start]
+
+        # If scoping removes all observations (e.g., all observations are after the requested
+        # anchor), return a one-row placeholder so the Tag is represented in outputs.
+        if (nrow(tree_data) == 0L) {
+            vcat(prefix, "No pre-anchor observations after scoping; returning original rows annotated with ReconstructionMethod='none_after_anchor'.")
+            out <- data.table::copy(original_tree_data)
+            if (!("ReconstructedStemID" %in% names(out))) out[, ReconstructedStemID := as.integer(NA_integer_)]
+            out[, ReconstructionMethod := "none_after_anchor"]
+            if (!("ConstraintViolation" %in% names(out))) out[, ConstraintViolation := as.logical(NA)]
+            out <- ensure_posterior_columns(out)
+            out[, `:=`(
+                DP_KUsed = NA_integer_,
+                DP_MaxStatesPerCensus = NA_real_,
+                DP_MaxStatesCensusID = NA_integer_
+            )]
+            attr(out, "DP_PruneInfo") <- prune_stats
+            return(out)
+        }
     }
 
     # Preserve any provided TrueStemID as hard values in output.
@@ -226,7 +275,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
         attr(out, "DP_PruneInfo") <- prune_stats
-        return(out)
+        return(finalize_out(out))
     }
     census_range <- seq.int(from = first_obs_census, to = anchor_start)
     n_census <- length(census_range)
@@ -324,7 +373,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
                 out <- ensure_posterior_columns(out)
                 attr(out, "DP_PruneInfo") <- prune_stats
-                return(out)
+                return(finalize_out(out))
             }
         }
     }
@@ -342,7 +391,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
         attr(out, "DP_PruneInfo") <- prune_stats
-        return(out)
+        return(finalize_out(out))
     }
 
     # If anchor_obs exists but some TrueStemID are missing, optionally allow a provisional DP anchor
@@ -373,7 +422,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
     }
     anchor_ids <- sort(unique(anchor_obs$TrueStemID))
@@ -435,7 +484,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
         attr(out, "DP_PruneInfo") <- prune_stats
-        return(out)
+        return(finalize_out(out))
     }
 
     vcat(prefix, "Chosen K=", K, " tracks; max theoretical states=", format(max(n_states_by_census, na.rm = TRUE), scientific = TRUE))
@@ -461,7 +510,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
         state_mats[[p]] <- mat
         state_keys[[p]] <- apply(mat, 1L, state_key)
@@ -478,7 +527,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
         attr(out, "DP_PruneInfo") <- prune_stats
-        return(out)
+        return(finalize_out(out))
     }
 
     # Life-cycle phase constraint helpers (internal representation)
@@ -688,7 +737,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
         next_index <- seq_len(n_next)
         names(next_index) <- next_keys
@@ -705,7 +754,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
 
         # Pre-decode next phases and next track-DBH vectors (shared across all current states)
@@ -906,7 +955,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
 
         keys_full[[p]] <- unlist(curr_keys_list, use.names = FALSE)
@@ -920,7 +969,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
         edges[[p]] <- data.table::data.table(
             from_idx = from_idx[seq_len(used_edges)],
@@ -941,7 +990,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
         attr(out, "DP_PruneInfo") <- prune_stats
-        return(out)
+        return(finalize_out(out))
     }
     map_idx <- integer(n_census)
     map_idx[1L] <- start_idx
@@ -951,7 +1000,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
         map_idx[p + 1L] <- nxt
     }
@@ -965,7 +1014,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
         tree_data[obs_idx, ReconstructedStemID := track_ids[sv]]
         obs_to_mark <- obs_idx[is.na(tree_data$TrueStemID[obs_idx])]
@@ -988,7 +1037,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
         la_from <- logalpha[[p]][ed$from_idx]
         vals <- la_from + ed$logw
@@ -998,7 +1047,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
             attr(out, "DP_PruneInfo") <- prune_stats
-            return(out)
+            return(finalize_out(out))
         }
         la_next_dt <- dt[, .(logalpha = log_sum_exp(v)), by = to_idx]
         la_next <- rep.int(-Inf, length(keys_full[[p + 1L]]))
