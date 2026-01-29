@@ -1098,6 +1098,4 @@ if (sys.nframe() == 0L) {
 }
 
 # Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=6 --DP_CHUNK_END=9 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10
-
-# s <- data.table::data.table(arrow::read_feather("./dp_global/output/20260129_122659_unknown_T0_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/stem_reconstruction_dp_global_rcpp_chunk_008.feather"))
-# unique(s$Tag)
+# Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10
