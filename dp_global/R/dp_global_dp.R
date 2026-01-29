@@ -16,6 +16,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            posterior_top_k = 2L,
                                                            eps_tiebreak = 1e-6,
                                                            # --- measurement error (optional) ---
+                                                           # --- NEW: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists ---
+                                                           allow_provisional_anchor = TRUE,
                                                            use_measurement_error = FALSE,
                                                            meas_sd1_a = 0.0062,
                                                            meas_sd1_b = 0.0904,
@@ -161,6 +163,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     tree_data <- ensure_posterior_columns(tree_data)
     vcat(prefix, "Ensured posterior columns; obs_row_id present (or created)")
 
+    # Defensive initialization: ensure core tracking columns exist with correct types
+    if (!("TrueStemID" %in% names(tree_data))) tree_data[, TrueStemID := as.integer(NA_integer_)]
+    if (!("ReconstructedStemID" %in% names(tree_data))) tree_data[, ReconstructedStemID := as.integer(NA_integer_)]
+    if (!("ReconstructionMethod" %in% names(tree_data))) tree_data[, ReconstructionMethod := NA_character_]
+    if (!("ConstraintViolation" %in% names(tree_data))) tree_data[, ConstraintViolation := as.logical(rep(NA, .N))]
+
     # Preserve original dataset in case we scope DP to only pre-anchor censuses
     original_tree_data <- data.table::copy(tree_data)
     anchor_requested <- anchor_start
@@ -275,6 +283,85 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             )
             max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
         } else {
+            # If configured, allow a provisional DP anchor at the last observed DBH census
+            if (isTRUE(allow_provisional_anchor) && !is.na(last_obs_census) && any(!is.na(tree_data$DBH[tree_data$CensusID == last_obs_census]))) {
+                provisional_anchor <- as.integer(last_obs_census)
+                vcat(prefix, "No anchored census with DBH+TrueStemID found; using provisional DP anchor at last observed census=", provisional_anchor)
+                anchor_start <- provisional_anchor
+
+                # Assign provisional TrueStemID/ReconstructedStemID at the anchor rows
+                anchor_idx <- which(tree_data$CensusID == anchor_start & !is.na(tree_data$DBH))
+                if (length(anchor_idx) > 0L) {
+                    current_max <- suppressWarnings(max(tree_data$TrueStemID, na.rm = TRUE))
+                    if (!is.finite(current_max)) current_max <- 0L
+                    prov_ids <- as.integer(seq.int(from = current_max + 1L, length.out = length(anchor_idx)))
+                    tree_data$TrueStemID[anchor_idx] <- prov_ids
+                    tree_data$ReconstructedStemID[anchor_idx] <- prov_ids
+                    tree_data$ReconstructionMethod[anchor_idx] <- "provisional_dp"
+                    tree_data$ConstraintViolation[anchor_idx] <- FALSE
+                    vcat(prefix, sprintf("Assigned %d provisional anchor ID(s) at CensusID=%d", length(anchor_idx), anchor_start))
+                }
+
+                # Recompute census_range and obs_counts now that anchor_start changed
+                census_range <- seq.int(from = first_obs_census, to = anchor_start)
+                n_census <- length(census_range)
+                vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
+                obs_counts <- vapply(
+                    census_range,
+                    function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
+                    integer(1L)
+                )
+                max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+            } else {
+                vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+                K_used <- as.integer(min(max_obs, max_tracks))
+                n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+                tree_data[, `:=`(
+                    DP_KUsed = K_used,
+                    DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+                    DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+                )]
+                out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+                out <- ensure_posterior_columns(out)
+                attr(out, "DP_PruneInfo") <- prune_stats
+                return(out)
+            }
+        }
+    }
+
+    anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
+    if (nrow(anchor_obs) == 0L) {
+        vcat(prefix, "Cannot anchor DP (missing anchor observations). Falling back to igraph.")
+        K_used <- as.integer(min(max_obs, max_tracks))
+        n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+        tree_data[, `:=`(
+            DP_KUsed = K_used,
+            DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+            DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+        )]
+        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        out <- ensure_posterior_columns(out)
+        attr(out, "DP_PruneInfo") <- prune_stats
+        return(out)
+    }
+
+    # If anchor_obs exists but some TrueStemID are missing, optionally allow a provisional DP anchor
+    if (any(is.na(anchor_obs$TrueStemID))) {
+        if (isTRUE(allow_provisional_anchor)) {
+            vcat(prefix, "Anchor census has DBH but missing TrueStemID; assigning provisional DP anchor IDs at CensusID=", anchor_start)
+            anchor_idx <- which(tree_data$CensusID == anchor_start & !is.na(tree_data$DBH))
+            current_max <- suppressWarnings(max(tree_data$TrueStemID, na.rm = TRUE))
+            if (!is.finite(current_max)) current_max <- 0L
+            prov_ids <- as.integer(seq.int(from = current_max + 1L, length.out = length(anchor_idx)))
+            tree_data$TrueStemID[anchor_idx] <- prov_ids
+            tree_data$ReconstructedStemID[anchor_idx] <- prov_ids
+            tree_data$ReconstructionMethod[anchor_idx] <- "provisional_dp"
+            tree_data$ConstraintViolation[anchor_idx] <- FALSE
+            # Recompute anchor_obs and anchor_ids after provisioning
+            anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
+            anchor_ids <- sort(unique(anchor_obs$TrueStemID))
+            anchor_ids <- anchor_ids[!is.na(anchor_ids)]
+        } else {
             vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
             K_used <- as.integer(min(max_obs, max_tracks))
             n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
@@ -288,22 +375,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
-    }
-
-    anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
-    if (nrow(anchor_obs) == 0L || any(is.na(anchor_obs$TrueStemID))) {
-        vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
-        K_used <- as.integer(min(max_obs, max_tracks))
-        n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
-        tree_data[, `:=`(
-            DP_KUsed = K_used,
-            DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
-            DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
-        )]
-        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
-        out <- ensure_posterior_columns(out)
-        attr(out, "DP_PruneInfo") <- prune_stats
-        return(out)
     }
     anchor_ids <- sort(unique(anchor_obs$TrueStemID))
     anchor_ids <- anchor_ids[!is.na(anchor_ids)]
