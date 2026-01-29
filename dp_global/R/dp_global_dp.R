@@ -161,6 +161,28 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     tree_data <- ensure_posterior_columns(tree_data)
     vcat(prefix, "Ensured posterior columns; obs_row_id present (or created)")
 
+    # Preserve original dataset in case we scope DP to only pre-anchor censuses
+    original_tree_data <- data.table::copy(tree_data)
+    anchor_requested <- anchor_start
+    dp_scoped_to_pre_anchor <- FALSE
+
+    # Determine last census with observed DBH for this tag
+    obs_census_all <- sort(unique(original_tree_data$CensusID[!is.na(original_tree_data$DBH)]))
+    last_obs_census <- if (length(obs_census_all) > 0L) as.integer(max(obs_census_all)) else NA_integer_
+
+    # Rules:
+    #  - If last observed census < requested anchor: use last observed census as anchor (anchor becomes terminal)
+    #  - If last observed census > requested anchor: run DP only for censuses <= anchor (preserve post-anchor rows unchanged in output)
+    if (!is.na(last_obs_census) && last_obs_census < anchor_start) {
+        vcat(prefix, "Requested anchor census=", anchor_start, " is after last observed census=", last_obs_census, "; using last observed census as anchor instead.")
+        anchor_start <- last_obs_census
+    } else if (!is.na(last_obs_census) && last_obs_census > anchor_requested) {
+        vcat(prefix, "Found observations after requested anchor (last_obs_census=", last_obs_census, "). Scoping DP to census <= ", anchor_start, " and preserving post-anchor rows in output.")
+        dp_scoped_to_pre_anchor <- TRUE
+        # restrict tree_data to pre-anchor censuses for DP computation
+        tree_data <- original_tree_data[CensusID <= anchor_start]
+    }
+
     # Preserve any provided TrueStemID as hard values in output.
     tree_data[!is.na(TrueStemID), `:=`(
         ReconstructedStemID = as.integer(TrueStemID),
@@ -1205,6 +1227,26 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         # Attach sampling profile to the returned data.table for external inspection
         attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
+    }
+
+    # If DP was scoped to pre-anchor only, merge original post-anchor rows back into the returned dataset
+    if (exists("dp_scoped_to_pre_anchor", inherits = FALSE) && isTRUE(dp_scoped_to_pre_anchor)) {
+        processed <- tree_data
+        post_rows <- original_tree_data[CensusID > anchor_requested]
+        # Ensure both parts have the same set of columns (add missing ones as NA)
+        all_cols <- union(names(processed), names(post_rows))
+        missing_in_processed <- setdiff(all_cols, names(processed))
+        missing_in_post <- setdiff(all_cols, names(post_rows))
+        if (length(missing_in_processed) > 0L) {
+            for (c in missing_in_processed) processed[, (c) := NA]
+        }
+        if (length(missing_in_post) > 0L) {
+            for (c in missing_in_post) post_rows[, (c) := NA]
+        }
+        tree_data <- data.table::rbindlist(list(processed, post_rows), use.names = TRUE, fill = TRUE)
+        # Restore original input order using obs_row_id
+        if ("obs_row_id" %in% names(tree_data)) setorder(tree_data, obs_row_id)
+        vcat(prefix, "DP was scoped to pre-anchor; preserved", nrow(post_rows), "post-anchor rows in output.")
     }
 
     # Attach pruning diagnostics
