@@ -79,7 +79,7 @@ Security & reproducibility
 - Record R and package versions used to build the bundle (e.g., `sessioninfo::session_info()`).
 - Do not run compiled code from untrusted bundles without verifying provenance.
 
-That's it — short and practical. If you'd like, I can also add a tiny `verify_bundle.R` script that demonstrates the one-liner `withr::with_dir(...)` pattern and performs a basic smoke test.
+That's it — short and practical. A small `verify_bundle.R` script can be included in this folder; when present `package_bundle.sh` copies it into the staged bundle. `verify_bundle.R` performs a basic smoke test by running a small set of regression tests (for example: `dp_global/dev/test_anchor_scoping.R` and `dp_global/dev/test_integration_post_anchor_given.R`) to validate bundle integrity on a target machine.
 
 ---
 
