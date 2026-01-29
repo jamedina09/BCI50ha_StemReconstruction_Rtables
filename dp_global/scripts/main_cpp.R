@@ -636,6 +636,19 @@ auto_dp_max_tracks <- function(xrun) {
 ############################################################
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
+    # Safety: skip groups with missing DBH or CensusID (all NA or missing columns)
+    tag_label <- if ("Tag" %in% names(dtg) && length(dtg$Tag) > 0) as.character(dtg$Tag[[1]]) else "<unknown>"
+    species_label <- if ("species" %in% names(dtg) && length(dtg$species) > 0) as.character(dtg$species[[1]]) else "<unknown>"
+
+    if (!("DBH" %in% names(dtg)) || !("CensusID" %in% names(dtg))) {
+        log_msg(sprintf("Skipping Tag=%s species=%s: missing DBH or CensusID column", tag_label, species_label), "WARN")
+        return(NULL)
+    }
+    if (all(is.na(dtg$DBH)) || all(is.na(dtg$CensusID))) {
+        log_msg(sprintf("Skipping Tag=%s species=%s: all DBH or all CensusID are NA; skipping DP", tag_label, species_label), "WARN")
+        return(NULL)
+    }
+
     match_stems_dp_global_backward_marginals_batch(
         tree_data = data.table::copy(dtg),
         min_growth = MAX_SHRINK_FIXED,
@@ -847,7 +860,13 @@ run_main <- function() {
             if (!(WHICH_TAG %in% unique(xrun$Tag))) {
                 stop("Requested WHICH_TAG=", WHICH_TAG, " not found in data. Set WHICH_TAG to an existing Tag or enable RUN_ALL_TAGS=TRUE.")
             }
-            out <- xrun[Tag == WHICH_TAG, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
+            dt_tag <- xrun[Tag == WHICH_TAG]
+            if (!("DBH" %in% names(dt_tag)) || !("CensusID" %in% names(dt_tag)) || all(is.na(dt_tag$DBH)) || all(is.na(dt_tag$CensusID))) {
+                log_msg(sprintf("Skipping WHICH_TAG=%s: all DBH or all CensusID missing for this Tag; no DP performed", WHICH_TAG), "WARN")
+                out <- NULL
+            } else {
+                out <- xrun[Tag == WHICH_TAG, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
+            }
         } else {
             if (!requireNamespace("parallel", quietly = TRUE)) {
                 stop("Package not available: parallel. (It normally ships with R.)")
@@ -859,10 +878,21 @@ run_main <- function() {
                 data.table::setDTthreads(1L)
                 g <- groups[i]
                 dtg <- xrun[Tag == g$Tag & species == g$species]
+                # Skip groups with missing DBH or CensusID (all NA)
+                if (!("DBH" %in% names(dtg)) || !("CensusID" %in% names(dtg)) || all(is.na(dtg$DBH)) || all(is.na(dtg$CensusID))) {
+                    log_msg(sprintf("Skipping Tag=%s species=%s: all DBH or all CensusID missing; skipping DP", g$Tag, g$species), "WARN")
+                    return(NULL)
+                }
                 run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
             }, mc.cores = MC_CORES)
 
-            out <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
+            # Remove NULLs (skipped groups) before binding
+            res_list <- Filter(Negate(is.null), res_list)
+            if (length(res_list) == 0L) {
+                out <- NULL
+            } else {
+                out <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
+            }
         }
     }
     out <- maybe_add_posterior_bins(out)
