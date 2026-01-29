@@ -42,8 +42,8 @@ check_inputs <- function(paths_file, out_file) {
 # `source()`.
 
 # Configuration defaults (edit interactively as needed)
-default_paths <- "./dp_global/output/20260123_184403_unknown_T19_DP_MB_ME_gD_sD_kgD_ksD_rcpp/posteriors/posteriors/tag_19_posterior_samples_20260123_184616_paths.csv"
-default_out <- "./dp_global/output/20260123_184403_unknown_T19_DP_MB_ME_gD_sD_kgD_ksD_rcpp/stem_reconstruction_dp_global_rcpp.csv"
+default_paths <- "./dp_global/output/20260128_233052_unknown_T0_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/posteriors/tag_41_posterior_samples__paths.csv"
+default_out <- "./dp_global/output/20260128_233052_unknown_T0_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/stem_reconstruction_dp_global_rcpp.csv"
 
 # Main interactive runner (explicit arguments, easy to call from R)
 run_attach_and_expand <- function(paths_file = default_paths,
@@ -86,3 +86,4 @@ if (interactive()) {
     vcat("Interactive: running `run_attach_and_expand()` with defaults (no expand_draws)")
     run_attach_and_expand()
 }
+
