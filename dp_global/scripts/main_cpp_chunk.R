@@ -140,7 +140,7 @@ ANCHOR_START_CENSUS <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
 DP_MAX_TRACKS <- NULL # auto (computed from data)
-DP_MAX_STATES <- 150L
+DP_MAX_STATES <- 4000L
 DP_SLACK_TRACKS <- 1L
 # NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
 # (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.
@@ -210,7 +210,7 @@ WRITE_DP_RDS <- TRUE
 WRITE_DP_FEATHER <- FALSE
 WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- TRUE
 ## when no simulated data, this needs to be FALSE to avoid errors
-DP_PDF_INCLUDE_REFERENCE <- FALSE
+DP_PDF_INCLUDE_REFERENCE <- TRUE
 
 # Per-tag PDF plotting control is part of the full runner but not used in
 # the chunked DP runner. Leave commented to avoid confusion.
