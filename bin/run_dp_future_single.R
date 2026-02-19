@@ -668,3 +668,5 @@ q(status = 0)
 
 # If you want to explicitly control path:
 # Rscript bin/run_dp_future_single.R --posterior-samples 100 --posterior-path /path/to/store/posteriors
+
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 10 --posterior-format csv --WHICH_TAG=20
