@@ -29,7 +29,6 @@
 # Use the numbered sections to quickly scan the file. Each section contains a
 # short header and concise responsibilities to make navigation quick and clear.
 
-
 ############################################################
 ### 0) Housekeeping
 ############################################################
@@ -160,6 +159,8 @@ POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "csv" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
 POSTERIOR_SAMPLE_SEED <- NULL
+# Option: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
+ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 
 ############################################################
 ### 3.3 Parallel & output settings
@@ -248,7 +249,8 @@ CLI_REFERENCE <- list(
     PROJECT_ROOT = "PROJECT_ROOT",
     BATCH_TS = "BATCH_TS",
     CONFIG_NAME = "CONFIG_NAME",
-    USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR"
+    USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR",
+    ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR"
 )
 
 ############################################################
@@ -474,7 +476,6 @@ source(here("dp_global", "R", "k_tuning_viz.R"))
 source(here("dp_global", "R", "naming_helpers.R"))
 # `naming_helpers.R` provides `encode_num()` and `build_out_dir_name()`
 
-
 ############################################################
 ### 5) Helpers — utility functions
 ############################################################
@@ -675,6 +676,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
         prune_recruit_max_dbh = RECRUIT_MAX_FIXED * 1.2, # very high recruit max dbh
         prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
+        allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
         verbose = isTRUE(DP_VERBOSE)
     )
 }
