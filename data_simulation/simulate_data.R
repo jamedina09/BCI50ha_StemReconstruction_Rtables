@@ -448,7 +448,6 @@ tag_49 <- data.table(
 ## get the min exactdate per census
 # dt_complete[, .(MinDate = min(ExactDate, na.rm = TRUE)), by = CensusID]$MinDate
 
-
 #    CensusID    Tag TreeID StemTag StemID   DBH TrueStemID
 #       <int> <char> <fctr>  <fctr> <char> <num>     <char>
 # 1:        1 007745   7620    <NA>   7620     3       7620
@@ -512,7 +511,6 @@ tag_53 <- data.table(
     )),
     DBH = c(1, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_)
 )
-
 
 #        Tag CensusID  ExactDate   DBH OriginalStemID TrueStemID
 #     <char>    <int>     <Date> <num>         <char>     <char>
@@ -627,7 +625,6 @@ tag_58 <- data.table(
     )),
     DBH = c(1.5, 1.0, 1.5, 1.0, 1.6, 1.1, 1.6, 1.7, NA_real_, NA_real_)
 )
-
 
 #        Tag CensusID  ExactDate   DBH OriginalStemID TrueStemID
 #     <char>    <int>     <Date> <num>         <char>     <char>
@@ -745,7 +742,6 @@ tag_62 <- data.table(
     DBH = c(9.3, 9.5, 1.0, 9.7, 1.6, 7.9, 2.1, 2.4, 1.3, 9.8, 2.5, 2.0, 8.9, 2.0, NA_real_, NA_real_)
 )
 
-
 #       Tag CensusID  ExactDate   DBH OriginalStemID TrueStemID
 #    <char>    <int>     <Date> <num>         <char>     <lgcl>
 # 1: 002747        1 1981-10-08  20.6           2738         NA
@@ -757,7 +753,7 @@ tag_62 <- data.table(
 # 7: 002747        4 1995-08-21   2.7         802079         NA
 # 8: 002747        5 2000-07-19    NA         755073         NA
 
-tag_62 <- data.table(
+tag_63 <- data.table(
     Species = "sp1", 
     Tag = 2747L,
     OriginalStemID = c(2738, 2738, 491245, 619581, 695541, 755073, 802079, 755073),
@@ -780,7 +776,7 @@ tag_62 <- data.table(
 # 7: 306322        8 2015-10-20    NA         574524     574524
 # 8: 306322        9 2023-05-02    NA         574524     574524
 
-tag_63 <- data.table(
+tag_64 <- data.table(
     Species = "sp1", 
     Tag = 306322L,
     OriginalStemID = rep(262595, 8),
@@ -806,7 +802,7 @@ tag_63 <- data.table(
 # 10: 071698        6 2005-07-21    NA         873203       <NA>
 # 11: 071698        7 2010-07-01    NA         873203     873203
 
-tag_64 <- data.table(
+tag_65 <- data.table(
     Species = "sp1", 
     Tag = 71698L,
     OriginalStemID = c(59081, 59081, 507755, 629999, 704141, 762029, 807829, 844274, 873203, 873203, 873203),
@@ -832,7 +828,7 @@ tag_64 <- data.table(
 # 10: 229214        8 2015-04-01    NA         858289     858289
 # 11: 229214        9 2022-06-09    NA         858289     858289
 
-tag_65 <- data.table(
+tag_66 <- data.table(
     Species = "sp1", 
     Tag = 229214L,
     OriginalStemID = c(202251, 202251, 553338, 659595, 729015, 782324, 824512, 824512, 858289, 858289, 858289),
@@ -847,9 +843,17 @@ tag_65 <- data.table(
 dt_complete_extra <- rbind(
     dt_complete, tag_43, tag_44, tag_45, tag_46,
     tag_47, tag_48, tag_49, tag_50,
-    tag_51, tag_52, tag_53, tag_54, tag_55, tag_56, tag_57, tag_58, tag_59,
-    tag_60, tag_61, tag_62, tag_63, tag_64, tag_65
+    tag_51, tag_52, tag_53, tag_54, tag_55, tag_56, tag_57, tag_58,
+    tag_59, tag_60, tag_61, tag_62, tag_63, tag_64, tag_65, tag_66
 )
+
+# Include additional information about growth forms, trees, vs figs
+growth_forms <- data.table(
+    Species = c("sp1", "sp2", "sp3"),
+    GrowthForm = c("tree", "tree", "fig")
+)
+
+dt_complete_extra <- merge(dt_complete_extra, growth_forms, by = "Species", all.x = TRUE)
 
 fwrite(dt_complete_extra, here("data_simulation", "data", "simulated_data_1.csv"))
 # Apply stem ID masking to simulate ForestGEO protocol
@@ -863,7 +867,6 @@ fwrite(dt_complete_extra, here("data_simulation", "data", "simulated_data_1.csv"
 # Creates two types of PDFs:
 # 1. Species-level: All stems grouped by species
 # 2. Tag-level: Individual stem trajectories for each tree
-
 
 if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)) {
     # =========================================================================
