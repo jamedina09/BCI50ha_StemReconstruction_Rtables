@@ -147,6 +147,8 @@ DP_SLACK_TRACKS <- 1L
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
 DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
+# Growth forms forcing igraph fallback. See main_cpp.R for details.
+DP_FALLBACK_GROWTH_FORMS <- character(0)
 
 # Posterior sampling defaults (disabled by default)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
@@ -251,6 +253,7 @@ CLI_REFERENCE <- list(
     WRITE_DP_FEATHER = "WRITE_DP_FEATHER",
     WRITE_DP_PDF = "WRITE_DP_PDF",
     DP_MAX_STATES = "DP_MAX_STATES",
+    DP_FALLBACK_GROWTH_FORMS = "DP_FALLBACK_GROWTH_FORMS",
     DP_SLACK_TRACKS = "DP_SLACK_TRACKS",
     DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE",
     DP_SLACK_REQUIRE_ANCHOR_EPS = "DP_SLACK_REQUIRE_ANCHOR_EPS",
@@ -676,6 +679,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         slack_require_anchor_eps = DP_SLACK_REQUIRE_ANCHOR_EPS,
         temperature = 1,
         posterior_top_k = DP_POSTERIOR_TOP_K,
+        fallback_growth_forms = DP_FALLBACK_GROWTH_FORMS,
         # posterior sampling controls (disabled by default)
         posterior_samples = POSTERIOR_SAMPLES,
         posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
@@ -1099,3 +1103,6 @@ if (sys.nframe() == 0L) {
 
 # Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=6 --DP_CHUNK_END=9 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10
 # Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250
+# Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250 --DP_FALLBACK_GROWTH_FORMS="fig,tree"
+# Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250 --DP_FALLBACK_GROWTH_FORMS="tree"
+# Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250 --DP_FALLBACK_GROWTH_FORMS="fig"
