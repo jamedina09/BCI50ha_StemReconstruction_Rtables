@@ -889,6 +889,16 @@ All quantiles are configurable via `estimate_bio_pars()` arguments.
 
 ### When Fallback Occurs
 
+In addition to the structural and numerical conditions below, the DP routine
+can be instructed to **bypass the solver based on a data column named
+`growth_form`**.  If the caller supplies a non-empty character vector via the
+`fallback_growth_forms` argument (propagated from the CLI variable
+`DP_FALLBACK_GROWTH_FORMS`), any tag whose pre-anchor subset contains at least
+one row whose `growth_form` value matches the vector will immediately fall back
+with reason `growth_form_forced`.  The CLI flag accepts comma‑ or
+semicolon‑separated lists, which are split automatically by the DP loader.
+
+
 The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 
 1. Anchor census missing or has no observed stems

@@ -8,6 +8,11 @@ Quick pointers:
 - See `dp_global/README.md` for details on the DP implementation and R driver. 🔧
 - Run `bin/run_dp_future.R` to execute experiments on a single machine (this is the recommended entrypoint). For single-config runs, use `bin/run_dp_future_single.R` or run `run_dp_future.R` with `--workers 1`. Please consult `bin/README.md` for examples and options.
 - See `bin/README.md` for a quick reference to the runners and usage notes.
+- You can now force the DP solver to skip particular growth forms by passing
+  `--DP_FALLBACK_GROWTH_FORMS=<form1,form2>` (for example, `tree` or `fig`) to
+  the driver; the flag accepts a comma‑ or semicolon‑separated list. Any tag
+  containing a row with a matching `growth_form` value will be reconstructed
+  with the igraph matcher.
 
 ## Prerequisites
 
