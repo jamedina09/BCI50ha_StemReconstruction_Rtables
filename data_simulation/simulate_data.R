@@ -847,6 +847,8 @@ dt_complete_extra <- rbind(
     tag_59, tag_60, tag_61, tag_62, tag_63, tag_64, tag_65, tag_66
 )
 
+dt_complete_extra <- dt_complete_extra[order(Tag, CensusID)]
+
 # Include additional information about growth forms, trees, vs figs
 growth_forms <- data.table(
     Species = c("sp1", "sp2", "sp3"),
@@ -854,6 +856,7 @@ growth_forms <- data.table(
 )
 
 dt_complete_extra <- merge(dt_complete_extra, growth_forms, by = "Species", all.x = TRUE)
+dt_complete_extra <- dt_complete_extra[order(Tag, CensusID)]
 
 fwrite(dt_complete_extra, here("data_simulation", "data", "simulated_data_1.csv"))
 # Apply stem ID masking to simulate ForestGEO protocol
