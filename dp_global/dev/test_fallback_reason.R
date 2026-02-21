@@ -60,3 +60,23 @@ if (!('DP_FallbackReason' %in% names(res2))) stop('Missing DP_FallbackReason col
 if (all(is.na(res2$DP_FallbackReason))) stop('DP_FallbackReason should be set when growth_form triggers fallback')
 if (!all(res2$DP_FallbackReason %in% 'growth_form_forced')) stop('Unexpected fallback reasons in growth form test')
 cat('OK: growth_form fallback test passed; DP_FallbackReason =', unique(na.omit(res2$DP_FallbackReason)), '\n')
+
+# verify comma-separated string is parsed into vector
+x3 <- copy(x)
+x3[, growth_form := 'tree']
+res3 <- match_stems_dp_global_backward_marginals_batch(
+  x3,
+  min_growth = -0.5,
+  max_growth = 7.5,
+  anchor_start = 5L,
+  max_tracks = 5L,
+  max_states = 5000L,
+  posterior_samples = 0L,
+  fallback_growth_forms = "tree,fig",
+  verbose = TRUE
+)
+if (!any(grepl('igraph', res3$ReconstructionMethod, ignore.case = TRUE))) stop('Expected igraph-based reconstruction method for comma-string growth form')
+if (!('DP_FallbackReason' %in% names(res3))) stop('Missing DP_FallbackReason column in comma-string growth form test')
+if (all(is.na(res3$DP_FallbackReason))) stop('DP_FallbackReason should be set when comma-string growth_form triggers fallback')
+if (!all(res3$DP_FallbackReason %in% 'growth_form_forced')) stop('Unexpected fallback reasons in comma-string growth form test')
+cat('OK: comma-string growth_form fallback test passed; DP_FallbackReason =', unique(na.omit(res3$DP_FallbackReason)), '\n')
