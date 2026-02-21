@@ -103,7 +103,9 @@ args <- commandArgs(trailingOnly = TRUE)
 # CLI options (the DP expects flags like --POSTERIOR_SAMPLES=... etc.). Keep
 # these names in sync with `dp_global/scripts/main_cpp.R`.
 MAIN_CLI_KEYS <- c(
-  "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLE_SEED", "POSTERIOR_SAMPLES_PATH", "PROJECT_ROOT", "BATCH_TS", "CONFIG_NAME"
+  "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLE_SEED", "POSTERIOR_SAMPLES_PATH", "PROJECT_ROOT", "BATCH_TS", "CONFIG_NAME",
+  # support the growth-form fallback parameter
+  "DP_FALLBACK_GROWTH_FORMS"
 )
 
 # Runner options (lowercase names for user-facing flags)
@@ -725,6 +727,9 @@ q(status = 0)
 # Rscript bin/run_dp_future.R --workers 3 --cores-per-job 5 --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
 
 # Rscript bin/run_dp_future.R --workers 1 --cores-per-job 14 --configs "fixed"
+
+# ./bin/run_dp_future.R --workers 1 --cores-per-job 14 --configs "fixed" --DP_FALLBACK_GROWTH_FORMS=tree
+# ./bin/run_dp_future.R --workers 1 --cores-per-job 14 --configs "fixed" --DP_FALLBACK_GROWTH_FORMS=tree,fig
 
 ## NOTE: If you want to run all experiments for one tag only, set --WHICH_TAG=N --RUN_ALL_TAGS=FALSE
 # Rscript bin/run_dp_future.R --workers 8 --cores-per-job 1 --WHICH_TAG=20 --RUN_ALL_TAGS=FALSE  --configs "fixed data_hard data_hard_soft data_soft fixed_k50 fixed_k25 data_hard_k50 data_hard_k25"
