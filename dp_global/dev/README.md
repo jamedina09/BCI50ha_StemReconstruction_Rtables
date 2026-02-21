@@ -35,6 +35,12 @@ These scripts validate the correctness and functionality of the dp_global implem
 - **`test_match_stems_dp_global_backward_marginals_batch.R`**: 
   - **Purpose**: Validates that the full batch DP algorithm executes without errors on synthetic data.
 
+- **`test_fallback_reason.R`**:
+  - **Purpose**: Exercises the various DP fallback branches and ensures the
+    `DP_FallbackReason` column is correctly populated.  Includes the growth-form
+    bypass check by toggling the `fallback_growth_forms` argument.
+  - **Usage**: `Rscript dp_global/dev/test_fallback_reason.R`
+
 - **`test_estimate_bio_pars_intervals.R`**:
   - **Purpose**: Tests `estimate_bio_pars()` interval handling (scalar vs per-row/per-pair interval columns) and verifies inference and diagnostic outputs.
   - **Usage**: `Rscript dp_global/dev/test_estimate_bio_pars_intervals.R`

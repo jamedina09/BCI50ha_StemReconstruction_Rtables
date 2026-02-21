@@ -62,6 +62,10 @@ DP / reconstruction option
 - `DP_SLACK_TRACKS` — default: `1L` - slack (additional) tracks allowed for DP.
 - `DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE` — default: `TRUE` - require anchor to be recruitable (if DBH less than max recruitment size) before granting slack.
 - `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
+- `DP_FALLBACK_GROWTH_FORMS` — default: `character(0)`; comma- or
+  semicolon-separated list of values in the `growth_form` column that should
+  trigger an immediate igraph fallback and prevent the DP solver from running
+  on that tag. The driver automatically splits the string into a vector.
 
 **Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was used by the DP are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows without DP assignments receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and observed `TrueStemID` values are treated as `given` while other rows are labeled `none_after_anchor`.
 

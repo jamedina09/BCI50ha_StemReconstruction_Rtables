@@ -42,6 +42,9 @@ Run a single config (serial or via helper):
 - `--DRY_RUN`               : prints Rscript invocations instead of executing them (pass after `--` to forward to `main_cpp.R`)
 - `--dp_max_states=N`       : set the DP enumerator maximum states per census (default 40000). Use a larger value for more complex tags, but be mindful of memory.
 - Any other `--NAME=VALUE` args are passed through to the R driver (`dp_global/scripts/main_cpp.R`).
+  This includes `--DP_FALLBACK_GROWTH_FORMS=<forms>` which allows the runner to
+  forward a list of growth-form values that should skip DP entirely.
+- Any other `--NAME=VALUE` args are passed through to the R driver (`dp_global/scripts/main_cpp.R`).
 
 Examples
 
