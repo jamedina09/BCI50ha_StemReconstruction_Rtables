@@ -1,4 +1,4 @@
-Species,Tag,OriginalStemID,TrueStemID,CensusID,DBH,ExactDate,GrowthForm
+Species,Tag,OriginalStemID,TrueStemID,CensusID,DBH,ExactDate,growth_form
 sp1,1,1,,1,7.53760054216104,1980-01-01,tree
 sp1,1,2,,1,23.5790347139569,1980-01-01,tree
 sp1,1,3,,1,,1980-01-01,tree

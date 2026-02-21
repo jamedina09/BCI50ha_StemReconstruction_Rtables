@@ -852,7 +852,7 @@ dt_complete_extra <- dt_complete_extra[order(Tag, CensusID)]
 # Include additional information about growth forms, trees, vs figs
 growth_forms <- data.table(
     Species = c("sp1", "sp2", "sp3"),
-    GrowthForm = c("tree", "tree", "fig")
+    growth_form = c("tree", "tree", "fig")
 )
 
 dt_complete_extra <- merge(dt_complete_extra, growth_forms, by = "Species", all.x = TRUE)
