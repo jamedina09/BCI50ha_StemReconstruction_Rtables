@@ -1,15 +1,14 @@
-#!/usr/bin/env Rscript
 library(data.table)
 source(file.path('dp_global','R','dp_global_main.R'))
 
 # Construct the user's example
 x <- data.table(
-  Tag = rep('014993', 3),
-  StemID = rep('10989', 3),
-  TrueStemID = c(NA_integer_, 1L, NA_integer_),
-  CensusID = 1:3,
-  DBH = c(58.6, 45.2, NA_real_),
-  ExactDate = as.IDate(c('2000-01-01','2005-01-01','2010-01-01'))
+  Tag = rep('014993', 5),
+  StemID = rep('10989', 5),
+  TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, 10989L),
+  CensusID = 1:5,
+  DBH = c(46, 48, 50, 52, 54),
+  ExactDate = as.IDate(c('2000-01-01','2005-01-01','2010-01-01', '2015-01-01', '2020-01-01'))
 )
 
 x[, species := 'sp']
@@ -32,17 +31,32 @@ res <- match_stems_dp_global_backward_marginals_batch(
   x,
   min_growth = -0.5,
   max_growth = 7.5,
-  anchor_start = 2L,
+  anchor_start = 5L,
   max_tracks = 5L,
   max_states = 5000L,
   posterior_samples = 0L,
+  fallback_growth_forms = "tree",
   verbose = TRUE
 )
 
-# Assert we fell back to igraph (some rows should have ReconstructionMethod either 'igraph' or 'provisional_igraph')
-if (!any(grepl('igraph', res$ReconstructionMethod, ignore.case = TRUE))) stop('Expected igraph-based reconstruction method')
-# Assert fallback reason present
-if (!('DP_FallbackReason' %in% names(res))) stop('Missing DP_FallbackReason column')
-if (all(is.na(res$DP_FallbackReason))) stop('DP_FallbackReason should be set when falling back')
+# --- growth form fallback --------------------------------------------------
+x2 <- copy(x)
+x2[, growth_form := 'fig']
 
-cat('OK: fallback reason test passed; DP_FallbackReason values:', unique(na.omit(res$DP_FallbackReason)), '\n')
+res2 <- match_stems_dp_global_backward_marginals_batch(
+  x2,
+  min_growth = -0.5,
+  max_growth = 7.5,
+  anchor_start = 5L,
+  max_tracks = 5L,
+  max_states = 5000L,
+  posterior_samples = 0L,
+  fallback_growth_forms = "fig",
+  verbose = TRUE
+)
+
+if (!any(grepl('igraph', res2$ReconstructionMethod, ignore.case = TRUE))) stop('Expected igraph-based reconstruction method for growth form')
+if (!('DP_FallbackReason' %in% names(res2))) stop('Missing DP_FallbackReason column in growth form test')
+if (all(is.na(res2$DP_FallbackReason))) stop('DP_FallbackReason should be set when growth_form triggers fallback')
+if (!all(res2$DP_FallbackReason %in% 'growth_form_forced')) stop('Unexpected fallback reasons in growth form test')
+cat('OK: growth_form fallback test passed; DP_FallbackReason =', unique(na.omit(res2$DP_FallbackReason)), '\n')
