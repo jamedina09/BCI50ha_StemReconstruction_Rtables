@@ -52,6 +52,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
     # ensure growth form list is character vector
     fallback_growth_forms <- if (is.null(fallback_growth_forms)) character(0) else as.character(fallback_growth_forms)
+    # interpret comma/semicolon-separated values in a single string element
+    if (length(fallback_growth_forms) == 1L && grepl("[,;]", fallback_growth_forms)) {
+        # split on commas or semicolons, trim whitespace, and drop empty
+        ff <- strsplit(fallback_growth_forms, "[,;]")[[1L]]
+        ff <- trimws(ff)
+        ff <- ff[nzchar(ff)]
+        fallback_growth_forms <- ff
+    }
 
     verbose <- isTRUE(verbose) || isTRUE(getOption("dp_global_biol.verbose", FALSE))
     vcat <- function(...) {
