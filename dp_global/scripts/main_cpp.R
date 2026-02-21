@@ -147,6 +147,11 @@ DP_SLACK_TRACKS <- 1L
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
 DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
+# Growth forms which should bypass DP and force igraph matcher
+# - character vector; values correspond to entries in the `growth_form`
+#   column of the input dataset.  Pass to the DP function via
+#   `fallback_growth_forms` argument.
+DP_FALLBACK_GROWTH_FORMS <- character(0)
 
 # Posterior sampling defaults (disabled by default)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
@@ -239,6 +244,7 @@ CLI_REFERENCE <- list(
     WRITE_DP_FEATHER = "WRITE_DP_FEATHER",
     WRITE_DP_PDF = "WRITE_DP_PDF",
     DP_MAX_STATES = "DP_MAX_STATES",
+    DP_FALLBACK_GROWTH_FORMS = "DP_FALLBACK_GROWTH_FORMS",
     DP_SLACK_TRACKS = "DP_SLACK_TRACKS",
     DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE",
     DP_SLACK_REQUIRE_ANCHOR_EPS = "DP_SLACK_REQUIRE_ANCHOR_EPS",
@@ -662,6 +668,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         slack_require_anchor_eps = DP_SLACK_REQUIRE_ANCHOR_EPS,
         temperature = 1,
         posterior_top_k = DP_POSTERIOR_TOP_K,
+        # growth-form bypass list
+        fallback_growth_forms = DP_FALLBACK_GROWTH_FORMS,
         # posterior sampling controls (disabled by default)
         posterior_samples = POSTERIOR_SAMPLES,
         posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,

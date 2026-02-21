@@ -102,7 +102,9 @@ args <- commandArgs(trailingOnly = TRUE)
 # CLI options (the DP expects flags like --POSTERIOR_SAMPLES=... etc.). Keep
 # these names in sync with `dp_global/scripts/main_cpp.R`.
 MAIN_CLI_KEYS <- c(
-  "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLE_SEED", "POSTERIOR_SAMPLES_PATH", "PROJECT_ROOT", "BATCH_TS", "CONFIG_NAME"
+  "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLE_SEED", "POSTERIOR_SAMPLES_PATH", "PROJECT_ROOT", "BATCH_TS", "CONFIG_NAME",
+  # allow overriding growth-form fallback list via runner
+  "DP_FALLBACK_GROWTH_FORMS"
 )
 
 # Runner options (lowercase names for user-facing flags)
@@ -669,4 +671,7 @@ q(status = 0)
 # If you want to explicitly control path:
 # Rscript bin/run_dp_future_single.R --posterior-samples 100 --posterior-path /path/to/store/posteriors
 
-# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 10 --posterior-format csv --WHICH_TAG=20
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 10 --posterior-format csv --WHICH_TAG=1 --DP_FALLBACK_GROWTH_FORMS=tree
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 10 --posterior-format csv --WHICH_TAG=1
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 10 --posterior-format csv --WHICH_TAG=30 --DP_FALLBACK_GROWTH_FORMS=fig
+# Rscript bin/run_dp_future_single.R --workers 1 --cores-per-job 1 --posterior-samples 10 --posterior-format csv --WHICH_TAG=30
