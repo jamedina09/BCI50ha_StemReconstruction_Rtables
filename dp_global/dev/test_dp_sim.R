@@ -58,6 +58,9 @@ dt[, RowID := .I]
 dt[RowID == 7, TrueStemID := 1L]
 dt[RowID == 8, TrueStemID := 2L]
 
+# add a growth_form column (default to 'tree' for this example)
+dt[, growth_form := 'tree']
+
 # Append required bio columns with simple constants
 bio_cols <- list(
     Bio_Mu_Growth = 0.5,
@@ -115,7 +118,7 @@ print(out[CensusID %in% 1:4, .(CensusID, DBH, TrueStemID, ReconstructedStemID, R
 print("DP diagnostics:")
 print(unique(out[, .(DP_KUsed, DP_MaxStatesPerCensus, DP_MaxStatesCensusID)]))
 
-fwrite(out, "./out.csv")
+# fwrite(out, "./out.csv")
 
 # --- Compare runs: no pruning vs pruning (tight max_growth to demonstrate effect) ---
 print("\nRunning comparison: no pruning vs pruning (growth bounds = -5 .. 15)\n")

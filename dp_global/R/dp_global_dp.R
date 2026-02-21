@@ -23,6 +23,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            meas_sd1_b = 0.0904,
                                                            meas_sd2 = 4.64,
                                                            meas_p_big = 0.05,
+                                                           # --- growth-form based fallback ---
+                                                           # vector of values in `growth_form` column that should trigger
+                                                           # immediate igraph fallback and avoid DP entirely
+                                                           fallback_growth_forms = character(0),
                                                            # --- posterior sampling options ---
                                                            posterior_samples = 0L,
                                                            posterior_samples_format = c("rds", "feather", "csv"),
@@ -46,6 +50,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!is.finite(temperature) || is.na(temperature) || temperature <= 0) {
         stop("temperature must be a positive finite number")
     }
+    # ensure growth form list is character vector
+    fallback_growth_forms <- if (is.null(fallback_growth_forms)) character(0) else as.character(fallback_growth_forms)
 
     verbose <- isTRUE(verbose) || isTRUE(getOption("dp_global_biol.verbose", FALSE))
     vcat <- function(...) {
@@ -317,6 +323,28 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         integer(1L)
     )
     max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+
+    # --- growth-form fallback check ------------------------------------
+    if (length(fallback_growth_forms) > 0L && "growth_form" %in% names(tree_data)) {
+        bad_idx <- which(tree_data$growth_form %in% fallback_growth_forms)
+        if (length(bad_idx) > 0L) {
+            vcat(prefix, "Detected growth_form(s) requiring igraph fallback; falling back to igraph.")
+            fallback_reason <- "growth_form_forced"
+            K_used <- as.integer(min(max_obs, max_tracks))
+            n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
+            tree_data[, `:=`(
+                DP_KUsed = K_used,
+                DP_MaxStatesPerCensus = max(n_states_by_census, na.rm = TRUE),
+                DP_MaxStatesCensusID = as.integer(census_range[which.max(n_states_by_census)])
+            )]
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+            out <- ensure_posterior_columns(out)
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := fallback_reason]
+            attr(out, "DP_PruneInfo") <- prune_stats
+            return(finalize_out(out))
+        }
+    }
 
     # Defensive initialization for prune diagnostics so early-return branches can safely set attributes
     prune_stats <- list(
