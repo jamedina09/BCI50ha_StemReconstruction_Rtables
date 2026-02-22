@@ -1411,52 +1411,35 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
         paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
 
-        # Export samples and summaries: prefer feather via arrow for speed if available
+        # Export only the paths summary; skip writing any summary file
         sampling_profile$export_paths <- character(0)
         sampling_profile$export_time_seconds <- 0
         if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
-            # Full long-format samples export intentionally disabled to reduce I/O and runtime.
-            # arrow::write_feather(samples_dt, paste0(out_path_base, ".feather"))
-            p1 <- paste0(out_path_base, "_summary.feather")
-            t0 <- tic()
-            arrow::write_feather(samples_summary, p1)
-            t1 <- tic()
-            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
             p2 <- paste0(out_path_base, "_paths.feather")
             t0 <- tic()
             arrow::write_feather(paths_summary, p2)
             t1 <- tic()
             sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
-            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1, p2)
-            vcat(prefix, "Wrote posterior samples summary to: ", p1)
+            sampling_profile$export_paths <- c(sampling_profile$export_paths, p2)
             vcat(prefix, "Wrote posterior paths summary to: ", p2)
         } else if (fmt == "csv") {
-            # Full long-format samples export intentionally disabled to reduce I/O and runtime.
-            # data.table::fwrite(samples_dt, paste0(out_path_base, ".csv"))
-            p1 <- paste0(out_path_base, "_summary.csv")
-            t0 <- tic()
-            data.table::fwrite(samples_summary, p1)
-            t1 <- tic()
-            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
             p2 <- paste0(out_path_base, "_paths.csv")
             t0 <- tic()
             data.table::fwrite(paths_summary, p2)
             t1 <- tic()
             sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
-            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1, p2)
-            vcat(prefix, "Wrote posterior samples summary to: ", p1)
+            sampling_profile$export_paths <- c(sampling_profile$export_paths, p2)
             vcat(prefix, "Wrote posterior paths summary to: ", p2)
         } else {
-            # Save only aggregated results (no full long-format samples)
-            p1 <- paste0(out_path_base, ".rds")
+            # rds variant: save only paths table
+            p1 <- paste0(out_path_base, "_paths.rds")
             t0 <- tic()
-            saveRDS(list(summary = samples_summary, paths = paths_summary), file = p1)
+            saveRDS(paths_summary, file = p1)
             t1 <- tic()
             sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
             sampling_profile$export_paths <- c(sampling_profile$export_paths, p1)
-            vcat(prefix, "Wrote posterior samples summary to: ", p1)
+            vcat(prefix, "Wrote posterior paths summary to: ", p1)
         }
-
         sampling_profile$export_total_size_bytes <- if (length(sampling_profile$export_paths) > 0) sum(file.size(sampling_profile$export_paths)) else 0L
         sampling_profile$finished <- Sys.time()
 
