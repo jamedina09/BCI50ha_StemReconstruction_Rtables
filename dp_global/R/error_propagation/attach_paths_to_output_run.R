@@ -11,6 +11,7 @@
 
 rm(list = ls())
 
+library(ggplot2)
 library(data.table)
 source("dp_global/R/error_propagation/process_posteriors.R")
 
@@ -42,8 +43,8 @@ check_inputs <- function(paths_file, out_file) {
 # `source()`.
 
 # Configuration defaults (edit interactively as needed)
-default_paths <- "./dp_global/output/20260221_211647_unknown_T0_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/posteriors/tag_1_posterior_samples__paths.csv"
-default_out <- "./dp_global/output/20260221_211647_unknown_T0_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/stem_reconstruction_dp_global_rcpp.csv"
+default_paths <- "./dp_global/output/20260221_222111_unknown_T0_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/posteriors/tag_2_posterior_samples__paths.csv"
+default_out <- "./dp_global/output/20260221_222111_unknown_T0_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/stem_reconstruction_dp_global_rcpp.csv"
 
 # Main interactive runner (explicit arguments, easy to call from R)
 run_attach_and_expand <- function(paths_file = default_paths,
@@ -84,6 +85,38 @@ run_attach_and_expand <- function(paths_file = default_paths,
 # Run automatically when sourced interactively with defaults
 if (interactive()) {
     vcat("Interactive: running `run_attach_and_expand()` with defaults (no expand_draws)")
-    run_attach_and_expand()
+    run_attach_and_expand(attach_n = 50L)
 }
 
+joined_paths <- as.data.table(read.csv("./dp_global/output/20260221_222111_unknown_T0_DP_MB_ME_g7p5_sm0p5_kg0_ks0_rcpp/stem_reconstruction_dp_global_rcpp_with_paths.csv"))
+
+cols <- grep("^DP_ReconstructedStemID_", names(joined_paths), value = TRUE)
+
+keep_cols <- c(
+    "CensusID",
+    "DBH",
+    "TrueStemID",
+    "ReconstructedStemID",
+    "ReconstructionMethod",
+    cols
+)
+
+joined_path_2 <- joined_paths[Tag == "2", ..keep_cols]
+
+joined_path_2[
+    ReconstructionMethod == "given",
+    (cols) := lapply(.SD, data.table::fcoalesce, TrueStemID),
+    .SDcols = cols
+]
+
+joined_path_2_long <- melt(
+    joined_path_2,
+    id.vars = c("CensusID", "DBH"),
+    measure.vars = c("ReconstructedStemID", cols),
+    variable.name = "Method",
+    value.name = "StemID"
+)
+
+ggplot(joined_path_2_long, aes(x = CensusID, y = DBH, group = interaction(StemID, Method))) +
+    geom_line() +
+    theme_minimal()
