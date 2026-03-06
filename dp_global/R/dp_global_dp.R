@@ -687,6 +687,27 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     K_from_counts <- as.integer(if (length(obs_counts) > 0L) obs_counts[1L] + births_needed else 0L)
     K_base <- max(length(anchor_ids), max_obs, K_from_counts)
 
+    # ---- Resprout barrier: increase K for resprout observations ----
+    # Each resprout (R|RP|RF|RT|QR code with non-NA DBH) forces the track into
+    # phase 0 at the preceding census, effectively creating a new identity that
+    # needs its own track slot.  Add one extra track per resprout observation.
+    resprout_regex <- "\\b(R|RP|RF|RT|QR)\\b"
+    n_resprout_total <- 0L
+    if ("ListOfTSM" %in% names(tree_data)) {
+        for (cc in census_range) {
+            obs_tmp <- tree_data[CensusID == cc & !is.na(DBH)]
+            if (nrow(obs_tmp) > 0L && "ListOfTSM" %in% names(obs_tmp)) {
+                n_resprout_total <- n_resprout_total + sum(
+                    !is.na(obs_tmp$ListOfTSM) & grepl(resprout_regex, obs_tmp$ListOfTSM)
+                )
+            }
+        }
+    }
+    if (n_resprout_total > 0L) {
+        K_base <- K_base + n_resprout_total
+        vcat(prefix, "Resprout barrier: adding ", n_resprout_total, " extra track(s) for resprout observations")
+    }
+
     slack_tracks <- suppressWarnings(as.integer(slack_tracks))
     if (!is.finite(slack_tracks) || is.na(slack_tracks) || slack_tracks < 0L) {
         slack_tracks <- 0L
@@ -739,6 +760,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     # Pre-enumerate assignment states (injective obs->track) for each census in census_range
     obs_dbh <- vector("list", n_census)
+    is_resprout_obs <- vector("list", n_census)
     state_mats <- vector("list", n_census)
     state_keys <- vector("list", n_census)
     for (p in seq_len(n_census)) {
@@ -746,6 +768,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         obs <- tree_data[CensusID == cc & !is.na(DBH)]
         obs_dbh[[p]] <- obs$DBH
         n_obs <- length(obs_dbh[[p]])
+
+        # Resprout flags for observations at this census
+        if (n_obs > 0L && "ListOfTSM" %in% names(obs)) {
+            is_resprout_obs[[p]] <- !is.na(obs$ListOfTSM) & grepl(resprout_regex, obs$ListOfTSM)
+        } else {
+            is_resprout_obs[[p]] <- rep(FALSE, n_obs)
+        }
         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
 
         if (is.null(mat)) {
@@ -803,7 +832,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         phase_vec <- decode_phase_key(p)
         list(assign = assign_vec, phase = phase_vec)
     }
-    derive_phase_prev <- function(phase_tp1, tdbh_t, tdbh_tp1) {
+    derive_phase_prev <- function(phase_tp1, tdbh_t, tdbh_tp1, resprout_tp1 = NULL) {
         K_loc <- length(tdbh_t)
         if (length(phase_tp1) != K_loc) {
             return(NULL)
@@ -820,7 +849,15 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         phase_t <- integer(K_loc)
         for (k in seq_len(K_loc)) {
             if (alive_tp1[k]) {
-                phase_t[k] <- if (alive_t[k]) 1L else 0L
+                if (!is.null(resprout_tp1) && isTRUE(resprout_tp1[k])) {
+                    # Resprout barrier: track k is a resprout at t+1.
+                    # The stem identity starts at t+1, so at t the track
+                    # must be phase 0 (unborn) with no observation.
+                    if (alive_t[k]) return(NULL)
+                    phase_t[k] <- 0L
+                } else {
+                    phase_t[k] <- if (alive_t[k]) 1L else 0L
+                }
             } else {
                 if (phase_tp1[k] == 0L) {
                     if (alive_t[k]) {
@@ -1022,6 +1059,23 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             tdbh1_by_next[[j]] <- track_dbh_by_state[[p + 1L]][[next_assign_row_idx[[j]]]]
         }
 
+        # Pre-compute resprout mask for each next state at census p+1.
+        # resprout_mask_by_next[[j]] is a logical(K) vector: TRUE for tracks
+        # that carry a resprout observation at census p+1 in state j.
+        resprout_mask_by_next <- NULL
+        if (any(is_resprout_obs[[p + 1L]])) {
+            resprout_flags_tp1 <- is_resprout_obs[[p + 1L]]
+            resprout_mask_by_next <- vector("list", n_next)
+            for (j in seq_len(n_next)) {
+                mask <- logical(K)
+                assign_tp1 <- next_assign_list[[j]]
+                for (q in seq_along(assign_tp1)) {
+                    if (resprout_flags_tp1[q]) mask[assign_tp1[q]] <- TRUE
+                }
+                resprout_mask_by_next[[j]] <- mask
+            }
+        }
+
         # Preallocate edge arrays (worst-case: every (assignment_state, next_full_state) is feasible)
         upper_edges <- n_states_cc * n_next
         from_idx <- integer(upper_edges)
@@ -1080,7 +1134,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 phase_tp1 <- phase_tp1_by_next[[j]]
                 if (length(phase_tp1) != K) next
                 tdbh1 <- tdbh1_by_next[[j]]
-                phase_t <- derive_phase_prev(phase_tp1, tdbh0, tdbh1)
+                resprout_mask <- if (!is.null(resprout_mask_by_next)) resprout_mask_by_next[[j]] else NULL
+                phase_t <- derive_phase_prev(phase_tp1, tdbh0, tdbh1, resprout_tp1 = resprout_mask)
                 if (is.null(phase_t)) next
 
                 # Conservative hard-pruning: cheap vectorized checks before expensive cost evaluation
