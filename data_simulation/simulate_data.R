@@ -1138,6 +1138,102 @@ tag_76 <- data.table(
     ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, "R", "R", NA_character_, NA_character_, NA_character_, NA_character_)
 )
 
+#    Species    Tag OriginalStemID TrueStemID CensusID  ExactDate   DBH ListOfTSM
+#     <char> <char>          <int>      <int>    <int>     <Date> <num>    <char>
+# 1:     sp1 159367         138454         NA        1 1982-03-23   1.5      <NA>
+# 2:     sp1 159367         138454         NA        2 1985-04-20   1.0      <NA>
+# 3:     sp1 159367         138454         NA        3 1990-09-20   1.6      <NA>
+# 4:     sp1 159367         138454         NA        4 1995-05-30   1.9      <NA>
+# 5:     sp1 159367         138454         NA        5 2000-05-17   2.0      <NA>
+# 6:     sp1 159367         138454         NA        6 2005-06-08   2.0      <NA>
+# 7:     sp1 159367         138454     138454        7 2010-06-03   2.3      <NA>
+# 8:     sp1 159367         138454     138454        8 2015-06-30   2.3      <NA>
+# 9:     sp1 159367         138454     138454        9 2022-09-28    NA         R
+
+tag_77 <- data.table(
+    Species = "sp1",
+    Tag = 159367L,
+    OriginalStemID = c(138454, 138454, 138454, 138454, 138454, 138454, 138454, 138454, 138454),
+    TrueStemID = c(NA, NA, NA, NA, NA, NA, 138454, 138454, 138454),
+    CensusID = c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L),
+    ExactDate = as.Date(c(
+        "1982-03-23", "1985-04-20", "1990-09-20", "1995-05-30", "2000-05-17", "2005-06-08", "2010-06-03", "2015-06-30", "2022-09-28"
+    )),
+    DBH = c(1.5, 1.0, 1.6, 1.9, 2.0, 2.0, 2.3, 2.3, NA_real_),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, "R")
+)
+
+# r$> tree_167848
+#    Species    Tag OriginalStemID TrueStemID CensusID  ExactDate   DBH ListOfTSM
+#     <char> <char>          <int>      <int>    <int>     <Date> <num>    <char>
+# 1:     sp1 167848         146104         NA        1 1982-04-08   1.0      <NA>
+# 2:     sp1 167848         146104         NA        2 1985-04-27   1.0      <NA>
+# 3:     sp1 167848         146104         NA        3 1990-09-08   1.5      <NA>
+# 4:     sp1 167848         146104         NA        4 1995-04-12   1.5      <NA>
+# 5:     sp1 167848         146104         NA        5 2000-04-13   1.5      <NA>
+# 6:     sp1 167848         146104         NA        6 2005-05-17   1.6      <NA>
+# 7:     sp1 167848         146104     146104        7 2010-05-18   1.6      <NA>
+# 8:     sp1 167848         146104     146104        8 2015-07-15   1.7      <NA>
+# 9:     sp1 167848         146104     146104        9 2022-09-27    NA         R
+
+tag_78 <- data.table(
+    Species = "sp1",
+    Tag = 167848L,
+    OriginalStemID = c(146104, 146104, 146104, 146104, 146104, 146104, 146104, 146104, 146104),
+    TrueStemID = c(NA, NA, NA, NA, NA, NA, 146104, 146104, 146104),
+    CensusID = c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L),
+    ExactDate = as.Date(c(
+        "1982-04-08", "1985-04-27", "1990-09-08", "1995-04-12", "2000-04-13", "2005-05-17", "2010-05-18", "2015-07-15", "2022-09-27"
+    )),
+    DBH = c(1.0, 1.0, 1.5, 1.5, 1.5, 1.6, 1.6, 1.7, NA_real_),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, "R")
+)
+
+#    Species    Tag OriginalStemID TrueStemID CensusID  ExactDate   DBH ListOfTSM
+#     <char> <char>          <int>      <int>    <int>     <Date> <num>    <char>
+# 1:     sp1 170662         147963         NA        1 1982-02-25   1.0      <NA>
+# 2:     sp1 170662         147963         NA        2 1985-04-04   1.5      <NA>
+# 3:     sp1 170662         147963         NA        3 1990-06-02   2.0      <NA>
+# 4:     sp1 170662         147963         NA        4 1995-03-23   2.4      <NA>
+# 5:     sp1 170662         147963         NA        5 2000-03-14   2.5      <NA>
+# 6:     sp1 170662         147963         NA        6 2005-03-22   2.5      <NA>
+# 7:     sp1 170662         147963     147963        7 2010-03-23   2.5      <NA>
+# 8:     sp1 170662         147963     147963        8 2015-05-25    NA         R
+# 9:     sp1 170662         147963     147963        9 2023-04-19    NA      <NA>
+
+tag_79 <- data.table(
+    Species = "sp1",
+    Tag = 170662L,
+    OriginalStemID = c(147963, 147963, 147963, 147963, 147963, 147963, 147963, 147963, 147963),
+    TrueStemID = c(NA, NA, NA, NA, NA, NA, 147963, 147963, 147963),
+    CensusID = c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L),
+    ExactDate = as.Date(c(
+        "1982-02-25", "1985-04-04", "1990-06-02", "1995-03-23", "2000-03-14", "2005-03-22", "2010-03-23", "2015-05-25", "2023-04-19"
+    )),
+    DBH = c(1.0, 1.5, 2.0, 2.4, 2.5, 2.5, 2.5, NA_real_, NA_real_),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, "R", NA_character_)
+)
+
+#    Species    Tag OriginalStemID TrueStemID CensusID  ExactDate   DBH ListOfTSM
+#     <char> <char>          <int>      <int>    <int>     <Date> <num>    <char>
+# 1:     sp1 106452          91320         NA        1 1981-09-30   1.0      <NA>
+# 2:     sp1 106452          91320         NA        2 1985-05-21   1.5      <NA>
+# 3:     sp1 106452          91320         NA        3 1990-08-22   1.8      <NA>
+# 4:     sp1 106452          91320         NA        4 1995-05-30    NA      <NA>
+
+tag_80 <- data.table(
+    Species = "sp1",
+    Tag = 106452L,
+    OriginalStemID = c(91320, 91320, 91320, 91320),
+    TrueStemID = c(NA, NA, NA, NA),
+    CensusID = c(1L, 2L, 3L, 4L),
+    ExactDate = as.Date(c(
+        "1981-09-30", "1985-05-21", "1990-08-22", "1995-05-30"
+    )),
+    DBH = c(1.0, 1.5, 1.8, NA_real_),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_)
+)
+
 dt_complete_extra <- dt_complete_extra[order(Tag, CensusID)]
 dt_complete_extra <- rbindlist(list(
     dt_complete_extra,
@@ -1150,7 +1246,11 @@ dt_complete_extra <- rbindlist(list(
     tag_73,
     tag_74,
     tag_75,
-    tag_76
+    tag_76, 
+    tag_77,
+    tag_78,
+    tag_79,
+    tag_80
 ), use.names = TRUE, fill = TRUE)
 
 # Include additional information about growth forms, trees, vs figs
