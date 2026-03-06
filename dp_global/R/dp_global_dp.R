@@ -192,6 +192,148 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!("ReconstructionMethod" %in% names(tree_data))) tree_data[, ReconstructionMethod := NA_character_]
     if (!("ConstraintViolation" %in% names(tree_data))) tree_data[, ConstraintViolation := as.logical(rep(NA, .N))]
 
+    # ---- MF (Missing From Field) pre-processing ----
+    # Detect MF episodes and stash affected rows before the DP runs.
+    # MF rows (is.na(DBH) & "MF" in ListOfTSM) represent stems confirmed alive
+    # but unmeasured.  Removing them prevents the DP from interpreting the gap
+    # as a spurious death-recruitment pair.
+    #
+    # Forward propagation is census-level (no per-stem identifier required):
+    #   1. An MF anchor row: is.na(DBH) & ListOfTSM contains "MF".
+    #   2. Starting from each census with at least one MF anchor row, check
+    #      subsequent consecutive censuses.  If ALL rows at the next census
+    #      have is.na(DBH) (regardless of ListOfTSM), the entire census is
+    #      treated as a continuation of the MF episode and all its rows are
+    #      stashed.  This continues until a census with at least one non-NA
+    #      DBH is reached — that census is retained normally.
+    mf_stash <- NULL
+    has_mf_stash <- FALSE
+
+    if ("ListOfTSM" %in% names(tree_data)) {
+        is_mf_anchor <- is.na(tree_data$DBH) &
+            !is.na(tree_data$ListOfTSM) &
+            grepl("\\bMF\\b", tree_data$ListOfTSM)
+
+        if (any(is_mf_anchor)) {
+            episode_idx <- which(is_mf_anchor)
+
+            # Census-level forward propagation: from each MF-anchor census,
+            # extend through subsequent consecutive censuses where ALL rows
+            # have NA DBH (stem still missing, regardless of ListOfTSM).
+            all_censuses_sorted <- sort(unique(tree_data$CensusID))
+            mf_anchor_censuses <- sort(unique(tree_data$CensusID[is_mf_anchor]))
+
+            for (mf_c in mf_anchor_censuses) {
+                later <- all_censuses_sorted[all_censuses_sorted > mf_c]
+                for (next_c in later) {
+                    rows_at_next <- which(tree_data$CensusID == next_c)
+                    if (length(rows_at_next) == 0L) break
+                    if (all(is.na(tree_data$DBH[rows_at_next]))) {
+                        # Entire census is all-NA DBH → continuation of MF episode
+                        episode_idx <- c(episode_idx, rows_at_next)
+                    } else {
+                        # Census has at least one measured DBH → episode ends
+                        break
+                    }
+                }
+            }
+            episode_idx <- sort(unique(episode_idx))
+
+            mf_stash <- data.table::copy(tree_data[episode_idx])
+            has_mf_stash <- TRUE
+            tree_data <- tree_data[-episode_idx]
+            vcat(prefix, "MF pre-processing: stashed ", nrow(mf_stash), " MF episode row(s)")
+
+            # Identify censuses that became fully empty after MF removal
+            mf_emptied_censuses <- integer(0)
+            for (cc in unique(mf_stash$CensusID)) {
+                if (nrow(tree_data[CensusID == cc & !is.na(DBH)]) == 0L) {
+                    mf_emptied_censuses <- c(mf_emptied_censuses, as.integer(cc))
+                }
+            }
+            if (length(mf_emptied_censuses) > 0L) {
+                vcat(prefix, "MF pre-processing: censuses fully emptied by MF removal: ",
+                     paste(mf_emptied_censuses, collapse = ","))
+            }
+        }
+    }
+
+    # Helper: re-insert stashed MF episode rows after the DP.
+    # Attempts to infer ReconstructedStemID by finding tracks that are alive
+    # in the flanking censuses but not observed at the MF census.  If exactly
+    # one such candidate exists the ID is assigned; otherwise it stays NA.
+    reinsert_mf_rows <- function(out, stash) {
+        stash <- ensure_posterior_columns(stash)
+        if (!("ReconstructionMethod" %in% names(stash))) stash[, ReconstructionMethod := NA_character_]
+        if (!("ReconstructedStemID" %in% names(stash))) stash[, ReconstructedStemID := NA_integer_]
+        if (!("ConstraintViolation" %in% names(stash))) stash[, ConstraintViolation := as.logical(NA)]
+        stash[, ReconstructionMethod := "dp_mf_inferred"]
+
+        # Best-effort matching: for each MF row at census C, look at tracks
+        # assigned in the nearest census before C and the nearest census after C.
+        # The candidate is the set of tracks present in both flanking sets BUT
+        # not assigned to any observation at census C in `out`.
+        # Each MF row at a given census consumes one candidate (removed from the
+        # pool for subsequent MF rows at the same census) so that when there are
+        # N MF rows and exactly N missing tracks the assignment is unambiguous.
+        out_assigned <- out[!is.na(ReconstructedStemID)]
+        dp_censuses <- sort(unique(out_assigned$CensusID))
+
+        for (mf_c in sort(unique(stash$CensusID))) {
+            mf_rows <- which(stash$CensusID == mf_c)
+            if (length(mf_rows) == 0L) next
+
+            # IDs assigned at census C in out (observed stems that were not MF)
+            ids_at_c <- unique(out_assigned[CensusID == mf_c, ReconstructedStemID])
+
+            # Nearest census with assignments before and after MF census
+            before_c <- dp_censuses[dp_censuses < mf_c]
+            after_c  <- dp_censuses[dp_censuses > mf_c]
+            ids_before <- if (length(before_c) > 0L) {
+                unique(out_assigned[CensusID == max(before_c), ReconstructedStemID])
+            } else {
+                integer(0)
+            }
+            ids_after <- if (length(after_c) > 0L) {
+                unique(out_assigned[CensusID == min(after_c), ReconstructedStemID])
+            } else {
+                integer(0)
+            }
+
+            # Candidate tracks: present in at least one flanking census but
+            # not assigned at the MF census itself.
+            if (length(ids_before) > 0L && length(ids_after) > 0L) {
+                flanking <- intersect(ids_before, ids_after)
+            } else if (length(ids_before) > 0L) {
+                flanking <- ids_before
+            } else {
+                flanking <- ids_after
+            }
+            candidates <- setdiff(flanking, ids_at_c)
+
+            # Assign one candidate per MF row (consuming from pool)
+            for (ri in mf_rows) {
+                if (length(candidates) == 1L) {
+                    data.table::set(stash, ri, "ReconstructedStemID",
+                        as.integer(candidates[[1L]]))
+                    candidates <- candidates[-1L]
+                } else if (length(candidates) > 1L) {
+                    # Multiple candidates — cannot disambiguate; leave NA
+                }
+            }
+        }
+
+        # Ensure DP metadata columns exist on stash
+        for (col in c("DP_KUsed", "DP_MaxStatesPerCensus", "DP_MaxStatesCensusID")) {
+            if (!(col %in% names(stash))) stash[, (col) := NA_integer_]
+        }
+        if (!("DP_FallbackReason" %in% names(stash))) stash[, DP_FallbackReason := NA_character_]
+
+        out <- data.table::rbindlist(list(out, stash), use.names = TRUE, fill = TRUE)
+        if ("obs_row_id" %in% names(out)) data.table::setorder(out, obs_row_id)
+        out
+    }
+
     # Helper: mark post-anchor rows as 'given' when appropriate and normalize post rows
     propagate_post_anchor_given <- function(post, used_ids = NULL) {
         # used_ids: NULL => treat any TrueStemID+DBH as given (no DP performed)
@@ -244,6 +386,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 out <- data.table::rbindlist(list(out, post), use.names = TRUE, fill = TRUE)
             }
         }
+        # Re-insert stashed MF episode rows (if any)
+        if (isTRUE(has_mf_stash) && !is.null(mf_stash) && nrow(mf_stash) > 0L) {
+            out <- reinsert_mf_rows(out, mf_stash)
+        }
         # Attach prune stats if available (some early returns may occur before prune_stats is initialized)
         attr(out, "DP_PruneInfo") <- if (exists("prune_stats")) prune_stats else list()
         out
@@ -277,6 +423,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             out <- data.table::copy(original_tree_data)
             # Use helper to normalize post-anchor rows: no DP performed, so treat observed TrueStemID as given
             out <- propagate_post_anchor_given(out, used_ids = NULL)
+            if (isTRUE(has_mf_stash) && !is.null(mf_stash) && nrow(mf_stash) > 0L) {
+                out <- reinsert_mf_rows(out, mf_stash)
+            }
             attr(out, "DP_PruneInfo") <- prune_stats
             return(out)
         }
@@ -323,6 +472,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         return(finalize_out(out))
     }
     census_range <- seq.int(from = first_obs_census, to = anchor_start)
+    # Exclude censuses fully emptied by MF removal so the DP bridges them
+    if (isTRUE(has_mf_stash) && length(mf_emptied_censuses) > 0L) {
+        census_range <- census_range[!census_range %in% mf_emptied_censuses]
+    }
     n_census <- length(census_range)
     vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
     obs_counts <- vapply(
@@ -390,6 +543,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vcat(prefix, "Requested anchor census=", anchor_start, " had no DBH/TrueStemID; using earlier anchor census=", new_anchor)
             anchor_start <- new_anchor
             census_range <- seq.int(from = first_obs_census, to = anchor_start)
+            # Exclude censuses fully emptied by MF removal
+            if (isTRUE(has_mf_stash) && length(mf_emptied_censuses) > 0L) {
+                census_range <- census_range[!census_range %in% mf_emptied_censuses]
+            }
             n_census <- length(census_range)
             vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
             obs_counts <- vapply(
@@ -420,6 +577,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
                 # Recompute census_range and obs_counts now that anchor_start changed
                 census_range <- seq.int(from = first_obs_census, to = anchor_start)
+                # Exclude censuses fully emptied by MF removal
+                if (isTRUE(has_mf_stash) && length(mf_emptied_censuses) > 0L) {
+                    census_range <- census_range[!census_range %in% mf_emptied_censuses]
+                }
                 n_census <- length(census_range)
                 vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
                 obs_counts <- vapply(
@@ -1505,6 +1666,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         sampling_profile$transition_cost_calls <- compute_profile$transition_cost_calls
         sampling_profile$transition_cost_avg_seconds <- compute_profile$transition_cost_avg_seconds
         attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
+    }
+
+    # Re-insert stashed MF episode rows (if any)
+    if (isTRUE(has_mf_stash) && !is.null(mf_stash) && nrow(mf_stash) > 0L) {
+        tree_data <- reinsert_mf_rows(tree_data, mf_stash)
     }
 
     vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
