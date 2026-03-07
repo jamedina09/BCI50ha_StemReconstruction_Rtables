@@ -8,7 +8,7 @@
 # Usage:
 #   Rscript dp_global/scripts/run_dp_dataset.R
 #   Rscript dp_global/scripts/run_dp_dataset.R --INPUT_FILE=path/to/data.csv
-#   Rscript dp_global/scripts/run_dp_dataset.R --WHICH_TAG=159367
+#   Rscript dp_global/dev/run_dp_dataset.R --WHICH_TAG=176129
 
 ############################################################
 ### 0) Housekeeping
@@ -54,7 +54,7 @@ DP_SLACK_TRACKS    <- 1L
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
 DP_POSTERIOR_TOP_K <- 2L
-USE_MEASUREMENT_ERROR <- TRUE
+USE_MEASUREMENT_ERROR <- FALSE
 ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 DP_VERBOSE         <- TRUE
 
