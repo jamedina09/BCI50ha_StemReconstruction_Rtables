@@ -437,7 +437,7 @@ estimate_bio_pars <- function(
     # - sigma0_hat is constrained to be positive
     # - sigma1_hat is constrained to be non-negative
     fit_sd <- lm(sd_proc_hat ~ d0_all)
-    sigma0_hat <- max(coef(fit_sd)[1], 1e-4)
+    sigma0_hat <- max(coef(fit_sd)[1], 0.01)
     sigma1_hat <- max(coef(fit_sd)[2], 0)
 
     # =========================================================================
