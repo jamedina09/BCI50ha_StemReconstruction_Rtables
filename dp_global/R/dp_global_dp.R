@@ -198,17 +198,23 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # but unmeasured.  Removing them prevents the DP from interpreting the gap
     # as a spurious death-recruitment pair.
     #
-    # Forward propagation is census-level (no per-stem identifier required):
-    #   1. An MF anchor row: is.na(DBH) & ListOfTSM contains "MF".
-    #   2. Starting from each census with at least one MF anchor row, check
-    #      subsequent consecutive censuses.  If ALL rows at the next census
-    #      have is.na(DBH) (regardless of ListOfTSM), the entire census is
-    #      treated as a continuation of the MF episode and all its rows are
-    #      stashed.  This continues until a census with at least one non-NA
-    #      DBH is reached — that census is retained normally.
+    # Two detection modes (both census-level, no per-stem identifier required):
+    #
+    #   A. Explicit MF: rows where is.na(DBH) & ListOfTSM contains "MF".
+    #      Forward propagation extends through subsequent consecutive censuses
+    #      where ALL rows have is.na(DBH).
+    #
+    #   B. Implicit MF: censuses where ALL rows have is.na(DBH) (regardless of
+    #      ListOfTSM) but the tag has at least one non-NA DBH in both an earlier
+    #      and a later census.  These are sandwiched gap censuses that indicate
+    #      the stem was alive but unmeasured, even without the MF code.
     mf_stash <- NULL
     has_mf_stash <- FALSE
 
+    # Collect row indices to stash (union of explicit and implicit MF)
+    episode_idx <- integer(0)
+
+    # --- A. Explicit MF detection (ListOfTSM contains "MF") ---
     if ("ListOfTSM" %in% names(tree_data)) {
         is_mf_anchor <- is.na(tree_data$DBH) &
             !is.na(tree_data$ListOfTSM) &
@@ -237,24 +243,52 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     }
                 }
             }
-            episode_idx <- sort(unique(episode_idx))
+        }
+    }
 
-            mf_stash <- data.table::copy(tree_data[episode_idx])
-            has_mf_stash <- TRUE
-            tree_data <- tree_data[-episode_idx]
-            vcat(prefix, "MF pre-processing: stashed ", nrow(mf_stash), " MF episode row(s)")
+    # --- B. Implicit MF detection (sandwiched all-NA censuses) ---
+    # A census is implicitly missing if:
+    #   1. ALL rows at that census have is.na(DBH)
+    #   2. There exists at least one earlier census with non-NA DBH
+    #   3. There exists at least one later census with non-NA DBH
+    all_censuses_sorted <- sort(unique(tree_data$CensusID))
+    censuses_with_dbh <- sort(unique(tree_data$CensusID[!is.na(tree_data$DBH)]))
 
-            # Identify censuses that became fully empty after MF removal
-            mf_emptied_censuses <- integer(0)
-            for (cc in unique(mf_stash$CensusID)) {
-                if (nrow(tree_data[CensusID == cc & !is.na(DBH)]) == 0L) {
-                    mf_emptied_censuses <- c(mf_emptied_censuses, as.integer(cc))
-                }
+    if (length(censuses_with_dbh) >= 2L) {
+        first_measured <- min(censuses_with_dbh)
+        last_measured  <- max(censuses_with_dbh)
+
+        for (cc in all_censuses_sorted) {
+            # Only consider censuses strictly between the first and last measured
+            if (cc <= first_measured || cc >= last_measured) next
+            rows_at_cc <- which(tree_data$CensusID == cc)
+            if (length(rows_at_cc) == 0L) next
+            if (all(is.na(tree_data$DBH[rows_at_cc]))) {
+                # Sandwiched all-NA census → implicit MF
+                episode_idx <- c(episode_idx, rows_at_cc)
             }
-            if (length(mf_emptied_censuses) > 0L) {
-                vcat(prefix, "MF pre-processing: censuses fully emptied by MF removal: ",
-                     paste(mf_emptied_censuses, collapse = ","))
+        }
+    }
+
+    # --- Stash collected MF rows (explicit + implicit) ---
+    episode_idx <- sort(unique(episode_idx))
+
+    if (length(episode_idx) > 0L) {
+        mf_stash <- data.table::copy(tree_data[episode_idx])
+        has_mf_stash <- TRUE
+        tree_data <- tree_data[-episode_idx]
+        vcat(prefix, "MF pre-processing: stashed ", nrow(mf_stash), " MF episode row(s) (explicit + implicit)")
+
+        # Identify censuses that became fully empty after MF removal
+        mf_emptied_censuses <- integer(0)
+        for (cc in unique(mf_stash$CensusID)) {
+            if (nrow(tree_data[CensusID == cc & !is.na(DBH)]) == 0L) {
+                mf_emptied_censuses <- c(mf_emptied_censuses, as.integer(cc))
             }
+        }
+        if (length(mf_emptied_censuses) > 0L) {
+            vcat(prefix, "MF pre-processing: censuses fully emptied by MF removal: ",
+                 paste(mf_emptied_censuses, collapse = ","))
         }
     }
 
