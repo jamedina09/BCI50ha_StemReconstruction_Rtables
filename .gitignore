@@ -15,3 +15,5 @@ tests/
 
 # Editor
 .vscode/
+
+bci_data/
