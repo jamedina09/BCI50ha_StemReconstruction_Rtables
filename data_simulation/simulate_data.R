@@ -1277,6 +1277,105 @@ tag_82 <- data.table(
     ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_)
 )
 
+tag_83 <- data.table(
+    Species = "sp1",
+    Tag = 83L,
+    OriginalStemID = c(318026, 318026, 318026, 318026, 318026, 318026),
+    TrueStemID = c(318026, 318026, 318026, 318026, 318026, 318026),
+    CensusID = c(4L, 5L, 6L, 7L, 8L, 9L),
+    ExactDate = as.Date(c(
+        "1995-06-14", "2000-06-01", "2005-06-30", "2010-05-25", "2015-09-01", "2022-12-21"
+    )),
+    DBH = c(1.7, 2.3, 3.2, 4.6, 6.0, 8.0),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_)
+)
+
+tag_84 <- data.table(
+    Species = "sp1",
+    Tag = 84L,
+    OriginalStemID = c(318026, NA, 318026, 318026, 318026, 318026),
+    TrueStemID = c(318026, NA, 318026, 318026, 318026, 318026),
+    CensusID = c(4L, 5L, 6L, 7L, 8L, 9L),
+    ExactDate = as.Date(c(
+        "1995-06-14", "2000-06-01", "2005-06-30", "2010-05-25", "2015-09-01", "2022-12-21"
+    )),
+    DBH = c(1.7, 2.3, 3.2, 4.6, 6.0, 8.0),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_)
+)
+
+tag_85 <- data.table(
+    Species = "sp1",
+    Tag = 85L,
+    OriginalStemID = c(318026, NA, 318026, NA, 318026, 318026),
+    TrueStemID = c(318026, NA, 318026, NA, 318026, 318026),
+    CensusID = c(4L, 5L, 6L, 7L, 8L, 9L),
+    ExactDate = as.Date(c(
+        "1995-06-14", "2000-06-01", "2005-06-30", "2010-05-25", "2015-09-01", "2022-12-21"
+    )),
+    DBH = c(1.7, 2.3, 3.2, 4.6, 6.0, 8.0),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_)
+)
+
+#     species    Tag StemID TrueStemID CensusID  ExactDate   DBH ListOfTSM
+#      <char> <char>  <int>      <int>    <int>     <IDat> <num>    <char>
+#  1:  alsebl 162975 141986     141986        1 1982-03-03   3.0      <NA>
+#  2:  alsebl 162975 141986     141986        2 1985-04-04   3.0      <NA>
+#  3:  alsebl 162975 250132     250132        2 1985-04-04   1.0      <NA>
+#  4:  alsebl 162975 141986     141986        3 1990-08-24   3.8      <NA>
+#  5:  alsebl 162975 250132     250132        3 1990-08-24   1.1      <NA>
+#  6:  alsebl 162975 141986     141986        4 1995-06-16   3.5      <NA>
+#  7:  alsebl 162975 250132     250132        4 1995-06-16   1.1      <NA>
+#  8:  alsebl 162975 141986     141986        5 2000-04-05   3.7      <NA>
+#  9:  alsebl 162975 250132     250132        5 2000-04-05   1.1      <NA>
+# 10:  alsebl 162975 141986     141986        6 2005-05-04   3.8      <NA>
+# 11:  alsebl 162975 250132     250132        6 2005-05-04   1.2         L
+# 12:  alsebl 162975 141986     141986        7 2010-05-06   4.6      <NA>
+# 13:  alsebl 162975 250132     250132        7 2010-05-06   1.2      <NA>
+# 14:  alsebl 162975 141986     141986        8 2015-06-02   4.6         M
+# 15:  alsebl 162975 250132     250132        8 2015-06-02   1.3      <NA>
+# 16:  alsebl 162975 141986     141986        9 2022-09-27   4.6      <NA>
+# 17:  alsebl 162975 250132     250132        9 2022-09-27   1.5      <NA>
+
+tag_86 <- data.table(
+    Species = "sp1",
+    Tag = 86L,
+    OriginalStemID = c(141986, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132),
+    TrueStemID = c(141986, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132), 
+    CensusID = c(1L, 2L, 2L, 3L, 3L, 4L, 4L, 5L, 5L, 6L, 6L, 7L, 7L, 8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c(
+        "1982-03-03", "1985-04-04", "1985-04-04", "1990-08-24", "1990-08-24", "1995-06-16", "1995-06-16", "2000-04-05", "2000-04-05", "2005-05-04", "2005-05-04", "2010-05-06", "2010-05-06", "2015-06-02", "2015-06-02", "2022-09-27", "2022-09-27"
+    )),
+    DBH = c(3.0, 3.0, 1.0, 3.8, 1.1, 3.5, 1.1, 3.7, 1.1, 3.8, 1.2, 4.6, 1.2, 4.6, 1.3, 4.6, 1.5),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, "L", NA_character_, NA_character_, "M", NA_character_, NA_character_, NA_character_)
+)
+
+tag_87 <- data.table(
+    Species = "sp1",
+    Tag = 87L,
+    OriginalStemID = c(141986, 141986, 250132, 141986, NA, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132),
+    TrueStemID = c(141986, 141986, 250132, 141986, NA, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132, 141986, 250132),
+    CensusID = c(1L, 2L, 2L, 3L, 3L, 4L, 4L, 5L, 5L, 6L, 6L, 7L, 7L, 8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c(
+        "1982-03-03", "1985-04-04", "1985-04-04", "1990-08-24", "1990-08-24", "1995-06-16", "1995-06-16", "2000-04-05", "2000-04-05", "2005-05-04", "2005-05-04", "2010-05-06", "2010-05-06", "2015-06-02", "2015-06-02", "2022-09-27", "2022-09-27"
+    )),
+    DBH = c(3.0, 3.0, 1.0, 3.8, 1.1, 3.5, 1.1, 3.7, 1.1, 3.8, 1.2, 4.6, 1.2, 4.6, 1.3, 4.6, 1.5),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, "L", NA_character_, NA_character_, "M", NA_character_, NA_character_, NA_character_)
+)
+
+tag_88 <- data.table(
+    Species = "sp1",
+    Tag = 88L,
+    OriginalStemID = c(141986, NA, 250132, 141986, NA, 141986, 250132, NA, 250132, 141986, 250132, 141986, 250132, NA, 250132, 141986, 250132),
+    TrueStemID = c(141986, NA, 250132, 141986, NA, 141986, 250132, NA, 250132, 141986, 250132, 141986, 250132, NA, 250132, 141986, 250132),
+    CensusID = c(1L, 2L, 2L, 3L, 3L, 4L, 4L, 5L, 5L, 6L, 6L, 7L, 7L, 8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c(
+        "1982-03-03", "1985-04-04", "1985-04-04", "1990-08-24", "1990-08-24", "1995-06-16", "1995-06-16", "2000-04-05", "2000-04-05", "2005-05-04", "2005-05-04", "2010-05-06", "2010-05-06", "2015-06-02", "2015-06-02", "2022-09-27", "2022-09-27"
+    )),
+    DBH = c(3.0, 3.0, 1.0, 3.8, 1.1, 3.5, 1.1, 3.7, 1.1, 3.8, 1.2, 4.6, 1.2, 4.6, 1.3, 4.6, 1.5),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, "L", NA_character_, NA_character_, "M", NA_character_, NA_character_, NA_character_)
+)
+
+
 dt_complete_extra <- dt_complete_extra[order(Tag, CensusID)]
 dt_complete_extra <- rbindlist(list(
     dt_complete_extra,
@@ -1295,7 +1394,13 @@ dt_complete_extra <- rbindlist(list(
     tag_79,
     tag_80, 
     tag_81,
-    tag_82
+    tag_82, 
+    tag_83,
+    tag_84,
+    tag_85,
+    tag_86,
+    tag_87,
+    tag_88
 ), use.names = TRUE, fill = TRUE)
 
 # Include additional information about growth forms, trees, vs figs
