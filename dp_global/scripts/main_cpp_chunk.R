@@ -121,7 +121,7 @@ SPECIES_COL <- NULL
 # NOTE: Ypu can define them with parameter data from your specie(s) of interest
 USE_MEASUREMENT_ERROR <- TRUE
 MAX_GROWTH_HARD_SOURCE <- "fixed"
-MAX_GROWTH_FIXED <- 7.5
+MAX_GROWTH_FIXED <- 5
 MAX_SHRINK_HARD_SOURCE <- "fixed"
 MAX_SHRINK_FIXED <- -0.5
 K_SHRINK_SOURCE <- "fixed"
@@ -798,15 +798,15 @@ run_main_chunked <- function() {
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,
             recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
-            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.99)),
+            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (MAX_GROWTH_FIXED * 5) + 0.99)),
             # -----------------------------------------------------------------
             # Optional enforcement of user-specified growth/recruit bounds
             # Units: growth bounds in cm/year; recruit max in cm.
             # If 'enforce_growth_bounds' is TRUE, observations outside the provided fixed
             # bounds ('growth_min_fixed' and/or 'growth_max_fixed') are dropped before estimation.
             enforce_growth_bounds = TRUE,
-            growth_min_fixed = -0.5,
-            growth_max_fixed = 7.5,
+            growth_min_fixed = MAX_SHRINK_FIXED,
+            growth_max_fixed = MAX_GROWTH_FIXED,
             # If 'enforce_recruit_max' is TRUE, recruits with DBH > 'recruit_max_fixed' are dropped
             # before fitting the recruitment-size lognormal.
             enforce_recruit_max = TRUE
