@@ -1036,6 +1036,16 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     # Backward recursion p = anchor_pos-1 .. 1 (maps to CensusID via census_range)
     vcat(prefix, "Backward pass (log-sum-exp + Viterbi) starting ...")
+
+    # Precompute census-pair intervals once (avoids repeated dcast inside the loop)
+    resolve_interval_years_pair <- function(tree_data) {
+        dt <- tree_data[, .(CensusID, ExactDate)]
+        dt_mean <- dt[, .(MeanDate = mean(ExactDate, na.rm = TRUE)), by = CensusID]
+        setorder(dt_mean, CensusID)
+        dcast(dt_mean, 1 ~ CensusID, value.var = "MeanDate")
+    }
+    pair_interval <- resolve_interval_years_pair(tree_data)
+
     # Guard: some tags only have the anchor census (anchor_pos == 1). In that case
     # there are no earlier censuses and calling seq.int(anchor_pos - 1L, 1L, by = -1L)
     # would error with "wrong sign in 'by' argument". Skip the loop when anchor_pos == 1.
@@ -1125,20 +1135,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         curr_vit <- numeric(0)
         curr_ptr <- integer(0)
 
-        resolve_interval_years_pair <- function(tree_data) {
-            dt <- tree_data[, .(CensusID, ExactDate)]
-            ## get mean exactdate per census
-            dt_mean <- dt[, .(MeanDate = mean(ExactDate, na.rm = TRUE)), by = CensusID]
-            setorder(dt_mean, CensusID)
-
-            ## dcast to wide format
-            dt_wide <- dcast(dt_mean, 1 ~ CensusID, value.var = "MeanDate")
-            ## compute interval between t0 and t1
-            return(dt_wide)
-        }
-
-        pair_interval <- resolve_interval_years_pair(tree_data)
-        # Interval (years) between cc and next_cc (computed once for this census pair)
+        # Interval (years) between cc and next_cc (pair_interval precomputed above the loop)
         val_next <- pair_interval[[as.character(next_cc)]]
         val_cc   <- pair_interval[[as.character(cc)]]
         if (is.null(val_next) || length(val_next) == 0 || is.null(val_cc) || length(val_cc) == 0) {
@@ -1178,23 +1175,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     candidate_ok <- TRUE
                     # Use precomputed effective prune bounds (eff_min_grow/eff_max_grow/eff_recruit_max)
                     if (is.finite(interval_val)) {
-                        for (k in seq_len(K)) {
-                            v0 <- tdbh0[k]
-                            v1 <- tdbh1[k]
-                            if (!is.na(v0) && !is.na(v1)) {
-                                g <- (v1 - v0) / interval_val
-                                if (g < eff_min_grow || g > eff_max_grow) {
-                                    candidate_ok <- FALSE
-                                    break
-                                }
-                            } else if (is.na(v0) && !is.na(v1)) {
-                                # recruit size guard
-                                # Protect against NA logicals by explicitly checking v1 and eff_recruit_max
-                                if (isTRUE(!is.na(eff_recruit_max) && is.finite(eff_recruit_max) && !is.na(v1) && (v1 > eff_recruit_max))) {
-                                    candidate_ok <- FALSE
-                                    break
-                                }
-                            }
+                        alive_both <- !is.na(tdbh0) & !is.na(tdbh1)
+                        recruit    <- is.na(tdbh0) & !is.na(tdbh1)
+                        g_vec      <- (tdbh1 - tdbh0) / interval_val
+                        if (any(alive_both & (g_vec < eff_min_grow | g_vec > eff_max_grow)) ||
+                            (is.finite(eff_recruit_max) && any(recruit & (tdbh1 > eff_recruit_max)))) {
+                            candidate_ok <- FALSE
                         }
                     }
 

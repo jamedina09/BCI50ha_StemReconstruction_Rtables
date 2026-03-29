@@ -21,6 +21,7 @@
 ###                       DBH->NA   : always OK (death)
 ###                       NA ->NA   : always OK (unborn track)
 ###  5. Output        — rows per tag, sorted by estimated_edges_pruned desc
+###                     + predicted_seconds / predicted_hours from calibrated model
 ############################################################
 
 #' Estimate DP transition-cost evaluations per tag
@@ -43,7 +44,13 @@
 #' @param recruit_max_dbh Numeric: fallback recruit size cap when column absent (default Inf)
 #' @param prune_recruit_max_dbh Numeric|NULL: explicit recruit prune cap
 #' @param prune_use_bio_recruit Logical: use bio recruit max DBH (default TRUE)
-#' @return data.table sorted descending by estimated_edges_pruned
+#' @param fast Logical: when TRUE (default) skip the O(states^2) pruned-edge
+#'   enumeration and rank by unpruned edge count instead.  Use fast=FALSE only
+#'   when you need accurate pruned counts (e.g., for model validation).
+#' @return data.table sorted descending by estimated_edges_unpruned (fast=TRUE)
+#'   or estimated_edges_pruned (fast=FALSE), with columns `predicted_seconds`
+#'   and `predicted_hours` from a log-log polynomial model calibrated on actual
+#'   benchmark runs (see dp_global/dev/run_dp_benchmark.R)
 #' @export
 estimate_dp_complexity <- function(data,
                                    anchor_start = 7L,
@@ -60,7 +67,8 @@ estimate_dp_complexity <- function(data,
                                    bio_max_growth = Inf,
                                    recruit_max_dbh = Inf,
                                    prune_recruit_max_dbh = NULL,
-                                   prune_use_bio_recruit = TRUE) {
+                                   prune_use_bio_recruit = TRUE,
+                                   fast = TRUE) {
     if (!requireNamespace("data.table", quietly = TRUE)) stop("data.table required")
     library(data.table)
 
@@ -364,9 +372,10 @@ estimate_dp_complexity <- function(data,
         }
 
         # 5g. Pruned edge count: full state enumeration + per-pair feasibility check
-        #     Skipped (NA) when tag would fall back to igraph
+        #     Skipped entirely when fast=TRUE (use unpruned count for ranking).
+        #     Skipped (NA) when tag would fall back to igraph.
         edges_pruned <- NA_real_
-        if (!fallback && n_census >= 2L) {
+        if (!isTRUE(fast) && !fallback && n_census >= 2L) {
             all_mats <- vector("list", n_census)
             ok <- TRUE
             for (p in seq_len(n_census)) {
@@ -418,19 +427,45 @@ estimate_dp_complexity <- function(data,
     }
 
     # ------------------------------------------------------------------
-    # 6. Run over all tags and sort
+    # 6. Runtime predictor
+    #    Calibrated polynomial in log-log space from dp_global/dev/run_dp_benchmark.R.
+    #    Uses estimated_edges_pruned when available (= actual C++ calls after pruning),
+    #    otherwise estimated_edges_unpruned (upper bound, same as old TransitionComputations).
+    #    Note: the model was fitted on unpruned counts; pruned predictions are optimistic.
+    # ------------------------------------------------------------------
+    predict_seconds <- function(N) {
+        logN <- log10(pmax(N, 1))  # guard against 0
+        10^(-1.45817 + (-0.07313 * logN) + (0.14164 * logN^2))
+    }
+
+    # ------------------------------------------------------------------
+    # 7. Run over all tags and sort
     # ------------------------------------------------------------------
     tags <- unique(data$Tag)
-    results <- vector("list", length(tags))
+    n_tags <- length(tags)
+    results <- vector("list", n_tags)
+    report_at <- unique(round(seq(0, n_tags, length.out = 21L)))  # every ~5 %
     for (i in seq_along(tags)) {
         tg <- tags[i]
         td <- data[Tag == tg]
         sp <- if (species_col %in% names(td)) unique(td[[species_col]])[1L] else NA_character_
         results[[i]] <- estimate_one_tag(td, tg, sp)
+        if (i %in% report_at) {
+            cat(sprintf("[estimate_dp_complexity] %d / %d tags done (%.0f%% remaining)\n",
+                        i, n_tags, 100 * (1 - i / n_tags)))
+            flush.console()
+        }
     }
     out <- rbindlist(results, use.names = TRUE, fill = TRUE)
 
-    # Sort: non-fallback tags first; within each group descending by pruned edges
+    # Attach runtime predictions
+    out[, n_for_pred := ifelse(is.na(estimated_edges_pruned),
+        estimated_edges_unpruned, estimated_edges_pruned)]
+    out[, predicted_seconds := predict_seconds(n_for_pred)]
+    out[, predicted_hours   := predicted_seconds / 3600]
+    out[, n_for_pred := NULL]
+
+    # Sort: non-fallback tags first; within each group descending by best available edge count
     out[, .sort_key := ifelse(is.na(estimated_edges_pruned),
         estimated_edges_unpruned,
         estimated_edges_pruned
@@ -527,18 +562,49 @@ if (FALSE) {
     source("dp_global/R/estimate_dp_complexity_function.R")
     d <- readRDS("bci_data/bci_multistem_xrun_debug.rds")
 
-    # Rank all tags by estimated cost
+    # DP_MAX_STATES: must match the value used in main_cpp_chunk.R.
+    # Tags with max_states_per_census > DP_MAX_STATES will fall back to igraph.
+    DP_MAX_STATES <- 1039L   # default; use 500–1100 for production batch runs
+
+    # ------------------------------------------------------------------
+    # FAST mode (default) — skips O(states^2) pruned-edge enumeration.
+    # Returns in seconds. Use this for ranking and DP-vs-igraph classification.
+    # ------------------------------------------------------------------
     comp <- estimate_dp_complexity(d,
         anchor_start = 7, slack_tracks = 1,
+        max_states = DP_MAX_STATES,
         min_growth = -0.5, max_growth = 7.5,
         prune_use_bio_bounds = FALSE,
         recruit_max_dbh = 100
+        # fast = TRUE   <- default
     )
     print(head(comp, 20))
 
-    # Detailed breakdown for one tag
+# write.csv(comp, "./bci_data/times.csv", row.names = FALSE)
+
+    # DP vs igraph split
+    cat("Tags via DP    :", sum(!comp$estimated_fallback), "\n")
+    cat("Tags via igraph:", sum( comp$estimated_fallback), "\n")
+    cat("Total predicted hours:", round(sum(comp$predicted_hours, na.rm = TRUE), 2), "\n")
+
+    # ------------------------------------------------------------------
+    # SLOW mode — enumerates all state pairs to count pruned edges exactly.
+    # Only needed for accuracy validation or when pruning ratio matters.
+    # ------------------------------------------------------------------
+    comp_exact <- estimate_dp_complexity(d,
+        anchor_start = 7, slack_tracks = 1,
+        max_states = DP_MAX_STATES,
+        min_growth = -0.5, max_growth = 7.5,
+        prune_use_bio_bounds = FALSE,
+        recruit_max_dbh = 100,
+        fast = FALSE
+    )
+    print(head(comp_exact, 20))
+
+    # Detailed per-census breakdown for one tag
     det <- get_tag_complexity_details(d,
         tag = 156669, anchor_start = 7, slack_tracks = 1,
+        max_states = DP_MAX_STATES,
         min_growth = -0.5, max_growth = 5,
         prune_use_bio_bounds = FALSE, recruit_max_dbh = (5 * 5) + 0.9999
     )
