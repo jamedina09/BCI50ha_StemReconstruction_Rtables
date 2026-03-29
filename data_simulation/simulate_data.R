@@ -1406,7 +1406,7 @@ dt_complete_extra <- rbindlist(list(
 # Include additional information about growth forms, trees, vs figs
 growth_forms <- data.table(
     Species = c("sp1", "sp2", "sp3"),
-    growth_form = c("tree", "tree", "fig")
+    growth_form = c("tree", "tree", "palm")
 )
 
 dt_complete_extra <- merge(dt_complete_extra, growth_forms, by = "Species", all.x = TRUE)
