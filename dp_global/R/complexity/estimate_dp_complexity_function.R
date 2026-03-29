@@ -218,8 +218,9 @@ estimate_dp_complexity <- function(data,
         }
 
         # 5b. census_range: first obs census up to eff_anchor
-        tmp_c <- tag_data[CensusID <= eff_anchor & !is.na(DBH), CensusID]
-        if (length(tmp_c) == 0L) {
+        # Use pre-aggregated summary (keyed) for O(1) lookup per tag.
+        tag_census_obs <- obs_summary_pre[.(tag_val)][CensusID <= eff_anchor]
+        if (nrow(tag_census_obs) == 0L) {
             return(data.table(
                 Tag = tag_val, Species = species_val,
                 census_range = NA_character_, n_censuses = 0L, K = 0L,
@@ -230,21 +231,17 @@ estimate_dp_complexity <- function(data,
                 fallback_reason = "no_obs_up_to_anchor"
             ))
         }
-        first_obs <- as.integer(min(tmp_c))
-        census_range <- seq.int(from = first_obs, to = eff_anchor)
-        # Retain only censuses with at least one DBH obs (or the anchor endpoint)
-        census_range <- census_range[vapply(
-            census_range, function(cc) {
-                nrow(tag_data[CensusID == cc & !is.na(DBH)]) > 0L || cc == eff_anchor
-            },
-            logical(1L)
-        )]
+        first_obs <- as.integer(min(tag_census_obs$CensusID))
+        # Keep all observed censuses up to anchor; add anchor itself if no obs there
+        census_range <- sort(unique(c(
+            tag_census_obs$CensusID,
+            if (eff_anchor > max(tag_census_obs$CensusID)) eff_anchor else integer(0L)
+        )))
+        census_range <- census_range[census_range <= eff_anchor]
         n_census <- length(census_range)
 
-        obs_counts <- vapply(
-            census_range,
-            function(cc) nrow(tag_data[CensusID == cc & !is.na(DBH)]), integer(1L)
-        )
+        obs_counts <- tag_census_obs$N[match(census_range, tag_census_obs$CensusID)]
+        obs_counts[is.na(obs_counts)] <- 0L
         max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
 
         # 5c. K — exact replica of dp_global_dp.R K computation
@@ -268,18 +265,11 @@ estimate_dp_complexity <- function(data,
         K_from_counts <- as.integer(if (length(obs_counts) > 0L) obs_counts[1L] + births_needed else 0L)
         K_base <- max(length(anchor_ids), max_obs, K_from_counts)
 
-        # Resprout barrier (same regex as DP)
-        resprout_regex <- "\\b(R|RP|RF|RT|QR)\\b"
+        # Resprout barrier — use pre-aggregated summary (keyed lookup)
         n_resprout <- 0L
-        if ("ListOfTSM" %in% names(tag_data)) {
-            for (cc in census_range) {
-                obs_tmp <- tag_data[CensusID == cc & !is.na(DBH)]
-                if (nrow(obs_tmp) > 0L) {
-                    n_resprout <- n_resprout + sum(
-                        !is.na(obs_tmp$ListOfTSM) & grepl(resprout_regex, obs_tmp$ListOfTSM)
-                    )
-                }
-            }
+        if (!is.null(resprout_summary_pre)) {
+            tag_resp <- resprout_summary_pre[.(tag_val)][CensusID %in% census_range]
+            n_resprout <- if (nrow(tag_resp) > 0L) sum(tag_resp$N) else 0L
         }
         K_base <- K_base + n_resprout
 
@@ -441,13 +431,190 @@ estimate_dp_complexity <- function(data,
     # ------------------------------------------------------------------
     # 7. Run over all tags and sort
     # ------------------------------------------------------------------
+    # FAST PATH (fast=TRUE, default): fully vectorized data.table operations,
+    # no per-tag for loop.  Scales to 100k+ tags in seconds.
+    # SLOW PATH (fast=FALSE): per-tag for loop used only when pruned-edge
+    # counts are needed (exact complexity measurement).
+    # ------------------------------------------------------------------
+    if (isTRUE(fast)) {
+        cat("[estimate_dp_complexity] Pre-aggregating (vectorized)...\n"); flush.console()
+        setkey(data, Tag, CensusID)
+
+        # 7a. Observation counts per (Tag, CensusID)
+        obs_sum <- data[!is.na(DBH), .N, by = .(Tag, CensusID)]
+        setkey(obs_sum, Tag, CensusID)
+
+        # 7b. Per-tag last observed census -> effective anchor
+        tag_meta <- obs_sum[, .(last_obs = max(CensusID)), by = Tag]
+        tag_meta[, eff_anchor := as.integer(pmin(last_obs, as.integer(anchor_start)))]
+        setkey(tag_meta, Tag)
+
+        # 7c. Filter obs to <= eff_anchor per tag
+        obs_pre <- obs_sum[tag_meta[, .(Tag, eff_anchor)], on = "Tag"][CensusID <= eff_anchor]
+        setorder(obs_pre, Tag, CensusID)
+
+        # 7d. Per-tag census stats + K_from_counts (births-based)
+        tag_stats <- obs_pre[, {
+            n <- N
+            list(
+                n_censuses    = .N,
+                max_obs       = max(n),
+                K_from_counts = n[1L] + sum(pmax(0L, diff(n)))
+            )
+        }, by = Tag]
+
+        # 7e. Anchor ids at effective anchor (one join, not per-tag)
+        data_anch <- data[!is.na(DBH)][
+            tag_meta[, .(Tag, CensusID = eff_anchor)],
+            on = .(Tag, CensusID), nomatch = NULL
+        ]
+        anchor_stats <- data_anch[,
+            .(n_anchor_ids = as.integer(length(unique(na.omit(TrueStemID))))),
+            by = Tag
+        ]
+
+        # 7f. Resprouts (one grep pass on full data, then aggregate per tag)
+        resprout_regex <- "\\b(R|RP|RF|RT|QR)\\b"
+        if ("ListOfTSM" %in% names(data)) {
+            resp_sum <- data[
+                !is.na(DBH) & !is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE),
+                .N, by = .(Tag, CensusID)
+            ]
+            resp_pre <- resp_sum[tag_meta[, .(Tag, eff_anchor)], on = "Tag"][CensusID <= eff_anchor]
+            resp_per_tag <- resp_pre[, .(n_resprout = sum(N)), by = Tag]
+        } else {
+            resp_per_tag <- data.table(Tag = integer(0L), n_resprout = integer(0L))
+        }
+
+        # 7g. Species per tag
+        if (species_col %in% names(data)) {
+            sp_tab <- data[, .(Species = as.character(.SD[[1L]][1L])), by = Tag, .SDcols = species_col]
+        } else {
+            sp_tab <- data.table(Tag = unique(data$Tag), Species = NA_character_)
+        }
+
+        # 7h. Assemble master per-tag table
+        out <- tag_meta[tag_stats, on = "Tag"]
+        out <- anchor_stats[out, on = "Tag"]
+        out[is.na(n_anchor_ids), n_anchor_ids := 0L]
+        out <- resp_per_tag[out, on = "Tag"]
+        out[is.na(n_resprout), n_resprout := 0L]
+        out <- sp_tab[out, on = "Tag"]
+
+        # census_range string (cosmetic)
+        census_range_str <- obs_pre[, .(census_range = paste(CensusID, collapse = ",")), by = Tag]
+        out <- census_range_str[out, on = "Tag"]
+        out[is.na(census_range), census_range := NA_character_]
+
+        # 7i. K computation (vectorized)
+        out[, K_base := pmax(n_anchor_ids, max_obs, K_from_counts) + n_resprout]
+
+        if (isTRUE(slack_require_anchor_recruitable) && is.finite(recruit_max_dbh)) {
+            anch_slack <- data_anch[!is.na(DBH),
+                .(grant_slack = any(DBH <= recruit_max_dbh, na.rm = TRUE)), by = Tag]
+            out <- anch_slack[out, on = "Tag"]
+            out[is.na(grant_slack), grant_slack := FALSE]
+        } else {
+            out[, grant_slack := (slack_tracks > 0L)]
+        }
+        out[, K := as.integer(pmin(
+            K_base + ifelse(grant_slack, as.integer(slack_tracks), 0L),
+            as.integer(max_tracks)
+        ))]
+
+        # 7j. State counts: precompute all unique (K, n) pairs once, then join
+        obs_for_states <- out[, .(Tag, K)][obs_pre, on = "Tag", nomatch = NULL]
+        unique_kn <- unique(obs_for_states[, .(K, N)])
+        unique_kn[, n_states := mapply(function(Kv, nv) {
+            Kv <- as.integer(Kv); nv <- as.integer(nv)
+            if (nv == 0L || Kv <= 0L) return(1.0)
+            if (nv > Kv) return(0.0)
+            prod(seq.int(from = Kv, to = Kv - nv + 1L, by = -1L))
+        }, K, N)]
+        obs_for_states <- unique_kn[obs_for_states, on = .(K, N)]
+        setorder(obs_for_states, Tag, CensusID)
+
+        # 7k. Per-tag: max states, total states, unpruned edge count
+        census_stats <- obs_for_states[, .(
+            max_states_per_census    = max(n_states),
+            total_states             = sum(n_states),
+            estimated_edges_unpruned = if (.N >= 2L) sum(n_states[-.N] * n_states[-1L]) else 0
+        ), by = Tag]
+        out <- census_stats[out, on = "Tag"]
+
+        # 7l. Fallback flags
+        out[, estimated_fallback := (n_anchor_ids == 0L) |
+                (K < max_obs) |
+                (max_states_per_census > as.numeric(max_states))]
+        out[, fallback_reason := fcase(
+            n_anchor_ids == 0L,                                    "anchor_ids_missing",
+            K < max_obs,                                           "K_too_small",
+            max_states_per_census > as.numeric(max_states),        "enum_exceeded",
+            default                                                = NA_character_
+        )]
+        out[is.na(estimated_edges_unpruned), estimated_edges_unpruned := 0]
+        out[, estimated_edges_pruned := NA_real_]
+        out[, n_censuses := as.integer(n_censuses)]
+
+        # Tags in data but absent from obs_pre (all-NA DBH)
+        tags_no_obs <- setdiff(unique(data$Tag), tag_meta$Tag)
+        if (length(tags_no_obs) > 0L) {
+            out_noobs <- data.table(
+                Tag = tags_no_obs, Species = NA_character_,
+                census_range = NA_character_, n_censuses = 0L, K = 0L,
+                max_obs = 0L, max_states_per_census = 0, total_states = 0,
+                estimated_edges_unpruned = 0, estimated_edges_pruned = NA_real_,
+                estimated_fallback = FALSE, fallback_reason = "no_obs_up_to_anchor"
+            )
+            out <- rbindlist(list(out, out_noobs), use.names = TRUE, fill = TRUE)
+        }
+
+        # Runtime predictions
+        out[, n_for_pred := ifelse(is.na(estimated_edges_pruned),
+            estimated_edges_unpruned, estimated_edges_pruned)]
+        out[is.na(n_for_pred), n_for_pred := 0]
+        out[, predicted_seconds := predict_seconds(n_for_pred)]
+        out[, predicted_hours   := predicted_seconds / 3600]
+        out[, n_for_pred := NULL]
+
+        # Sort: non-fallback first, then descending by edge count
+        setorder(out, estimated_fallback, -estimated_edges_unpruned)
+
+        keep_cols <- intersect(c(
+            "Tag", "Species", "census_range", "n_censuses", "K", "max_obs",
+            "max_states_per_census", "total_states",
+            "estimated_edges_unpruned", "estimated_edges_pruned",
+            "estimated_fallback", "fallback_reason",
+            "predicted_seconds", "predicted_hours"
+        ), names(out))
+        cat("[estimate_dp_complexity] Done.\n"); flush.console()
+        return(out[, ..keep_cols])
+    }
+
+    # ------------------------------------------------------------------
+    # SLOW PATH (fast=FALSE): per-tag for loop for pruned-edge counts
+    # ------------------------------------------------------------------
+    setkey(data, Tag, CensusID)
+    obs_summary_pre <- data[!is.na(DBH), .N, by = .(Tag, CensusID)]
+    setkey(obs_summary_pre, Tag, CensusID)
+    resprout_regex_pre <- "\\b(R|RP|RF|RT|QR)\\b"
+    if ("ListOfTSM" %in% names(data)) {
+        resprout_summary_pre <- data[
+            !is.na(DBH) & !is.na(ListOfTSM) & grepl(resprout_regex_pre, ListOfTSM, perl = TRUE),
+            .N, by = .(Tag, CensusID)
+        ]
+        setkey(resprout_summary_pre, Tag, CensusID)
+    } else {
+        resprout_summary_pre <- NULL
+    }
+
     tags <- unique(data$Tag)
     n_tags <- length(tags)
     results <- vector("list", n_tags)
-    report_at <- unique(round(seq(0, n_tags, length.out = 21L)))  # every ~5 %
+    report_at <- unique(round(seq(0, n_tags, length.out = 21L)))
     for (i in seq_along(tags)) {
         tg <- tags[i]
-        td <- data[Tag == tg]
+        td <- data[.(tg)]
         sp <- if (species_col %in% names(td)) unique(td[[species_col]])[1L] else NA_character_
         results[[i]] <- estimate_one_tag(td, tg, sp)
         if (i %in% report_at) {
@@ -458,18 +625,14 @@ estimate_dp_complexity <- function(data,
     }
     out <- rbindlist(results, use.names = TRUE, fill = TRUE)
 
-    # Attach runtime predictions
     out[, n_for_pred := ifelse(is.na(estimated_edges_pruned),
         estimated_edges_unpruned, estimated_edges_pruned)]
     out[, predicted_seconds := predict_seconds(n_for_pred)]
     out[, predicted_hours   := predicted_seconds / 3600]
     out[, n_for_pred := NULL]
 
-    # Sort: non-fallback tags first; within each group descending by best available edge count
     out[, .sort_key := ifelse(is.na(estimated_edges_pruned),
-        estimated_edges_unpruned,
-        estimated_edges_pruned
-    )]
+        estimated_edges_unpruned, estimated_edges_pruned)]
     setorder(out, estimated_fallback, -.sort_key)
     out[, .sort_key := NULL]
     out[]
@@ -559,7 +722,7 @@ get_tag_complexity_details <- function(data, tag,
 # Example usage:
 if (FALSE) {
     library(data.table)
-    source("dp_global/R/estimate_dp_complexity_function.R")
+    source("dp_global/R/complexity/estimate_dp_complexity_function.R")
     d <- readRDS("bci_data/bci_multistem_xrun_debug.rds")
 
     # DP_MAX_STATES: must match the value used in main_cpp_chunk.R.
@@ -579,8 +742,6 @@ if (FALSE) {
         # fast = TRUE   <- default
     )
     print(head(comp, 20))
-
-# write.csv(comp, "./bci_data/times.csv", row.names = FALSE)
 
     # DP vs igraph split
     cat("Tags via DP    :", sum(!comp$estimated_fallback), "\n")
