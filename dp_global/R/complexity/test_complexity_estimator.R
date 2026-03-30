@@ -1,6 +1,13 @@
 ############################################################
 ### test_complexity_estimator.R
-### Rank tags by expected DP run time before batch submission.
+### Predict DP running time and show how parameter changes
+### affect runtime.
+###
+### Produces:
+###   1. Ranked tag list with predicted run time
+###   2. Overall runtime summary (DP vs igraph, total hours)
+###   3. Parameter sensitivity table showing how tightening
+###      pruning or lowering max_states changes runtime
 ###
 ### Parameters match main_cpp_chunk.R defaults.
 ### Run from the project root:
@@ -30,79 +37,230 @@ for (.a in .args) {
     }
 }
 
-# --- Parameters: keep in sync with main_cpp_chunk.R ---
-DATA_PATH     <- here("data_simulation", "data", "simulated_data_1.csv")
-ANCHOR_START  <- 7L
-DP_MAX_STATES <- 1100L   # --DP_MAX_STATES in main_cpp_chunk.R
-SLACK_TRACKS  <- 1L
-MIN_GROWTH    <- -0.5    # MAX_SHRINK_FIXED
-MAX_GROWTH    <- 5.0     # MAX_GROWTH_FIXED
-RECRUIT_MAX   <- (MAX_GROWTH * 5) + 0.9999  # RECRUIT_MAX_FIXED
+# ==================================================================
+# Parameters — synced with main_cpp_chunk.R defaults
+# ==================================================================
+DATA_PATH        <- here("data_simulation", "data", "simulated_data_1.csv")
+ANCHOR_START     <- 7L
+DP_MAX_STATES    <- 40000L
+SLACK_TRACKS     <- 1L
+MAX_GROWTH_FIXED <- 5.0
+MAX_SHRINK_FIXED <- -0.5
+RECRUIT_MAX      <- (MAX_GROWTH_FIXED * 5) + 0.9999
+PRUNE_MARGIN     <- 1.25   # prune bounds = fixed bounds * this margin
 
 # Apply CLI overrides
-if (!is.null(.overrides$INPUT_FILE))   DATA_PATH     <- .overrides$INPUT_FILE
-if (!is.null(.overrides$ANCHOR_START)) ANCHOR_START  <- as.integer(.overrides$ANCHOR_START)
-if (!is.null(.overrides$DP_MAX_STATES)) DP_MAX_STATES <- as.integer(.overrides$DP_MAX_STATES)
-if (!is.null(.overrides$SLACK_TRACKS)) SLACK_TRACKS  <- as.integer(.overrides$SLACK_TRACKS)
-if (!is.null(.overrides$MIN_GROWTH))   MIN_GROWTH    <- as.numeric(.overrides$MIN_GROWTH)
-if (!is.null(.overrides$MAX_GROWTH))   MAX_GROWTH    <- as.numeric(.overrides$MAX_GROWTH)
-if (!is.null(.overrides$RECRUIT_MAX))  RECRUIT_MAX   <- as.numeric(.overrides$RECRUIT_MAX)
+if (!is.null(.overrides$INPUT_FILE))      DATA_PATH        <- .overrides$INPUT_FILE
+if (!is.null(.overrides$ANCHOR_START))    ANCHOR_START     <- as.integer(.overrides$ANCHOR_START)
+if (!is.null(.overrides$DP_MAX_STATES))   DP_MAX_STATES    <- as.integer(.overrides$DP_MAX_STATES)
+if (!is.null(.overrides$SLACK_TRACKS))    SLACK_TRACKS     <- as.integer(.overrides$SLACK_TRACKS)
+if (!is.null(.overrides$MAX_GROWTH))      MAX_GROWTH_FIXED <- as.numeric(.overrides$MAX_GROWTH)
+if (!is.null(.overrides$MIN_GROWTH))      MAX_SHRINK_FIXED <- as.numeric(.overrides$MIN_GROWTH)
+if (!is.null(.overrides$RECRUIT_MAX))     RECRUIT_MAX      <- as.numeric(.overrides$RECRUIT_MAX)
+if (!is.null(.overrides$PRUNE_MARGIN))    PRUNE_MARGIN     <- as.numeric(.overrides$PRUNE_MARGIN)
+
+# Recompute RECRUIT_MAX if MAX_GROWTH was overridden but RECRUIT_MAX was not
+if (!is.null(.overrides$MAX_GROWTH) && is.null(.overrides$RECRUIT_MAX)) {
+    RECRUIT_MAX <- (MAX_GROWTH_FIXED * 5) + 0.9999
+}
+
 # Resolve relative paths from project root
 if (!file.exists(DATA_PATH)) {
     candidate <- file.path(here::here(), DATA_PATH)
     if (file.exists(candidate)) DATA_PATH <- candidate
 }
-RECRUIT_MAX <- (MAX_GROWTH * 5) + 0.9999   # recompute if MAX_GROWTH changed and RECRUIT_MAX not set
-if (!is.null(.overrides$RECRUIT_MAX)) RECRUIT_MAX <- as.numeric(.overrides$RECRUIT_MAX)
 
-# -------------------------------------------------------
-cat(sprintf("[complexity] Input: %s\n", DATA_PATH))
-cat(sprintf("[complexity] anchor=%d  max_states=%d  min_growth=%.2f  max_growth=%.2f  recruit_max=%.2f\n\n",
-    ANCHOR_START, DP_MAX_STATES, MIN_GROWTH, MAX_GROWTH, RECRUIT_MAX))
+# Derived prune bounds (match main_cpp_chunk.R)
+PRUNE_MIN <- MAX_SHRINK_FIXED * PRUNE_MARGIN
+PRUNE_MAX <- MAX_GROWTH_FIXED * PRUNE_MARGIN
+PRUNE_REC <- RECRUIT_MAX * PRUNE_MARGIN
+
+cat("============================================================\n")
+cat("  DP Complexity Estimator — Runtime Overview\n")
+cat("============================================================\n\n")
+cat(sprintf("  Input file    : %s\n", DATA_PATH))
+cat(sprintf("  Anchor census : %d\n", ANCHOR_START))
+cat(sprintf("  Max states    : %s\n", format(DP_MAX_STATES, big.mark = ",")))
+cat(sprintf("  Growth bounds : [%.2f, %.2f] cm/yr\n", MAX_SHRINK_FIXED, MAX_GROWTH_FIXED))
+cat(sprintf("  Prune bounds  : [%.2f, %.2f] cm/yr  (margin=%.2fx)\n", PRUNE_MIN, PRUNE_MAX, PRUNE_MARGIN))
+cat(sprintf("  Recruit max   : %.2f cm  (prune: %.2f cm)\n", RECRUIT_MAX, PRUNE_REC))
+cat("\n")
+
+# ==================================================================
+# 1. Run complexity estimation at current settings
+# ==================================================================
+cat("--- Running complexity estimation at current settings ---\n\n")
 
 complexity <- estimate_dp_complexity(
     data                  = DATA_PATH,
     anchor_start          = ANCHOR_START,
     slack_tracks          = SLACK_TRACKS,
     max_states            = DP_MAX_STATES,
-    min_growth            = MIN_GROWTH,
-    max_growth            = MAX_GROWTH,
-    prune_min_growth      = MIN_GROWTH * 2.5,
-    prune_max_growth      = MAX_GROWTH * 1.5,
+    min_growth            = MAX_SHRINK_FIXED,
+    max_growth            = MAX_GROWTH_FIXED,
+    prune_min_growth      = PRUNE_MIN,
+    prune_max_growth      = PRUNE_MAX,
     prune_use_bio_bounds  = FALSE,
-    recruit_max_dbh       = RECRUIT_MAX * 1.2,
+    recruit_max_dbh       = PRUNE_REC,
     prune_use_bio_recruit = FALSE,
-    fast = TRUE
+    fast                  = TRUE
 )
 
-# -------------------------------------------------------
-# Summary counts
+# ==================================================================
+# 2. Overall Summary
+# ==================================================================
+n_total  <- nrow(complexity)
 n_dp     <- sum(!complexity$estimated_fallback)
 n_igraph <- sum( complexity$estimated_fallback)
-total_h  <- round(sum(complexity$predicted_hours, na.rm = TRUE), 2)
+total_h  <- sum(complexity$predicted_hours, na.rm = TRUE)
+dp_only  <- complexity[estimated_fallback == FALSE]
 
-cat(sprintf("Tags via DP     : %d\n", n_dp))
-cat(sprintf("Tags via igraph : %d\n", n_igraph))
-cat(sprintf("Total predicted : %.2f hours\n\n", total_h))
+cat("\n")
+cat("============================================================\n")
+cat("  OVERALL SUMMARY\n")
+cat("============================================================\n")
+cat(sprintf("  Total tags       : %d\n", n_total))
+cat(sprintf("  Tags via DP      : %d  (%.1f%%)\n", n_dp, 100 * n_dp / max(1, n_total)))
+cat(sprintf("  Tags via igraph  : %d  (%.1f%%)\n", n_igraph, 100 * n_igraph / max(1, n_total)))
+cat(sprintf("  Total predicted  : %.2f hours\n", total_h))
+if (nrow(dp_only) > 0L) {
+    cat(sprintf("  Slowest tag      : %s (%.1f min)\n", dp_only$Tag[1L], dp_only$predicted_seconds[1L] / 60))
+    cat(sprintf("  Median tag time  : %.1f sec\n", median(dp_only$predicted_seconds, na.rm = TRUE)))
+}
+cat("\n")
 
-# -------------------------------------------------------
-# Clean ranked display (already sorted slowest first by estimate_dp_complexity)
-display_cols <- c("Tag", "K", "max_obs", "n_censuses",
+# ==================================================================
+# 3. Top 15 Slowest Tags
+# ==================================================================
+display_cols <- c("Tag", "Species", "K", "max_obs", "n_censuses",
                   "max_states_per_census", "estimated_edges_unpruned",
                   "estimated_fallback", "predicted_seconds", "predicted_hours")
+display_cols <- display_cols[display_cols %in% names(complexity)]
 
-disp <- complexity[, display_cols[display_cols %in% names(complexity)], with = FALSE]
+n_show <- min(15L, nrow(complexity))
+disp <- complexity[seq_len(n_show), ..display_cols]
 disp[, predicted_seconds := round(predicted_seconds, 1)]
-disp[, predicted_hours   := round(predicted_hours,   4)]
+disp[, predicted_hours   := round(predicted_hours, 4)]
 
-cat("=== All tags ranked slowest first ===\n")
-print(disp, topn = nrow(disp))
+cat("============================================================\n")
+cat(sprintf("  TOP %d SLOWEST TAGS\n", n_show))
+cat("============================================================\n")
+print(disp, topn = n_show)
+cat("\n")
 
-cat(sprintf("\n=== Top 10 slowest tags ===\n"))
-print(disp[seq_len(min(10L, nrow(disp)))], topn = 10L)
+# ==================================================================
+# 4. Fallback breakdown (why tags use igraph)
+# ==================================================================
+if (n_igraph > 0L) {
+    fb <- complexity[estimated_fallback == TRUE, .N, by = fallback_reason]
+    setorder(fb, -N)
+    cat("============================================================\n")
+    cat("  IGRAPH FALLBACK REASONS\n")
+    cat("============================================================\n")
+    print(fb)
+    cat("\n")
+}
 
-# -------------------------------------------------------
-# Export
-output_path <- here("data_simulation", "data", "report_run_simulated_data_1.csv")
+# ==================================================================
+# 5. Parameter Sensitivity — how changing settings affects runtime
+# ==================================================================
+cat("============================================================\n")
+cat("  PARAMETER SENSITIVITY\n")
+cat("  How changing pruning bounds and max_states affects runtime\n")
+cat("============================================================\n\n")
+
+# Build scenarios. Each row overrides one parameter at a time from the current
+# settings so you can see the marginal effect.
+scenarios <- rbindlist(list(
+    # Baseline (current settings)
+    data.table(label = "current settings",
+        max_states = DP_MAX_STATES, min_growth = MAX_SHRINK_FIXED, max_growth = MAX_GROWTH_FIXED,
+        prune_min_growth = PRUNE_MIN, prune_max_growth = PRUNE_MAX,
+        recruit_max_dbh = PRUNE_REC),
+
+    # --- Vary max_states ---
+    data.table(label = "max_states 5,000",
+        max_states = 5000L, min_growth = MAX_SHRINK_FIXED, max_growth = MAX_GROWTH_FIXED,
+        prune_min_growth = PRUNE_MIN, prune_max_growth = PRUNE_MAX,
+        recruit_max_dbh = PRUNE_REC),
+    data.table(label = "max_states 10,000",
+        max_states = 10000L, min_growth = MAX_SHRINK_FIXED, max_growth = MAX_GROWTH_FIXED,
+        prune_min_growth = PRUNE_MIN, prune_max_growth = PRUNE_MAX,
+        recruit_max_dbh = PRUNE_REC),
+    data.table(label = "max_states 100,000",
+        max_states = 100000L, min_growth = MAX_SHRINK_FIXED, max_growth = MAX_GROWTH_FIXED,
+        prune_min_growth = PRUNE_MIN, prune_max_growth = PRUNE_MAX,
+        recruit_max_dbh = PRUNE_REC),
+
+    # --- Vary max_growth (tighter/wider) ---
+    data.table(label = "max_growth 3 cm/yr",
+        max_states = DP_MAX_STATES, min_growth = MAX_SHRINK_FIXED, max_growth = 3.0,
+        prune_min_growth = MAX_SHRINK_FIXED * PRUNE_MARGIN, prune_max_growth = 3.0 * PRUNE_MARGIN,
+        recruit_max_dbh = ((3.0 * 5) + 0.9999) * PRUNE_MARGIN),
+    data.table(label = "max_growth 7.5 cm/yr",
+        max_states = DP_MAX_STATES, min_growth = MAX_SHRINK_FIXED, max_growth = 7.5,
+        prune_min_growth = MAX_SHRINK_FIXED * PRUNE_MARGIN, prune_max_growth = 7.5 * PRUNE_MARGIN,
+        recruit_max_dbh = ((7.5 * 5) + 0.9999) * PRUNE_MARGIN),
+    data.table(label = "max_growth 10 cm/yr",
+        max_states = DP_MAX_STATES, min_growth = MAX_SHRINK_FIXED, max_growth = 10.0,
+        prune_min_growth = MAX_SHRINK_FIXED * PRUNE_MARGIN, prune_max_growth = 10.0 * PRUNE_MARGIN,
+        recruit_max_dbh = ((10.0 * 5) + 0.9999) * PRUNE_MARGIN),
+
+    # --- Vary shrinkage ---
+    data.table(label = "min_growth -0.25 cm/yr",
+        max_states = DP_MAX_STATES, min_growth = -0.25, max_growth = MAX_GROWTH_FIXED,
+        prune_min_growth = -0.25 * PRUNE_MARGIN, prune_max_growth = PRUNE_MAX,
+        recruit_max_dbh = PRUNE_REC),
+    data.table(label = "min_growth -1.0 cm/yr",
+        max_states = DP_MAX_STATES, min_growth = -1.0, max_growth = MAX_GROWTH_FIXED,
+        prune_min_growth = -1.0 * PRUNE_MARGIN, prune_max_growth = PRUNE_MAX,
+        recruit_max_dbh = PRUNE_REC),
+
+    # --- Tighter prune margin ---
+    data.table(label = "prune margin 1.0x (no margin)",
+        max_states = DP_MAX_STATES, min_growth = MAX_SHRINK_FIXED, max_growth = MAX_GROWTH_FIXED,
+        prune_min_growth = MAX_SHRINK_FIXED * 1.0, prune_max_growth = MAX_GROWTH_FIXED * 1.0,
+        recruit_max_dbh = RECRUIT_MAX * 1.0),
+    data.table(label = "prune margin 1.5x",
+        max_states = DP_MAX_STATES, min_growth = MAX_SHRINK_FIXED, max_growth = MAX_GROWTH_FIXED,
+        prune_min_growth = MAX_SHRINK_FIXED * 1.5, prune_max_growth = MAX_GROWTH_FIXED * 1.5,
+        recruit_max_dbh = RECRUIT_MAX * 1.5)
+), fill = TRUE)
+
+sweep <- sweep_dp_complexity(
+    data        = DATA_PATH,
+    scenarios   = scenarios,
+    base_params = list(
+        anchor_start       = ANCHOR_START,
+        slack_tracks       = SLACK_TRACKS,
+        prune_use_bio_bounds  = FALSE,
+        prune_use_bio_recruit = FALSE
+    )
+)
+
+# Display sweep results
+show_cols <- c("label", "n_tags_dp", "n_tags_igraph", "pct_dp",
+               "total_hours", "slowest_min", "median_sec")
+show_cols <- show_cols[show_cols %in% names(sweep)]
+cat("\n")
+print(sweep[, ..show_cols], topn = nrow(sweep))
+
+cat("\n")
+cat("  Notes:\n")
+cat("  - 'total_hours' is the sum of predicted DP time for all tags\n")
+cat("  - 'slowest_min' is the predicted time for the single slowest tag\n")
+cat("  - 'n_tags_igraph' = tags that exceed max_states and fall back\n")
+cat("  - Tighter pruning reduces edges but does not change the state count;\n")
+cat("    lowering max_states pushes more tags to igraph fallback\n")
+cat("\n")
+
+# ==================================================================
+# 6. Export results
+# ==================================================================
+output_path <- sub("\\.[^.]+$", "_complexity_report.csv", DATA_PATH)
 fwrite(complexity, output_path)
-cat(sprintf("\nResults exported to: %s\n", output_path))
+cat(sprintf("  Full per-tag results exported to: %s\n", output_path))
+
+sweep_path <- sub("\\.[^.]+$", "_complexity_sweep.csv", DATA_PATH)
+fwrite(sweep, sweep_path)
+cat(sprintf("  Parameter sweep results exported to: %s\n\n", sweep_path))
