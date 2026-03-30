@@ -240,3 +240,151 @@ Rcpp::NumericVector transition_cost_tracks_bio_batch_rcpp_cpp(
 
     return cost;
 }
+
+// ---------------------------------------------------------------------------
+// derive_phase_prev_batch_rcpp
+//
+// Vectorized C++ implementation of the R `derive_phase_prev()` logic.
+// Checks phase-transition feasibility for every (current_assignment i,
+// next_full_state j) pair and returns the indices of feasible pairs plus
+// the derived phase_t vector for each pair.
+//
+// Arguments:
+//   tdbh0_mat     : numeric matrix [n_cc  × K] — track DBH at t   per current assignment
+//   tdbh1_mat     : numeric matrix [n_next × K] — track DBH at t+1 per next assignment
+//   phase_tp1_mat : integer matrix [n_next × K] — phase at t+1 per next full-state
+//   resprout_mat  : logical matrix [n_next × K] — resprout flag per next full-state
+//                   (pass a 0-row matrix when no resprouts present)
+//   prune_hard    : logical — whether to apply hard growth-rate pruning
+//   interval_val  : numeric — census interval in years (NA / non-finite → skip pruning)
+//   eff_min_grow  : numeric — minimum allowed annual DBH growth (cm/yr)
+//   eff_max_grow  : numeric — maximum allowed annual DBH growth (cm/yr)
+//   eff_recruit_max: numeric — maximum DBH for a recruit (NA / non-finite → skip)
+//
+// Returns a list with:
+//   from_i    : integer vector (1-based) — current-assignment index for each feasible pair
+//   to_j      : integer vector (1-based) — next-full-state index for each feasible pair
+//   phase_t   : integer matrix [n_feasible × K] — derived phase at t for each feasible pair
+// ---------------------------------------------------------------------------
+// [[Rcpp::export]]
+Rcpp::List derive_phase_prev_batch_rcpp(
+    const Rcpp::NumericMatrix&  tdbh0_mat,
+    const Rcpp::NumericMatrix&  tdbh1_mat,
+    const Rcpp::IntegerMatrix&  phase_tp1_mat,
+    const Rcpp::LogicalMatrix&  resprout_mat,
+    bool   prune_hard,
+    double interval_val,
+    double eff_min_grow,
+    double eff_max_grow,
+    double eff_recruit_max
+) {
+    const int n_cc   = tdbh0_mat.nrow();
+    const int n_next = tdbh1_mat.nrow();
+    const int K      = tdbh0_mat.ncol();
+    const bool has_resprout = (resprout_mat.nrow() == n_next) && (resprout_mat.ncol() == K);
+    const bool do_prune = prune_hard && std::isfinite(interval_val) && interval_val > 0.0;
+
+    // Worst-case pre-allocation (all pairs feasible).
+    std::vector<int>   from_i_vec;  from_i_vec.reserve(n_cc * n_next);
+    std::vector<int>   to_j_vec;    to_j_vec.reserve(n_cc * n_next);
+    // phase_t stored row-major: [n_feasible × K]
+    std::vector<int>   phase_t_flat; phase_t_flat.reserve(n_cc * n_next * K);
+
+    std::vector<int>   phase_t_buf(K);
+
+    for (int i = 0; i < n_cc; ++i) {
+        for (int j = 0; j < n_next; ++j) {
+
+            // ---- 1. Phase-transition feasibility check ----
+            bool feasible = true;
+
+            // Quick global guard: alive_tp1 must have phase 1 and dead_tp1 must not.
+            for (int k = 0; k < K && feasible; ++k) {
+                double d1      = tdbh1_mat(j, k);
+                int    ph_tp1  = phase_tp1_mat(j, k);
+                bool   alive1  = !Rcpp::NumericVector::is_na(d1);
+                if (alive1 && ph_tp1 != 1) { feasible = false; break; }
+                if (!alive1 && ph_tp1 == 1) { feasible = false; break; }
+            }
+            if (!feasible) continue;
+
+            // Derive phase_t per track
+            for (int k = 0; k < K && feasible; ++k) {
+                double d0      = tdbh0_mat(i, k);
+                double d1      = tdbh1_mat(j, k);
+                int    ph_tp1  = phase_tp1_mat(j, k);
+                bool   alive0  = !Rcpp::NumericVector::is_na(d0);
+                bool   alive1  = !Rcpp::NumericVector::is_na(d1);
+                bool   resp    = has_resprout && resprout_mat(j, k);
+
+                if (alive1) {
+                    if (resp) {
+                        // Resprout barrier: track was unborn at t.
+                        if (alive0) { feasible = false; break; }
+                        phase_t_buf[k] = 0;
+                    } else {
+                        phase_t_buf[k] = alive0 ? 1 : 0;
+                    }
+                } else {
+                    // dead or never-born at t+1
+                    if (ph_tp1 == 0) {
+                        if (alive0) { feasible = false; break; }
+                        phase_t_buf[k] = 0;
+                    } else if (ph_tp1 == 2) {
+                        phase_t_buf[k] = alive0 ? 1 : 2;
+                    } else {
+                        // ph_tp1 == 1 but !alive1 — impossible (caught above)
+                        feasible = false; break;
+                    }
+                }
+            }
+            if (!feasible) continue;
+
+            // Final consistency checks
+            for (int k = 0; k < K && feasible; ++k) {
+                double d0 = tdbh0_mat(i, k);
+                bool alive0 = !Rcpp::NumericVector::is_na(d0);
+                if (alive0  && phase_t_buf[k] != 1) { feasible = false; }
+                if (!alive0 && phase_t_buf[k] == 1) { feasible = false; }
+            }
+            if (!feasible) continue;
+
+            // ---- 2. Hard growth-rate pruning ----
+            if (do_prune) {
+                for (int k = 0; k < K && feasible; ++k) {
+                    double d0 = tdbh0_mat(i, k);
+                    double d1 = tdbh1_mat(j, k);
+                    bool alive0 = !Rcpp::NumericVector::is_na(d0);
+                    bool alive1 = !Rcpp::NumericVector::is_na(d1);
+                    if (alive0 && alive1) {
+                        double g = (d1 - d0) / interval_val;
+                        if (g < eff_min_grow || g > eff_max_grow) { feasible = false; }
+                    } else if (!alive0 && alive1) {
+                        if (std::isfinite(eff_recruit_max) && d1 > eff_recruit_max) { feasible = false; }
+                    }
+                }
+            }
+            if (!feasible) continue;
+
+            // ---- 3. Record feasible pair ----
+            from_i_vec.push_back(i + 1);  // convert to 1-based for R
+            to_j_vec.push_back(j + 1);
+            for (int k = 0; k < K; ++k) phase_t_flat.push_back(phase_t_buf[k]);
+        }
+    }
+
+    const int n_feasible = (int)from_i_vec.size();
+
+    Rcpp::IntegerVector r_from(from_i_vec.begin(), from_i_vec.end());
+    Rcpp::IntegerVector r_to(to_j_vec.begin(), to_j_vec.end());
+    Rcpp::IntegerMatrix r_phase(n_feasible, K);
+    for (int r = 0; r < n_feasible; ++r)
+        for (int k = 0; k < K; ++k)
+            r_phase(r, k) = phase_t_flat[r * K + k];
+
+    return Rcpp::List::create(
+        Rcpp::Named("from_i")  = r_from,
+        Rcpp::Named("to_j")    = r_to,
+        Rcpp::Named("phase_t") = r_phase
+    );
+}
