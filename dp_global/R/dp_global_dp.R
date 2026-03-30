@@ -110,17 +110,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     tree_data <- tree_data[order(CensusID)]
 
     # Helpers
-    log_add_exp <- function(a, b) {
-        # stable log(exp(a) + exp(b)) for scalars
-        if (!is.finite(a)) {
-            return(b)
-        }
-        if (!is.finite(b)) {
-            return(a)
-        }
-        m <- max(a, b)
-        m + log(exp(a - m) + exp(b - m))
-    }
     log_sum_exp <- function(x) {
         x <- x[is.finite(x)]
         if (length(x) == 0L) {
@@ -149,6 +138,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     post_cols <- c(post_cols, "DP_PosteriorEntropy", "DP_PosteriorReconstructedProb", "DP_PosteriorUnlinkedProb")
 
     ensure_posterior_columns <- function(dt) {
+        # Fast path: all expected columns already present with correct types.
+        # After the initial setup call, subsequent calls (fallback paths, finalize_out)
+        # return immediately without any data.table operations.
+        .nms  <- names(dt)
+        .ptk  <- max(1L, as.integer(posterior_top_k))
+        .nids <- paste0("DP_PosteriorTop", seq_len(.ptk), "ID")
+        .npbs <- paste0("DP_PosteriorTop", seq_len(.ptk), "Prob")
+        if (all(c(.nids, .npbs, "DP_PosteriorEntropy", "DP_PosteriorReconstructedProb",
+                  "DP_PosteriorUnlinkedProb", "obs_row_id") %in% .nms) &&
+            all(vapply(.nids, function(n) is.integer(dt[[n]]),  logical(1L))) &&
+            all(vapply(.npbs, function(n) is.numeric(dt[[n]]),  logical(1L))) &&
+            is.numeric(dt$DP_PosteriorEntropy) &&
+            is.numeric(dt$DP_PosteriorReconstructedProb) &&
+            is.numeric(dt$DP_PosteriorUnlinkedProb) &&
+            is.integer(dt$obs_row_id)) {
+            return(dt)
+        }
+        # Slow path: add or coerce missing/wrong-typed columns.
         # data.table uses the type of the RHS to infer the column type.
         # Create ID (integer) and Prob (numeric) columns for 1..posterior_top_k
         for (k in seq_len(max(1L, as.integer(posterior_top_k)))) {
@@ -726,17 +733,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # phase 0 at the preceding census, effectively creating a new identity that
     # needs its own track slot.  Add one extra track per resprout observation.
     resprout_regex <- "\\b(R|RP|RF|RT|QR)\\b"
-    n_resprout_total <- 0L
-    if ("ListOfTSM" %in% names(tree_data)) {
-        for (cc in census_range) {
-            obs_tmp <- tree_data[CensusID == cc & !is.na(DBH)]
-            if (nrow(obs_tmp) > 0L && "ListOfTSM" %in% names(obs_tmp)) {
-                n_resprout_total <- n_resprout_total + sum(
-                    !is.na(obs_tmp$ListOfTSM) & grepl(resprout_regex, obs_tmp$ListOfTSM)
-                )
-            }
+    # Pre-compute per-census row indices and resprout flags ONCE here.
+    # This single pass is reused in both the resprout count below and the
+    # state enumeration loop after K is determined, eliminating duplicate
+    # [.data.table subset calls from those two loops.
+    .has_tsm <- "ListOfTSM" %in% names(tree_data)
+    .obs_row_idx_pre <- vector("list", n_census)
+    .is_resprout_pre <- vector("list", n_census)
+    for (.p0 in seq_len(n_census)) {
+        .idx0 <- tree_data[CensusID == census_range[.p0] & !is.na(DBH), which = TRUE]
+        .obs_row_idx_pre[[.p0]] <- .idx0
+        if (length(.idx0) > 0L && .has_tsm) {
+            .tsm0 <- tree_data$ListOfTSM[.idx0]
+            .is_resprout_pre[[.p0]] <- !is.na(.tsm0) & grepl(resprout_regex, .tsm0)
+        } else {
+            .is_resprout_pre[[.p0]] <- rep(FALSE, length(.idx0))
         }
     }
+    n_resprout_total <- sum(vapply(.is_resprout_pre, function(x) sum(x), integer(1L)))
     if (n_resprout_total > 0L) {
         K_base <- K_base + n_resprout_total
         vcat(prefix, "Resprout barrier: adding ", n_resprout_total, " extra track(s) for resprout observations")
@@ -800,18 +814,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     state_keys <- vector("list", n_census)
     for (p in seq_len(n_census)) {
         cc <- census_range[p]
-        idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+        idx <- .obs_row_idx_pre[[p]]    # reuse pre-computed indices (eliminates [.data.table call)
         obs_row_idx[[p]] <- idx
         obs_dbh[[p]] <- tree_data$DBH[idx]
         n_obs <- length(obs_dbh[[p]])
-
-        # Resprout flags for observations at this census
-        if (n_obs > 0L && "ListOfTSM" %in% names(tree_data)) {
-            tsm_vals <- tree_data$ListOfTSM[idx]
-            is_resprout_obs[[p]] <- !is.na(tsm_vals) & grepl(resprout_regex, tsm_vals)
-        } else {
-            is_resprout_obs[[p]] <- rep(FALSE, n_obs)
-        }
+        is_resprout_obs[[p]] <- .is_resprout_pre[[p]]  # reuse pre-computed flags (eliminates grepl call)
         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
 
         if (is.null(mat)) {
@@ -875,54 +882,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         phase_vec <- decode_phase_key(p)
         list(assign = assign_vec, phase = phase_vec)
     }
-    derive_phase_prev <- function(phase_tp1, tdbh_t, tdbh_tp1, resprout_tp1 = NULL) {
-        K_loc <- length(tdbh_t)
-        if (length(phase_tp1) != K_loc) {
-            return(NULL)
-        }
-        alive_t <- !is.na(tdbh_t)
-        alive_tp1 <- !is.na(tdbh_tp1)
-        if (any(alive_tp1 & phase_tp1 != 1L)) {
-            return(NULL)
-        }
-        if (any((!alive_tp1) & phase_tp1 == 1L)) {
-            return(NULL)
-        }
-
-        phase_t <- integer(K_loc)
-        for (k in seq_len(K_loc)) {
-            if (alive_tp1[k]) {
-                if (!is.null(resprout_tp1) && isTRUE(resprout_tp1[k])) {
-                    # Resprout barrier: track k is a resprout at t+1.
-                    # The stem identity starts at t+1, so at t the track
-                    # must be phase 0 (unborn) with no observation.
-                    if (alive_t[k]) return(NULL)
-                    phase_t[k] <- 0L
-                } else {
-                    phase_t[k] <- if (alive_t[k]) 1L else 0L
-                }
-            } else {
-                if (phase_tp1[k] == 0L) {
-                    if (alive_t[k]) {
-                        return(NULL)
-                    }
-                    phase_t[k] <- 0L
-                } else if (phase_tp1[k] == 2L) {
-                    phase_t[k] <- if (alive_t[k]) 1L else 2L
-                } else {
-                    return(NULL)
-                }
-            }
-        }
-        if (any(alive_t & phase_t != 1L)) {
-            return(NULL)
-        }
-        if (any((!alive_t) & phase_t == 1L)) {
-            return(NULL)
-        }
-        phase_t
-    }
-
     # Bio params (same extraction logic as MAP DP)
     Bio_Mu_Growth_unit <- unique(tree_data$Bio_Mu_Growth)
     Bio_Gamma_Growth_unit <- if ("Bio_Gamma_Growth" %in% names(tree_data)) {
@@ -1179,7 +1138,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         # Compute full-state key strings for each feasible pair using vectorized ops.
-        # phase key: apply encode_phase_key row-wise (compact char-vector encoding)
         if (n_feasible > 0L) {
             fe_assign_keys <- state_keys[[p]][fe_from]  # assign key portion (precomputed)
             # Vectorized phase key encoding: avoids per-row apply + rawToChar overhead
@@ -1250,10 +1208,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 transition_cost_calls <- transition_cost_calls + 1L
                 if (verbose) transition_cost_time <- transition_cost_time + (tic() - t_tc0)
 
-                for (e in seq_along(rows)) {
-                    j        <- j_vals[[e]]
+                # Step 1: sequential state registration (new keys need sequential idx)
+                n_e <- length(rows)
+                c_trans_num <- unlist(c_trans_vec, use.names = FALSE)
+                edge_idx <- integer(n_e)
+                for (e in seq_len(n_e)) {
                     curr_key <- f_keys[[e]]
-
                     idx <- key_to_idx[[curr_key]]
                     if (is.null(idx)) {
                         idx <- length(curr_keys_list) + 1L
@@ -1264,25 +1224,61 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                         curr_vit[idx]  <- Inf
                         curr_ptr[idx]  <- NA_integer_
                     }
-
-                    c_trans <- c_trans_vec[[e]]
-
-                    # Viterbi update (MAP)
-                    cand_vit <- c_trans + vit_next[[j]]
-                    if (!is.finite(curr_vit[idx]) || cand_vit < curr_vit[idx]) {
-                        curr_vit[idx] <- cand_vit
-                        curr_ptr[idx] <- j
+                    edge_idx[[e]] <- idx
+                }
+                # Step 2: vectorized cost accumulation — eliminates per-edge log_add_exp R calls
+                .logw_v     <- -c_trans_num / temperature
+                .cand_vit_v <- c_trans_num + vit_next[j_vals]
+                .cand_log_v <- .logw_v + logB_next[j_vals]
+                if (n_e == 1L) {
+                    # Single-edge fast path
+                    .ix <- edge_idx[1L]
+                    if (!is.finite(curr_vit[.ix]) || .cand_vit_v[1L] < curr_vit[.ix]) {
+                        curr_vit[.ix] <- .cand_vit_v[1L]; curr_ptr[.ix] <- j_vals[1L]
                     }
-
-                    # Backward log-sum-exp update
-                    cand_log <- (-c_trans / temperature) + logB_next[[j]]
-                    curr_logB[idx] <- log_add_exp(curr_logB[idx], cand_log)
-
-                    # Store edge for forward pass
+                    .lb <- curr_logB[.ix]
+                    curr_logB[.ix] <- if (!is.finite(.lb)) .cand_log_v[1L] else {
+                        .m <- max(.lb, .cand_log_v[1L])
+                        .m + log(exp(.lb - .m) + exp(.cand_log_v[1L] - .m))
+                    }
                     used_edges <- used_edges + 1L
-                    from_idx[[used_edges]] <- idx
-                    to_idx[[used_edges]]   <- j
-                    logw[[used_edges]]     <- (-c_trans / temperature)
+                    from_idx[[used_edges]] <- .ix; to_idx[[used_edges]] <- j_vals[1L]
+                    logw[[used_edges]] <- .logw_v[1L]
+                } else if (!anyDuplicated(edge_idx)) {
+                    # No duplicate indices: fully vectorized Viterbi + logB updates
+                    .vit_old <- curr_vit[edge_idx]
+                    .upd <- !is.finite(.vit_old) | (.cand_vit_v < .vit_old)
+                    if (any(.upd)) {
+                        curr_vit[edge_idx[.upd]] <- .cand_vit_v[.upd]
+                        curr_ptr[edge_idx[.upd]] <- j_vals[.upd]
+                    }
+                    .lb_old <- curr_logB[edge_idx]
+                    .fin    <- is.finite(.lb_old)
+                    if (any(.fin)) {
+                        .m <- pmax(.lb_old[.fin], .cand_log_v[.fin])
+                        curr_logB[edge_idx[.fin]] <- .m + log(
+                            exp(.lb_old[.fin] - .m) + exp(.cand_log_v[.fin] - .m))
+                    }
+                    if (any(!.fin)) curr_logB[edge_idx[!.fin]] <- .cand_log_v[!.fin]
+                    .e_rng <- seq.int(used_edges + 1L, used_edges + n_e)
+                    from_idx[.e_rng] <- edge_idx; to_idx[.e_rng] <- j_vals; logw[.e_rng] <- .logw_v
+                    used_edges <- used_edges + n_e
+                } else {
+                    # Fallback: duplicate edge_idx values (rare — two j's yield same full-key)
+                    for (e in seq_len(n_e)) {
+                        .ix <- edge_idx[e]
+                        if (!is.finite(curr_vit[.ix]) || .cand_vit_v[e] < curr_vit[.ix]) {
+                            curr_vit[.ix] <- .cand_vit_v[e]; curr_ptr[.ix] <- j_vals[e]
+                        }
+                        .lb <- curr_logB[.ix]
+                        curr_logB[.ix] <- if (!is.finite(.lb)) .cand_log_v[e] else {
+                            .m <- max(.lb, .cand_log_v[e])
+                            .m + log(exp(.lb - .m) + exp(.cand_log_v[e] - .m))
+                        }
+                        used_edges <- used_edges + 1L
+                        from_idx[[used_edges]] <- .ix; to_idx[[used_edges]] <- j_vals[e]
+                        logw[[used_edges]] <- .logw_v[e]
+                    }
                 }
             }
         }
