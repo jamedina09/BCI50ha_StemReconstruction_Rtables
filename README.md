@@ -5,10 +5,10 @@ A collection of scripts and R modules for running and testing the DP stem-identi
 
 Quick pointers:
 
-- See `dp_global/README.md` for details on the DP implementation and R driver. 🔧
-- Run `bin/run_dp_future.R` to execute experiments on a single machine (this is the recommended entrypoint). For single-config runs, use `bin/run_dp_future_single.R` or run `run_dp_future.R` with `--workers 1`. Please consult `bin/README.md` for examples and options.
-- See `bin/README.md` for a quick reference to the runners and usage notes.
-- You can now force the DP solver to skip particular growth forms by passing
+- See `dp_global/README.md` for details on the DP implementation and R modules.
+- Run `dp_global/scripts/main_cpp.R` for single-tag or small-dataset runs. For large datasets, use `dp_global/scripts/main_cpp_chunk.R` which writes outputs incrementally and supports resume.
+- See `dp_global/scripts/README.md` for a full CLI flag reference, chunking details, and example invocations.
+- You can force the DP solver to skip particular growth forms by passing
   `--DP_FALLBACK_GROWTH_FORMS=<form1,form2>` (for example, `tree` or `fig`) to
   the driver; the flag accepts a comma‑ or semicolon‑separated list. Any tag
   containing a row with a matching `growth_form` value will be reconstructed
@@ -22,10 +22,10 @@ R (packages: `data.table`, `igraph`).
 
 1. Install R and required packages (see `## Prerequisites`).
 
-2. Dry-run the concurrent runner to verify commands (no execution):
+2. Run a single tag to verify the pipeline:
 
 ```bash
-./bin/run_dp_future.R --workers 1 --cores-per-job 1 --configs "fixed" -- --DRY_RUN
+Rscript dp_global/scripts/main_cpp.R --WHICH_TAG=20
 ```
 
 3. Run the smoke test to verify core functionality:
@@ -40,12 +40,12 @@ Notes
 
 Conventions
 -----------
-- Top-level helper scripts intended for users live in `bin/` (e.g., `bin/run_dp_future.R` — the recommended entrypoint for running experiments). Module internals and helpers live under `dp_global/`.
+- Driver scripts live under `dp_global/scripts/` (`main_cpp.R` for single-tag/small runs; `main_cpp_chunk.R` for large chunked runs). Module internals and helpers live under `dp_global/R/`.
 - Directory names are lowercase snake_case (e.g., `data_simulation`, `dp_global`). Most scripts and documentation follow this convention.
 
 Testing & CI
 ------------
-- Run `make smoke` to perform a lightweight smoke test: it executes the serial runner in `--DRY_RUN` mode and runs `Rscript dp_global/scripts/run_smoke.R` to verify core functions load without performing heavy computations.
+- Run `make smoke` to perform a lightweight smoke test: runs `Rscript dp_global/scripts/run_smoke.R` to verify core functions load without performing heavy computations.
 
 ## TODO / Future improvements ✅
 
