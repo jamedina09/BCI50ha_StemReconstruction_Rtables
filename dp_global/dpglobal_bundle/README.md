@@ -79,7 +79,7 @@ Security & reproducibility
 - Record R and package versions used to build the bundle (e.g., `sessioninfo::session_info()`).
 - Do not run compiled code from untrusted bundles without verifying provenance.
 
-That's it — short and practical. A small `verify_bundle.R` script can be included in this folder; when present `package_bundle.sh` copies it into the staged bundle. `verify_bundle.R` performs a basic smoke test by running a small set of regression tests (for example: `dp_global/dev/test_anchor_scoping.R` and `dp_global/dev/test_integration_post_anchor_given.R`) to validate bundle integrity on a target machine.
+That's it — short and practical. A small `verify_bundle.R` script can be included in this folder; when present `package_bundle.sh` copies it into the staged bundle. `verify_bundle.R` performs a basic smoke test to validate bundle integrity on a target machine.
 
 ---
 
@@ -322,11 +322,10 @@ exists('estimate_bio_pars', envir = myenv)
 exists('transition_cost_tracks_bio_batch_rcpp_cpp', mode = 'function', inherits = TRUE)
 ```
 
-7. Run a short smoke test or the provided tests:
+7. Run a short smoke test or the provided verify script:
 
 ```bash
-# example test that exists in the project
-Rscript dp_global/dev/test_transition_cost_tracks_bio_batch.R
+Rscript dp_global/R/dpglobal_bundle/verify_bundle.R
 ```
 
 
