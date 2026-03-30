@@ -955,7 +955,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     if (!is.null(prune_recruit_max_dbh)) {
         if (isTRUE(prune_use_bio_recruit) && is.finite(Bio_Recruit_MaxDBH_unit)) {
-            # TODO: probably should add a margin here - e.g., Bio_Recruit_MaxDBH_unit * 1.2
             eff_recruit_max <- min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)
         } else {
             eff_recruit_max <- prune_recruit_max_dbh
