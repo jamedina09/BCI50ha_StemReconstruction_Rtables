@@ -1153,10 +1153,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         fe_phase <- feasible_result$phase_t  # n_feasible × K integer matrix
         n_feasible <- length(fe_from)
 
-        # Update prune diagnostics (count all infeasible pairs as examined+pruned)
+        # Update prune diagnostics
         if (isTRUE(prune_hard)) {
-            n_infeasible <- n_states_cc * n_next - n_feasible
-            prune_stats$total_examined <- prune_stats$total_examined + n_infeasible
+            n_examined   <- n_states_cc * n_next
+            n_infeasible <- n_examined - n_feasible
+            prune_stats$total_examined <- prune_stats$total_examined + n_examined
             prune_stats$total_pruned   <- prune_stats$total_pruned   + n_infeasible
             prune_stats$per_census[[as.character(cc)]] <-
                 prune_stats$per_census[[as.character(cc)]] + n_infeasible
