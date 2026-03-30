@@ -172,4 +172,4 @@ echo "[package_bundle] Created: ${TARBALL_PATH}"
 
 exit 0
 
-# ./dp_global/R/dpglobal_bundle/package_bundle.sh
+# ./dp_global/dpglobal_bundle/package_bundle.sh
