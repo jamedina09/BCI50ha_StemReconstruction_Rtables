@@ -46,7 +46,7 @@ if (sys.nframe() == 0L) {
 ### 1) CLI parsing — Command-line parsing & overrides
 ############################################################
 # Parse command-line arguments to override defaults.
-# Usage: Rscript main_cpp.R --WHICH_TAG=2 --RUN_ALL_TAGS=TRUE --DP_MODE=marginals+bins --SENSITIVITY_MODE=run --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=8
+# Usage: Rscript main_cpp_chunk_bci.R --INPUT_FILE=/path/to/data.rds --MANUAL_CORES_VALUE=15
 # Supported args: any config variable name prefixed with --
 
 parse_args <- function() {
@@ -117,7 +117,7 @@ library(withr)
 ############################################################
 ### 3) Defaults & constants — editable run defaults
 ############################################################
-## 2.1 Input data and species handling
+### 3.0) Input data and bundle path
 INPUT_FILE <- here("DATA", "PROCESSED", "6_ViewFullTable_taper_corrected_growth_forms.rds")
 
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE
@@ -173,9 +173,8 @@ DP_FALLBACK_GROWTH_FORMS <- character(0)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
 # - POSTERIOR_SAMPLES_FORMAT: output format forwarded to DP ('rds','feather','csv')
 # - POSTERIOR_SAMPLES_PATH: optional path to write posterior files; when NULL DP writes to out_dir/posteriors
-# - POSTERIOR_SAMPLE_SEED: integer seed used to make posterior sampling reproducible. If NULL sampling is not deterministically seeded; runners
-#   (e.g., bin/run_dp_future_single.R) may auto-generate a seed when running in batch/parallel to avoid RNG misuse warnings and ensure
-#   reproducible sampling across tasks. If you want reproducible CLI runs, pass --POSTERIOR_SAMPLE_SEED explicitly.
+# - POSTERIOR_SAMPLE_SEED: integer seed for reproducible posterior sampling.
+#   If NULL, sampling is not deterministically seeded; pass --POSTERIOR_SAMPLE_SEED=<int> for reproducible runs.
 POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "feather" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
@@ -261,9 +260,9 @@ with_dir(dp_bundle_path, source(file.path("dp_global", "R", "naming_helpers.R"))
 ### 4) CLI reference & override mapping — canonical flags and mapping
 ############################################################
 # This short reference is useful when constructing or validating CLI flags
-# in external orchestrators (e.g., bin/run_dp_future_single.R). Keys in the CLI
-# are case-insensitive and may use '-' or '_' as separators; they are mapped to
-# the corresponding internal variable names below.
+# for external orchestrators. Keys in the CLI are case-insensitive and may
+# use '-' or '_' as separators; they are mapped to the corresponding internal
+# variable names below.
 CLI_REFERENCE <- list(
     INPUT_FILE = "INPUT_FILE",
     FORCE_ONE_SPECIES_PARAMETERS = "FORCE_ONE_SPECIES_PARAMETERS",

@@ -45,7 +45,7 @@ Conventions
 
 Testing & CI
 ------------
-- Run `make smoke` to perform a lightweight smoke test: runs `Rscript dp_global/scripts/run_smoke.R` to verify core functions load without performing heavy computations.
+- Run `make smoke` to perform a lightweight smoke test: sources `dp_global/R/dp_global_main.R` to verify all R modules load without errors.
 
 ## TODO / Future improvements ✅
 

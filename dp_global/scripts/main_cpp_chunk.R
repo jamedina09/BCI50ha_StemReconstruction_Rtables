@@ -51,7 +51,7 @@ if (sys.nframe() == 0L) {
 ### 1) CLI parsing — Command-line parsing & overrides
 ############################################################
 # Parse command-line arguments to override defaults.
-# Usage: Rscript main_cpp.R --WHICH_TAG=2 --RUN_ALL_TAGS=TRUE --DP_MODE=marginals+bins --SENSITIVITY_MODE=run --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=8
+# Usage: Rscript main_cpp_chunk.R --RUN_ALL_TAGS=TRUE --DP_CHUNK_SIZE=7 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=4
 # Supported args: any config variable name prefixed with --
 
 parse_args <- function() {
@@ -171,9 +171,8 @@ PALM_PRUNE_MAX_GROWTH <-  0.5
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
 # - POSTERIOR_SAMPLES_FORMAT: output format forwarded to DP ('rds','feather','csv')
 # - POSTERIOR_SAMPLES_PATH: optional path to write posterior files; when NULL DP writes to out_dir/posteriors
-# - POSTERIOR_SAMPLE_SEED: integer seed used to make posterior sampling reproducible. If NULL sampling is not deterministically seeded; runners
-#   (e.g., bin/run_dp_future_single.R) may auto-generate a seed when running in batch/parallel to avoid RNG misuse warnings and ensure
-#   reproducible sampling across tasks. If you want reproducible CLI runs, pass --POSTERIOR_SAMPLE_SEED explicitly.
+# - POSTERIOR_SAMPLE_SEED: integer seed for reproducible posterior sampling. If NULL, this script defaults to 123L
+#   when sampling is enabled; pass --POSTERIOR_SAMPLE_SEED=<int> to override.
 POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "csv" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL

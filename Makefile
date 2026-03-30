@@ -2,9 +2,8 @@
 .PHONY: smoke profile docs
 
 smoke:
-	@echo "Running smoke tests (uses run_dp_future.R DRY_RUN)..."
-	@./bin/run_dp_future.R --workers 1 --cores-per-job 1 --configs "fixed" -- --DRY_RUN
-	@Rscript dp_global/scripts/run_smoke.R
+	@echo "Smoke test: verifying dp_global R modules load without errors..."
+	@Rscript -e "source('dp_global/R/dp_global_main.R'); cat('[smoke] All modules loaded OK\n')"
 
 profile:
 	@echo "Profiling (cpp-only)..."
