@@ -8,12 +8,13 @@
 ###   2. Overall runtime summary (DP vs igraph, total hours)
 ###   3. Parameter sensitivity table showing how tightening
 ###      pruning or lowering max_states changes runtime
+###      (skipped when --NO_SWEEP is passed)
 ###
 ### Parameters match main_cpp_chunk.R defaults.
 ### Run from the project root:
 ###   Rscript dp_global/R/complexity/test_complexity_estimator.R
-###   Rscript dp_global/R/complexity/test_complexity_estimator.R --INPUT_FILE=bci_data/bci_multistem_xrun_debug.rds
-###   Rscript dp_global/R/complexity/test_complexity_estimator.R --INPUT_FILE=path/to/file.csv --ANCHOR_START=7 --DP_MAX_STATES=1100
+###   Rscript dp_global/R/complexity/test_complexity_estimator.R --INPUT_FILE=bci_data/bci_multistem_xrun_debug.rds --NO_SWEEP
+###   Rscript dp_global/R/complexity/test_complexity_estimator.R --INPUT_FILE=path/to/file.csv --ANCHOR_START=7 --DP_MAX_STATES=10000 --TOP_N=30
 ############################################################
 rm(list = ls())
 
@@ -34,6 +35,10 @@ for (.a in .args) {
         else if (grepl("^[+-]?[0-9]*\\.[0-9]+$", .val)) .val <- as.numeric(.val)
         else if (tolower(.val) %in% c("true","false")) .val <- as.logical(tolower(.val))
         .overrides[[.key]] <- .val
+    } else if (grepl("^--[A-Za-z]", .a)) {
+        # valueless flags like --NO_SWEEP treated as TRUE
+        .key <- toupper(gsub("^--", "", .a))
+        .overrides[[.key]] <- TRUE
     }
 }
 
@@ -48,6 +53,8 @@ MAX_GROWTH_FIXED <- 5.0
 MAX_SHRINK_FIXED <- -0.5
 RECRUIT_MAX      <- (MAX_GROWTH_FIXED * 5) + 0.9999
 PRUNE_MARGIN     <- 1.25   # prune bounds = fixed bounds * this margin
+TOP_N            <- 30L    # number of slowest tags to display
+RUN_SWEEP        <- TRUE   # set FALSE via --NO_SWEEP to skip the slow parameter sweep
 
 # Apply CLI overrides
 if (!is.null(.overrides$INPUT_FILE))      DATA_PATH        <- .overrides$INPUT_FILE
@@ -58,6 +65,8 @@ if (!is.null(.overrides$MAX_GROWTH))      MAX_GROWTH_FIXED <- as.numeric(.overri
 if (!is.null(.overrides$MIN_GROWTH))      MAX_SHRINK_FIXED <- as.numeric(.overrides$MIN_GROWTH)
 if (!is.null(.overrides$RECRUIT_MAX))     RECRUIT_MAX      <- as.numeric(.overrides$RECRUIT_MAX)
 if (!is.null(.overrides$PRUNE_MARGIN))    PRUNE_MARGIN     <- as.numeric(.overrides$PRUNE_MARGIN)
+if (!is.null(.overrides$TOP_N))           TOP_N            <- as.integer(.overrides$TOP_N)
+if (isTRUE(.overrides$NO_SWEEP))          RUN_SWEEP        <- FALSE
 
 # Recompute RECRUIT_MAX if MAX_GROWTH was overridden but RECRUIT_MAX was not
 if (!is.null(.overrides$MAX_GROWTH) && is.null(.overrides$RECRUIT_MAX)) {
@@ -75,10 +84,48 @@ PRUNE_MIN <- MAX_SHRINK_FIXED * PRUNE_MARGIN
 PRUNE_MAX <- MAX_GROWTH_FIXED * PRUNE_MARGIN
 PRUNE_REC <- RECRUIT_MAX * PRUNE_MARGIN
 
-cat("============================================================\n")
-cat("  DP Complexity Estimator — Runtime Overview\n")
+# ==================================================================
+# BCI data preprocessing
+# Detect if input is a BCI-style RDS (has raw mm DBH and StemID columns)
+# and normalize to the standard columns expected by estimate_dp_complexity.
+# ==================================================================
+.is_bci_raw <- grepl("\\.rds$", DATA_PATH, ignore.case = TRUE)
+if (.is_bci_raw) {
+    cat("  Detected RDS input — loading and preprocessing BCI data...\n")
+    .raw <- as.data.table(readRDS(DATA_PATH))
+
+    # BCI-specific column mapping
+    if ("dbh_with_best_candidate_taper_corrected" %in% names(.raw) &&
+        !("DBH" %in% names(.raw))) {
+        .raw[, DBH := dbh_with_best_candidate_taper_corrected / 10]  # mm -> cm
+    }
+    if ("StemID" %in% names(.raw) && !("TrueStemID" %in% names(.raw))) {
+        .raw[, TrueStemID := as.integer(as.character(StemID))]
+    }
+    if ("Mnemonic" %in% names(.raw) && !("species" %in% names(.raw))) {
+        .raw[, species := as.character(Mnemonic)]
+    }
+    .raw[, Tag := as.character(Tag)]
+
+    # Keep only multi-stemmed tags (those that need DP)
+    if ("single_stem_tags" %in% names(.raw)) {
+        .n_before <- uniqueN(.raw$Tag)
+        .raw <- .raw[single_stem_tags == FALSE]
+        cat(sprintf("  Kept %d multi-stemmed tags (dropped %d single-stemmed).\n",
+            uniqueN(.raw$Tag), .n_before - uniqueN(.raw$Tag)))
+    }
+
+    # Restrict to anchor-census and later rows (mirrors main_cpp_chunk_bci.R)
+    .raw <- .raw[CensusID >= ANCHOR_START & !is.na(DBH)]
+
+    cat(sprintf("  Tags after filtering: %d\n", uniqueN(.raw$Tag)))
+    DATA_PATH <- .raw   # pass the prepared data.table directly
+    rm(.raw)
+}
+.data_path_label <- if (is.character(DATA_PATH)) DATA_PATH else
+    sprintf("[BCI data.table: %d rows]", nrow(DATA_PATH))
 cat("============================================================\n\n")
-cat(sprintf("  Input file    : %s\n", DATA_PATH))
+cat(sprintf("  Input file    : %s\n", .data_path_label))
 cat(sprintf("  Anchor census : %d\n", ANCHOR_START))
 cat(sprintf("  Max states    : %s\n", format(DP_MAX_STATES, big.mark = ",")))
 cat(sprintf("  Growth bounds : [%.2f, %.2f] cm/yr\n", MAX_SHRINK_FIXED, MAX_GROWTH_FIXED))
@@ -130,7 +177,7 @@ if (nrow(dp_only) > 0L) {
 cat("\n")
 
 # ==================================================================
-# 3. Top 15 Slowest Tags
+# 3. Top N Slowest Tags
 # ==================================================================
 display_cols <- c("Tag", "Species", "K", "max_obs", "n_censuses",
                   "max_states_per_census", "estimated_edges_unpruned",
@@ -138,7 +185,7 @@ display_cols <- c("Tag", "Species", "K", "max_obs", "n_censuses",
                   "estimated_fallback", "predicted_seconds", "predicted_hours")
 display_cols <- display_cols[display_cols %in% names(complexity)]
 
-n_show <- min(15L, nrow(complexity))
+n_show <- min(TOP_N, nrow(complexity))
 disp <- complexity[seq_len(n_show), ..display_cols]
 disp[, predicted_seconds := round(predicted_seconds, 1)]
 disp[, predicted_hours   := round(predicted_hours, 4)]
@@ -165,7 +212,9 @@ if (n_igraph > 0L) {
 # ==================================================================
 # 5. Parameter Sensitivity — how changing settings affects runtime
 # ==================================================================
-cat("============================================================\n")
+if (!isTRUE(RUN_SWEEP)) {
+    cat("  (Parameter sweep skipped — pass without --NO_SWEEP to enable)\n\n")
+} else {
 cat("  PARAMETER SENSITIVITY\n")
 cat("  How changing pruning bounds and max_states affects runtime\n")
 cat("============================================================\n\n")
@@ -255,13 +304,25 @@ cat("  - Tighter pruning reduces edges but does not change the state count;\n")
 cat("    lowering max_states pushes more tags to igraph fallback\n")
 cat("\n")
 
+} # end if (RUN_SWEEP)
+
 # ==================================================================
 # 6. Export results
 # ==================================================================
-output_path <- sub("\\.[^.]+$", "_complexity_report.csv", DATA_PATH)
+output_path <- if (is.character(DATA_PATH)) {
+    sub("\\.[^.]+$", "_complexity_report.csv", DATA_PATH)
+} else {
+    file.path(here("dp_global", "R", "complexity"), "complexity_report.csv")
+}
 fwrite(complexity, output_path)
 cat(sprintf("  Full per-tag results exported to: %s\n", output_path))
 
-sweep_path <- sub("\\.[^.]+$", "_complexity_sweep.csv", DATA_PATH)
-fwrite(sweep, sweep_path)
-cat(sprintf("  Parameter sweep results exported to: %s\n\n", sweep_path))
+if (isTRUE(RUN_SWEEP)) {
+    sweep_path <- if (is.character(DATA_PATH)) {
+        sub("\\.[^.]+$", "_complexity_sweep.csv", DATA_PATH)
+    } else {
+        file.path(here("dp_global", "R", "complexity"), "complexity_sweep.csv")
+    }
+    fwrite(sweep, sweep_path)
+    cat(sprintf("  Parameter sweep results exported to: %s\n\n", sweep_path))
+}
