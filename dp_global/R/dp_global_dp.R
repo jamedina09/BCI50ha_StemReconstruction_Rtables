@@ -40,6 +40,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            prune_recruit_max_dbh = NULL,
                                                            # NOTE: Check the TODO in the code about possibly adding a margin when using biological recruit max DBH
                                                            prune_use_bio_recruit = TRUE,
+                                                           # --- palm-specific tight prune bounds ---
+                                                           # When the tree is a palm (growth_form == "palm"), override eff_min_grow / eff_max_grow
+                                                           # with these tight bounds (DBH is stable, not growing).
+                                                           palm_prune_min_growth = -0.5,
+                                                           palm_prune_max_growth =  0.5,
                                                            verbose = FALSE) {
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
@@ -564,6 +569,20 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     prune_use_bio_bounds <- isTRUE(prune_use_bio_bounds)
     if (!is.null(prune_recruit_max_dbh)) prune_recruit_max_dbh <- as.numeric(prune_recruit_max_dbh)
     prune_use_bio_recruit <- isTRUE(prune_use_bio_recruit)
+    palm_prune_min_growth <- as.numeric(palm_prune_min_growth)
+    palm_prune_max_growth <- as.numeric(palm_prune_max_growth)
+
+    # --- Palm detection (tight DBH-stability prune bounds when growth_form == "palm")
+    if ("growth_form" %in% names(tree_data)) {
+        gf_vals <- unique(tree_data$growth_form)
+        if (length(gf_vals) > 1L) {
+            warning(prefix, "Multiple growth_form values found; using most common to determine palm status.")
+            gf_vals <- names(sort(table(tree_data$growth_form), decreasing = TRUE))[1L]
+        }
+        is_palm <- isTRUE(gf_vals == "palm")
+    } else {
+        is_palm <- FALSE
+    }
 
     prune_stats <- list(
         total_examined = 0L,
@@ -961,6 +980,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
     } else {
         eff_recruit_max <- Bio_Recruit_MaxDBH_unit
+    }
+
+    # Palm override: DBH is stable in palms — collapse prune window to very tight bounds
+    if (isTRUE(is_palm)) {
+        eff_min_grow <- palm_prune_min_growth
+        eff_max_grow <- palm_prune_max_growth
     }
 
     prune_stats$eff_min_growth <- as.numeric(eff_min_grow)
