@@ -200,6 +200,10 @@ message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 # experimental configuration; default to NULL so override parsing treats it as
 # a valid, known variable rather than an unknown override.
 CONFIG_NAME <- NULL
+# When non-NULL, OUT_DIR_OVERRIDE bypasses build_out_dir_name() and uses this
+# path directly as out_dir. Pass --OUT_DIR_OVERRIDE=/path/to/existing/run on
+# the command line to reuse an existing output directory.
+OUT_DIR_OVERRIDE <- NULL
 
 # Output path helpers (`encode_num`, `build_out_dir_name`) live in naming_helpers.R,
 # sourced near the end of this section.
@@ -244,6 +248,7 @@ CLI_REFERENCE <- list(
     WRITE_DP_RDS = "WRITE_DP_RDS",
     WRITE_DP_FEATHER = "WRITE_DP_FEATHER",
     WRITE_DP_PDF = "WRITE_DP_PDF",
+    DP_PDF_INCLUDE_REFERENCE = "DP_PDF_INCLUDE_REFERENCE",
     DP_MAX_STATES = "DP_MAX_STATES",
     DP_FALLBACK_GROWTH_FORMS = "DP_FALLBACK_GROWTH_FORMS",
     PALM_PRUNE_MIN_GROWTH = "PALM_PRUNE_MIN_GROWTH",
@@ -255,11 +260,16 @@ CLI_REFERENCE <- list(
     POSTERIOR_SAMPLES_FORMAT = "POSTERIOR_SAMPLES_FORMAT",
     POSTERIOR_SAMPLES_PATH = "POSTERIOR_SAMPLES_PATH",
     POSTERIOR_SAMPLE_SEED = "POSTERIOR_SAMPLE_SEED",
+    SENSITIVITY_MODE = "SENSITIVITY_MODE",
+    RUN_REALISM_REPORT = "RUN_REALISM_REPORT",
+    RUN_K_SWEEP_DEMO = "RUN_K_SWEEP_DEMO",
     PROJECT_ROOT = "PROJECT_ROOT",
     BATCH_TS = "BATCH_TS",
     CONFIG_NAME = "CONFIG_NAME",
     USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR",
-    ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR"
+    ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR",
+    DP_MAX_TRACKS = "DP_MAX_TRACKS",
+    OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE"
 )
 
 ############################################################
@@ -403,9 +413,15 @@ RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
 WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
 MAKE_ALL_SWEEPS_PDF <- SENSITIVITY_MODE == "run+write+pdf"
 
-# Final output directory for this run (created at runtime in run_main())
-out_dir <- file.path(base_out_dir, build_out_dir_name())
-message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
+# Final output directory for this run (created at runtime in run_main()).
+# OUT_DIR_OVERRIDE takes precedence: set it to reuse an existing output directory.
+if (!is.null(OUT_DIR_OVERRIDE) && nzchar(as.character(OUT_DIR_OVERRIDE))) {
+    out_dir <- normalizePath(OUT_DIR_OVERRIDE, winslash = "/", mustWork = FALSE)
+    message("[dp_global main_cpp.R] OUT_DIR_OVERRIDE set — using existing dir: ", out_dir)
+} else {
+    out_dir <- file.path(base_out_dir, build_out_dir_name())
+    message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
+}
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
 # Centralized DP naming and path helpers 🔧
@@ -481,9 +497,7 @@ source(here("dp_global", "R", "dp_global_main.R"))
 source(here("dp_global", "R", "sensitivity_transition_cost_bio.R"))
 source(here("dp_global", "R", "realism_calibration.R"))
 source(here("dp_global", "R", "k_tuning_viz.R"))
-# Helpers split out for clarity
-source(here("dp_global", "R", "naming_helpers.R"))
-# `naming_helpers.R` provides `encode_num()` and `build_out_dir_name()`
+# naming_helpers.R is already sourced in section 3.4; not repeated here.
 
 ############################################################
 ### 7) Helpers — data-manipulation utilities
@@ -682,8 +696,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         # prune controls
         # NOTE: You can always define very wide based on the parameter data you have.
         prune_hard = TRUE,
-        prune_min_growth = MAX_SHRINK_FIXED * 2.5, # very wide fixed bounds
-        prune_max_growth = MAX_GROWTH_FIXED * 1.5, # very wide fixed bounds
+        prune_min_growth = MAX_SHRINK_FIXED * 1.25, # very wide fixed bounds
+        prune_max_growth = MAX_GROWTH_FIXED * 1.25, # very wide fixed bounds
         prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
         prune_recruit_max_dbh = RECRUIT_MAX_FIXED * 1.2, # very high recruit max dbh
         prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
@@ -728,17 +742,6 @@ run_main <- function() {
         ensure_dir(ensured)
         log_msg(paste("Ensured posterior samples path:", ensured))
     }
-
-    # Write a small startup marker so parallel runs can be observed immediately
-    # (helps verify jobs start concurrently before heavy computation)
-    tryCatch(
-        {
-            writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
-        },
-        error = function(e) {
-            message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
-        }
-    )
 
     # 5.1 Load data
     xraw <- data.table::fread(INPUT_FILE)
@@ -793,16 +796,16 @@ run_main <- function() {
             growth_soft_quantile = 0.99,
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,
-            recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
-            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (7.5 * 5) + 0.99)),
+            recruit_max_source = RECRUIT_MAX_SOURCE,
+            recruit_max_fixed = as.numeric(RECRUIT_MAX_FIXED),
             # -----------------------------------------------------------------
             # Optional enforcement of user-specified growth/recruit bounds
             # Units: growth bounds in cm/year; recruit max in cm.
             # If 'enforce_growth_bounds' is TRUE, observations outside the provided fixed
             # bounds ('growth_min_fixed' and/or 'growth_max_fixed') are dropped before estimation.
             enforce_growth_bounds = TRUE,
-            growth_min_fixed = -0.5,
-            growth_max_fixed = 7.5,
+            growth_min_fixed = MAX_SHRINK_FIXED,
+            growth_max_fixed = MAX_GROWTH_FIXED,
             # If 'enforce_recruit_max' is TRUE, recruits with DBH > 'recruit_max_fixed' are dropped
             # before fitting the recruitment-size lognormal.
             enforce_recruit_max = TRUE
@@ -817,6 +820,14 @@ run_main <- function() {
     params$TIMESTAMP <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     params$OUT_DIR <- out_dir
     params$GENERATED_DIR_NAME <- basename(out_dir)
+    # Record BATCH_TS explicitly: use provided BATCH_TS if present; otherwise
+    # extract the timestamp prefix used in the generated directory name (YYYYmmdd_HHMMSS)
+    if (exists("BATCH_TS") && nzchar(BATCH_TS)) {
+        params$BATCH_TS <- BATCH_TS
+    } else {
+        m <- regexpr("^[0-9]{8}_[0-9]{6}", basename(out_dir))
+        params$BATCH_TS <- if (m[1] == -1) "" else regmatches(basename(out_dir), m)
+    }
 
     # Add called parameters (command-line overrides)
     params$CALLED_PARAMETERS <- overrides
@@ -912,9 +923,9 @@ run_main <- function() {
     }
     out <- maybe_add_posterior_bins(out)
 
-    # Add output directory name as a column for reference
+    # Record run output directory (basename) in each row to avoid variable/column name collision
     if (!is.null(out)) {
-        out[, out_dir := basename(out_dir)]
+        out[, run_out_dir := basename(out_dir)]
     }
 
     # 5.6 Optional: write DP outputs (centralized helpers)
@@ -1157,8 +1168,49 @@ if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
     message("[dp_global main_cpp.R] Skipping bio_pars report: 'res$bio_pars' not available (chunked run or earlier error).")
 }
 
-# Rscript dp_global/scripts/main_cpp.R --POSTERIOR_SAMPLES=20 --POSTERIOR_SAMPLES_FORMAT=csv --POSTERIOR_SAMPLE_SEED=123 --RUN_REALISM_REPORT=TRUE --SENSITIVITY_MODE=run+write+pdf --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_PDF=TRUE
-# Rscript dp_global/scripts/main_cpp.R --POSTERIOR_SAMPLES=10 --POSTERIOR_SAMPLES_FORMAT=csv --POSTERIOR_SAMPLE_SEED=123 --RUN_REALISM_REPORT=TRUE --SENSITIVITY_MODE=run+write+pdf --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_PDF=TRUE --WHICH_TAG=2747 --RUN_ALL_TAGS=FALSE
-# Rscript dp_global/scripts/main_cpp.R --POSTERIOR_SAMPLES=10 --POSTERIOR_SAMPLES_FORMAT=csv --POSTERIOR_SAMPLE_SEED=123 --RUN_REALISM_REPORT=TRUE --SENSITIVITY_MODE=run+write+pdf --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_PDF=TRUE --WHICH_TAG=2747 --RUN_ALL_TAGS=FALSE --DP_FALLBACK_GROWTH_FORMS="fig,tree"
-# Rscript dp_global/scripts/main_cpp.R --POSTERIOR_SAMPLES=10 --POSTERIOR_SAMPLES_FORMAT=csv --POSTERIOR_SAMPLE_SEED=123 --RUN_REALISM_REPORT=TRUE --SENSITIVITY_MODE=run+write+pdf --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_PDF=TRUE --WHICH_TAG=2747 --RUN_ALL_TAGS=FALSE --DP_FALLBACK_GROWTH_FORMS="tree"
 # Rscript dp_global/scripts/main_cpp.R --POSTERIOR_SAMPLES=10 --POSTERIOR_SAMPLES_FORMAT=csv --POSTERIOR_SAMPLE_SEED=123 --RUN_REALISM_REPORT=TRUE --SENSITIVITY_MODE=run+write+pdf --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_PDF=TRUE --WHICH_TAG=2747 --RUN_ALL_TAGS=FALSE --DP_FALLBACK_GROWTH_FORMS="fig"
+
+############################################################
+### Usage guide
+############################################################
+#
+# PURPOSE
+#   Single-pass DP pipeline. Loads the full data set into memory, runs the
+#   dynamic-programming stem reconstruction over all (or one) Tag x species
+#   groups, and writes a combined CSV / RDS / PDF output. Also supports
+#   optional sensitivity sweeps, realism reports, and k-sweep demos.
+#   Use main_cpp_chunk.R instead when memory is limited.
+#
+# BASIC RUN — all tags, default settings
+#   Rscript dp_global/scripts/main_cpp.R \
+#     --INPUT_FILE=data/my_stems.csv
+#
+# SINGLE-TAG MODE
+#   Rscript dp_global/scripts/main_cpp.R \
+#     --INPUT_FILE=data/my_stems.csv \
+#     --RUN_ALL_TAGS=FALSE \
+#     --WHICH_TAG=2747
+#
+# COMMON OVERRIDES
+#   --DP_MAX_STATES=1100          Max DP states per track (higher = slower, more accurate)
+#   --MANUAL_CORES=TRUE           Use a fixed core count instead of auto-detect
+#   --MANUAL_CORES_VALUE=8        Number of cores (requires MANUAL_CORES=TRUE)
+#   --WRITE_DP_PDF=TRUE/FALSE     Whether to produce the per-tag PDF plot
+#   --POSTERIOR_SAMPLES=250       Draw N posterior samples per group (0 = disabled)
+#   --POSTERIOR_SAMPLES_FORMAT=csv|rds|feather
+#   --USE_MEASUREMENT_ERROR=TRUE  Enable measurement-error model for bio params
+#   --DP_FALLBACK_GROWTH_FORMS="fig,tree"
+#                                 Comma-separated list of growth forms that bypass
+#                                 species-specific bio params
+#   --SENSITIVITY_MODE=run+write+pdf
+#                                 Run transition-cost sensitivity sweep and write PDF
+#   --RUN_REALISM_REPORT=TRUE     Write per-tag realism / tuning-suggestion tables
+#   --RUN_K_SWEEP_DEMO=TRUE       Produce k-sweep join-vs-split plot after the run
+#
+# STOPPING & RESTARTING
+#   This script processes all groups in a single call and does not support
+#   incremental checkpointing. If stopped mid-run, restart from scratch.
+#   For large data sets where checkpointing is needed, use main_cpp_chunk.R.
+#
+# HELP
+#   Rscript dp_global/scripts/main_cpp.R --help
