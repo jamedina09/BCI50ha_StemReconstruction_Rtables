@@ -205,6 +205,59 @@ estimate_dp_complexity <- function(data,
     }
 
     # ------------------------------------------------------------------
+    # 4b. Vectorized pruned-edge count for one census transition.
+    #     Uses outer() matrix operations instead of nested R for loops.
+    #     Memory: O(n0 * n1) per track — feasible up to ~6000 states.
+    # ------------------------------------------------------------------
+    count_pruned_edges_step_vec <- function(mat0, mat1, dbh0, dbh1, K,
+                                           interval_val, eff_min, eff_max, eff_rec) {
+        n0 <- nrow(mat0)
+        n1 <- nrow(mat1)
+        if (n0 == 0L || n1 == 0L) return(0L)
+
+        # Build track-DBH matrices: (n_states x K), NA where track is unoccupied
+        tdbh0 <- matrix(NA_real_, nrow = n0, ncol = K)
+        tdbh1 <- matrix(NA_real_, nrow = n1, ncol = K)
+        for (i in seq_len(n0)) {
+            a <- mat0[i, ]
+            if (length(a) > 0L) tdbh0[i, a] <- dbh0
+        }
+        for (j in seq_len(n1)) {
+            a <- mat1[j, ]
+            if (length(a) > 0L) tdbh1[j, a] <- dbh1
+        }
+
+        # feasible[i,j] starts all TRUE; we AND-in per-track constraints
+        feasible <- matrix(TRUE, nrow = n0, ncol = n1)
+
+        if (!is.finite(interval_val)) return(sum(feasible))
+
+        for (k in seq_len(K)) {
+            d0 <- tdbh0[, k]   # length n0
+            d1 <- tdbh1[, k]   # length n1
+            have0 <- !is.na(d0)
+            have1 <- !is.na(d1)
+
+            # Case 1: both observed -> growth must be in [eff_min, eff_max]
+            both <- outer(have1, have0, "&")  # n1 x n0 (R outer: rows=d1, cols=d0)
+            if (any(both)) {
+                g <- outer(d1, d0, "-") / interval_val  # n1 x n0
+                bad <- both & (g < eff_min | g > eff_max)
+                feasible <- feasible & !t(bad)   # transpose to n0 x n1
+            }
+
+            # Case 2: recruit (NA at t, observed at t+1) -> DBH at t+1 <= eff_rec
+            if (is.finite(eff_rec)) {
+                recruit <- outer(have1, !have0, "&")  # n1 x n0
+                bad_rec <- recruit & outer(d1 > eff_rec, rep(TRUE, length(d0)), "&")
+                feasible <- feasible & !t(bad_rec)
+            }
+            # Cases 3,4 (death, both-NA) are always feasible — no update needed
+        }
+        sum(feasible)
+    }
+
+    # ------------------------------------------------------------------
     # 5. Per-tag estimator — mirrors match_stems_dp_global_backward_marginals_batch
     # ------------------------------------------------------------------
     estimate_one_tag <- function(tag_data, tag_val, species_val) {
@@ -555,6 +608,62 @@ estimate_dp_complexity <- function(data,
         out[is.na(estimated_edges_unpruned), estimated_edges_unpruned := 0]
         out[, estimated_edges_pruned := NA_real_]
         out[, n_censuses := as.integer(n_censuses)]
+
+        # 7m. Pruned-edge computation (vectorized matrix ops per tag)
+        #     Only for non-fallback tags with >= 2 censuses.
+        #     Uses count_pruned_edges_step_vec() which does outer() products
+        #     per track — memory bounded by O(max_states^2).
+        prune_candidates <- out[estimated_fallback == FALSE & n_censuses >= 2L, Tag]
+        if (length(prune_candidates) > 0L) {
+            # Effective bounds (same logic as slow path; bio_bounds not used here when prune_use_bio_bounds=FALSE)
+            user_min_g <- if (!is.null(prune_min_growth)) prune_min_growth else min_growth
+            user_max_g <- if (!is.null(prune_max_growth)) prune_max_growth else max_growth
+            eff_min_g  <- if (isTRUE(prune_use_bio_bounds)) max(user_min_g, bio_max_shrink) else user_min_g
+            eff_max_g  <- if (isTRUE(prune_use_bio_bounds)) min(user_max_g, bio_max_growth) else user_max_g
+            eff_rec_g  <- if (!is.null(prune_recruit_max_dbh)) {
+                if (isTRUE(prune_use_bio_recruit)) min(recruit_max_dbh, prune_recruit_max_dbh)
+                else prune_recruit_max_dbh
+            } else {
+                recruit_max_dbh
+            }
+
+            cat(sprintf("[estimate_dp_complexity] Computing pruned edges for %d tags...\n",
+                length(prune_candidates))); flush.console()
+
+            for (tg in prune_candidates) {
+                tg_K     <- out[Tag == tg, K]
+                tg_data  <- data[Tag == tg & !is.na(DBH)]
+                tg_meta  <- tag_meta[Tag == tg]
+                eff_anch <- tg_meta$eff_anchor
+                census_ids <- sort(unique(tg_data[CensusID <= eff_anch, CensusID]))
+                n_c <- length(census_ids)
+                if (n_c < 2L) next
+
+                # Enumerate states per census (re-uses existing helper)
+                all_mats <- vector("list", n_c)
+                ok <- TRUE
+                for (p in seq_len(n_c)) {
+                    obs_in_census <- tg_data[CensusID == census_ids[p]]
+                    n_obs_p <- nrow(obs_in_census)
+                    all_mats[[p]] <- enumerate_assignments(tg_K, n_obs_p, max_states)
+                    if (is.null(all_mats[[p]])) { ok <- FALSE; break }
+                }
+                if (!ok) next  # shouldn't happen (already non-fallback), but guard
+
+                edges_p <- 0L
+                for (p in seq_len(n_c - 1L)) {
+                    dbh0 <- tg_data[CensusID == census_ids[p], DBH]
+                    dbh1 <- tg_data[CensusID == census_ids[p + 1L], DBH]
+                    iv   <- get_interval(census_ids[p], census_ids[p + 1L])
+                    edges_p <- edges_p + count_pruned_edges_step_vec(
+                        all_mats[[p]], all_mats[[p + 1L]],
+                        dbh0, dbh1, tg_K, iv, eff_min_g, eff_max_g, eff_rec_g
+                    )
+                }
+                out[Tag == tg, estimated_edges_pruned := as.numeric(edges_p)]
+            }
+            cat("[estimate_dp_complexity] Pruned edges done.\n"); flush.console()
+        }
 
         # Tags in data but absent from obs_pre (all-NA DBH)
         tags_no_obs <- setdiff(unique(data$Tag), tag_meta$Tag)

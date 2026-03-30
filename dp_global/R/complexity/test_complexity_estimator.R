@@ -134,6 +134,7 @@ cat("\n")
 # ==================================================================
 display_cols <- c("Tag", "Species", "K", "max_obs", "n_censuses",
                   "max_states_per_census", "estimated_edges_unpruned",
+                  "estimated_edges_pruned",
                   "estimated_fallback", "predicted_seconds", "predicted_hours")
 display_cols <- display_cols[display_cols %in% names(complexity)]
 
