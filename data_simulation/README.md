@@ -55,7 +55,7 @@ Size-dependent annual growth follows:
 μ(DBH) = α + γ × log(DBH)
 ```
 Where:
-- `α = 0.45` cm/year (intercept)
+- `α = 0.4` cm/year (intercept)
 - `γ = 0.2` (slope for log(DBH))
 
 Growth variability:
@@ -73,7 +73,7 @@ hazard(DBH) = h₀ × exp(β × DBH)
 P(death) = 1 - exp(-hazard × interval_years)
 ```
 Where:
-- `h₀ = 0.005` (baseline hazard)
+- `h₀ = 0.004` (baseline hazard)
 - `β = 0.02` (DBH effect)
 
 ### Recruitment Model
@@ -81,7 +81,7 @@ New stems enter with lognormal DBH distribution:
 ```
 DBH ~ Lognormal(μ = log(2), σ = 0.8)
 ```
-Recruitment probability per available stem slot: 0.4 per census
+Recruitment probability per available stem slot: 0.3 per census
 
 ### Measurement Error Model
 
@@ -111,23 +111,23 @@ The `simulate_data.R` script is organized into the following sections:
 
 ### Simulation Structure
 - `n_census`: Number of census intervals (9)
-- `census_interval_years`: Base years between censuses (5), with random noise added: `interval_years = 5 + rnorm(n_census-1, 0, 0.1)`
+- `census_interval_years`: Base years between censuses (5)
 
 ### Species Configuration
-- `n_species`: Number of species (2)
-- `n_trees_per_species`: Trees per species [20, 15] (35 total trees)
-- `max_stems`: Maximum stems per tree (2-7 sampled uniformly)
-- `scale_range`: Trait scaling range [1.0, 1.45]
+- `n_species`: Number of species (3)
+- `n_trees_per_species`: Trees per species [10, 15, 13] (38 total trees)
+- `max_stems`: Maximum stems per tree (6)
+- `scale_range`: Trait scaling range [1.0, 1.7]
 - Species get evenly distributed scaling factors
 
 ### Recruitment Process
-- `recruit_prob`: Probability of recruitment per available stem slot (0.4)
+- `recruit_prob`: Probability of recruitment per available stem slot (0.3)
 - `threshold_dbh`: DBH threshold for stems to become observable (1 cm)
 - `meanlog`: Lognormal mean for recruit DBH (log(2) ≈ 0.69)
 - `sdlog`: Lognormal SD for recruit DBH (0.8)
 
 ### Growth Process
-- `alpha`: Growth model intercept (0.45 cm/year)
+- `alpha`: Growth model intercept (0.4 cm/year)
 - `gamma`: Growth model slope for log(DBH) (0.2)
 - `sigma0`: Growth variability intercept (0.1 cm/year)
 - `sigma1`: Growth variability slope for DBH (0.01)
@@ -151,16 +151,19 @@ The `simulate_data.R` script is organized into the following sections:
 - `min_dbh_obs`: Minimum observed DBH after error (1.0 cm)
 
 ### Mortality Process
-- `h0`: Baseline hazard rate (0.005)
+- `h0`: Baseline hazard rate (0.004)
 - `beta`: DBH effect on hazard (0.02)
 
 ### Growth Scaling Events
 Simulates disturbances by applying multipliers. Multiple events per species-census combination are multiplied together for compounding effects:
 ```r
 events = list(
-    list(species = "sp1", census = 3L, multiplier = 0.5),  # sp1 drought in census 3
-    list(species = "sp1", census = 3L, multiplier = 1.2),  # sp1 partial recovery in census 3 (final: 0.5 × 1.2 = 0.6)
-    list(species = "all", census = 5L, multiplier = 1.2)   # All species enhanced growth in census 5
+    list(species = "sp1", census = 2, multiplier = 1.7),  # sp1 enhanced growth in census 2
+    list(species = "sp1", census = 5, multiplier = 1.7),  # sp1 enhanced growth in census 5
+    list(species = "sp1", census = 8, multiplier = 1.7),  # sp1 enhanced growth in census 8
+    list(species = "sp3", census = 2, multiplier = 0.1),  # sp3 suppressed growth in census 2
+    list(species = "sp3", census = 5, multiplier = 0.1),  # sp3 suppressed growth in census 5
+    list(species = "sp3", census = 8, multiplier = 0.1)   # sp3 suppressed growth in census 8
 )
 ```
 
@@ -225,7 +228,7 @@ Rscript simulate_data.R
 ```
 
 The script generates synthetic forest census data with:
-- Variable census intervals (~5 years ± random noise)
+- Variable census intervals (~5 years)
 - Date-stamped censuses starting from 1980-01-01
 - Multi-species dynamics with realistic growth, mortality, and recruitment
 - Measurement error and stem identification challenges
@@ -240,7 +243,7 @@ Edit the `params` list in `simulate_data.R` to customize:
 
 ### Dependencies
 - R packages: `data.table`, `ggplot2`, `here`
-- Compatible with DP workflow in `../dp_global/R/dp_global_biol.R`
+- Compatible with DP workflow in `../dp_global/R/dp_global_bio.R`
 
 ## Applications
 
@@ -276,8 +279,8 @@ data_simulation/
 ## Notes
 
 - Random seed (1234) ensures reproducible results
-- Census intervals are variable: base 5 years + random noise (N(0, 0.1))
-- Census dates start from 1980-01-01 and accumulate with variable intervals
+- Census intervals are 5 years (fixed base interval)
+- Census dates start from 1980-01-01
 - All parameters match DP workflow conventions
 - Measurement error model validated against field data
 - Growth scaling enables controlled disturbance experiments

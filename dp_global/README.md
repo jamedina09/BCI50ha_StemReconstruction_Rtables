@@ -94,8 +94,7 @@ dp_global/
 │       └── dist/                         # Generated tarballs (not tracked by git)
 ├── scripts/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
-│   ├── main_cpp_chunk.R              # Chunked driver for large runs
-│   └── main_cpp_chunk_bci.R          # BCI-specific chunked driver (bundle-based loading)
+│   └── main_cpp_chunk.R              # Chunked driver for large runs
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
 │   └── transition_cost_rcpp.R        # R wrapper for Rcpp-compiled functions

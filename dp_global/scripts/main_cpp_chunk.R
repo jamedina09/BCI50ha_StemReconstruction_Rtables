@@ -207,10 +207,10 @@ MANUAL_CORES_VALUE <- 1L # Number of cores to use if MANUAL_CORES=TRUE
 # Controls what is written and where. base_out_dir and out_dir are computed
 # here; the final out_dir is created at runtime inside run_main_chunked().
 base_out_dir <- here("dp_global", "output")
-message("[dp_global main_cpp.R] here root: ", here::here())
-message("[dp_global main_cpp.R] base_out_dir (raw): ", base_out_dir)
+message("[dp_global main_cpp_chunk.R] here root: ", here::here())
+message("[dp_global main_cpp_chunk.R] base_out_dir (raw): ", base_out_dir)
 base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
-message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
+message("[dp_global main_cpp_chunk.R] base_out_dir (normalized): ", base_out_dir)
 
 # Optional: explicitly set a subdirectory name for outputs.
 # If NULL, an automatic name based on timestamp + key config flags is used.
@@ -306,7 +306,7 @@ CLI_REFERENCE <- list(
 ### 4.1) Help & override application
 ############################################################
 print_help <- function() {
-    cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
+    cat("Usage: Rscript scripts/main_cpp_chunk.R [--KEY=VALUE] [--FLAG]\n")
     cat("Common keys and defaults:\n")
 
     # Prefer printing the canonical CLI keys from CLI_REFERENCE so the help is
@@ -361,7 +361,7 @@ for (name in names(overrides)) {
     match_var <- find_matching_var(norm)
 
     if (is.null(match_var)) {
-        warning(sprintf("[dp_global main_cpp.R] Unknown override '%s' (ignored).\n", name))
+        warning(sprintf("[dp_global main_cpp_chunk.R] Unknown override '%s' (ignored).\n", name))
         next
     }
 
@@ -376,7 +376,7 @@ for (name in names(overrides)) {
     }
 
     assign(match_var, new_val, envir = globalenv())
-    message("[dp_global main_cpp.R] Overriding ", match_var, " = ", as.character(new_val))
+    message("[dp_global main_cpp_chunk.R] Overriding ", match_var, " = ", as.character(new_val))
 }
 
 # Backwards-compatibility aliases removed. Use canonical ALL-CAPS variables (e.g., WHICH_TAG, INPUT_FILE) everywhere; update scripts that relied on lowercase globals.
@@ -408,9 +408,9 @@ MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) {
 # Optional override: explicitly set project root (useful when running under different working dirs or job launchers)
 # Usage: --PROJECT_ROOT=/absolute/path/to/project
 if (exists("PROJECT_ROOT") && !is.null(PROJECT_ROOT) && nzchar(PROJECT_ROOT)) {
-    message("[dp_global main_cpp.R] Using PROJECT_ROOT override: ", PROJECT_ROOT)
+    message("[dp_global main_cpp_chunk.R] Using PROJECT_ROOT override: ", PROJECT_ROOT)
     base_out_dir <- normalizePath(file.path(PROJECT_ROOT, "dp_global", "output"), winslash = "/", mustWork = FALSE)
-    message("[dp_global main_cpp.R] base_out_dir overridden to: ", base_out_dir)
+    message("[dp_global main_cpp_chunk.R] base_out_dir overridden to: ", base_out_dir)
 }
 
 ############################################################
@@ -455,9 +455,9 @@ message("[dp_global main_cpp_chunk.R] getwd(): ", getwd())
 ensure_dir <- function(path) {
     if (!dir.exists(path)) {
         dir.create(path, recursive = TRUE)
-        message("[dp_global main_cpp.R] Created directory: ", path)
+        message("[dp_global main_cpp_chunk.R] Created directory: ", path)
     } else {
-        message("[dp_global main_cpp.R] Directory already exists: ", path)
+        message("[dp_global main_cpp_chunk.R] Directory already exists: ", path)
     }
     invisible(path)
 }
@@ -736,7 +736,7 @@ run_main_chunked <- function() {
             writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
         },
         error = function(e) {
-            message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
+            message("[dp_global main_cpp_chunk.R] Warning writing run_started marker: ", conditionMessage(e))
         }
     )
     log_msg("Started run")
@@ -1166,7 +1166,7 @@ if (sys.nframe() == 0L) {
 # RESUMING A STOPPED RUN
 #   Pass the path of the existing output directory via --OUT_DIR_OVERRIDE and
 #   enable the resume flag. The script will skip every chunk that already has a
-#   _done.txt or _chunk_NNN.rds marker and continue from where it stopped.
+#   _done.txt marker and continue from where it stopped.
 #
 #   Rscript dp_global/scripts/main_cpp_chunk.R \
 #     --INPUT_FILE=data/my_stems.csv \
