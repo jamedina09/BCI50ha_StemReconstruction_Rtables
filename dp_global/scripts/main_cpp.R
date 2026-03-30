@@ -1,5 +1,5 @@
 ############################################################
-### main.R — dp_global driver
+### main_cpp.R — dp_global driver
 ############################################################
 # Goal
 #   One place to run the DP_GLOBAL workflow end-to-end
@@ -11,20 +11,24 @@
 #   construct flags matching these canonical names (case-insensitive, '-' or
 #   '_' allowed). Keep the orchestrator in sync with `CLI_REFERENCE`.
 #
-# Table of Contents (high-level)
-#  0) Housekeeping — safe top-level behavior
-#  1) CLI parsing — parse and coerce command-line overrides
-#  2) Dependencies — package checks and imports
-#  3) Defaults & constants — editable run defaults and output naming
-#    3.1) Parameter estimation settings
-#    3.2) DP running settings
-#    3.3) Parallel & output settings
-#    3.4) Output naming & CPP settings
-#  4) CLI reference & override mapping — canonical CLI keys and matching logic
-#  5) Helpers — utility functions for filesystem, logging and data manipulation
-#  6) Core DP functions — the DP runner helpers used by the main pipeline
-#  7) Main pipeline — `run_main()`; load data, estimate parameters, run DP, write outputs
-#  8) Entrypoint — execute `run_main()` when invoked via Rscript
+# Table of Contents
+#  0) Housekeeping           — safe top-level behavior
+#  1) CLI parsing            — parse and coerce command-line overrides
+#  2) Dependencies           — package checks and imports
+#  3) Defaults
+#    3.1) Biological parameter estimation settings
+#    3.2) DP solver settings
+#    3.3) Parallelism settings
+#    3.4) Output & path settings
+#  4) CLI reference & override mapping
+#    4.1) Sensitivity & realism settings
+#    4.2) Help & override application
+#  5) Input validation       — abort early on missing/invalid inputs
+#  6) Source project code    — load dp_global R modules
+#  7) Helpers                — data-manipulation utilities
+#  8) Core DP functions      — run_dp_one_group() and helpers
+#  9) Main pipeline          — run_main()
+# 10) Entrypoint             — execute when invoked via Rscript
 #
 # Use the numbered sections to quickly scan the file. Each section contains a
 # short header and concise responsibilities to make navigation quick and clear.
@@ -101,9 +105,9 @@ if (!requireNamespace("here", quietly = TRUE)) {
 library(here)
 
 ############################################################
-### 3) Defaults & constants — editable run defaults
+### 3) Defaults
 ############################################################
-## 2.1 Input data and species handling
+# Editable run defaults and output-naming variables shared across all sections.
 INPUT_FILE <- here("data_simulation", "data", "simulated_data_1.csv")
 FORCE_ONE_SPECIES_PARAMETERS <- TRUE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
@@ -115,10 +119,10 @@ if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
 SPECIES_COL <- NULL
 
 ############################################################
-### 3.1 Parameter estimation settings
+### 3.1) Biological parameter estimation settings
 ############################################################
-# All settings related to parameter estimation and biological realism
-# NOTE: Ypu can define them with parameter data from your specie(s) of interest
+# Growth rates, shrinkage limits, and soft-penalty k values.
+# NOTE: You can define them with parameter data from your species of interest.
 USE_MEASUREMENT_ERROR <- TRUE
 MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_GROWTH_FIXED <- 7.5
@@ -132,8 +136,9 @@ RECRUIT_MAX_SOURCE <- "fixed"
 RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 
 ############################################################
-### 3.2 DP running settings
+### 3.2) DP solver settings
 ############################################################
+# DP algorithm parameters: mode, anchoring, state budget, slack, posterior sampling.
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
 WHICH_TAG <- 20L
 ANCHOR_START_CENSUS <- 7L
@@ -152,6 +157,10 @@ DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
 #   column of the input dataset.  Pass to the DP function via
 #   `fallback_growth_forms` argument.
 DP_FALLBACK_GROWTH_FORMS <- character(0)
+# Palm-specific tight pruning bounds — override eff_min_grow / eff_max_grow when
+# growth_form == "palm".  Units: cm/year.  Set to NULL to disable palm overrides.
+PALM_PRUNE_MIN_GROWTH <- -0.5
+PALM_PRUNE_MAX_GROWTH <-  0.5
 
 # Posterior sampling defaults (disabled by default)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
@@ -168,17 +177,15 @@ POSTERIOR_SAMPLE_SEED <- NULL
 ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 
 ############################################################
-### 3.3 Parallel & output settings
+### 3.3) Parallelism settings
 ############################################################
 RUN_ALL_TAGS <- FALSE
 MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
 MANUAL_CORES_VALUE <- 1L # Number of cores to use if MANUAL_CORES=TRUE
 
 ############################################################
-### 3.4 Output naming & CPP settings
+### 3.4) Output & path settings
 ############################################################
-
-## create output directory within project
 # Base output directory
 base_out_dir <- here("dp_global", "output")
 message("[dp_global main_cpp.R] here root: ", here::here())
@@ -194,12 +201,8 @@ message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 # a valid, known variable rather than an unknown override.
 CONFIG_NAME <- NULL
 
-# `encode_num()` and `build_out_dir_name()` are provided by
-# dp_global/R/naming_helpers.R (sourced above). See that file for
-# directory-safe naming utilities.
-
-# `build_out_dir_name()` is provided by dp_global/R/naming_helpers.R
-# and referenced later when computing `out_dir`.
+# Output path helpers (`encode_num`, `build_out_dir_name`) live in naming_helpers.R,
+# sourced near the end of this section.
 
 WRITE_DP_CSV <- TRUE
 WRITE_DP_RDS <- TRUE
@@ -223,12 +226,10 @@ BATCH_TS <- ""
 source(here("dp_global", "R", "naming_helpers.R"))
 
 ############################################################
-### 4) CLI reference & override mapping — canonical flags and mapping
+### 4) CLI reference & override mapping
 ############################################################
-# This short reference is useful when constructing or validating CLI flags
-# in external orchestrators (e.g., bin/run_dp_future_single.R). Keys in the CLI
-# are case-insensitive and may use '-' or '_' as separators; they are mapped to
-# the corresponding internal variable names below.
+# Canonical CLI flags used by external orchestrators (e.g., bin/run_dp_future_single.R).
+# Keys are case-insensitive and may use '-' or '_' as separators.
 CLI_REFERENCE <- list(
     INPUT_FILE = "INPUT_FILE",
     FORCE_ONE_SPECIES_PARAMETERS = "FORCE_ONE_SPECIES_PARAMETERS",
@@ -245,6 +246,8 @@ CLI_REFERENCE <- list(
     WRITE_DP_PDF = "WRITE_DP_PDF",
     DP_MAX_STATES = "DP_MAX_STATES",
     DP_FALLBACK_GROWTH_FORMS = "DP_FALLBACK_GROWTH_FORMS",
+    PALM_PRUNE_MIN_GROWTH = "PALM_PRUNE_MIN_GROWTH",
+    PALM_PRUNE_MAX_GROWTH = "PALM_PRUNE_MAX_GROWTH",
     DP_SLACK_TRACKS = "DP_SLACK_TRACKS",
     DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE",
     DP_SLACK_REQUIRE_ANCHOR_EPS = "DP_SLACK_REQUIRE_ANCHOR_EPS",
@@ -260,16 +263,15 @@ CLI_REFERENCE <- list(
 )
 
 ############################################################
-### 2.5 Sensitivity analysis settings
+### 4.1) Sensitivity & realism settings
 ############################################################
 SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
 RUN_K_SWEEP_DEMO <- FALSE
-
-############################################################
-### 2.6 Realism report settings
-############################################################
 RUN_REALISM_REPORT <- FALSE
 
+############################################################
+### 4.2) Help & override application
+############################################################
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
     cat("Common keys and defaults:\n")
@@ -379,8 +381,9 @@ if (exists("PROJECT_ROOT") && !is.null(PROJECT_ROOT) && nzchar(PROJECT_ROOT)) {
 }
 
 ############################################################
-### Input file validation (must be explicit)
+### 5) Input validation
 ############################################################
+# Abort early on missing or unreadable inputs; derive boolean mode flags.
 
 if (!exists("INPUT_FILE") || is.null(INPUT_FILE) || !nzchar(INPUT_FILE)) {
     stop(
@@ -472,7 +475,7 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
 }
 
 ############################################################
-### 3) Source project code
+### 6) Source project code
 ############################################################
 source(here("dp_global", "R", "dp_global_main.R"))
 source(here("dp_global", "R", "sensitivity_transition_cost_bio.R"))
@@ -483,11 +486,7 @@ source(here("dp_global", "R", "naming_helpers.R"))
 # `naming_helpers.R` provides `encode_num()` and `build_out_dir_name()`
 
 ############################################################
-### 5) Helpers — utility functions
-############################################################
-
-############################################################
-### 5.1) Optional tuning / inspection helpers
+### 7) Helpers — data-manipulation utilities
 ############################################################
 
 # Soft penalties vs hard guardrails (unit reminder)
@@ -639,8 +638,10 @@ auto_dp_max_tracks <- function(xrun) {
 }
 
 ############################################################
-### 6) Core DP functions — run helpers used by the pipeline
+### 8) Core DP functions
 ############################################################
+# run_dp_one_group(dtg, dp_max_tracks)  — wraps match_stems_dp_global_backward_marginals_batch()
+# maybe_add_posterior_bins(out)          — optionally annotates output with posterior bin labels
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
     # Safety: skip groups with missing DBH or CensusID (all NA or missing columns)
@@ -670,6 +671,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         posterior_top_k = DP_POSTERIOR_TOP_K,
         # growth-form bypass list
         fallback_growth_forms = DP_FALLBACK_GROWTH_FORMS,
+        palm_prune_min_growth = PALM_PRUNE_MIN_GROWTH,
+        palm_prune_max_growth = PALM_PRUNE_MAX_GROWTH,
         # posterior sampling controls (disabled by default)
         posterior_samples = POSTERIOR_SAMPLES,
         posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
@@ -703,8 +706,10 @@ maybe_add_posterior_bins <- function(out) {
 }
 
 ############################################################
-### 7) Main pipeline — run_main and writing outputs
+### 9) Main pipeline — run_main()
 ############################################################
+# run_main() — loads data, estimates bio parameters, runs DP over all tags,
+# writes CSV/RDS/PDF outputs, and returns list(xrun, bio_pars).
 run_main <- function() {
     ensure_dir(out_dir)
     tryCatch(
@@ -1073,8 +1078,9 @@ run_main <- function() {
 }
 
 ############################################################
-### 8) Entrypoint — execute when invoked via Rscript
+### 10) Entrypoint
 ############################################################
+# Execute run_main() when called via Rscript; skip when sourced interactively.
 
 # When you run this file with Rscript, sys.nframe()==0 and we execute.
 # When you source() this file from another script/session, we only define helpers.
@@ -1083,7 +1089,7 @@ if (sys.nframe() == 0L) {
 }
 
 ############################################################
-### EOptional demo: k sweep join-vs-split analysis
+### Optional demo: k sweep join-vs-split analysis
 ############################################################
 # Usage (run after run_main() so that `bio_pars` exists):
 

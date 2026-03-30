@@ -1,33 +1,42 @@
 ############################################################
-### main_cpp_chunk.R — dp_global driver
+### main_cpp_chunk.R — dp_global chunked driver
 ############################################################
 # Goal
-#   One place to run the DP_GLOBAL workflow end-to-end
+#   Chunked, memory-efficient version of the DP_GLOBAL pipeline for large
+#   datasets. Groups (Tag + species) are processed in chunks of DP_CHUNK_SIZE
+#   and outputs are written incrementally to disk so peak RAM stays low.
 #
 # Note for orchestrators
 # - This script accepts CLI overrides of internal variables via --KEY=VALUE.
 # - See the `CLI_REFERENCE` variable below for the canonical keys used by
-#   external orchestrators (e.g., bin/run_dp_future_single.R) which should
-#   construct flags matching these canonical names (case-insensitive, '-' or
-#   '_' allowed). Keep the orchestrator in sync with `CLI_REFERENCE`.
+#   external orchestrators; they should construct flags matching these names
+#   (case-insensitive, '-' or '_' allowed).
 #
-# Table of Contents (high-level)
-#  0) Housekeeping — safe top-level behavior
-#  1) CLI parsing — parse and coerce command-line overrides
-#  2) Dependencies — package checks and imports
-#  3) Defaults & constants — editable run defaults and output naming
-#    3.1) Parameter estimation settings
-#    3.2) DP running settings
-#    3.3) Parallel & output settings
-#    3.4) Output naming & CPP settings
-#  4) CLI reference & override mapping — canonical CLI keys and matching logic
-#  5) Helpers — utility functions for filesystem, logging and data manipulation
-#  6) Core DP functions — the DP runner helpers used by the main pipeline
-#  7) Main pipeline — `run_main()`; load data, estimate parameters, run DP, write outputs
-#  8) Entrypoint — execute `run_main()` when invoked via Rscript
+# Differences from main_cpp.R
+# - run_main_chunked() writes each chunk to disk and sets out <- NULL after
+#   each chunk, keeping peak memory proportional to chunk size.
+# - Sensitivity sweeps and realism reports are disabled (require a full out).
+# - PLOT_PDF_ONE_TAG_ONLY is not used; per-chunk PDFs are controlled by
+#   WRITE_DP_PDF_PER_CHUNK.
 #
-# Use the numbered sections to quickly scan the file. Each section contains a
-# short header and concise responsibilities to make navigation quick and clear.
+# Table of Contents
+#  0) Housekeeping       — workspace reset guard
+#  1) CLI parsing        — parse_args(); overrides applied later in section 4
+#  2) Dependencies       — package checks and imports
+#  3) Defaults           — editable run defaults
+#    3.1) Biological parameter estimation settings
+#    3.2) DP solver settings
+#    3.3) Chunking & posterior sampling settings
+#    3.4) Parallelism settings
+#    3.5) Output & path settings
+#  4) CLI reference & override mapping — CLI_REFERENCE list; apply overrides
+#  5) Input validation   — validate INPUT_FILE; derive boolean flags; compute out_dir
+#  6) Source project code — load dp_global R modules
+#  7) Helpers            — filesystem, logging, data-manipulation utilities
+#  8) Core DP functions  — run_dp_one_group(); maybe_add_posterior_bins()
+#  9) Main pipeline      — run_main_chunked(); chunk loop; incremental writes
+# 10) Post-run utilities — merge_chunk_rds_to_csv(); merge_chunks_to_csv()
+# 11) Entrypoint         — execute run_main_chunked() when called via Rscript
 
 ############################################################
 ### 0) Housekeeping
@@ -101,9 +110,13 @@ if (!requireNamespace("here", quietly = TRUE)) {
 library(here)
 
 ############################################################
-### 3) Defaults & constants — editable run defaults
+### 3) Defaults — editable run defaults
 ############################################################
-## 2.1 Input data and species handling
+
+############################################################
+### 3.1) Biological parameter estimation settings
+############################################################
+# Input data and species handling
 INPUT_FILE <- here("data_simulation", "data", "simulated_data_1.csv")
 FORCE_ONE_SPECIES_PARAMETERS <- TRUE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
@@ -114,11 +127,9 @@ if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
 }
 SPECIES_COL <- NULL
 
-############################################################
-### 3.1 Parameter estimation settings
-############################################################
-# All settings related to parameter estimation and biological realism
-# NOTE: Ypu can define them with parameter data from your specie(s) of interest
+# Biological parameter sources and fixed fallback values.
+# _SOURCE controls whether the bound is estimated from data ("data") or fixed ("fixed").
+# _FIXED is the fallback value used when _SOURCE = "fixed" or data are too sparse.
 USE_MEASUREMENT_ERROR <- TRUE
 MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_GROWTH_FIXED <- 5
@@ -132,8 +143,10 @@ RECRUIT_MAX_SOURCE <- "fixed"
 RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 
 ############################################################
-### 3.2 DP running settings
+### 3.2) DP solver settings
 ############################################################
+# Controls the DP reconstruction: mode, anchor census, state-space limits,
+# slack tracks, growth-form fallbacks, and palm-specific pruning bounds.
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
 WHICH_TAG <- 0L
 ANCHOR_START_CENSUS <- 7L
@@ -149,6 +162,10 @@ DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
 # Growth forms forcing igraph fallback. See main_cpp.R for details.
 DP_FALLBACK_GROWTH_FORMS <- character(0)
+# Palm-specific tight pruning bounds — override eff_min_grow / eff_max_grow when
+# growth_form == "palm".  Units: cm/year.  Set to NULL to disable palm overrides.
+PALM_PRUNE_MIN_GROWTH <- -0.5
+PALM_PRUNE_MAX_GROWTH <-  0.5
 
 # Posterior sampling defaults (disabled by default)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
@@ -161,8 +178,13 @@ POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "csv" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
 POSTERIOR_SAMPLE_SEED <- NULL
+# Option: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
+ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 
-# Chunk-specific defaults
+############################################################
+### 3.3) Chunking & posterior sampling settings
+############################################################
+# Controls incremental chunk processing and posterior path sampling.
 DP_CHUNK_SIZE <- 7L
 DP_CHUNK_RESUME <- TRUE
 DP_CHUNK_OVERWRITE <- FALSE
@@ -170,22 +192,18 @@ DP_CHUNK_OVERWRITE <- FALSE
 DP_CHUNK_START <- NULL
 DP_CHUNK_END <- NULL
 
-# Option: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
-ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
-
 ############################################################
-### 3.3 Parallel & output settings
+### 3.4) Parallelism settings
 ############################################################
 RUN_ALL_TAGS <- FALSE
 MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
 MANUAL_CORES_VALUE <- 1L # Number of cores to use if MANUAL_CORES=TRUE
 
 ############################################################
-### 3.4 Output naming & CPP settings
+### 3.5) Output & path settings
 ############################################################
-
-## create output directory within project
-# Base output directory
+# Controls what is written and where. base_out_dir and out_dir are computed
+# here; the final out_dir is created at runtime inside run_main_chunked().
 base_out_dir <- here("dp_global", "output")
 message("[dp_global main_cpp.R] here root: ", here::here())
 message("[dp_global main_cpp.R] base_out_dir (raw): ", base_out_dir)
@@ -200,18 +218,14 @@ message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 # a valid, known variable rather than an unknown override.
 CONFIG_NAME <- NULL
 
-# `encode_num()` and `build_out_dir_name()` are provided by
-# dp_global/R/naming_helpers.R (sourced above). See that file for
-# directory-safe naming utilities.
-
-# `build_out_dir_name()` is provided by dp_global/R/naming_helpers.R
-# and referenced later when computing `out_dir`.
+# Output path helpers (encode_num, build_out_dir_name) are provided by
+# dp_global/R/naming_helpers.R; sourced at the end of this section.
 
 WRITE_DP_CSV <- TRUE
 WRITE_DP_RDS <- TRUE
 WRITE_DP_FEATHER <- FALSE
 WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- TRUE
-## when no simulated data, this needs to be FALSE to avoid errors
+# Set to FALSE when input data have no TrueStemID reference lines to plot.
 DP_PDF_INCLUDE_REFERENCE <- TRUE
 
 # Per-tag PDF plotting control is part of the full runner but not used in
@@ -232,12 +246,11 @@ BATCH_TS <- ""
 source(here("dp_global", "R", "naming_helpers.R"))
 
 ############################################################
-### 4) CLI reference & override mapping — canonical flags and mapping
+### 4) CLI reference & override mapping
 ############################################################
-# This short reference is useful when constructing or validating CLI flags
-# in external orchestrators (e.g., bin/run_dp_future_single.R). Keys in the CLI
-# are case-insensitive and may use '-' or '_' as separators; they are mapped to
-# the corresponding internal variable names below.
+# CLI_REFERENCE maps canonical uppercase CLI flag names to internal variable
+# names. Keys are case-insensitive on the command line; use '-' or '_'.
+# Orchestrators should keep their flag list in sync with this table.
 CLI_REFERENCE <- list(
     INPUT_FILE = "INPUT_FILE",
     FORCE_ONE_SPECIES_PARAMETERS = "FORCE_ONE_SPECIES_PARAMETERS",
@@ -254,6 +267,8 @@ CLI_REFERENCE <- list(
     WRITE_DP_PDF = "WRITE_DP_PDF",
     DP_MAX_STATES = "DP_MAX_STATES",
     DP_FALLBACK_GROWTH_FORMS = "DP_FALLBACK_GROWTH_FORMS",
+    PALM_PRUNE_MIN_GROWTH = "PALM_PRUNE_MIN_GROWTH",
+    PALM_PRUNE_MAX_GROWTH = "PALM_PRUNE_MAX_GROWTH",
     DP_SLACK_TRACKS = "DP_SLACK_TRACKS",
     DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE",
     DP_SLACK_REQUIRE_ANCHOR_EPS = "DP_SLACK_REQUIRE_ANCHOR_EPS",
@@ -268,22 +283,14 @@ CLI_REFERENCE <- list(
     ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR"
 )
 
-############################################################
-### 2.5 Sensitivity analysis settings
-############################################################
-# Sensitivity analysis options are defined here in the full runner but are not
-# used by the chunked DP runner. Commented out to reduce clutter and avoid
-# confusion when running chunked DP.
-# SENSITIVITY_MODE <- "none" # Options: "none", "run", "run+write", "run+write+pdf"
-# RUN_K_SWEEP_DEMO <- FALSE
-
-############################################################
-### 2.6 Realism report settings
-############################################################
-# Realism report generation is not used by the chunked DP runner; keep disabled
-# and commented out here to avoid suggesting it affects chunked runs.
+# Sensitivity and realism flags are not applicable to the chunked runner
+# (they require a fully assembled out object). Kept as comments for reference.
+# SENSITIVITY_MODE <- "none"
 # RUN_REALISM_REPORT <- FALSE
 
+############################################################
+### 4.1) Help & override application
+############################################################
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
     cat("Common keys and defaults:\n")
@@ -393,8 +400,10 @@ if (exists("PROJECT_ROOT") && !is.null(PROJECT_ROOT) && nzchar(PROJECT_ROOT)) {
 }
 
 ############################################################
-### Input file validation (must be explicit)
+### 5) Input validation
 ############################################################
+# Validate INPUT_FILE, derive boolean flags from mode strings, compute out_dir,
+# and define filesystem/logging helpers used throughout the script.
 
 if (!exists("INPUT_FILE") || is.null(INPUT_FILE) || !nzchar(INPUT_FILE)) {
     stop(
@@ -420,7 +429,8 @@ out_dir <- file.path(base_out_dir, build_out_dir_name())
 message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
 message("[dp_global main_cpp.R] getwd(): ", getwd())
 
-# Filesystem/logging helpers (defined early so chunk runner can use them before other definitions)
+# Define filesystem and logging helpers here (before source() calls) so they
+# are available in the input validation block above and in section 6.
 ensure_dir <- function(path) {
     if (!dir.exists(path)) {
         dir.create(path, recursive = TRUE)
@@ -514,8 +524,10 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
 }
 
 ############################################################
-### 3) Source project code
+### 6) Source project code
 ############################################################
+# Load dp_global R modules: DP solver, biological parameter estimation,
+# sensitivity and realism helpers, naming utilities.
 source(here("dp_global", "R", "dp_global_main.R"))
 source(here("dp_global", "R", "sensitivity_transition_cost_bio.R"))
 source(here("dp_global", "R", "realism_calibration.R"))
@@ -525,42 +537,17 @@ source(here("dp_global", "R", "naming_helpers.R"))
 # `naming_helpers.R` provides `encode_num()` and `build_out_dir_name()`
 
 ############################################################
-### 5) Helpers — utility functions
+### 7) Helpers — data-manipulation utilities
 ############################################################
+# These functions support parameter estimation and input preparation.
+# Filesystem/logging helpers (ensure_dir, log_msg, maybe_write) are defined
+# in section 5 so they are available before project code is sourced.
 
-############################################################
-### 5.1) Optional tuning / inspection helpers
-############################################################
-
-# Soft penalties vs hard guardrails (unit reminder)
-# - Soft penalties operate on DBH differences (cm) over the interval.
+# Unit reminder for soft-penalty tuning:
+# - Soft penalties operate on DBH differences (cm) over the census interval.
 # - Hard guardrails operate on annualized growth (cm/year).
-#
-# Choosing k from a reference excess:
-# - Soft penalty is quadratic: soft_cost = k * (delta_cm^2)
-# - If you want delta_cm = D to contribute cost C, set k = C / (D^2).
-
-# Helper: compute the *actual* soft-penalty cost for a given k and delta.
-# - delta_cm is in cm over the interval (NOT cm/year).
-# - temperature is the marginal-DP temperature; weight multiplier is exp(-soft_cost / temperature).
-# soft_cost_from_k <- function(delta_cm, k, temperature = 1) {
-#     delta_cm <- as.numeric(delta_cm)
-#     k <- as.numeric(k)
-#     temperature <- as.numeric(temperature)
-#     cost <- k * (delta_cm^2)
-#     data.frame(
-#         delta_cm = delta_cm,
-#         k = k,
-#         soft_cost = cost,
-#         temperature = temperature,
-#         weight_multiplier = exp(-cost / temperature)
-#     )
-# }
-
-# soft_cost_from_k(delta_cm = seq(-10, 10, by = 1), k = 20, temperature = 1)
-
-# `ensure_dir()` and `log_msg()` are defined earlier; duplicate definitions removed.
-
+# - Soft penalty is quadratic: soft_cost = k * delta_cm^2
+#   To have delta_cm = D contribute cost C, set k = C / D^2.
 ensure_species_column <- function(x) {
     if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
         x[, species := FORCED_SPECIES_LABEL]
@@ -663,8 +650,10 @@ auto_dp_max_tracks <- function(xrun) {
 }
 
 ############################################################
-### 6) Core DP functions — run helpers used by the pipeline
+### 8) Core DP functions
 ############################################################
+# run_dp_one_group()       — runs the DP solver for a single (Tag, species) group
+# maybe_add_posterior_bins() — applies posterior binning when DP_MODE includes bins
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
     match_stems_dp_global_backward_marginals_batch(
@@ -680,6 +669,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         temperature = 1,
         posterior_top_k = DP_POSTERIOR_TOP_K,
         fallback_growth_forms = DP_FALLBACK_GROWTH_FORMS,
+        palm_prune_min_growth = PALM_PRUNE_MIN_GROWTH,
+        palm_prune_max_growth = PALM_PRUNE_MAX_GROWTH,
         # posterior sampling controls (disabled by default)
         posterior_samples = POSTERIOR_SAMPLES,
         posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
@@ -713,8 +704,11 @@ maybe_add_posterior_bins <- function(out) {
 }
 
 ############################################################
-### 7) Main pipeline — run_main and writing outputs
+### 9) Main pipeline — run_main_chunked()
 ############################################################
+# Loads input data, estimates biological parameters, processes groups in
+# chunks of DP_CHUNK_SIZE, writes incremental CSV/RDS/PDF outputs per chunk,
+# and records run markers (run_started.txt, run_finished.txt, run_log.txt).
 run_main_chunked <- function() {
     ensure_dir(out_dir)
     tryCatch(
@@ -1029,6 +1023,13 @@ run_main_chunked <- function() {
     invisible(list(xrun = xrun, bio_pars = bio_pars))
 }
 
+############################################################
+### 10) Post-run utilities
+############################################################
+# Helpers for merging per-chunk RDS or Feather files into a single CSV.
+# Call merge_chunks_to_csv(out_dir) after a run to produce a combined flat
+# file without loading all chunks into memory simultaneously.
+
 # Merge helpers: combine per-chunk RDS or Feather files into a single CSV
 merge_chunk_rds_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(DP_BASE, "_merged.csv"))) {
     files <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.rds$"), full.names = TRUE)
@@ -1091,11 +1092,10 @@ merge_chunks_to_csv <- function(out_dir, prefer = c("rds", "feather")) {
 }
 
 ############################################################
-### 6) Script entrypoint
+### 11) Entrypoint
 ############################################################
-
-# When you run this file with Rscript, sys.nframe()==0 and we execute.
-# When you source() this file from another script/session, we only define helpers.
+# Executed only when called directly via Rscript; safe to source() without
+# triggering a run (sys.nframe() > 0 when sourced interactively).
 if (sys.nframe() == 0L) {
     message("[dp_global main_cpp_chunk.R] Starting chunked run_main_chunked()")
     run_main_chunked()
