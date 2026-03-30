@@ -196,7 +196,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     # Ensure tree_data has posterior columns and obs_row_id assigned
     tree_data <- ensure_posterior_columns(tree_data)
-    vcat(prefix, "Ensured posterior columns; obs_row_id present (or created)")
     # Defensive: add `DP_FallbackReason` column so downstream early-returns can set it
     if (!("DP_FallbackReason" %in% names(tree_data))) tree_data[, DP_FallbackReason := NA_character_]
 
@@ -291,7 +290,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         mf_stash <- data.table::copy(tree_data[episode_idx])
         has_mf_stash <- TRUE
         tree_data <- tree_data[-episode_idx]
-        vcat(prefix, "MF pre-processing: stashed ", nrow(mf_stash), " MF episode row(s) (explicit + implicit)")
+        vcat(prefix, "Removed ", nrow(mf_stash), " missing-from-field (MF) row(s) before DP (will re-insert after)")
 
         # Identify censuses that became fully empty after MF removal
         mf_emptied_censuses <- integer(0)
@@ -301,8 +300,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             }
         }
         if (length(mf_emptied_censuses) > 0L) {
-            vcat(prefix, "MF pre-processing: censuses fully emptied by MF removal: ",
-                 paste(mf_emptied_censuses, collapse = ","))
+            vcat(prefix, "Censuses with no remaining observations after MF removal: ",
+                 paste(mf_emptied_censuses, collapse = ", "))
         }
     }
 
@@ -456,10 +455,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     #  - If last observed census < requested anchor: use last observed census as anchor (anchor becomes terminal)
     #  - If last observed census > requested anchor: run DP only for censuses <= anchor (preserve post-anchor rows unchanged in output)
     if (!is.na(last_obs_census) && last_obs_census < anchor_start) {
-        vcat(prefix, "Requested anchor census=", anchor_start, " is after last observed census=", last_obs_census, "; using last observed census as anchor instead.")
+        vcat(prefix, "Anchor census ", anchor_start, " is beyond last observed census ", last_obs_census, "; adjusting anchor to census ", last_obs_census)
         anchor_start <- last_obs_census
     } else if (!is.na(last_obs_census) && last_obs_census > anchor_requested) {
-        vcat(prefix, "Found observations after requested anchor (last_obs_census=", last_obs_census, "). Scoping DP to census <= ", anchor_start, " and preserving post-anchor rows in output.")
+        vcat(prefix, "Post-anchor observations found (last census=", last_obs_census, "); running DP on censuses 1-", anchor_start, " only, preserving later rows unchanged")
         dp_scoped_to_pre_anchor <- TRUE
         # restrict tree_data to pre-anchor censuses for DP computation
         tree_data <- original_tree_data[CensusID <= anchor_start]
@@ -467,7 +466,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # If scoping removes all observations (e.g., all observations are after the requested
         # anchor), return a one-row placeholder so the Tag is represented in outputs.
         if (nrow(tree_data) == 0L) {
-            vcat(prefix, "No pre-anchor observations after scoping; returning original rows annotated with ReconstructionMethod='none_after_anchor'.")
+            vcat(prefix, "No observations before anchor census ", anchor_start, "; skipping DP and returning rows as-is")
             out <- data.table::copy(original_tree_data)
             # Use helper to normalize post-anchor rows: no DP performed, so treat observed TrueStemID as given
             out <- propagate_post_anchor_given(out, used_ids = NULL)
@@ -504,7 +503,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     )
 
     if (is.na(first_obs_census)) {
-        vcat(prefix, "Cannot find any observations up to anchor_start. Falling back to igraph.")
+        vcat(prefix, "No DBH observations found up to anchor census ", anchor_start, "; falling back to igraph matcher")
         fallback_reason <- "no_obs_up_to_anchor"
         K_used <- as.integer(min(0L, max_tracks))
         tree_data[, `:=`(
@@ -525,7 +524,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         census_range <- census_range[!census_range %in% mf_emptied_censuses]
     }
     n_census <- length(census_range)
-    vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
+    vcat(prefix, "Census range: ", paste(census_range, collapse = ", "), " (first observed=", first_obs_census, ", anchor=", anchor_start, ")")
     obs_counts <- vapply(
         census_range,
         function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
@@ -537,7 +536,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (length(fallback_growth_forms) > 0L && "growth_form" %in% names(tree_data)) {
         bad_idx <- which(tree_data$growth_form %in% fallback_growth_forms)
         if (length(bad_idx) > 0L) {
-            vcat(prefix, "Detected growth_form(s) requiring igraph fallback; falling back to igraph.")
+            vcat(prefix, "Growth form requires igraph fallback (detected: ", paste(unique(tree_data$growth_form[bad_idx]), collapse = ", "), "); skipping DP")
             fallback_reason <- "growth_form_forced"
             K_used <- as.integer(min(max_obs, max_tracks))
             n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
@@ -602,7 +601,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         cand_census <- sort(unique(tree_data$CensusID[tree_data$CensusID < anchor_start & !is.na(tree_data$DBH) & !is.na(tree_data$TrueStemID)]))
         if (length(cand_census) > 0L) {
             new_anchor <- as.integer(max(cand_census))
-            vcat(prefix, "Requested anchor census=", anchor_start, " had no DBH/TrueStemID; using earlier anchor census=", new_anchor)
+            vcat(prefix, "Anchor census ", anchor_start, " has no DBH/TrueStemID; falling back to earlier anchor at census ", new_anchor)
             anchor_start <- new_anchor
             census_range <- seq.int(from = first_obs_census, to = anchor_start)
             # Exclude censuses fully emptied by MF removal
@@ -610,7 +609,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 census_range <- census_range[!census_range %in% mf_emptied_censuses]
             }
             n_census <- length(census_range)
-            vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
+            vcat(prefix, "Adjusted census range: ", paste(census_range, collapse = ", "))
             obs_counts <- vapply(
                 census_range,
                 function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
@@ -621,7 +620,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # If configured, allow a provisional DP anchor at the last observed DBH census
             if (isTRUE(allow_provisional_anchor) && !is.na(last_obs_census) && any(!is.na(tree_data$DBH[tree_data$CensusID == last_obs_census]))) {
                 provisional_anchor <- as.integer(last_obs_census)
-                vcat(prefix, "No anchored census with DBH+TrueStemID found; using provisional DP anchor at last observed census=", provisional_anchor)
+                vcat(prefix, "No census with DBH+TrueStemID found; using provisional anchor at last observed census ", provisional_anchor)
                 anchor_start <- provisional_anchor
 
                 # Assign provisional TrueStemID/ReconstructedStemID at the anchor rows
@@ -634,7 +633,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     tree_data$ReconstructedStemID[anchor_idx] <- prov_ids
                     tree_data$ReconstructionMethod[anchor_idx] <- "provisional_dp"
                     tree_data$ConstraintViolation[anchor_idx] <- FALSE
-                    vcat(prefix, sprintf("Assigned %d provisional anchor ID(s) at CensusID=%d", length(anchor_idx), anchor_start))
+                    vcat(prefix, sprintf("Assigned %d provisional anchor ID(s) at census %d", length(anchor_idx), anchor_start))
                 }
 
                 # Recompute census_range and obs_counts now that anchor_start changed
@@ -644,7 +643,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     census_range <- census_range[!census_range %in% mf_emptied_censuses]
                 }
                 n_census <- length(census_range)
-                vcat(prefix, "first_obs_census=", first_obs_census, "census_range=", paste(census_range, collapse = ","))
+                vcat(prefix, "Adjusted census range: ", paste(census_range, collapse = ", "))
                 obs_counts <- vapply(
                     census_range,
                     function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
@@ -652,7 +651,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 )
                 max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
             } else {
-                vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+                vcat(prefix, "No usable anchor found (no DBH or TrueStemID available); falling back to igraph matcher")
                 fallback_reason <- "anchor_missing_truestem"
                 K_used <- as.integer(min(max_obs, max_tracks))
                 n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
@@ -673,7 +672,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     if (nrow(anchor_obs) == 0L) {
-        vcat(prefix, "Cannot anchor DP (missing anchor observations). Falling back to igraph.")
+        vcat(prefix, "Anchor census ", anchor_start, " has no DBH observations; falling back to igraph matcher")
         fallback_reason <- "anchor_missing_obs"
         K_used <- as.integer(min(max_obs, max_tracks))
         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
@@ -693,7 +692,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # If anchor_obs exists but some TrueStemID are missing, optionally allow a provisional DP anchor
     if (any(is.na(anchor_obs$TrueStemID))) {
         if (isTRUE(allow_provisional_anchor)) {
-            vcat(prefix, "Anchor census has DBH but missing TrueStemID; assigning provisional DP anchor IDs at CensusID=", anchor_start)
+            vcat(prefix, "Anchor census ", anchor_start, " has DBH but no TrueStemID; assigning provisional IDs")
             anchor_idx <- which(tree_data$CensusID == anchor_start & !is.na(tree_data$DBH))
             current_max <- suppressWarnings(max(tree_data$TrueStemID, na.rm = TRUE))
             if (!is.finite(current_max)) current_max <- 0L
@@ -707,7 +706,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             anchor_ids <- sort(unique(anchor_obs$TrueStemID))
             anchor_ids <- anchor_ids[!is.na(anchor_ids)]
         } else {
-            vcat(prefix, "Cannot anchor DP (missing anchor observations or TrueStemID). Falling back to igraph.")
+            vcat(prefix, "No usable anchor (TrueStemID missing and provisional anchoring disabled); falling back to igraph matcher")
             fallback_reason <- "anchor_missing_truestem_prov_disabled"
             K_used <- as.integer(min(max_obs, max_tracks))
             n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
@@ -728,7 +727,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     anchor_ids <- anchor_ids[!is.na(anchor_ids)]
 
     if (length(anchor_ids) == 0L) {
-        vcat(prefix, "Cannot anchor DP (no anchor IDs). Falling back to igraph.")
+        vcat(prefix, "No valid anchor IDs at anchor census; falling back to igraph matcher")
         fallback_reason <- "anchor_ids_missing"
         K_used <- as.integer(min(max_obs, max_tracks))
         n_states_by_census <- vapply(obs_counts, function(n_obs) count_injective_states(K_used, n_obs), numeric(1L))
@@ -793,7 +792,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 (anchor_obs$DBH <= (anchor_obs$Bio_Recruit_MaxDBH_unit + eps))
         )
         if (!anchor_ok) {
-            vcat(prefix, "slack requested but not granted: no anchor DBH <= recruit_max_dbh (eps=", eps, ")")
+            vcat(prefix, "Slack tracks not granted: no anchor DBH is small enough to be recruitable (eps=", eps, ")")
         }
     }
 
@@ -810,7 +809,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     )]
 
     if (K < max(obs_counts)) {
-        vcat(prefix, "K too small for observed counts (K=", K, ", max_obs=", max(obs_counts), "). Falling back to igraph.")
+        vcat(prefix, "K=", K, " tracks is fewer than max observed stems (", max(obs_counts), "); falling back to igraph matcher")
         fallback_reason <- "K_too_small"
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
@@ -820,7 +819,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         return(finalize_out(out))
     }
 
-    vcat(prefix, "Chosen K=", K, " tracks; max theoretical states=", format(max(n_states_by_census, na.rm = TRUE), scientific = TRUE))
+    vcat(prefix, "Using K=", K, " identity tracks; worst-case states per census: ", format(max(n_states_by_census, na.rm = TRUE), big.mark = ","))
 
     n_extra <- K - length(anchor_ids)
     current_max <- suppressWarnings(max(tree_data$TrueStemID, na.rm = TRUE))
@@ -843,7 +842,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
 
         if (is.null(mat)) {
-            vcat(prefix, "State enumeration exceeded max_states at CensusID=", cc, " (n_obs=", n_obs, "). Falling back to igraph.")
+            vcat(prefix, "Too many states at census ", cc, " (", n_obs, " stems, exceeds max_states=", max_states, "); falling back to igraph matcher")
             fallback_reason <- "enum_exceeded"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
@@ -861,7 +860,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             do.call(paste, c(lapply(seq_len(ncol(mat)), function(j) mat[, j]), list(sep = ",")))
         }
 
-        vcat(prefix, "Enumerated CensusID=", cc, ": n_obs=", n_obs, ", n_states=", nrow(mat))
+        vcat(prefix, "Census ", cc, ": ", n_obs, " observed stem(s), ", nrow(mat), " assignment states")
     }
 
     # Anchor state assignment (pins endpoint)
@@ -869,7 +868,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     anchor_track_idx <- match(anchor_obs_ordered$TrueStemID, track_ids)
 
     if (any(is.na(anchor_track_idx))) {
-        vcat(prefix, "Anchor TrueStemID not found in track_ids. Falling back to igraph.")
+        vcat(prefix, "Anchor IDs not found in track list; falling back to igraph matcher")
         fallback_reason <- "anchor_truestem_not_found"
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
         out <- ensure_posterior_columns(out)
@@ -994,7 +993,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     prune_stats$eff_max_growth <- as.numeric(eff_max_grow)
     prune_stats$eff_recruit_max <- as.numeric(eff_recruit_max)
 
-    vcat(prefix, "Pruning effective bounds: min=", eff_min_grow, ", max=", eff_max_grow, ", recruit_max=", eff_recruit_max)
+    vcat(prefix, "Pruning bounds: growth [", eff_min_grow, ", ", eff_max_grow, "] cm/yr, max recruit DBH=", eff_recruit_max, " cm")
 
     # Precompute track-wise DBH matrix for each census (rows = states, cols = tracks).
     # Vectorized: one matrix indexing operation per census instead of a per-state loop.
@@ -1034,7 +1033,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     edges[[anchor_pos]] <- NULL
 
     # Backward recursion p = anchor_pos-1 .. 1 (maps to CensusID via census_range)
-    vcat(prefix, "Backward pass (log-sum-exp + Viterbi) starting ...")
+    vcat(prefix, "Starting backward pass (anchor -> earliest census) ...")
 
     # Precompute census mean dates as a named numeric vector (avoids dcast overhead).
     .dt_pi <- tree_data[, .(MeanDate = mean(ExactDate, na.rm = TRUE)), by = CensusID]
@@ -1052,12 +1051,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             n_states_cc <- nrow(mat_cc)
 
             if (verbose) t_cc0 <- tic()
-            vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[p + 1L]]))
+            vcat(prefix, "  Backward step ", (anchor_pos - p), "/", (anchor_pos - 1L), ": census ", cc, " -> ", next_cc, " (", n_states_cc, " candidate states, ", length(keys_full[[p + 1L]]), " target states)")
 
         next_keys <- keys_full[[p + 1L]]
         n_next <- length(next_keys)
         if (n_next == 0L) {
-            vcat(prefix, "No reachable next full-states at CensusID=", next_cc, ". Falling back to igraph.")
+            vcat(prefix, "  No reachable states at census ", next_cc, "; falling back to igraph matcher")
             fallback_reason <- "no_reachable_next_states"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
@@ -1110,7 +1109,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 interval_val <- NA_real_
             }
         }
-        vcat(prefix, "  Interval years between CensusID ", cc, " and ", next_cc, ": ", interval_val, sep = "")
+        vcat(prefix, "  Interval: ", sprintf("%.2f", interval_val), " years (census ", cc, " -> ", next_cc, ")", sep = "")
 
         # -----------------------------------------------------------------------
         # Batch feasibility check in C++: replaces the O(n_cc × n_next × K) R
@@ -1310,7 +1309,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         if (length(curr_keys_list) == 0L) {
-            vcat(prefix, "DP produced no states at CensusID=", cc, ". Falling back to igraph.")
+            vcat(prefix, "  No valid states produced at census ", cc, "; falling back to igraph matcher")
             fallback_reason <- "no_states_produced"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
@@ -1327,7 +1326,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         vit_ptr[[p]] <- curr_ptr
 
         if (used_edges == 0L) {
-            vcat(prefix, "No feasible edges at CensusID=", cc, ". Falling back to igraph.")
+            vcat(prefix, "  No feasible transitions at census ", cc, "; falling back to igraph matcher")
             fallback_reason <- "no_feasible_edges"
             out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
             out <- ensure_posterior_columns(out)
@@ -1342,14 +1341,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             logw     = logw[seq_len(used_edges)]
         )
 
-        vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[p]]), ", edges=", used_edges, if (verbose) paste0(", dt=", sprintf("%.2fs", tic() - t_cc0)) else "")
+        vcat(prefix, "  Backward step ", (anchor_pos - p), "/", (anchor_pos - 1L), " done: census ", cc, " has ", length(keys_full[[p]]), " reachable states, ", used_edges, " transitions", if (verbose) paste0(" (", sprintf("%.2fs", tic() - t_cc0), ")") else "")
     }
     }
 
     # -----------------
     # Decode MAP path
     # -----------------
-    vcat(prefix, "Decoding MAP path and writing ReconstructedStemID ...")
+    vcat(prefix, "Decoding best reconstruction path ...")
     start_idx <- which.min(vit_cost[[1L]])
     if (length(start_idx) == 0L || !is.finite(vit_cost[[1L]][start_idx])) {
         fallback_reason <- "decode_failure"
@@ -1400,7 +1399,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # -----------------
     # Forward pass for marginals
     # -----------------
-    vcat(prefix, "Forward pass starting ...")
+    vcat(prefix, "Starting forward pass (earliest census -> anchor) for uncertainty quantification ...")
     # Start distribution: uniform over all reachable states at census 1.
     logalpha <- vector("list", n_census)
     logalpha[[1L]] <- rep.int(0, length(keys_full[[1L]]))
@@ -1434,7 +1433,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         la_next[la_next_dt$to_idx] <- la_next_dt$logalpha
         logalpha[[p + 1L]] <- la_next
 
-        vcat(prefix, "Forward step CensusID=", census_range[p + 1L], ": reached ", sum(is.finite(la_next)), " / ", length(la_next), " states")
+        vcat(prefix, "  Forward step ", p, "/", (n_census - 1L), ": census ", census_range[p + 1L], " — ", sum(is.finite(la_next)), "/", length(la_next), " states reachable")
     }
 
     # Partition function Z = total weight of all paths ending at the fixed anchor state.
@@ -1445,7 +1444,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         logZ <- log_sum_exp(logB[[1L]])
     }
 
-    vcat(prefix, "Computed logZ=", sprintf("%.3f", logZ))
+    vcat(prefix, "Log-partition function (logZ) = ", sprintf("%.3f", logZ), " (normalisation constant for posterior probabilities)")
 
     # -----------------
     # Observation-level marginals
@@ -1646,7 +1645,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         n_unique_paths <- uniqueN(sample_sigs$path_sig)
         vcat(prefix, sprintf("Posterior sampling: generated %d samples (%d unique paths)", posterior_samples, n_unique_paths))
         if (uniqueN(sample_logp$logp) == 1L) {
-            vcat(prefix, sprintf("Warning: all sampled logp identical (logp=%f); posterior may be degenerate or sampling explored equivalent paths", sample_logp$logp[1]))
+            vcat(prefix, sprintf("Warning: all %d posterior samples have identical log-probability (%.3f); the posterior may be concentrated on a single reconstruction", posterior_samples, sample_logp$logp[1]))
         }
 
         # Export samples: prefer feather via arrow for speed if available
@@ -1747,13 +1746,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         tree_data <- data.table::rbindlist(list(processed, post_rows), use.names = TRUE, fill = TRUE)
         # Restore original input order using obs_row_id
         if ("obs_row_id" %in% names(tree_data)) setorder(tree_data, obs_row_id)
-        vcat(prefix, "DP was scoped to pre-anchor; preserved", nrow(post_rows), "post-anchor rows in output.")
+        vcat(prefix, "Preserved ", nrow(post_rows), " post-anchor row(s) in output (unchanged)")
     }
 
     # Attach pruning diagnostics
     attr(tree_data, "DP_PruneInfo") <- prune_stats
     if (prune_stats$total_examined > 0L) {
-        vcat(prefix, "Prune summary: removed", prune_stats$total_pruned, "of", prune_stats$total_examined, "candidate transitions; per-census:", paste(names(prune_stats$per_census), prune_stats$per_census, sep = ":", collapse = ","))
+        vcat(prefix, "Pruning summary: removed ", prune_stats$total_pruned, " of ", prune_stats$total_examined, " candidate transitions")
     }
 
     # Attach compute profiling (transition cost timing)
@@ -1777,7 +1776,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         tree_data <- reinsert_mf_rows(tree_data, mf_stash)
     }
 
-    vcat(prefix, "Done. Total elapsed ", sprintf("%.2fs", tic() - t_start))
+    vcat(prefix, "Finished. Total time: ", sprintf("%.2fs", tic() - t_start))
     return(tree_data)
 }
 
