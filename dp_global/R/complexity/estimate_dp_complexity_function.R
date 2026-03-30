@@ -627,10 +627,25 @@ estimate_dp_complexity <- function(data,
                 recruit_max_dbh
             }
 
+            n_prune_cand <- length(prune_candidates)
             cat(sprintf("[estimate_dp_complexity] Computing pruned edges for %d tags...\n",
-                length(prune_candidates))); flush.console()
+                n_prune_cand)); flush.console()
+            prune_t0       <- proc.time()[["elapsed"]]
+            progress_every <- max(1L, as.integer(n_prune_cand / 20L))  # print at every 5%
 
-            for (tg in prune_candidates) {
+            for (.pi in seq_along(prune_candidates)) {
+                tg <- prune_candidates[.pi]
+
+                # Progress line every 5% (and on the last tag)
+                if (.pi %% progress_every == 0L || .pi == n_prune_cand) {
+                    elapsed  <- proc.time()[["elapsed"]] - prune_t0
+                    rate     <- .pi / max(elapsed, 0.001)
+                    eta_sec  <- (n_prune_cand - .pi) / max(rate, 1e-9)
+                    cat(sprintf("[estimate_dp_complexity]   %d/%d  (%.0f%%)  elapsed %.0fs  ETA %.0fs\n",
+                        .pi, n_prune_cand, 100 * .pi / n_prune_cand, elapsed, eta_sec))
+                    flush.console()
+                }
+
                 tg_K     <- out[Tag == tg, K]
                 tg_data  <- data[Tag == tg & !is.na(DBH)]
                 tg_meta  <- tag_meta[Tag == tg]
