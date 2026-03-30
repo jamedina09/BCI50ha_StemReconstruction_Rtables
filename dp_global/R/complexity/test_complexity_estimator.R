@@ -15,6 +15,9 @@
 ###   Rscript dp_global/R/complexity/test_complexity_estimator.R
 ###   Rscript dp_global/R/complexity/test_complexity_estimator.R --INPUT_FILE=bci_data/bci_multistem_xrun_debug.rds --NO_SWEEP
 ###   Rscript dp_global/R/complexity/test_complexity_estimator.R --INPUT_FILE=path/to/file.csv --ANCHOR_START=7 --DP_MAX_STATES=10000 --TOP_N=30
+###   Rscript dp_global/R/complexity/test_complexity_estimator.R --INPUT_FILE=bci_data/bci_multistem_xrun_debug.rds --DP_MAX_STATES=10000 --NO_SWEEP --TOP_N=50
+###   Rscript dp_global/R/complexity/test_complexity_estimator.R --INPUT_FILE=bci_data/bci_multistem_xrun_debug.rds --DP_MAX_STATES=10000 --NO_SWEEP --TOP_N=50 --SAMPLE_N=10
+
 ############################################################
 rm(list = ls())
 
@@ -55,6 +58,7 @@ RECRUIT_MAX      <- (MAX_GROWTH_FIXED * 5) + 0.9999
 PRUNE_MARGIN     <- 1.25   # prune bounds = fixed bounds * this margin
 TOP_N            <- 30L    # number of slowest tags to display
 RUN_SWEEP        <- TRUE   # set FALSE via --NO_SWEEP to skip the slow parameter sweep
+SAMPLE_N         <- NULL   # if set, randomly sample this many tags (for quick checks)
 
 # Apply CLI overrides
 if (!is.null(.overrides$INPUT_FILE))      DATA_PATH        <- .overrides$INPUT_FILE
@@ -66,6 +70,7 @@ if (!is.null(.overrides$MIN_GROWTH))      MAX_SHRINK_FIXED <- as.numeric(.overri
 if (!is.null(.overrides$RECRUIT_MAX))     RECRUIT_MAX      <- as.numeric(.overrides$RECRUIT_MAX)
 if (!is.null(.overrides$PRUNE_MARGIN))    PRUNE_MARGIN     <- as.numeric(.overrides$PRUNE_MARGIN)
 if (!is.null(.overrides$TOP_N))           TOP_N            <- as.integer(.overrides$TOP_N)
+if (!is.null(.overrides$SAMPLE_N))        SAMPLE_N         <- as.integer(.overrides$SAMPLE_N)
 if (isTRUE(.overrides$NO_SWEEP))          RUN_SWEEP        <- FALSE
 
 # Recompute RECRUIT_MAX if MAX_GROWTH was overridden but RECRUIT_MAX was not
@@ -114,13 +119,20 @@ if (.is_bci_raw) {
         cat(sprintf("  Kept %d multi-stemmed tags (dropped %d single-stemmed).\n",
             uniqueN(.raw$Tag), .n_before - uniqueN(.raw$Tag)))
     }
-
-    # Restrict to anchor-census and later rows (mirrors main_cpp_chunk_bci.R)
-    .raw <- .raw[CensusID >= ANCHOR_START & !is.na(DBH)]
+    # NOTE: do NOT filter by CensusID here — the estimator needs all historical
+    # censuses (not just >= anchor_start) to compute transition complexity.
 
     cat(sprintf("  Tags after filtering: %d\n", uniqueN(.raw$Tag)))
     DATA_PATH <- .raw   # pass the prepared data.table directly
     rm(.raw)
+}
+# Subsample tags (for quick smoke-tests)
+if (!is.null(SAMPLE_N) && is.data.table(DATA_PATH)) {
+    .all_tags <- unique(DATA_PATH$Tag)
+    set.seed(42L)
+    .keep <- sample(.all_tags, min(SAMPLE_N, length(.all_tags)))
+    DATA_PATH <- DATA_PATH[Tag %in% .keep]
+    cat(sprintf("  [SAMPLE_N=%d] Subsampled to %d tags.\n", SAMPLE_N, uniqueN(DATA_PATH$Tag)))
 }
 .data_path_label <- if (is.character(DATA_PATH)) DATA_PATH else
     sprintf("[BCI data.table: %d rows]", nrow(DATA_PATH))
