@@ -822,7 +822,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             return(finalize_out(out))
         }
         state_mats[[p]] <- mat
-        state_keys[[p]] <- apply(mat, 1L, state_key)
+        # Vectorized state key computation: avoids per-row paste() calls from apply().
+        # do.call(paste, list_of_columns) produces comma-separated strings in R's C layer.
+        state_keys[[p]] <- if (ncol(mat) == 0L) {
+            rep("", nrow(mat))
+        } else {
+            do.call(paste, c(lapply(seq_len(ncol(mat)), function(j) mat[, j]), list(sep = ",")))
+        }
 
         vcat(prefix, "Enumerated CensusID=", cc, ": n_obs=", n_obs, ", n_states=", nrow(mat))
     }
@@ -1079,8 +1085,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         # Fast lookup for next assignment DBHs via assignment key
         next_assign_list <- assign_full[[p + 1L]]
-        # Build assignment-key -> state index for next census (since phase differs but assignment cost uses assignment)
-        next_assign_key <- vapply(next_assign_list, state_key, character(1L))
+        # Build assignment-key -> state index for next census (since phase differs but assignment cost uses assignment).
+        # Vectorized: rebuild assign list as matrix then use do.call(paste,...) instead of vapply+state_key.
+        next_assign_mat <- do.call(rbind, next_assign_list)
+        next_assign_key <- if (is.null(next_assign_mat) || ncol(next_assign_mat) == 0L) {
+            rep("", nrow(next_assign_mat))
+        } else {
+            do.call(paste, c(lapply(seq_len(ncol(next_assign_mat)), function(j) next_assign_mat[, j]), list(sep = ",")))
+        }
         next_assign_row_idx <- match(next_assign_key, state_keys[[p + 1L]])
         if (any(is.na(next_assign_row_idx))) {
             # Should not happen; indicates mismatch in state enumeration.
@@ -1103,29 +1115,77 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             tdbh1_by_next[[j]] <- track_dbh_by_state[[p + 1L]][[next_assign_row_idx[[j]]]]
         }
 
-        # Pre-compute resprout mask for each next state at census p+1.
-        # resprout_mask_by_next[[j]] is a logical(K) vector: TRUE for tracks
-        # that carry a resprout observation at census p+1 in state j.
-        resprout_mask_by_next <- NULL
-        if (any(is_resprout_obs[[p + 1L]])) {
-            resprout_flags_tp1 <- is_resprout_obs[[p + 1L]]
-            resprout_mask_by_next <- vector("list", n_next)
-            for (j in seq_len(n_next)) {
-                mask <- logical(K)
-                assign_tp1 <- next_assign_list[[j]]
-                for (q in seq_along(assign_tp1)) {
-                    if (resprout_flags_tp1[q]) mask[assign_tp1[q]] <- TRUE
-                }
-                resprout_mask_by_next[[j]] <- mask
+        # Interval (years) between cc and next_cc (pair_interval precomputed above the loop)
+        val_next <- pair_interval[[as.character(next_cc)]]
+        val_cc   <- pair_interval[[as.character(cc)]]
+        if (is.null(val_next) || length(val_next) == 0 || is.null(val_cc) || length(val_cc) == 0) {
+            interval_val <- NA_real_
+        } else {
+            interval_val <- (as.numeric(val_next) - as.numeric(val_cc)) / 365.25
+            if (!is.finite(interval_val) || interval_val <= 0) {
+                interval_val <- NA_real_
             }
         }
+        vcat(prefix, "  Interval years between CensusID ", cc, " and ", next_cc, ": ", interval_val, sep = "")
 
-        # Preallocate edge arrays (worst-case: every (assignment_state, next_full_state) is feasible)
-        upper_edges <- n_states_cc * n_next
-        from_idx <- integer(upper_edges)
-        to_idx <- integer(upper_edges)
-        logw <- numeric(upper_edges)
-        used_edges <- 0L
+        # -----------------------------------------------------------------------
+        # Batch feasibility check in C++: replaces the O(n_cc × n_next × K) R
+        # inner loop.  derive_phase_prev_batch_rcpp checks phase-transition
+        # constraints and hard growth-rate pruning for every (i, j) pair at once.
+        # -----------------------------------------------------------------------
+
+        # Build input matrices (rows = states/next-states, cols = tracks K)
+        tdbh0_mat  <- do.call(rbind, track_dbh_by_state[[p]])  # n_cc   × K
+        tdbh1_mat  <- do.call(rbind, tdbh1_by_next)             # n_next × K
+        phase_tp1_mat <- do.call(rbind, phase_tp1_by_next)      # n_next × K; integer
+
+        # Resprout matrix: n_next × K (zero-row means "no resprouts")
+        if (any(is_resprout_obs[[p + 1L]])) {
+            resprout_flags_tp1 <- is_resprout_obs[[p + 1L]]
+            resp_mat <- matrix(FALSE, nrow = n_next, ncol = K)
+            for (j in seq_len(n_next)) {
+                assign_tp1 <- next_assign_list[[j]]
+                for (q in seq_along(assign_tp1)) {
+                    if (resprout_flags_tp1[q]) resp_mat[j, assign_tp1[q]] <- TRUE
+                }
+            }
+        } else {
+            resp_mat <- matrix(logical(0L), nrow = 0L, ncol = K)
+        }
+
+        feasible_result <- derive_phase_prev_batch_rcpp(
+            tdbh0_mat      = tdbh0_mat,
+            tdbh1_mat      = tdbh1_mat,
+            phase_tp1_mat  = phase_tp1_mat,
+            resprout_mat   = resp_mat,
+            prune_hard     = isTRUE(prune_hard),
+            interval_val   = if (is.finite(interval_val)) interval_val else NaN,
+            eff_min_grow   = eff_min_grow,
+            eff_max_grow   = eff_max_grow,
+            eff_recruit_max = if (is.finite(eff_recruit_max)) eff_recruit_max else Inf
+        )
+
+        fe_from  <- feasible_result$from_i   # 1-based current assignment indices
+        fe_to    <- feasible_result$to_j     # 1-based next full-state indices
+        fe_phase <- feasible_result$phase_t  # n_feasible × K integer matrix
+        n_feasible <- length(fe_from)
+
+        # Update prune diagnostics (count all infeasible pairs as examined+pruned)
+        if (isTRUE(prune_hard)) {
+            n_infeasible <- n_states_cc * n_next - n_feasible
+            prune_stats$total_examined <- prune_stats$total_examined + n_infeasible
+            prune_stats$total_pruned   <- prune_stats$total_pruned   + n_infeasible
+            prune_stats$per_census[[as.character(cc)]] <-
+                prune_stats$per_census[[as.character(cc)]] + n_infeasible
+        }
+
+        # Compute full-state key strings for each feasible pair using vectorized ops.
+        # phase key: apply encode_phase_key row-wise (compact char-vector encoding)
+        if (n_feasible > 0L) {
+            fe_assign_keys <- state_keys[[p]][fe_from]  # assign key portion (precomputed)
+            fe_phase_keys  <- apply(fe_phase, 1L, encode_phase_key)
+            fe_full_keys   <- paste0(fe_assign_keys, "|", fe_phase_keys)
+        }
 
         # Dynamic creation of current full-states
         key_to_idx <- new.env(parent = emptyenv())
@@ -1135,148 +1195,95 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         curr_vit <- numeric(0)
         curr_ptr <- integer(0)
 
-        # Interval (years) between cc and next_cc (pair_interval precomputed above the loop)
-        val_next <- pair_interval[[as.character(next_cc)]]
-        val_cc   <- pair_interval[[as.character(cc)]]
-        if (is.null(val_next) || length(val_next) == 0 || is.null(val_cc) || length(val_cc) == 0) {
-            interval_val <- NA_real_
-        } else {
-            interval_val <- (as.numeric(val_next) - as.numeric(val_cc)) / 365.25
-            if (!is.finite(interval_val) || interval_val <= 0) {
-                # fallback safe default; if invalid, growth-based pruning will be skipped
-                interval_val <- NA_real_
-            }
-        }
-        vcat(prefix, "  Interval years between CensusID ", cc, " and ", next_cc, ": ", interval_val, sep = "")
+        # Preallocate edge arrays (at most n_feasible edges)
+        from_idx <- integer(n_feasible)
+        to_idx   <- integer(n_feasible)
+        logw     <- numeric(n_feasible)
+        used_edges <- 0L
 
-        for (i in seq_len(n_states_cc)) {
-            # i <- 1L # For testing only
-            tdbh0 <- track_dbh_by_state[[p]][[i]]
-            assign0 <- mat_cc[i, ]
-            # vcat(prefix, "  processing assignment i=", i, " tdbh0_len=", length(tdbh0), " assign0_len=", length(assign0))
+        # Process feasible pairs grouped by from_i (i-order is guaranteed by C++ loop order).
+        # split() creates one group per unique from_i — only i values with ≥1 feasible j appear.
+        if (n_feasible > 0L) {
+            by_i <- split(seq_len(n_feasible), fe_from)
 
-            # Collect all feasible next states (based on phase constraints) for this current assignment
-            feasible_n <- 0L
-            feasible_j <- integer(n_next)
-            feasible_key <- character(n_next)
-            feasible_tdbh1 <- vector("list", n_next)
+            for (i_key in names(by_i)) {
+                i_val   <- as.integer(i_key)
+                rows    <- by_i[[i_key]]
+                tdbh0   <- track_dbh_by_state[[p]][[i_val]]
+                assign0 <- mat_cc[i_val, ]
+                j_vals  <- fe_to[rows]
+                f_keys  <- fe_full_keys[rows]
+                f_tdbh1 <- lapply(j_vals, function(jj) tdbh1_by_next[[jj]])
 
-            for (j in seq_len(n_next)) {
-                phase_tp1 <- phase_tp1_by_next[[j]]
-                if (length(phase_tp1) != K) next
-                tdbh1 <- tdbh1_by_next[[j]]
-                resprout_mask <- if (!is.null(resprout_mask_by_next)) resprout_mask_by_next[[j]] else NULL
-                phase_t <- derive_phase_prev(phase_tp1, tdbh0, tdbh1, resprout_tp1 = resprout_mask)
-                if (is.null(phase_t)) next
+                t_tc0 <- tic()
+                c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
+                    track_dbh_t   = tdbh0,
+                    track_dbh_tp1 = f_tdbh1,
+                    interval_years = interval_val,
+                    # --- growth model ---
+                    mu_const = Bio_Mu_Growth_unit,
+                    mu_gamma = Bio_Gamma_Growth_unit,
+                    sigma0   = Bio_Sigma0_unit,
+                    sigma1   = Bio_Sigma1_unit,
+                    max_shrink      = Bio_max_shrink_unit,
+                    k_shrink        = Bio_k_shrink_unit,
+                    max_growth      = Bio_max_growth_unit,
+                    max_growth_soft = Bio_max_growth_soft_unit,
+                    k_growth        = Bio_k_growth_unit,
+                    # --- measurement error (optional) ---
+                    use_measurement_error = use_measurement_error,
+                    meas_sd1_a = meas_sd1_a,
+                    meas_sd1_b = meas_sd1_b,
+                    meas_sd2   = meas_sd2,
+                    meas_p_big = meas_p_big,
+                                    # --- mortality model ---
+                    h0             = Bio_H0_Mortality,
+                    beta           = Bio_Beta_Mortality,
+                                    # --- recruitment model ---
+                    recruit_meanlog = Bio_Recruit_Meanlog_unit,
+                    recruit_sdlog   = Bio_Recruit_Sdlog_unit,
+                    recruit_max_dbh = Bio_Recruit_MaxDBH_unit,
+                    recruit_lambda  = Bio_Recruitment_lambda,
+                    eps_tiebreak    = eps_tiebreak
+                )
+                t_tc1 <- tic()
+                transition_cost_time  <- transition_cost_time  + (t_tc1 - t_tc0)
+                transition_cost_calls <- transition_cost_calls + 1L
 
-                # Conservative hard-pruning: cheap vectorized checks before expensive cost evaluation
-                if (isTRUE(prune_hard)) {
-                    prune_stats$total_examined <- prune_stats$total_examined + 1L
-                    candidate_ok <- TRUE
-                    # Use precomputed effective prune bounds (eff_min_grow/eff_max_grow/eff_recruit_max)
-                    if (is.finite(interval_val)) {
-                        alive_both <- !is.na(tdbh0) & !is.na(tdbh1)
-                        recruit    <- is.na(tdbh0) & !is.na(tdbh1)
-                        g_vec      <- (tdbh1 - tdbh0) / interval_val
-                        if (any(alive_both & (g_vec < eff_min_grow | g_vec > eff_max_grow)) ||
-                            (is.finite(eff_recruit_max) && any(recruit & (tdbh1 > eff_recruit_max)))) {
-                            candidate_ok <- FALSE
-                        }
+                for (e in seq_along(rows)) {
+                    j        <- j_vals[[e]]
+                    curr_key <- f_keys[[e]]
+
+                    idx <- key_to_idx[[curr_key]]
+                    if (is.null(idx)) {
+                        idx <- length(curr_keys_list) + 1L
+                        key_to_idx[[curr_key]] <- idx
+                        curr_keys_list[[idx]]  <- curr_key
+                        curr_assign_list[[idx]] <- as.integer(assign0)
+                        curr_logB[idx] <- -Inf
+                        curr_vit[idx]  <- Inf
+                        curr_ptr[idx]  <- NA_integer_
                     }
 
-                    if (!candidate_ok) {
-                        prune_stats$total_pruned <- prune_stats$total_pruned + 1L
-                        prune_stats$per_census[[as.character(cc)]] <- prune_stats$per_census[[as.character(cc)]] + 1L
-                        next
+                    c_trans <- c_trans_vec[[e]]
+
+                    # Viterbi update (MAP)
+                    cand_vit <- c_trans + vit_next[[j]]
+                    if (!is.finite(curr_vit[idx]) || cand_vit < curr_vit[idx]) {
+                        curr_vit[idx] <- cand_vit
+                        curr_ptr[idx] <- j
                     }
+
+                    # Backward log-sum-exp update
+                    cand_log <- (-c_trans / temperature) + logB_next[[j]]
+                    curr_logB[idx] <- log_add_exp(curr_logB[idx], cand_log)
+
+                    # Store edge for forward pass
+                    used_edges <- used_edges + 1L
+                    from_idx[[used_edges]] <- idx
+                    to_idx[[used_edges]]   <- j
+                    logw[[used_edges]]     <- (-c_trans / temperature)
                 }
-
-                feasible_n <- feasible_n + 1L
-                feasible_j[[feasible_n]] <- j
-                feasible_key[[feasible_n]] <- encode_full_key(assign0, phase_t)
-                feasible_tdbh1[[feasible_n]] <- tdbh1
-            }
-
-            if (feasible_n == 0L) next
-
-            feasible_j <- feasible_j[seq_len(feasible_n)]
-            feasible_key <- feasible_key[seq_len(feasible_n)]
-            feasible_tdbh1 <- feasible_tdbh1[seq_len(feasible_n)]
-
-            # Batch compute all transition costs from this current assignment
-            # log diagnostic about feasibility before calling into C++
-            # vcat(prefix, "    feasible_n=", feasible_n, " length(feasible_tdbh1)=", length(feasible_tdbh1))
-            # Time the C++ batch transition-cost call for profiling
-            # vcat(prefix, "    Bio params: mu=", Bio_Mu_Growth_unit, " sigma0=", Bio_Sigma0_unit, " recruit_max=", Bio_Recruit_MaxDBH_unit, " interval=", interval_val)
-
-            t_tc0 <- tic()
-            c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
-                track_dbh_t = tdbh0,
-                track_dbh_tp1 = feasible_tdbh1,
-                interval_years = interval_val,
-                # --- growth model ---
-                mu_const = Bio_Mu_Growth_unit,
-                mu_gamma = Bio_Gamma_Growth_unit,
-                sigma0 = Bio_Sigma0_unit,
-                sigma1 = Bio_Sigma1_unit,
-                max_shrink = Bio_max_shrink_unit,
-                k_shrink = Bio_k_shrink_unit,
-                max_growth = Bio_max_growth_unit,
-                max_growth_soft = Bio_max_growth_soft_unit,
-                k_growth = Bio_k_growth_unit,
-                # --- measurement error (optional) ---
-                use_measurement_error = use_measurement_error,
-                meas_sd1_a = meas_sd1_a,
-                meas_sd1_b = meas_sd1_b,
-                meas_sd2 = meas_sd2,
-                meas_p_big = meas_p_big,
-                # --- mortality model ---
-                h0 = Bio_H0_Mortality,
-                beta = Bio_Beta_Mortality,
-                # --- recruitment model ---
-                recruit_meanlog = Bio_Recruit_Meanlog_unit,
-                recruit_sdlog = Bio_Recruit_Sdlog_unit,
-                recruit_max_dbh = Bio_Recruit_MaxDBH_unit,
-                recruit_lambda = Bio_Recruitment_lambda,
-                eps_tiebreak = eps_tiebreak
-            )
-            t_tc1 <- tic()
-            transition_cost_time <- transition_cost_time + (t_tc1 - t_tc0)
-            transition_cost_calls <- transition_cost_calls + 1L
-
-            for (e in seq_len(feasible_n)) {
-                j <- feasible_j[[e]]
-                curr_key <- feasible_key[[e]]
-
-                idx <- key_to_idx[[curr_key]]
-                if (is.null(idx)) {
-                    idx <- length(curr_keys_list) + 1L
-                    key_to_idx[[curr_key]] <- idx
-                    curr_keys_list[[idx]] <- curr_key
-                    curr_assign_list[[idx]] <- as.integer(assign0)
-                    curr_logB[idx] <- -Inf
-                    curr_vit[idx] <- Inf
-                    curr_ptr[idx] <- NA_integer_
-                }
-
-                c_trans <- c_trans_vec[[e]]
-
-                # Viterbi update (MAP)
-                cand_vit <- c_trans + vit_next[[j]]
-                if (!is.finite(curr_vit[idx]) || cand_vit < curr_vit[idx]) {
-                    curr_vit[idx] <- cand_vit
-                    curr_ptr[idx] <- j
-                }
-
-                # Backward log-sum-exp update
-                cand_log <- (-c_trans / temperature) + logB_next[[j]]
-                curr_logB[idx] <- log_add_exp(curr_logB[idx], cand_log)
-
-                # Store edge for forward pass
-                used_edges <- used_edges + 1L
-                from_idx[[used_edges]] <- idx
-                to_idx[[used_edges]] <- j
-                logw[[used_edges]] <- (-c_trans / temperature)
             }
         }
 
@@ -1309,8 +1316,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
         edges[[p]] <- data.table::data.table(
             from_idx = from_idx[seq_len(used_edges)],
-            to_idx = to_idx[seq_len(used_edges)],
-            logw = logw[seq_len(used_edges)]
+            to_idx   = to_idx[seq_len(used_edges)],
+            logw     = logw[seq_len(used_edges)]
         )
 
         vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[p]]), ", edges=", used_edges, ", dt=", sprintf("%.2fs", tic() - t_cc0))

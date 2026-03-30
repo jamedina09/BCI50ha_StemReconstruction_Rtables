@@ -37,39 +37,33 @@ enumerate_states_injective <- function(K, n_obs, max_states) {
 
     # Before we try to build the list, estimate how big it will be.
     # Number of injective mappings: P(K, n_obs) = K*(K-1)*...*(K-n_obs+1)
-    n_states <- 1
-    for (i in 0:(n_obs - 1L)) n_states <- n_states * (K - i)
+    n_states_est <- prod(seq.int(from = K, by = -1L, length.out = n_obs))
 
     # Safety guard: if it's too big, we refuse and make the caller fall back.
-    if (is.finite(n_states) && n_states > max_states) {
+    if (!is.finite(n_states_est) || n_states_est > max_states) {
         return(NULL)
     }
-    tracks <- seq_len(K)
+    n_states <- as.integer(n_states_est)
 
-    build <- function(prefix, remaining) {
-        # Recursive constructor.
-        #
-        # prefix    = the track choices we have already made for obs 1..length(prefix)
-        # remaining = which tracks are still available to use
-        #
-        # Base case:
-        # - If we've chosen n_obs tracks, we have completed one full state.
-        if (length(prefix) == n_obs) {
-            return(list(prefix))
-        }
+    # Pre-allocate the output matrix and fill it using a shared row buffer + counter.
+    # This avoids the O(n_states^2) list-copying that recursive c(out, build(...)) incurs.
+    mat <- matrix(0L, nrow = n_states, ncol = n_obs)
+    row_ctr <- 1L
+    current_row <- integer(n_obs)
 
-        # Otherwise, we need to pick a track for the next observation.
-        # We'll try each available track and recurse.
-        out <- vector("list", 0L)
-        for (t in remaining) {
-            # Choose track t for the next observation.
-            # Then remove t from remaining (cannot reuse it).
-            out <- c(out, build(c(prefix, t), remaining[remaining != t]))
+    fill <- function(col, avail) {
+        if (col > n_obs) {
+            mat[row_ctr, ] <<- current_row
+            row_ctr <<- row_ctr + 1L
+            return()
         }
-        out
+        for (t in avail) {
+            current_row[col] <<- t
+            fill(col + 1L, avail[avail != t])
+        }
     }
-    combos <- build(integer(0), tracks)
-    do.call(rbind, lapply(combos, function(v) matrix(v, nrow = 1L)))
+    fill(1L, seq_len(K))
+    mat
 }
 
 state_key <- function(state_vec) {
