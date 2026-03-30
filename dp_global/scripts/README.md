@@ -84,7 +84,7 @@ Output controls:
 - `WRITE_DP_RDS` — default: `TRUE` - write per-chunk RDS or combined for non-chunk runs.
 - `WRITE_DP_FEATHER` — default: `FALSE` (requires the `arrow` package) - write per-chunk feather (.feather) files or combined for non-chunk runs.
 - `WRITE_DP_PDF` — default: `TRUE` - write pdf visualizations per tag - memory heavy.
-- `DP_PDF_INCLUDE_REFERENCE` — `main_cpp.R` default: `TRUE`; `main_cpp_chunk.R` default: `FALSE` — include biologically-informed reference lines in PDFs (useful with simulated data).
+- `DP_PDF_INCLUDE_REFERENCE` — `main_cpp.R` default: `TRUE`; `main_cpp_chunk.R` default: `TRUE` — include biologically-informed reference lines in PDFs (useful with simulated data).
 - `WRITE_DP_PDF_PER_CHUNK` — default in `main_cpp_chunk.R`: `TRUE` (controls per-chunk PDFs).
 
 Parallel & chunking controls (chunked runner specific):
@@ -128,7 +128,7 @@ Files produced as run markers/logs:
 PDF & plotting controls:
 - `WRITE_DP_PDF` (default: `TRUE`) — control whether PDFs are generated via `plot_tag_to_pdf()`.
 - `DP_PDF_INCLUDE_REFERENCE` (default: `TRUE`) — include biologically-informed reference lines in PDFs.
-- `PLOT_PDF_ONE_TAG_ONLY` (main: `TRUE` when `RUN_ALL_TAGS=FALSE`; not used by `main_cpp_chunk.R`) — when `TRUE` produce PDFs only for `which_tag` (useful for single-tag runs).
+- `PLOT_PDF_ONE_TAG_ONLY` (main: `TRUE` when `RUN_ALL_TAGS=FALSE`; not used by `main_cpp_chunk.R`) — when `TRUE` produce PDFs only for `WHICH_TAG` (useful for single-tag runs).
 
 Sensitivity & realism flags (available in `main_cpp.R`):
 - `SENSITIVITY_MODE` (default: `"none"`) — Options: `"none"`, `"run"`, `"run+write"`, `"run+write+pdf"`. Controls whether sensitivity sweeps are executed and if results are written.

@@ -46,38 +46,57 @@ R (packages: `data.table`, `igraph`; optional: `ggplot2`, `cowplot`)
 
 ### Running the Code
 
-**Interactive:**
+**Interactive (single-tag or small datasets):**
 ```r
 source("dp_global/scripts/main_cpp.R")
 ```
 
-**Command line:**
+**Command line (single-tag or small datasets):**
 ```bash
 Rscript dp_global/scripts/main_cpp.R
 ```
 
-> For running experiments on a single machine, prefer `bin/run_dp_future.R` (concurrent runner) or `bin/run_dp_future_single.R` (fixed-config helper). See `bin/README.md` for runner usage and notes.
+**Command line (large datasets — chunked incremental output):**
+```bash
+Rscript dp_global/scripts/main_cpp_chunk.R
+```
 
 Notes:
-- To specify census timing, pass `interval_years` (scalar) or ensure a per-row interval column (e.g., `Bio_IntervalYears`) is present and set `interval_years = NULL` to enable automatic per-pair interval detection (see `dp_global/R/dp_global_utils.R::resolve_interval_years()`).
-- You can request `.rds` outputs in addition to CSV/PDF by passing `--WRITE_DP_RDS=TRUE` to `main_cpp.R` or via orchestrator arguments.
-- Recommended runner scripts: `bin/run_dp_future.R` and `bin/run_dp_future_single.R`.
+- For large datasets prefer `main_cpp_chunk.R` which processes groups (Tag + species) in configurable chunks, writes incremental CSV/RDS output, and supports resume (`DP_CHUNK_RESUME=TRUE`).
+- To specify census timing, pass `interval_years` (scalar) or ensure a per-row interval column (e.g., `Bio_IntervalYears`) is present and set `interval_years = NULL` to enable automatic per-pair interval detection.
+- Request `.rds` outputs by passing `--WRITE_DP_RDS=TRUE`.
 
 ### File Structure
 
 ```
 dp_global/
-├── dp_global_biol.R              # Core DP functions
-├── scripts/main_cpp.R                    # Driver script (C++ accelerated)
+├── README.md
 ├── R/
-│   ├── sensitivity_transition_cost_bio.R
-│   └── realism_calibration.R
-├── src/                          # C++ implementation
-│   ├── transition_cost_rcpp.R
-│   ├── transition_cost_rcpp.cpp
-│   └── test_rcpp_implementation.R
-├── dev/                     # Testing & profiling
-└── output/                       # Generated artifacts
+│   ├── dp_global_main.R              # Source loader: sources all R modules below
+│   ├── dp_global_bio.R               # Biological parameter estimation (estimate_bio_pars)
+│   ├── dp_global_dp.R                # Production DP solver (match_stems_dp_global_backward_marginals_batch)
+│   ├── dp_global_states.R            # State enumeration and track-DBH helpers
+│   ├── dp_global_matchers.R          # Fallback igraph matcher (match_stems_optimal_backward)
+│   ├── dp_global_utils.R             # Shared utilities (interval resolution, etc.)
+│   ├── dp_global_diag.R              # Diagnostics and PDF plotting
+│   ├── naming_helpers.R              # Output directory naming helpers
+│   ├── sensitivity_transition_cost_bio.R  # Sensitivity sweep helpers
+│   ├── realism_calibration.R         # Realism calibration helpers
+│   ├── k_tuning_viz.R                # K-tuning visualisation
+│   └── complexity/
+│       ├── estimate_dp_complexity_function.R  # DP complexity estimator
+│       └── test_complexity_estimator.R        # Complexity estimator test/demo
+├── scripts/
+│   ├── main_cpp.R                    # Interactive / single-tag driver
+│   └── main_cpp_chunk.R              # Chunked driver for large runs
+├── src/
+│   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
+│   └── transition_cost_rcpp.R        # R wrapper for Rcpp-compiled functions
+├── dpglobal_bundle/
+│   ├── dpglobal_bundle_loader.R      # Bundle builder (creates RData + manifest)
+│   ├── package_bundle.sh             # Packaging helper (creates tarball)
+│   └── verify_bundle.R               # Basic smoke-test for deployed bundles
+└── output/                           # Generated run artifacts (not tracked by git)
 ```
 
 ---
@@ -564,9 +583,9 @@ source("dp_global/R/realism_calibration.R")
 # Analyze reconstruction quality
 ```
 
-### Files written by `main_cpp.R`
+### Files written by the driver scripts
 
-When you run `dp_global/scripts/main_cpp.R` (or via `bin/run_dp_future.R`), outputs are written to a run-specific directory under `dp_global/output/` (the driver prints `out_dir` on startup). Common files written by the run include:
+When you run `dp_global/scripts/main_cpp.R` or `dp_global/scripts/main_cpp_chunk.R`, outputs are written to a run-specific directory under `dp_global/output/` (the driver prints `out_dir` on startup). Common files written by the run include:
 
 - `run_started.txt`, `run_finished.txt` — simple markers indicating job start/finish timestamps
 - `run_parameters_full.txt` — full parameter dump and command-line overrides for reproducibility
@@ -1022,284 +1041,41 @@ prune_use_bio_recruit = FALSE# use fixed prune bounds instead of biological ones
 
 ---
 
-## Experimental Design & Configuration
-
-### Overview
-
-The experimental configuration explores how parameter estimation strategies affect reconstruction quality by varying:
-1. **Hard constraints** (MAX_GROWTH/MAX_SHRINK): Fixed vs data-driven bounds
-2. **Soft penalties** (K_SHRINK/K_GROWTH): Fixed vs data-driven quadratic penalties
-3. **Penalty strength**: None (K=0) vs moderate (K=25) vs strong (K=50)
-
-### Fixed Parameters Across All Experiments
-
-These settings remain constant across all configurations to ensure fair comparison:
-
-```bash
-# Input data
-input_file="../data_simulation/data/simulated_data_1.csv"
-FORCE_ONE_SPECIES_PARAMETERS=FALSE
-
-# Census configuration
-WHICH_TAG=1
-anchor_start_census=7
-interval_years=5  # scalar interval; set to NULL to detect per-pair values from data (e.g., via Bio_IntervalYears), or pass --interval_years=5
-
-# Processing settings
-RUN_ALL_TAGS=TRUE
-MC_CORES=5
-RUN_DP_MARGINALS=TRUE
-USE_MEASUREMENT_ERROR=TRUE  # Always enabled
-
-# Output settings
-WRITE_DP_CSV=TRUE
-WRITE_DP_RDS=TRUE
-WRITE_DP_PDF=TRUE
-DP_PDF_INCLUDE_REFERENCE=TRUE
-PLOT_PDF_ONE_TAG_ONLY=FALSE
-
-# Analysis settings
-RUN_SENSITIVITY=TRUE
-RUN_K_SWEEP_DEMO=TRUE
-RUN_REALISM_REPORT=TRUE
-```
-
-### Experimental Configurations
-
-The script runs 8 configurations in a 2×4 factorial-like design:
-
-| Config | Hard Constraints | Soft Penalties | K Value | Description |
-|--------|-----------------|----------------|---------|-------------|
-| `fixed` | fixed | fixed | 0 | Pure fixed-parameter baseline (no soft penalties) |
-| `data_hard` | **data** | fixed | 0 | Data-driven hard bounds only |
-| `data_hard_soft` | **data** | **data** | — | Fully data-driven (K from data) |
-| `data_soft` | fixed | **data** | — | Fixed hard bounds + data-driven soft |
-| `fixed_k50` | fixed | fixed | **50** | Fixed baseline + strong penalties |
-| `fixed_k25` | fixed | fixed | **25** | Fixed baseline + moderate penalties |
-| `data_hard_k50` | **data** | fixed | **50** | Data hard bounds + strong penalties |
-| `data_hard_k25` | **data** | fixed | **25** | Data hard bounds + moderate penalties |
-
-### Parameter Variation Details
-
-#### Hard Constraint Sources
-
-**MAX_GROWTH_HARD_SOURCE** and **MAX_SHRINK_HARD_SOURCE** control how absolute growth/shrinkage limits are determined:
-
-**Fixed mode:**
-```bash
-MAX_GROWTH_HARD_SOURCE=fixed
-MAX_GROWTH_FIXED=7.5        # cm/year upper bound
-MAX_SHRINK_HARD_SOURCE=fixed
-MAX_SHRINK_FIXED=-0.5       # cm/year lower bound (negative)
-```
-- Uses literature-derived or expert-specified values
-- Consistent across all species/groups
-- Good when data is sparse or unreliable
-
-**Data mode:**
-```bash
-MAX_GROWTH_HARD_SOURCE=data
-MAX_SHRINK_HARD_SOURCE=data
-# MAX_GROWTH_FIXED and MAX_SHRINK_FIXED serve as fallbacks only
-```
-- **Shrinkage:** Calculates from lower quantile (default 0.1%) of observed annual increments
-  - With measurement error: `max_shrink` = min(`max_shrink_data`, `max_shrink_meas`)
-  - Without: uses only empirical quantile
-- **Growth:** Calculates from upper quantile (default 99.9%) of observed annual increments
-  - With measurement error: `max_growth` = max(`max_growth_data`, `max_growth_meas`)
-  - Without: uses only empirical quantile
-- Adapts to species-specific growth patterns
-
-#### Soft Penalty Sources
-
-**K_SHRINK_SOURCE** and **K_GROWTH_SOURCE** control quadratic penalty weights:
-
-**Fixed mode with K=0 (no soft penalties):**
-```bash
-K_SHRINK_SOURCE=fixed
-K_SHRINK_FIXED=0
-K_GROWTH_SOURCE=fixed
-K_GROWTH_FIXED=0
-```
-- Disables soft penalties entirely
-- Relies purely on hard constraints and growth likelihood
-- Most permissive configuration
-
-**Fixed mode with K>0:**
-```bash
-K_SHRINK_SOURCE=fixed
-K_SHRINK_FIXED=50          # 1/cm² penalty weight
-K_GROWTH_SOURCE=fixed
-K_GROWTH_FIXED=50
-```
-- Applies user-specified penalty strength
-- K=50: strong discouragement (~0.1 cm excess costs 1 unit, since $0.1^2 \times 50 = 0.5$)
-- K=25: moderate discouragement (~0.14 cm excess costs 1 unit)
-- Rule of thumb: To make $s$ cm excess cost ≈1 unit, use $K \approx 1/(2s^2)$
-
-**Data mode:**
-```bash
-K_SHRINK_SOURCE=data
-K_GROWTH_SOURCE=data
-# K_SHRINK_FIXED and K_GROWTH_FIXED are ignored
-```
-- Calibrates from typical measurement SD: $K = 1/(2s_{\text{typ}}^2)$
-- With measurement error: uses median measurement SD across pairs
-- Without measurement error: uses variance of observed increments
-- Automatically scales with data variability
-- Estimated values clamped to $[10^{-6}, 10^6]$ for numerical stability
-
-### Experimental Questions & Comparisons
-
-#### 1. Effect of Data-Driven Hard Constraints
-
-**Compare:** `fixed` vs `data_hard`
-- Both have K=0 (no soft penalties)
-- Only hard constraint source differs
-- **Question:** Do data-driven bounds improve reconstruction accuracy?
-
-#### 2. Effect of Soft Penalties on Fixed Baseline
-
-**Compare:** `fixed` vs `fixed_k25` vs `fixed_k50`
-- All use fixed hard constraints
-- Soft penalty strength varies (0, 25, 50)
-- **Question:** How much do soft penalties reduce biologically implausible transitions?
-
-#### 3. Effect of Soft Penalties on Data-Driven Hard Constraints
-
-**Compare:** `data_hard` vs `data_hard_k25` vs `data_hard_k50`
-- All use data-driven hard constraints
-- Soft penalty strength varies (0, 25, 50)
-- **Question:** Are soft penalties still beneficial with adaptive hard bounds?
-
-#### 4. Full Data-Driven vs Hybrid Approaches
-
-**Compare:** `data_hard_soft` vs `data_hard` vs `data_soft` vs `fixed`
-- Tests all combinations of data/fixed for hard/soft
-- **Question:** Which parameter estimation strategy gives best results?
-
-#### 5. Interaction Between Hard and Soft Sources
-
-**Compare:** `fixed_k50` vs `data_hard_k50` vs `data_hard_soft`
-- Same soft penalty strength (50 or data-derived)
-- Hard constraint source varies
-- **Question:** Do data-driven hard constraints reduce need for strong soft penalties?
-
-### Running Experiments
-
-**Run all configurations sequentially (serial runner):**
-```bash
-bin/run_dp_full.sh
-```
-
-**Note about parallel runs:**
-For concurrent execution and improved logging use `bin/run_dp_future.R`. If you prefer a simple serial invocation for a single config, `bin/run_dp_full.sh --config=<name>` can be executed directly; coordinate `BATCH_TS` if you need grouped outputs.
-
-**Run single configuration:**
-```bash
-bin/run_dp_full.sh --config=data_hard_soft
-```
-
-**Override specific parameters:**
-```bash
-bin/run_dp_full.sh --WHICH_TAG=2 --MC_CORES=8
-```
-
-### Output Organization
-
-Each configuration writes to a separate directory:
-```
-output/
-├── config_fixed/
-│   ├── dp_reconstruction.csv
-│   ├── realism_report.pdf
-│   ├── sensitivity_analysis.pdf
-│   └── trajectories/
-├── config_data_hard/
-├── config_data_hard_soft/
-└── ...
-```
-
-### Comparing Results
-
-**Key metrics to compare across configurations:**
-
-1. **Reconstruction accuracy** (from realism reports):
-   - Identity match rate vs ground truth
-   - Growth constraint violations
-   - Trajectory smoothness
-
-2. **Computational efficiency:**
-   - Runtime per configuration
-   - Fallback frequency (igraph usage)
-   - State space sizes
-
-3. **Biological realism:**
-   - Growth rate distributions
-   - Mortality patterns consistency
-   - Recruitment size distributions
-
-4. **Posterior uncertainty** (from marginal runs):
-   - Mean entropy across observations
-   - Proportion confident/ambiguous/unlinked
-   - Uncertainty reduction with data-driven vs fixed
-
-### Expected Patterns
-
-**Hypothesis 1:** Data-driven hard constraints will show:
-- Better species-specific adaptation
-- Fewer constraint violations
-- Higher computational cost (wider feasible region)
-
-**Hypothesis 2:** Soft penalties (K>0) will show:
-- Smoother trajectories
-- Fewer extreme growth events
-- Trade-off between flexibility and realism
-
-**Hypothesis 3:** Full data-driven (data_hard_soft) will show:
-- Best match to true IDs (if simulation is realistic)
-- Most computational resources required
-- Highest sensitivity to data quality
-
----
-
 ## Workflows & Usage Patterns
 
 ### Single-Tag Debug
 
 ```r
-# In scripts/main.R:
+# In dp_global/scripts/main_cpp.R (or via CLI):
 RUN_ALL_TAGS <- FALSE
-which_tag <- 123456
+WHICH_TAG <- 123456L
 
 WRITE_DP_PDF <- TRUE
-PLOT_PDF_ONE_TAG_ONLY <- TRUE
 ```
 
 ### Single-Tag with Posterior Uncertainty
 
 ```r
-RUN_DP_MARGINALS <- TRUE
-DP_POSTERIOR_TEMPERATURE <- 0.5
-
-ADD_DP_POSTERIOR_BINS <- TRUE
+DP_MODE <- "marginals+bins"  # default; also adds posterior bins
+# temperature is passed directly to match_stems_dp_global_backward_marginals_batch()
 ```
 
 ### Full Parallel Run
 
 ```r
 RUN_ALL_TAGS <- TRUE
-MC_CORES <- 8
+MANUAL_CORES <- TRUE
+MANUAL_CORES_VALUE <- 8L
 
 # Adjust if needed:
-dp_max_states <- 1e5
-dp_max_tracks <- 50
+DP_MAX_STATES <- 1e5
+DP_MAX_TRACKS <- 50L
 ```
 
 ### Sensitivity Analysis Only
 
 ```r
-source("dp_global/R/dp_global_biol.R")
+source("dp_global/R/dp_global_main.R")
 source("dp_global/R/sensitivity_transition_cost_bio.R")
 # Run parameter sweeps on costs
 ```
@@ -1383,8 +1159,8 @@ xraw[, Bio_Recruit_MaxDBH_unit := bio_pars_list[[species]]$recruitment$recruit_m
 # By default RECRUIT_MAX_SOURCE="data" (estimate from observed recruits).
 xraw[, Bio_Recruitment_lambda := bio_pars_list[[species]]$recruitment$lambda, by = species]
 
-# 3. Run DP solver
-out <- xraw[, match_stems_dp_global_backward(
+# 3. Run DP solver (marginals + posterior bins)
+out <- xraw[, match_stems_dp_global_backward_marginals_batch(
   .SD,
   min_growth = -2,           # Used by fallback and diagnostics only
   max_growth = 10,           # Used by fallback and diagnostics only
@@ -1393,29 +1169,16 @@ out <- xraw[, match_stems_dp_global_backward(
   max_tracks = 30,
   max_states = 50000,
   slack_tracks = 1,
-  use_measurement_error = USE_MEASUREMENT_ERROR,
-  verbose = TRUE
-), by = .(Tag, species)]
-
-# 4. Optional: Run posterior marginals
-out_marginal <- xraw[, match_stems_dp_global_backward_marginals(
-  .SD,
-  min_growth = -2,
-  max_growth = 10,
-  interval_years = NULL,    # set to NULL to prefer per-row interval column (e.g., Bio_IntervalYears) or pass a scalar like 5
-  anchor_start = 7,
-  max_tracks = 30,
-  max_states = 50000,
-  slack_tracks = 1,
+  dp_mode = "marginals+bins",
   temperature = 0.5,
   posterior_top_k = 2,
   use_measurement_error = USE_MEASUREMENT_ERROR,
   verbose = TRUE
 ), by = .(Tag, species)]
 
-# 5. Add posterior bins (if using marginals)
-out_marginal <- add_dp_posterior_bins(
-  out_marginal,
+# 4. Add posterior bins (applied per-group or to full out)
+out <- add_dp_posterior_bins(
+  out,
   confident_prob = 0.95,
   unlinked_prob = 0.50,
   use_reconstructed_prob = TRUE
@@ -1448,18 +1211,18 @@ out_marginal <- add_dp_posterior_bins(
 
 | Task | Primary Function | Location |
 |------|------------------|----------|
-| State enumeration | `enumerate_states_injective()` | `dp_global_biol.R` |
-| Track DBH vectors | `state_to_track_dbh()` | `dp_global_biol.R` |
-| Transition costs | `transition_cost_tracks_bio()` | `dp_global_biol.R` |
-| Cost breakdown (debug) | `transition_cost_tracks_bio_components()` | `dp_global_biol.R` |
-| MAP/Viterbi DP | `match_stems_dp_global_backward()` | `dp_global_biol.R` |
-| Posterior marginals (single-tag) | `match_stems_dp_global_backward_marginals()` | `dp_global_biol.R` |
-| Posterior marginals (batch / production) | `match_stems_dp_global_backward_marginals_batch()` | `dp_global/R/dp_global_dp.R` |
-| Posterior binning | `add_dp_posterior_bins()` | `dp_global_biol.R` |
-| Fallback matcher | `match_stems_optimal_backward()` | `dp_global_biol.R` |
-| Parameter estimation | `estimate_bio_pars()` | `dp_global_biol.R` |
-| Plotting | `plot_tag_to_pdf()` | `dp_global_biol.R` |
-| Driver/wiring | `scripts/main.R` | `scripts/main.R` |
+| State enumeration | `enumerate_states_injective()` | `dp_global/R/dp_global_states.R` |
+| Track DBH vectors | `state_to_track_dbh()` | `dp_global/R/dp_global_states.R` |
+| Transition costs (C++) | `transition_cost_tracks_bio_batch_rcpp_cpp()` | `dp_global/src/transition_cost_rcpp.cpp` |
+| Cost breakdown (debug) | `transition_cost_tracks_bio_components()` | `dp_global/R/dp_global_bio.R` |
+| Posterior marginals (production) | `match_stems_dp_global_backward_marginals_batch()` | `dp_global/R/dp_global_dp.R` |
+| Posterior binning | `add_dp_posterior_bins()` | `dp_global/R/dp_global_diag.R` |
+| Fallback matcher | `match_stems_optimal_backward()` | `dp_global/R/dp_global_matchers.R` |
+| Parameter estimation | `estimate_bio_pars()` | `dp_global/R/dp_global_bio.R` |
+| DP complexity estimate | `estimate_dp_complexity()` | `dp_global/R/complexity/estimate_dp_complexity_function.R` |
+| Plotting | `plot_tag_to_pdf()` | `dp_global/R/dp_global_diag.R` |
+| Driver (interactive / single-tag) | `run_dp_one_group()` | `dp_global/scripts/main_cpp.R` |
+| Driver (chunked / large runs) | `run_main_chunked()` | `dp_global/scripts/main_cpp_chunk.R` |
 
 ### match_stems_dp_global_backward_marginals_batch — Function reference (implementation details)
 
@@ -1478,7 +1241,7 @@ Key computations and helpers:
   - `state_to_track_dbh(assign_vec, obs_dbh, K)` constructs length-K DBH vectors for each state used in cost evaluation.
 
 - Phase constraints
-  - `derive_phase_prev(phase_tp1, tdbh_t, tdbh_tp1)` computes the feasible phase vector at t given the next phase and DBH presence/absence; used to enforce life-cycle feasibility (prebirth, alive, dead).
+  - `derive_phase_prev_batch_rcpp(...)` (C++, `dp_global/src/transition_cost_rcpp.cpp`) checks phase-transition feasibility for all (i, j) assignment pairs in batch; returns `from_i`, `to_j`, and `phase_t` matrix for feasible pairs.
 
 - Interval computation
   - Uses per-census mean `ExactDate` to compute `interval_val` (years) between census pairs. If `interval_val` is NA or non-finite, growth-based pruning is skipped for that pair.
@@ -1512,7 +1275,7 @@ Key computations and helpers:
   - `transition_cost_tracks_bio_batch_rcpp(track_dbh_t, track_dbh_tp1, interval_years, ...)` computes per-candidate cost (sum across tracks) including growth likelihood, mortality, recruitment, and hard-penalties (1e6) for impossible transitions.
 
 - Backward recursion & Viterbi
-  - Uses log-sum-exp (`log_add_exp` / `log_sum_exp`) to accumulate marginal weights and a Viterbi update to compute MAP path (per-step `vit_cost`, `vit_ptr` arrays).
+  - Uses `log_sum_exp` to accumulate marginal weights and a Viterbi update to compute MAP path (per-step `vit_cost`, `vit_ptr` arrays).
 
 - Forward pass & posterior marginals
   - Builds per-observation posterior distributions (`DP_PosteriorTopK*` columns) via normalized state weights.
@@ -1683,8 +1446,8 @@ Complete table of all quantiles used in parameter estimation:
 ### Performance Considerations
 
 - State space grows factorially: $O(K^{n_{obs}})$
-- Set `dp_max_states` based on memory availability (default 50,000)
-- Parallel processing via `MC_CORES` for multiple tags
+- Set `DP_MAX_STATES` based on memory availability (default 40,000)
+- Parallel processing via `MANUAL_CORES_VALUE` (controlled by `MANUAL_CORES=TRUE`) for multiple tags
 - Consider fallback threshold adjustment for large datasets
 - Batch cost computation (`match_stems_dp_global_backward_marginals_batch`) is faster for posterior inference
 
@@ -1710,7 +1473,7 @@ Chave, J., Condit, R., Aguilar, S., Hernandez, A., Lao, S., & Perez, R. (2004). 
 **Additional documentation:**
 - Sensitivity analysis: `dp_global/R/sensitivity_transition_cost_bio.R`
 - Realism calibration: `dp_global/R/realism_calibration.R`
-- API documentation: See function headers in `dp_global_biol.R`
+- API documentation: See function headers in the relevant R files (`dp_global/R/dp_global_dp.R`, `dp_global/R/dp_global_bio.R`, etc.)
 
 ---
 

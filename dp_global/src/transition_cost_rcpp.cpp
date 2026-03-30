@@ -3,6 +3,59 @@
 #include <algorithm>
 #include <vector>
 
+// ---------------------------------------------------------------------------
+// transition_cost_tracks_bio_batch_rcpp_cpp
+//
+// Computes the total negative-log-likelihood transition cost for a batch of
+// candidate track-state vectors relative to a current track-state vector.
+//
+// Arguments:
+//   track_dbh_t    : NumericVector of length K — current DBH values per track
+//                    (NA = track not currently observed).
+//   mat_tp1        : NumericMatrix of dimensions n_batch × K — candidate next-
+//                    state DBH values; each row is one candidate assignment.
+//   interval_years : Length of the census interval in years.
+//   mu_const       : Intercept of the linear growth mean (cm/year).
+//   mu_gamma       : Slope on log(DBH) for growth mean (0 = constant mean).
+//   sigma0, sigma1 : Intercept and slope of the process SD model:
+//                      SD(D) = sigma0 + sigma1 * D.
+//   max_shrink     : Hard lower bound on annual growth (cm/year); transitions
+//                    below this rate receive hard_penalty.
+//   k_shrink       : Soft quadratic penalty weight for shrinkage below 0.
+//   max_growth     : Hard upper bound on annual growth (cm/year); transitions
+//                    above this rate receive hard_penalty.
+//   max_growth_soft: Soft threshold for excess growth penalty.
+//   k_growth       : Soft quadratic penalty weight for growth exceeding
+//                    max_growth_soft.
+//   use_measurement_error : When TRUE, growth likelihood is computed as a
+//                    4-component mixture (process + 3 measurement-error
+//                    components) rather than a single Gaussian.
+//   meas_sd1_a, meas_sd1_b : Parameters of the small-error SD model:
+//                              SD1(D) = meas_sd1_a * D + meas_sd1_b.
+//   meas_sd2       : SD of the large measurement-error component.
+//   meas_p_big     : Mixing weight for the large measurement-error component.
+//   h0, beta       : Hazard model parameters for mortality probability:
+//                      p_die = 1 − exp(−h0 * exp(beta * D) * interval_years).
+//   recruit_meanlog, recruit_sdlog : Log-normal parameters for recruit DBH.
+//   recruit_max_dbh : Hard cap on recruit DBH; exceeding this gives hard_penalty.
+//   recruit_lambda : Poisson recruitment rate (per year) for p_recruit.
+//   eps_tiebreak   : Small deterministic rank-sum term added to each row cost
+//                    to break ties in a reproducible way.
+//   hard_penalty   : Cost assigned to biologically impossible transitions
+//                    (default 1e6).
+//
+// Per-track cases evaluated for each candidate row:
+//   NA → NA   : log(1 − p_recruit) — track absent in both censuses.
+//   NA → DBH  : log(p_recruit) + dlnorm(DBH | recruit_meanlog, recruit_sdlog)
+//               − cap at recruit_max_dbh (hard_penalty if exceeded).
+//   DBH → NA  : log(p_die) — observed tree goes absent (mortality).
+//   DBH → DBH : Growth likelihood (Gaussian or 4-component mixture) plus soft
+//               and hard growth-rate penalties.
+//
+// Returns: NumericVector of length n_batch — total (summed across tracks)
+//          negative-log-likelihood cost for each candidate, plus eps_tiebreak
+//          scaled by the rank sum of current DBH values for tie-breaking.
+// ---------------------------------------------------------------------------
 // [[Rcpp::export]]
 Rcpp::NumericVector transition_cost_tracks_bio_batch_rcpp_cpp(
     const Rcpp::NumericVector& track_dbh_t,
