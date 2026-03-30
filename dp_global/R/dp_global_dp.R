@@ -45,7 +45,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            # with these tight bounds (DBH is stable, not growing).
                                                            palm_prune_min_growth = -0.5,
                                                            palm_prune_max_growth =  0.5,
-                                                           verbose = FALSE) {
+                                                           verbose = FALSE,
+                                                           chunk_id = NULL) {
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
     if (!is.finite(posterior_top_k) || is.na(posterior_top_k) || posterior_top_k < 1L) {
@@ -107,6 +108,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     )
     prefix <- paste0(
         "[dp_global_batch",
+        if (!is.null(chunk_id)) paste0(" chunk=", chunk_id) else "",
         if (!is.na(tag_val)) paste0(" Tag=", tag_val) else "",
         if (!is.na(sp_val)) paste0(" species=", sp_val) else "",
         "] "

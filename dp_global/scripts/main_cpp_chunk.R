@@ -148,6 +148,9 @@ RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 # Controls the DP reconstruction: mode, anchor census, state-space limits,
 # slack tracks, growth-form fallbacks, and palm-specific pruning bounds.
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
+# WHICH_TAG is not used for group selection in the chunked runner (all groups
+# are processed), but build_out_dir_name() reads it when RUN_ALL_TAGS=FALSE.
+# Keep it defined as 0 (meaning "all") for directory naming purposes.
 WHICH_TAG <- 0L
 ANCHOR_START_CENSUS <- 7L
 DP_VERBOSE <- TRUE
@@ -216,6 +219,10 @@ message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 # experimental configuration; default to NULL so override parsing treats it as
 # a valid, known variable rather than an unknown override.
 CONFIG_NAME <- NULL
+# When non-NULL, OUT_DIR_OVERRIDE bypasses build_out_dir_name() and uses this
+# path directly as out_dir. Pass --OUT_DIR_OVERRIDE=/path/to/previous/run on
+# the command line to resume into an existing output directory.
+OUT_DIR_OVERRIDE <- NULL
 
 # Output path helpers (encode_num, build_out_dir_name) are provided by
 # dp_global/R/naming_helpers.R; sourced at the end of this section.
@@ -254,7 +261,6 @@ CLI_REFERENCE <- list(
     INPUT_FILE = "INPUT_FILE",
     FORCE_ONE_SPECIES_PARAMETERS = "FORCE_ONE_SPECIES_PARAMETERS",
     DP_MODE = "DP_MODE",
-    # WHICH_TAG = "WHICH_TAG",
     ANCHOR_START_CENSUS = "ANCHOR_START_CENSUS",
     DP_VERBOSE = "DP_VERBOSE",
     RUN_ALL_TAGS = "RUN_ALL_TAGS",
@@ -264,6 +270,8 @@ CLI_REFERENCE <- list(
     WRITE_DP_RDS = "WRITE_DP_RDS",
     WRITE_DP_FEATHER = "WRITE_DP_FEATHER",
     WRITE_DP_PDF = "WRITE_DP_PDF",
+    WRITE_DP_PDF_PER_CHUNK = "WRITE_DP_PDF_PER_CHUNK",
+    DP_PDF_INCLUDE_REFERENCE = "DP_PDF_INCLUDE_REFERENCE",
     DP_MAX_STATES = "DP_MAX_STATES",
     DP_FALLBACK_GROWTH_FORMS = "DP_FALLBACK_GROWTH_FORMS",
     PALM_PRUNE_MIN_GROWTH = "PALM_PRUNE_MIN_GROWTH",
@@ -275,11 +283,18 @@ CLI_REFERENCE <- list(
     POSTERIOR_SAMPLES_FORMAT = "POSTERIOR_SAMPLES_FORMAT",
     POSTERIOR_SAMPLES_PATH = "POSTERIOR_SAMPLES_PATH",
     POSTERIOR_SAMPLE_SEED = "POSTERIOR_SAMPLE_SEED",
+    DP_CHUNK_SIZE = "DP_CHUNK_SIZE",
+    DP_CHUNK_RESUME = "DP_CHUNK_RESUME",
+    DP_CHUNK_OVERWRITE = "DP_CHUNK_OVERWRITE",
+    DP_CHUNK_START = "DP_CHUNK_START",
+    DP_CHUNK_END = "DP_CHUNK_END",
     PROJECT_ROOT = "PROJECT_ROOT",
     BATCH_TS = "BATCH_TS",
     CONFIG_NAME = "CONFIG_NAME",
     USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR",
-    ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR"
+    ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR",
+    DP_MAX_TRACKS = "DP_MAX_TRACKS",
+    OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE"
 )
 
 # Sensitivity and realism flags are not applicable to the chunked runner
@@ -423,10 +438,17 @@ ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
 # WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
 # MAKE_ALL_SWEEPS_PDF <- SENSITIVITY_MODE == "run+write+pdf"
 
-# Final output directory for this run (created at runtime in run_main())
-out_dir <- file.path(base_out_dir, build_out_dir_name())
-message("[dp_global main_cpp.R] out_dir (computed): ", out_dir)
-message("[dp_global main_cpp.R] getwd(): ", getwd())
+# Final output directory for this run (created at runtime in run_main_chunked()).
+# OUT_DIR_OVERRIDE takes precedence: set it to resume into an existing output
+# directory (--OUT_DIR_OVERRIDE=/path/to/previous/run).
+if (!is.null(OUT_DIR_OVERRIDE) && nzchar(as.character(OUT_DIR_OVERRIDE))) {
+    out_dir <- normalizePath(OUT_DIR_OVERRIDE, winslash = "/", mustWork = FALSE)
+    message("[dp_global main_cpp_chunk.R] OUT_DIR_OVERRIDE set — using existing dir: ", out_dir)
+} else {
+    out_dir <- file.path(base_out_dir, build_out_dir_name())
+    message("[dp_global main_cpp_chunk.R] out_dir (computed): ", out_dir)
+}
+message("[dp_global main_cpp_chunk.R] getwd(): ", getwd())
 
 # Define filesystem and logging helpers here (before source() calls) so they
 # are available in the input validation block above and in section 6.
@@ -528,12 +550,10 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
 # Load dp_global R modules: DP solver, biological parameter estimation,
 # sensitivity and realism helpers, naming utilities.
 source(here("dp_global", "R", "dp_global_main.R"))
-source(here("dp_global", "R", "sensitivity_transition_cost_bio.R"))
-source(here("dp_global", "R", "realism_calibration.R"))
-source(here("dp_global", "R", "k_tuning_viz.R"))
-# Helpers split out for clarity
-source(here("dp_global", "R", "naming_helpers.R"))
-# `naming_helpers.R` provides `encode_num()` and `build_out_dir_name()`
+# NOTE: sensitivity_transition_cost_bio.R, realism_calibration.R, and
+# k_tuning_viz.R are NOT sourced here — they require a fully assembled
+# output object and are not applicable to the chunked runner.
+# naming_helpers.R is already sourced in section 3.5.
 
 ############################################################
 ### 7) Helpers — data-manipulation utilities
@@ -654,9 +674,10 @@ auto_dp_max_tracks <- function(xrun) {
 # run_dp_one_group()       — runs the DP solver for a single (Tag, species) group
 # maybe_add_posterior_bins() — applies posterior binning when DP_MODE includes bins
 
-run_dp_one_group <- function(dtg, dp_max_tracks) {
+run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
     match_stems_dp_global_backward_marginals_batch(
         tree_data = data.table::copy(dtg),
+        chunk_id = chunk_id,
         min_growth = MAX_SHRINK_FIXED,
         max_growth = MAX_GROWTH_FIXED,
         anchor_start = ANCHOR_START_CENSUS,
@@ -726,17 +747,6 @@ run_main_chunked <- function() {
         log_msg(paste("Ensured posterior samples path:", file.path(POSTERIOR_SAMPLES_PATH, "posteriors")))
     }
 
-    # Write a small startup marker so parallel runs can be observed immediately
-    # (helps verify jobs start concurrently before heavy computation)
-    tryCatch(
-        {
-            writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
-        },
-        error = function(e) {
-            message("[dp_global main_cpp.R] Warning writing run_started marker: ", conditionMessage(e))
-        }
-    )
-
     # 5.1 Load data
     xraw <- data.table::fread(INPUT_FILE)
     xraw <- ensure_species_column(xraw)
@@ -790,8 +800,8 @@ run_main_chunked <- function() {
             growth_soft_quantile = 0.99,
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,
-            recruit_max_source = get0("RECRUIT_MAX_SOURCE", ifnotfound = "data"),
-            recruit_max_fixed = as.numeric(get0("RECRUIT_MAX_FIXED", ifnotfound = (MAX_GROWTH_FIXED * 5) + 0.99)),
+            recruit_max_source = RECRUIT_MAX_SOURCE,
+            recruit_max_fixed = as.numeric(RECRUIT_MAX_FIXED),
             # -----------------------------------------------------------------
             # Optional enforcement of user-specified growth/recruit bounds
             # Units: growth bounds in cm/year; recruit max in cm.
@@ -914,10 +924,11 @@ run_main_chunked <- function() {
         if (ci < start_ci || ci > end_ci) {
             next
         }
-        chunk_rds <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.rds"), ci))
+        chunk_rds  <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.rds"), ci))
+        chunk_done <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d_done.txt"), ci))
 
-        if (isTRUE(DP_CHUNK_RESUME) && file.exists(chunk_rds) && !isTRUE(DP_CHUNK_OVERWRITE)) {
-            log_msg(sprintf("Skipping chunk %d/%d — chunk RDS exists (resume enabled)", ci, length(chunks)))
+        if (isTRUE(DP_CHUNK_RESUME) && file.exists(chunk_done) && !isTRUE(DP_CHUNK_OVERWRITE)) {
+            log_msg(sprintf("Skipping chunk %d/%d — already completed (resume enabled)", ci, length(chunks)))
             first_chunk <- !file.exists(DP_CSV_FILE)
             next
         }
@@ -939,7 +950,7 @@ run_main_chunked <- function() {
                         return(NULL)
                     }
 
-                    run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
+                    run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local, chunk_id = ci)
                 }, mc.cores = MC_CORES)
 
                 # Remove NULLs (skipped groups) before binding
@@ -991,6 +1002,13 @@ run_main_chunked <- function() {
                     }
                 }
 
+                # Write a completion marker so resume can skip this chunk
+                # even when WRITE_DP_RDS=FALSE.
+                tryCatch(
+                    writeLines(as.character(Sys.time()), con = chunk_done),
+                    error = function(e) log_msg(sprintf("Warning writing chunk done marker: %s", conditionMessage(e)), "WARN")
+                )
+
                 TRUE
             },
             error = function(e) {
@@ -1003,7 +1021,10 @@ run_main_chunked <- function() {
         )
 
         first_chunk <- FALSE
-        rm(res, out_chunk, groups_ci)
+        # Safe cleanup: only rm() variables that were successfully assigned
+        for (.v in c("res", "out_chunk", "groups_ci")) {
+            if (exists(.v, inherits = FALSE)) rm(list = .v)
+        }
         invisible(gc())
     }
 
@@ -1100,12 +1121,90 @@ if (sys.nframe() == 0L) {
     run_main_chunked()
 }
 
-# Rscript dp_global/scripts/main_cpp_chunk.R --DP_CHUNK_START=6 --DP_CHUNK_END=9 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_FEATHER=TRUE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=10
-# Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250
-# Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250 --DP_FALLBACK_GROWTH_FORMS="fig,tree"
-# Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250 --DP_FALLBACK_GROWTH_FORMS="tree"
-# Rscript dp_global/scripts/main_cpp_chunk.R --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250 --DP_FALLBACK_GROWTH_FORMS="fig"
+############################################################
+### Usage guide
+############################################################
+#
+# PURPOSE
+#   Memory-efficient chunked DP pipeline. Splits all (Tag, species) groups into
+#   batches of DP_CHUNK_SIZE, processes each batch independently, and writes a
+#   per-chunk RDS file plus an incrementally-appended CSV. Use this script
+#   instead of main_cpp.R when the full data set does not fit comfortably in RAM
+#   or when you want fault-tolerant checkpointing.
+#
+# BASIC RUN — all chunks, default settings
+#   Rscript dp_global/scripts/main_cpp_chunk.R \
+#     --INPUT_FILE=data/my_stems.csv
+#
+# COMMON OVERRIDES
+#   --DP_CHUNK_SIZE=7             Groups per chunk (increase for faster runs with enough RAM)
+#   --DP_MAX_STATES=1100          Max DP states per track
+#   --MANUAL_CORES=TRUE           Use a fixed core count instead of auto-detect
+#   --MANUAL_CORES_VALUE=8        Number of cores (requires MANUAL_CORES=TRUE)
+#   --WRITE_DP_PDF=TRUE/FALSE     Whether to produce per-chunk PDF plots
+#   --WRITE_DP_PDF_PER_CHUNK=TRUE Per-chunk PDFs in addition to any run-level PDF
+#   --POSTERIOR_SAMPLES=250       Draw N posterior samples per group (0 = disabled)
+#   --POSTERIOR_SAMPLES_FORMAT=csv|rds|feather
+#   --USE_MEASUREMENT_ERROR=TRUE  Enable measurement-error model for bio params
+#   --DP_FALLBACK_GROWTH_FORMS="fig,tree"
+#                                 Comma-separated list of growth forms that bypass
+#                                 species-specific bio params-falls back to igraph
+#   --DP_CHUNK_START=3            Start from chunk N (skip earlier chunks)
+#   --DP_CHUNK_END=9              Stop after chunk N
+#
+# STOPPING A RUN
+#   Send SIGINT (Ctrl-C in the terminal) or SIGTERM to the Rscript process.
+#   The completion marker (_done.txt) is written as the very last step of each
+#   chunk, after all outputs (RDS, CSV, feather, PDF) have been flushed.
+#   A chunk without a _done.txt is treated as incomplete and will be re-run
+#   on resume, even if a partial _chunk_NNN.rds exists from the interrupted run.
+#   Files in the output directory:
+#     stem_reconstruction_dp_global_rcpp_chunk_NNN.rds   — chunk data
+#     stem_reconstruction_dp_global_rcpp_chunk_NNN_done.txt — completion flag
+#                                                             (only present if chunk finished)
+#
+# RESUMING A STOPPED RUN
+#   Pass the path of the existing output directory via --OUT_DIR_OVERRIDE and
+#   enable the resume flag. The script will skip every chunk that already has a
+#   _done.txt or _chunk_NNN.rds marker and continue from where it stopped.
+#
+#   Rscript dp_global/scripts/main_cpp_chunk.R \
+#     --INPUT_FILE=data/my_stems.csv \
+#     --OUT_DIR_OVERRIDE=dp_global/output/20260329_220720_unknown_T0_DP_MB_ME_g5_sm0p5_kg0_ks0_rcpp \
+#     --DP_CHUNK_RESUME=TRUE \
+#     --MANUAL_CORES=TRUE \
+#     --MANUAL_CORES_VALUE=8
+#
+#   Important: all non-output parameters (DP_MAX_STATES, POSTERIOR_SAMPLES,
+#   DP_FALLBACK_GROWTH_FORMS, etc.) must match the original run so that the
+#   resumed chunks are processed identically to the ones already completed.
+#
+# MERGING CHUNK FILES AFTER A RUN
+#   If the incremental CSV is missing or incomplete, rebuild it from the RDS
+#   checkpoints without re-running the DP:
+#
+#   source("dp_global/scripts/main_cpp_chunk.R")   # defines helpers only
+#   merge_chunk_rds_to_csv("dp_global/output/<run_dir>")
+#
+# HELP
+#   Rscript dp_global/scripts/main_cpp_chunk.R --help
 
-# Rscript dp_global/scripts/main_cpp_chunk.R --DP_MAX_STATES=500 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250 --USE_MEASUREMENT_ERROR=TRUE --DP_FALLBACK_GROWTH_FORMS="fig"
 
-# Rscript dp_global/scripts/main_cpp_chunk.R --DP_MAX_STATES=1100 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 --WRITE_DP_FEATHER=FALSE --WRITE_DP_PDF=TRUE --POSTERIOR_SAMPLES=250 --USE_MEASUREMENT_ERROR=TRUE
+# Rscript dp_global/scripts/main_cpp_chunk.R \
+# --DP_MAX_STATES=1100 \
+# --MANUAL_CORES=TRUE \
+# --MANUAL_CORES_VALUE=16 \
+# --WRITE_DP_FEATHER=FALSE \
+# --WRITE_DP_PDF=TRUE \
+# --POSTERIOR_SAMPLES=250 \
+# --USE_MEASUREMENT_ERROR=TRUE
+
+# Rscript dp_global/scripts/main_cpp_chunk.R \
+#     --OUT_DIR_OVERRIDE=/Users/medinaja/GDrive_Science/STRI/STEM_IDENTIFICATION_TEST/dp_global/output/20260330_131433_unknown_T0_DP_MB_ME_g5_sm0p5_kg0_ks0_rcpp \
+#     --DP_CHUNK_RESUME=TRUE \
+#     --MANUAL_CORES=TRUE \
+#     --MANUAL_CORES_VALUE=16 \
+#     --WRITE_DP_FEATHER=FALSE \
+#     --WRITE_DP_PDF=TRUE \
+#     --POSTERIOR_SAMPLES=250 \
+#     --USE_MEASUREMENT_ERROR=TRUE
