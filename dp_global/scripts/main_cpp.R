@@ -7,9 +7,9 @@
 # Note for orchestrators
 # - This script accepts CLI overrides of internal variables via --KEY=VALUE.
 # - See the `CLI_REFERENCE` variable below for the canonical keys used by
-#   external orchestrators (e.g., bin/run_dp_future_single.R) which should
-#   construct flags matching these canonical names (case-insensitive, '-' or
-#   '_' allowed). Keep the orchestrator in sync with `CLI_REFERENCE`.
+#   external orchestrators; they should construct flags matching these canonical
+#   names (case-insensitive, '-' or '_' allowed).
+#   Keep the orchestrator in sync with `CLI_REFERENCE`.
 #
 # Table of Contents
 #  0) Housekeeping           — safe top-level behavior
@@ -166,9 +166,9 @@ PALM_PRUNE_MAX_GROWTH <-  0.5
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
 # - POSTERIOR_SAMPLES_FORMAT: output format forwarded to DP ('rds','feather','csv')
 # - POSTERIOR_SAMPLES_PATH: optional path to write posterior files; when NULL DP writes to out_dir/posteriors
-# - POSTERIOR_SAMPLE_SEED: integer seed used to make posterior sampling reproducible. If NULL sampling is not deterministically seeded; runners
-#   (e.g., bin/run_dp_future_single.R) may auto-generate a seed when running in batch/parallel to avoid RNG misuse warnings and ensure
-#   reproducible sampling across tasks. If you want reproducible CLI runs, pass --POSTERIOR_SAMPLE_SEED explicitly.
+# - POSTERIOR_SAMPLE_SEED: integer seed used to make posterior sampling reproducible. If NULL sampling is not
+#   deterministically seeded. Pass --POSTERIOR_SAMPLE_SEED=<int> for reproducible CLI runs; the chunked runner
+#   (main_cpp_chunk.R) defaults to 123L when sampling is enabled and no seed is set.
 POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "csv" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
@@ -228,7 +228,7 @@ source(here("dp_global", "R", "naming_helpers.R"))
 ############################################################
 ### 4) CLI reference & override mapping
 ############################################################
-# Canonical CLI flags used by external orchestrators (e.g., bin/run_dp_future_single.R).
+# Canonical CLI flags for external orchestrators.
 # Keys are case-insensitive and may use '-' or '_' as separators.
 CLI_REFERENCE <- list(
     INPUT_FILE = "INPUT_FILE",

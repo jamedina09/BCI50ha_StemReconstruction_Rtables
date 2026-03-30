@@ -83,9 +83,15 @@ dp_global/
 │   ├── sensitivity_transition_cost_bio.R  # Sensitivity sweep helpers
 │   ├── realism_calibration.R         # Realism calibration helpers
 │   ├── k_tuning_viz.R                # K-tuning visualisation
-│   └── complexity/
-│       ├── estimate_dp_complexity_function.R  # DP complexity estimator
-│       └── test_complexity_estimator.R        # Complexity estimator test/demo
+│   ├── check_functions.r             # Mortality parameter inspection and plotting utilities
+│   ├── complexity/
+│   │   ├── estimate_dp_complexity_function.R  # DP complexity estimator
+│   │   └── test_complexity_estimator.R        # Complexity estimator test/demo
+│   └── dpglobal_bundle/
+│       ├── dpglobal_bundle_loader.R      # Bundle builder (creates RData + manifest)
+│       ├── package_bundle.sh             # Packaging helper (creates tarball in dist/)
+│       ├── verify_bundle.R               # Basic smoke-test for deployed bundles
+│       └── dist/                         # Generated tarballs (not tracked by git)
 ├── scripts/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
 │   ├── main_cpp_chunk.R              # Chunked driver for large runs
@@ -93,11 +99,6 @@ dp_global/
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
 │   └── transition_cost_rcpp.R        # R wrapper for Rcpp-compiled functions
-│   └── dpglobal_bundle/
-│       ├── dpglobal_bundle_loader.R      # Bundle builder (creates RData + manifest)
-│       ├── package_bundle.sh             # Packaging helper (creates tarball in dist/)
-│       ├── verify_bundle.R               # Basic smoke-test for deployed bundles
-│       └── dist/                         # Generated tarballs (not tracked by git)
 └── output/                           # Generated run artifacts (not tracked by git)
 ```
 

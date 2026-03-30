@@ -1,10 +1,11 @@
 # dp_global/scripts
 
 This document describes the current behavior of the `dp_global` driver scripts:
-- `dp_global/scripts/main_cpp.R` — the interactive/CLI driver for single-tag or targeted runs, and
+- `dp_global/scripts/main_cpp.R` — the interactive/CLI driver for single-tag or targeted runs.
 - `dp_global/scripts/main_cpp_chunk.R` — the chunked driver optimized for large runs.
+- `dp_global/scripts/main_cpp_chunk_bci.R` — the BCI-specific chunked driver that loads project functions from a pre-built bundle (`dp_bundle_path`) rather than sourcing `dp_global_main.R` directly.
 
-Both scripts accept command-line overrides of defaults using `--KEY=VALUE` flags. Keys are case-insensitive and may use `-` or `_` as separators.
+All scripts accept command-line overrides of defaults using `--KEY=VALUE` flags. Keys are case-insensitive and may use `-` or `_` as separators.
 
 ---
 
@@ -67,6 +68,11 @@ DP / reconstruction option
   semicolon-separated list of values in the `growth_form` column that should
   trigger an immediate igraph fallback and prevent the DP solver from running
   on that tag. The driver automatically splits the string into a vector.
+- `PALM_PRUNE_MIN_GROWTH` — default: `-0.5` cm/year (`main_cpp.R` and `main_cpp_chunk.R` only); lower growth
+  bound used during pruning specifically for palm entries (where `growth_form == "palm"`). Set to `NULL` to disable
+  palm-specific pruning and use the general bounds instead.
+- `PALM_PRUNE_MAX_GROWTH` — default: `0.5` cm/year (`main_cpp.R` and `main_cpp_chunk.R` only); upper growth
+  bound for palm entries during pruning. Set to `NULL` to disable.
 
 **Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was used by the DP are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows without DP assignments receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and observed `TrueStemID` values are treated as `given` while other rows are labeled `none_after_anchor`.
 
@@ -141,11 +147,22 @@ Sensitivity & realism flags (available in `main_cpp.R`):
 Note: the chunked runner (`main_cpp_chunk.R`) disables or comments out these options because per-chunk processing does not assemble a full `out` object for full-run sensitivity/realism processing.
 
 Biological realism settings (defaults in script):
-- `MAX_GROWTH_HARD_SOURCE = "fixed"`, `MAX_GROWTH_FIXED = 7.5` (`main_cpp.R`) / `5` (`main_cpp_chunk.R`)
+- `MAX_GROWTH_HARD_SOURCE = "fixed"`, `MAX_GROWTH_FIXED = 7.5` (`main_cpp.R`) / `5` (`main_cpp_chunk.R` and `main_cpp_chunk_bci.R`)
 - `MAX_SHRINK_HARD_SOURCE = "fixed"`, `MAX_SHRINK_FIXED = -0.5`
 - `K_SHRINK_SOURCE = "fixed"`, `K_SHRINK_FIXED = 0`
 - `K_GROWTH_SOURCE = "fixed"`, `K_GROWTH_FIXED = 0`
 - `RECRUIT_MAX_SOURCE = "fixed"`, `RECRUIT_MAX_FIXED = (MAX_GROWTH_FIXED * 5) + 0.9999`
+- `USE_MEASUREMENT_ERROR = TRUE` (`main_cpp.R` and `main_cpp_chunk.R`) / `FALSE` (`main_cpp_chunk_bci.R`)
+
+BCI-specific defaults (`main_cpp_chunk_bci.R` only — differ from the standard drivers):
+- `DP_MAX_STATES = 1039L` (tighter budget; calibrated to ~30 min runtime per tag on BCI data — see complexity estimator)
+- `MANUAL_CORES_VALUE = 15L`
+- `POSTERIOR_SAMPLES_FORMAT = "feather"` (requires the `arrow` package)
+- `WRITE_DP_CSV = FALSE`, `WRITE_DP_RDS = FALSE`, `WRITE_DP_FEATHER = TRUE` — feather-only outputs
+- `WRITE_DP_PDF = FALSE` — no per-tag PDFs
+- `DP_PDF_INCLUDE_REFERENCE = FALSE` — no reference lines (BCI data has no simulated `TrueStemID`)
+- `base_out_dir` = `here("2_STEM_IDENTIFICATION", "output")` — output to the BCI project subfolder
+- `dp_bundle_path` — path to the extracted bundle tarball; must be updated to point to the deployed bundle directory
 
 Notes about chunking & downstream outputs:
 - When chunking is active (`DP_CHUNK_SIZE > 0`), the script processes and writes chunk outputs incrementally and intentionally sets the in-memory `out` object to `NULL` to avoid excessive memory use.
