@@ -724,50 +724,134 @@ if (FALSE) {
     library(data.table)
     source("dp_global/R/complexity/estimate_dp_complexity_function.R")
     d <- readRDS("bci_data/bci_multistem_xrun_debug.rds")
-
-    # DP_MAX_STATES: must match the value used in main_cpp_chunk.R.
-    # Tags with max_states_per_census > DP_MAX_STATES will fall back to igraph.
-    DP_MAX_STATES <- 1039L   # default; use 500–1100 for production batch runs
-
-    # ------------------------------------------------------------------
-    # FAST mode (default) — skips O(states^2) pruned-edge enumeration.
-    # Returns in seconds. Use this for ranking and DP-vs-igraph classification.
-    # ------------------------------------------------------------------
-    comp <- estimate_dp_complexity(d,
-        anchor_start = 7, slack_tracks = 1,
-        max_states = DP_MAX_STATES,
-        min_growth = -0.5, max_growth = 7.5,
-        prune_use_bio_bounds = FALSE,
-        recruit_max_dbh = 100
-        # fast = TRUE   <- default
-    )
+    comp <- estimate_dp_complexity(d, anchor_start = 7, slack_tracks = 1,
+        max_states = 40000L, min_growth = -0.5, max_growth = 5,
+        prune_use_bio_bounds = FALSE, recruit_max_dbh = (5 * 5) + 0.9999)
     print(head(comp, 20))
+}
 
-    # DP vs igraph split
-    cat("Tags via DP    :", sum(!comp$estimated_fallback), "\n")
-    cat("Tags via igraph:", sum( comp$estimated_fallback), "\n")
-    cat("Total predicted hours:", round(sum(comp$predicted_hours, na.rm = TRUE), 2), "\n")
 
-    # ------------------------------------------------------------------
-    # SLOW mode — enumerates all state pairs to count pruned edges exactly.
-    # Only needed for accuracy validation or when pruning ratio matters.
-    # ------------------------------------------------------------------
-    comp_exact <- estimate_dp_complexity(d,
-        anchor_start = 7, slack_tracks = 1,
-        max_states = DP_MAX_STATES,
-        min_growth = -0.5, max_growth = 7.5,
-        prune_use_bio_bounds = FALSE,
-        recruit_max_dbh = 100,
-        fast = FALSE
+#' Sweep across parameter configurations and summarise predicted runtime
+#'
+#' Runs estimate_dp_complexity once per scenario and returns a summary table
+#' showing how many tags use DP vs igraph, total predicted hours, and the
+#' slowest-tag predicted time. Use this to decide how tightening pruning or
+#' lowering max_states affects your batch runtime.
+#'
+#' @param data RDS path, CSV path, or already-loaded data.table/data.frame
+#' @param scenarios A data.frame or data.table where each row is one parameter
+#'   configuration.  Recognised column names (all optional — defaults used for
+#'   omitted columns): \code{label}, \code{max_states}, \code{min_growth},
+#'   \code{max_growth}, \code{prune_min_growth}, \code{prune_max_growth},
+#'   \code{recruit_max_dbh}, \code{anchor_start}, \code{slack_tracks},
+#'   \code{max_tracks}.
+#' @param base_params Named list of defaults passed to estimate_dp_complexity()
+#'   for any parameter not overridden by a scenario row.
+#' @param return_full Logical: if TRUE, attach per-tag tables as an attribute
+#'   `"full_results"` on the returned summary (default FALSE).
+#' @return data.table with one row per scenario.
+#' @export
+sweep_dp_complexity <- function(data,
+                                scenarios,
+                                base_params = list(),
+                                return_full = FALSE) {
+    if (!requireNamespace("data.table", quietly = TRUE)) stop("data.table required")
+    library(data.table)
+
+    # Load data once
+    if (is.character(data)) {
+        if (grepl("\\.rds$", data, ignore.case = TRUE)) {
+            data <- readRDS(data)
+            data.table::setDT(data)
+        } else {
+            data <- data.table::fread(data)
+        }
+    } else {
+        data <- data.table::copy(data)
+        data.table::setDT(data)
+    }
+
+    scenarios <- as.data.table(scenarios)
+    if (!"label" %in% names(scenarios)) {
+        scenarios[, label := paste0("scenario_", seq_len(.N))]
+    }
+
+    # Allowed overridable params with factory defaults
+    defaults <- list(
+        anchor_start       = 7L,
+        slack_tracks       = 1L,
+        max_states         = 40000L,
+        max_tracks         = 9999L,
+        min_growth         = -Inf,
+        max_growth         = Inf,
+        prune_min_growth   = NULL,
+        prune_max_growth   = NULL,
+        prune_use_bio_bounds = TRUE,
+        recruit_max_dbh    = Inf,
+        prune_recruit_max_dbh = NULL,
+        prune_use_bio_recruit = TRUE,
+        fast               = TRUE
     )
-    print(head(comp_exact, 20))
+    # Merge user base_params over factory defaults
+    for (nm in names(base_params)) defaults[[nm]] <- base_params[[nm]]
 
-    # Detailed per-census breakdown for one tag
-    det <- get_tag_complexity_details(d,
-        tag = 156669, anchor_start = 7, slack_tracks = 1,
-        max_states = DP_MAX_STATES,
-        min_growth = -0.5, max_growth = 5,
-        prune_use_bio_bounds = FALSE, recruit_max_dbh = (5 * 5) + 0.9999
-    )
-    print(det)
+    results <- vector("list", nrow(scenarios))
+    full_results <- if (isTRUE(return_full)) vector("list", nrow(scenarios)) else NULL
+
+    for (s in seq_len(nrow(scenarios))) {
+        row <- as.list(scenarios[s])
+        lbl <- row$label
+
+        # Build call args: start from defaults, then overlay scenario columns
+        args <- defaults
+        overridable <- setdiff(names(defaults), "fast")
+        for (nm in overridable) {
+            if (nm %in% names(row) && !is.na(row[[nm]])) {
+                args[[nm]] <- row[[nm]]
+            }
+        }
+        args$data <- data
+        args$fast <- TRUE
+
+        cat(sprintf("[sweep] Scenario %d/%d: %s  (max_states=%s, growth=[%.2f, %.2f])\n",
+            s, nrow(scenarios), lbl,
+            format(args$max_states, big.mark = ","),
+            if (is.finite(args$min_growth)) args$min_growth else -Inf,
+            if (is.finite(args$max_growth)) args$max_growth else Inf))
+        flush.console()
+
+        comp <- do.call(estimate_dp_complexity, args)
+
+        n_dp     <- sum(!comp$estimated_fallback)
+        n_igraph <- sum( comp$estimated_fallback)
+        total_s  <- sum(comp$predicted_seconds, na.rm = TRUE)
+        dp_only  <- comp[estimated_fallback == FALSE]
+        slowest_tag    <- if (nrow(dp_only) > 0L) dp_only$Tag[1L] else NA
+        slowest_sec    <- if (nrow(dp_only) > 0L) dp_only$predicted_seconds[1L] else NA_real_
+        median_sec     <- if (nrow(dp_only) > 0L) median(dp_only$predicted_seconds, na.rm = TRUE) else NA_real_
+        max_states_obs <- if (nrow(dp_only) > 0L) max(dp_only$max_states_per_census, na.rm = TRUE) else NA_real_
+
+        results[[s]] <- data.table(
+            label             = lbl,
+            max_states        = as.numeric(args$max_states),
+            min_growth        = args$min_growth,
+            max_growth        = args$max_growth,
+            prune_min         = if (!is.null(args$prune_min_growth)) args$prune_min_growth else NA_real_,
+            prune_max         = if (!is.null(args$prune_max_growth)) args$prune_max_growth else NA_real_,
+            recruit_max       = if (is.finite(args$recruit_max_dbh)) args$recruit_max_dbh else NA_real_,
+            n_tags_total      = nrow(comp),
+            n_tags_dp         = n_dp,
+            n_tags_igraph     = n_igraph,
+            pct_dp            = round(100 * n_dp / max(1L, nrow(comp)), 1),
+            total_hours       = round(total_s / 3600, 2),
+            slowest_tag       = slowest_tag,
+            slowest_min       = round(slowest_sec / 60, 1),
+            median_sec        = round(median_sec, 1),
+            max_states_in_data = max_states_obs
+        )
+        if (isTRUE(return_full)) full_results[[s]] <- comp
+    }
+    out <- rbindlist(results, use.names = TRUE, fill = TRUE)
+    if (isTRUE(return_full)) attr(out, "full_results") <- full_results
+    out
 }
