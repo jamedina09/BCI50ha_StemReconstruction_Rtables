@@ -47,18 +47,16 @@ Testing & CI
 ------------
 - Run `make smoke` to perform a lightweight smoke test: sources `dp_global/R/dp_global_main.R` to verify all R modules load without errors.
 
-## TODO / Future improvements ✅
+## TODO / Future improvements
 
 Short actionable items to stabilize the DP and posterior-attachment workflow and make downstream usage easier:
 
 - **Add a convenience alias `ObsRowID` → `obs_row_id` on final outputs** to simplify joins with posterior `paths.csv` (which use `ObsRowID`). Keep `obs_row_id` as the canonical internal name; create `ObsRowID` before export and add a unit test to assert equality.
 
-- **Convert dev scripts into formal tests (testthat) and add to CI**:
-  - `dp_global/dev/test_anchor_scoping.R` validates anchor-scoping semantics (anchor at first census, anchor > last observed census, post-anchor preservation, and provisional anchor behavior). Run it with `Rscript dp_global/dev/test_anchor_scoping.R` to exercise these cases.
-  - Add tests for `dp_global/R/error_propagation/process_posteriors.R` and `attach_paths_to_output()` to check `ObsRowID` mapping, alternative reconstruction formats, expand/aggregate correctness, and failure modes.
+- **Convert ad-hoc validation scripts into formal tests (testthat) and add to CI**:
+  - Add tests for anchor-scoping semantics (anchor at first census, anchor > last observed census, post-anchor preservation, and provisional anchor behavior).
+  - Add tests for posterior-path attachment (`attach_paths_to_output()`) covering `ObsRowID` mapping, alternative reconstruction formats, expand/aggregate correctness, and failure modes.
   - Add a regression test asserting the `DP_PruneInfo` attribute exists (defensive init) and that early-return branches do not error.
-
-- **Integration smoke test (added)**: a small integration test now exists (`dp_global/dev/test_integration_post_anchor_given.R`) that verifies post-anchor preservation and `ReconstructionMethod == "given"` propagation for post-anchor rows used by the DP. The project no longer includes ad-hoc, one-off dev scripts; use the canonical tests in `dp_global/dev/` for reproducible checks.
 
 - **Document `obs_row_id`/`ObsRowID` expectations** in `dp_global/README.md` (how posterior reconstructions map back to output rows).
 

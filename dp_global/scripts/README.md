@@ -3,9 +3,8 @@
 This document describes the current behavior of the `dp_global` driver scripts:
 - `dp_global/scripts/main_cpp.R` — the interactive/CLI driver for single-tag or targeted runs.
 - `dp_global/scripts/main_cpp_chunk.R` — the chunked driver optimized for large runs.
-- `dp_global/scripts/main_cpp_chunk_bci.R` — the BCI-specific chunked driver that loads project functions from a pre-built bundle (`dp_bundle_path`) rather than sourcing `dp_global_main.R` directly.
 
-All scripts accept command-line overrides of defaults using `--KEY=VALUE` flags. Keys are case-insensitive and may use `-` or `_` as separators.
+Both scripts accept command-line overrides of defaults using `--KEY=VALUE` flags. Keys are case-insensitive and may use `-` or `_` as separators.
 
 ---
 
@@ -24,7 +23,6 @@ You can run either script directly via Rscript:
 
 - Single-tag or small dataset: `Rscript dp_global/scripts/main_cpp.R --INPUT_FILE=... --RUN_ALL_TAGS=TRUE`
 - Large dataset (chunked, recommended): `Rscript dp_global/scripts/main_cpp_chunk.R --INPUT_FILE=...`
-- BCI-specific run (loads functions from a pre-built bundle): `Rscript dp_global/scripts/main_cpp_chunk_bci.R`
 
 (When running from the `dp_global` folder: `Rscript scripts/main_cpp.R`.)
 
@@ -96,7 +94,8 @@ Output controls:
 
 Parallel & chunking controls (chunked runner specific):
 - `DP_CHUNK_SIZE` — default in `main_cpp_chunk.R`: `7L` (set `<= 0` to disable chunking behavior when applicable).
-- `DP_CHUNK_RESUME` — default: `TRUE` (skip chunks with existing RDS files) - allows to stop runs and continue later.
+- `DP_CHUNK_RESUME` — default: `TRUE` (skip chunks whose `_done.txt` completion marker exists) — allows stopping and resuming runs. A chunk is considered complete only when its `_done.txt` file is present; partial RDS files from interrupted runs are re-processed.
+- `OUT_DIR_OVERRIDE` — default: `NULL`. When set, bypasses automatic output directory creation and writes into the specified path directly. Use this to resume into an existing output directory (e.g., `--OUT_DIR_OVERRIDE=dp_global/output/<previous_run_dir>`).
 - `DP_CHUNK_OVERWRITE` — default: `FALSE` (when `TRUE`, overwrite existing chunk RDS files).
 - `DP_CHUNK_START`, `DP_CHUNK_END` — default: `NULL` (limit chunk range for tests).
 - `RUN_ALL_TAGS` — default: `FALSE` (when `TRUE` run across all tags; chunking is recommended for large runs).
@@ -147,22 +146,12 @@ Sensitivity & realism flags (available in `main_cpp.R`):
 Note: the chunked runner (`main_cpp_chunk.R`) disables or comments out these options because per-chunk processing does not assemble a full `out` object for full-run sensitivity/realism processing.
 
 Biological realism settings (defaults in script):
-- `MAX_GROWTH_HARD_SOURCE = "fixed"`, `MAX_GROWTH_FIXED = 7.5` (`main_cpp.R`) / `5` (`main_cpp_chunk.R` and `main_cpp_chunk_bci.R`)
+- `MAX_GROWTH_HARD_SOURCE = "fixed"`, `MAX_GROWTH_FIXED = 7.5` (`main_cpp.R`) / `5` (`main_cpp_chunk.R`)
 - `MAX_SHRINK_HARD_SOURCE = "fixed"`, `MAX_SHRINK_FIXED = -0.5`
 - `K_SHRINK_SOURCE = "fixed"`, `K_SHRINK_FIXED = 0`
 - `K_GROWTH_SOURCE = "fixed"`, `K_GROWTH_FIXED = 0`
 - `RECRUIT_MAX_SOURCE = "fixed"`, `RECRUIT_MAX_FIXED = (MAX_GROWTH_FIXED * 5) + 0.9999`
-- `USE_MEASUREMENT_ERROR = TRUE` (`main_cpp.R` and `main_cpp_chunk.R`) / `FALSE` (`main_cpp_chunk_bci.R`)
-
-BCI-specific defaults (`main_cpp_chunk_bci.R` only — differ from the standard drivers):
-- `DP_MAX_STATES = 1039L` (tighter budget; calibrated to ~30 min runtime per tag on BCI data — see complexity estimator)
-- `MANUAL_CORES_VALUE = 15L`
-- `POSTERIOR_SAMPLES_FORMAT = "feather"` (requires the `arrow` package)
-- `WRITE_DP_CSV = FALSE`, `WRITE_DP_RDS = FALSE`, `WRITE_DP_FEATHER = TRUE` — feather-only outputs
-- `WRITE_DP_PDF = FALSE` — no per-tag PDFs
-- `DP_PDF_INCLUDE_REFERENCE = FALSE` — no reference lines (BCI data has no simulated `TrueStemID`)
-- `base_out_dir` = `here("2_STEM_IDENTIFICATION", "output")` — output to the BCI project subfolder
-- `dp_bundle_path` — path to the extracted bundle tarball; must be updated to point to the deployed bundle directory
+- `USE_MEASUREMENT_ERROR = TRUE`
 
 Notes about chunking & downstream outputs:
 - When chunking is active (`DP_CHUNK_SIZE > 0`), the script processes and writes chunk outputs incrementally and intentionally sets the in-memory `out` object to `NULL` to avoid excessive memory use.
@@ -200,7 +189,7 @@ This ensures posterior-bin computation is done while memory per-chunk is small a
 Runner integration
 
 - `main_cpp.R` and `main_cpp_chunk.R` are the primary entrypoints and are designed to be invoked directly with `Rscript`. External orchestrators can build CLI flags using the canonical names in `CLI_REFERENCE` (defined in each script); keys are case-insensitive and can use `-` or `_`.
-- `main_cpp_chunk_bci.R` is a BCI-specific variant that loads project functions from a pre-built bundle (path set via `dp_bundle_path`) rather than sourcing `dp_global_main.R` directly; it is suitable for deployments where the project source tree is not present at the expected relative path.
+
 
 ---
 
@@ -240,6 +229,6 @@ chunk_files <- list.files("<out_dir>", pattern = "stem_reconstruction_dp_global_
 all <- rbindlist(lapply(chunk_files, readRDS), use.names = TRUE, fill = TRUE)
 ```
 
-- If `stem_reconstruction_dp_global_rcpp.csv` already exists when you resume with `DP_CHUNK_RESUME=TRUE`, the script will append new chunk rows and skip chunks with existing RDS files.
+- If `stem_reconstruction_dp_global_rcpp.csv` already exists when you resume with `DP_CHUNK_RESUME=TRUE`, the script will append new chunk rows and skip chunks whose `_done.txt` completion marker exists. Use `--OUT_DIR_OVERRIDE=<path>` to point at the existing output directory.
 
 ---
