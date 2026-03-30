@@ -88,14 +88,16 @@ dp_global/
 │       └── test_complexity_estimator.R        # Complexity estimator test/demo
 ├── scripts/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
-│   └── main_cpp_chunk.R              # Chunked driver for large runs
+│   ├── main_cpp_chunk.R              # Chunked driver for large runs
+│   └── main_cpp_chunk_bci.R          # BCI-specific chunked driver (bundle-based loading)
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
 │   └── transition_cost_rcpp.R        # R wrapper for Rcpp-compiled functions
-├── dpglobal_bundle/
-│   ├── dpglobal_bundle_loader.R      # Bundle builder (creates RData + manifest)
-│   ├── package_bundle.sh             # Packaging helper (creates tarball)
-│   └── verify_bundle.R               # Basic smoke-test for deployed bundles
+│   └── dpglobal_bundle/
+│       ├── dpglobal_bundle_loader.R      # Bundle builder (creates RData + manifest)
+│       ├── package_bundle.sh             # Packaging helper (creates tarball in dist/)
+│       ├── verify_bundle.R               # Basic smoke-test for deployed bundles
+│       └── dist/                         # Generated tarballs (not tracked by git)
 └── output/                           # Generated run artifacts (not tracked by git)
 ```
 

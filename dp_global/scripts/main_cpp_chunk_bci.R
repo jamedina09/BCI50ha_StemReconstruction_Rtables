@@ -1,15 +1,19 @@
 ############################################################
-### main_cpp_chunk.R — dp_global driver
+### main_cpp_chunk_bci.R — dp_global BCI chunked driver
 ############################################################
 # Goal
-#   One place to run the DP_GLOBAL workflow end-to-end
+#   BCI-specific variant of the chunked DP_GLOBAL pipeline. Loads project
+#   functions from a pre-built bundle (dp_bundle_path) rather than sourcing
+#   dp_global_main.R directly — suitable when the project source tree is not
+#   at the standard relative path. Groups (Tag + species) are processed in
+#   chunks of DP_CHUNK_SIZE and outputs are written incrementally to disk.
 #
 # Note for orchestrators
 # - This script accepts CLI overrides of internal variables via --KEY=VALUE.
 # - See the `CLI_REFERENCE` variable below for the canonical keys used by
-#   external orchestrators (e.g., bin/run_dp_future_single.R) which should
-#   construct flags matching these canonical names (case-insensitive, '-' or
-#   '_' allowed). Keep the orchestrator in sync with `CLI_REFERENCE`.
+#   external orchestrators, which should construct flags matching these
+#   canonical names (case-insensitive, '-' or '_' allowed).
+#   Keep the orchestrator in sync with `CLI_REFERENCE`.
 #
 # Table of Contents (high-level)
 #  0) Housekeeping — safe top-level behavior

@@ -19,12 +19,13 @@ Both scripts accept command-line overrides of defaults using `--KEY=VALUE` flags
 - Optionally runs sensitivity sweeps and realism checks.
 - Writes outputs (CSV, RDS, PDF) to an automatically created output directory.
 
-You can run the script directly via Rscript or by using the provided orchestrator wrapper:
+You can run either script directly via Rscript:
 
-- Direct: `Rscript dp_global/scripts/main_cpp.R --INPUT_FILE=... --RUN_ALL_TAGS=TRUE` 
-- Or via the orchestrator: `bin/run_dp_future_single.R` (this wrapper constructs CLI flags and runs the driver)
+- Single-tag or small dataset: `Rscript dp_global/scripts/main_cpp.R --INPUT_FILE=... --RUN_ALL_TAGS=TRUE`
+- Large dataset (chunked, recommended): `Rscript dp_global/scripts/main_cpp_chunk.R --INPUT_FILE=...`
+- BCI-specific run (loads functions from a pre-built bundle): `Rscript dp_global/scripts/main_cpp_chunk_bci.R`
 
-(When running in the workspace, a canonical example is `Rscript scripts/main_cpp.R` from the `dp_global` folder.)
+(When running from the `dp_global` folder: `Rscript scripts/main_cpp.R`.)
 
 ---
 
@@ -140,11 +141,11 @@ Sensitivity & realism flags (available in `main_cpp.R`):
 Note: the chunked runner (`main_cpp_chunk.R`) disables or comments out these options because per-chunk processing does not assemble a full `out` object for full-run sensitivity/realism processing.
 
 Biological realism settings (defaults in script):
-- `MAX_GROWTH_HARD_SOURCE = "data"`, `MAX_GROWTH_FIXED = 7.5`
-- `MAX_SHRINK_HARD_SOURCE = "data"`, `MAX_SHRINK_FIXED = -0.5`
-- `K_SHRINK_SOURCE = "data"`, `K_SHRINK_FIXED = 0`
-- `K_GROWTH_SOURCE = "data"`, `K_GROWTH_FIXED = 0`
-- `RECRUIT_MAX_SOURCE = "fixed"`, `RECRUIT_MAX_FIXED = 5`
+- `MAX_GROWTH_HARD_SOURCE = "fixed"`, `MAX_GROWTH_FIXED = 7.5` (`main_cpp.R`) / `5` (`main_cpp_chunk.R`)
+- `MAX_SHRINK_HARD_SOURCE = "fixed"`, `MAX_SHRINK_FIXED = -0.5`
+- `K_SHRINK_SOURCE = "fixed"`, `K_SHRINK_FIXED = 0`
+- `K_GROWTH_SOURCE = "fixed"`, `K_GROWTH_FIXED = 0`
+- `RECRUIT_MAX_SOURCE = "fixed"`, `RECRUIT_MAX_FIXED = (MAX_GROWTH_FIXED * 5) + 0.9999`
 
 Notes about chunking & downstream outputs:
 - When chunking is active (`DP_CHUNK_SIZE > 0`), the script processes and writes chunk outputs incrementally and intentionally sets the in-memory `out` object to `NULL` to avoid excessive memory use.
@@ -181,7 +182,8 @@ This ensures posterior-bin computation is done while memory per-chunk is small a
 
 Runner integration
 
-- When an orchestrator (`bin/run_dp_future_single.R` / `bin/run_dp_future.R`) runs DP, it attempts to detect the run `out_dir` by matching `BATCH_TS` and `CONFIG_NAME`. If the `out_dir` is located, the orchestrator will include the main run's `run_log.txt` in the per-config worker log and record the `main_out_dir` in the joblog CSV for easier discovery of artifacts and diagnostics.
+- `main_cpp.R` and `main_cpp_chunk.R` are the primary entrypoints and are designed to be invoked directly with `Rscript`. External orchestrators can build CLI flags using the canonical names in `CLI_REFERENCE` (defined in each script); keys are case-insensitive and can use `-` or `_`.
+- `main_cpp_chunk_bci.R` is a BCI-specific variant that loads project functions from a pre-built bundle (path set via `dp_bundle_path`) rather than sourcing `dp_global_main.R` directly; it is suitable for deployments where the project source tree is not present at the expected relative path.
 
 ---
 

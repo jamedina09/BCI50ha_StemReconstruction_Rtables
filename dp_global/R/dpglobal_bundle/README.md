@@ -54,7 +54,7 @@ Quick verification (optional)
 ```r
 # load into a fresh environment to avoid polluting your session
 myenv <- new.env()
-load(file.path('/path/to/extracted_bundle', 'dp_global', 'R', 'dpglobal_bundle.RData'), envir = myenv)
+load(file.path('/path/to/extracted_bundle', 'dp_global', 'dpglobal_bundle', 'dpglobal_bundle.RData'), envir = myenv)
 exists('estimate_bio_pars', envir = myenv, mode = 'function')  # should be TRUE if RData was created
 ```
 
@@ -90,9 +90,9 @@ Purpose
 
 What it stages (full package, by default)
 - A copy of the `dp_global/` tree (it uses `rsync` if available) with these exclusions: `dp_global/output/`, `dp_global/R/dpglobal_bundle/dist/`, and `.git/` (keeps the archive free of large outputs and VCS metadata).
-- `data_simulation/data/` (example inputs) and `bin/` runner scripts (e.g., `run_dp_future_single.R`, `run_dp_future.R`) and `Makefile` from project root.
+- `data_simulation/data/` (example inputs) from the project root.
 - The bundle-local files: `dp_global/R/dpglobal_bundle/*` (if present) including `dpglobal_bundle.RData` and `dpglobal_bundle_manifest.rds` when available.
-- The R wrapper and C++ source for the transition-cost functions are copied from `dp_global/src/` into the staged `dp_global/R/dpglobal_bundle/src/` so the README paths are consistent and `Rcpp::sourceCpp()` can be run as described.
+- The R wrapper and C++ source for the transition-cost functions from `dp_global/src/`.
 - An `INSTALL.txt` auto-generated inside the archive with exact copy-paste commands to install packages, compile the C++, and run `main_cpp.R`.
 
 Key behavior and safeguards
@@ -140,11 +140,8 @@ Rscript -e "manifest <- readRDS('dp_global/R/dpglobal_bundle/dpglobal_bundle_man
 # Compile the C++ acceleration (recommended):
 Rscript -e "Rcpp::sourceCpp('dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp')"
 
-# Load the prebuilt functions (optional sample):
+# Load the prebuilt functions (optional):
 Rscript -e "load('dp_global/R/dpglobal_bundle/dpglobal_bundle.RData')"
-
-# Dry-run example (print Rscript invocations without running DP):
-./bin/run_dp_future_single.R --workers 1 --cores-per-job 1 -- --DRY_RUN
 ```
 
 Notes and recommendations
@@ -161,7 +158,7 @@ From the project root (recommended):
 # 1) Load the R functions into the global session (or into an environment)
 load("./dp_global/R/dpglobal_bundle/dpglobal_bundle.RData")
 
-# 2) Source the R wrapper (R-side wrapper comes from dp_global/src and is staged into the bundle):
+# 2) Source the R wrapper (R-side wrapper for the C++ transition cost functions):
 sys.source("./dp_global/R/dpglobal_bundle/transition_cost_rcpp.R", envir = globalenv())
 
 # 3) Compile the C++ implementation (optional but recommended for speed):
@@ -200,11 +197,7 @@ Rebuild the bundle (on the source machine)
 
 ```bash
 # run from project root on the machine that has the full source code
-# Option A: build the RData manually, then package
 Rscript -e "source('./dp_global/R/dpglobal_bundle/dpglobal_bundle_loader.R')"
-sh dp_global/R/dpglobal_bundle/package_bundle.sh --build-bundle
-
-# Option B: have the packaging script build it for you
 sh dp_global/R/dpglobal_bundle/package_bundle.sh --build-bundle
 ```
 
@@ -280,7 +273,7 @@ missing <- pkgs[!pkgs %in% installed.packages()[,1]]
 if (length(missing)) install.packages(missing)
 ```
 
-- Automated packaging: you can create a single tarball containing the bundle and runtime files with the provided packaging script. From the project root run:
+- Automated packaging: create a tarball with the provided packaging script. From the project root:
 
 ```bash
 # Create package (does not auto-build dpglobal_bundle.RData unless it exists)
@@ -337,7 +330,7 @@ Q: Some functions are missing after I load the RData. What now?
 
 Q: I get an error about a missing compiled symbol.
 
-- A: This means the C++ code hasn't been compiled in the current session. Compile it with Rcpp::sourceCpp("./dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp") (requires `Rcpp` and a C++ toolchain).
+- A: This means the C++ code hasn't been compiled in the current session. Compile it with `Rcpp::sourceCpp('./dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp')` (requires `Rcpp` and a C++ toolchain).
 
 Q: Is it safe to copy the compiled shared object from one machine to another?
 
