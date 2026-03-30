@@ -794,18 +794,21 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     # Pre-enumerate assignment states (injective obs->track) for each census in census_range
     obs_dbh <- vector("list", n_census)
+    obs_row_idx <- vector("list", n_census)    # precomputed row indices per census (avoids repeated [.data.table)
     is_resprout_obs <- vector("list", n_census)
     state_mats <- vector("list", n_census)
     state_keys <- vector("list", n_census)
     for (p in seq_len(n_census)) {
         cc <- census_range[p]
-        obs <- tree_data[CensusID == cc & !is.na(DBH)]
-        obs_dbh[[p]] <- obs$DBH
+        idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+        obs_row_idx[[p]] <- idx
+        obs_dbh[[p]] <- tree_data$DBH[idx]
         n_obs <- length(obs_dbh[[p]])
 
         # Resprout flags for observations at this census
-        if (n_obs > 0L && "ListOfTSM" %in% names(obs)) {
-            is_resprout_obs[[p]] <- !is.na(obs$ListOfTSM) & grepl(resprout_regex, obs$ListOfTSM)
+        if (n_obs > 0L && "ListOfTSM" %in% names(tree_data)) {
+            tsm_vals <- tree_data$ListOfTSM[idx]
+            is_resprout_obs[[p]] <- !is.na(tsm_vals) & grepl(resprout_regex, tsm_vals)
         } else {
             is_resprout_obs[[p]] <- rep(FALSE, n_obs)
         }
@@ -1008,16 +1011,21 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     vcat(prefix, "Pruning effective bounds: min=", eff_min_grow, ", max=", eff_max_grow, ", recruit_max=", eff_recruit_max)
 
-    # Precompute track-wise DBH vectors for each *assignment* state (phase doesn't matter for costs)
+    # Precompute track-wise DBH matrix for each census (rows = states, cols = tracks).
+    # Vectorized: one matrix indexing operation per census instead of a per-state loop.
     track_dbh_by_state <- vector("list", n_census)
     for (p in seq_len(n_census)) {
-        mat <- state_mats[[p]]
+        mat      <- state_mats[[p]]
         n_states <- nrow(mat)
-        tdbh_list <- vector("list", n_states)
-        for (i in seq_len(n_states)) {
-            tdbh_list[[i]] <- state_to_track_dbh(mat[i, ], obs_dbh[[p]], K)
+        n_obs_p  <- ncol(mat)
+        tdbh_mat <- matrix(NA_real_, nrow = n_states, ncol = K)
+        if (n_obs_p > 0L && n_states > 0L) {
+            row_idx_v <- rep(seq_len(n_states), times = n_obs_p)
+            col_idx_v <- as.vector(mat)            # column-major track indices
+            dbh_vals  <- rep(obs_dbh[[p]], each = n_states)
+            tdbh_mat[cbind(row_idx_v, col_idx_v)] <- dbh_vals
         }
-        track_dbh_by_state[[p]] <- tdbh_list
+        track_dbh_by_state[[p]] <- tdbh_mat        # n_states × K matrix
     }
 
     # Backward tables (sum-product) and Viterbi backpointers
@@ -1043,14 +1051,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Backward recursion p = anchor_pos-1 .. 1 (maps to CensusID via census_range)
     vcat(prefix, "Backward pass (log-sum-exp + Viterbi) starting ...")
 
-    # Precompute census-pair intervals once (avoids repeated dcast inside the loop)
-    resolve_interval_years_pair <- function(tree_data) {
-        dt <- tree_data[, .(CensusID, ExactDate)]
-        dt_mean <- dt[, .(MeanDate = mean(ExactDate, na.rm = TRUE)), by = CensusID]
-        setorder(dt_mean, CensusID)
-        dcast(dt_mean, 1 ~ CensusID, value.var = "MeanDate")
-    }
-    pair_interval <- resolve_interval_years_pair(tree_data)
+    # Precompute census mean dates as a named numeric vector (avoids dcast overhead).
+    .dt_pi <- tree_data[, .(MeanDate = mean(ExactDate, na.rm = TRUE)), by = CensusID]
+    pair_interval <- setNames(as.numeric(.dt_pi$MeanDate), as.character(.dt_pi$CensusID))
 
     # Guard: some tags only have the anchor census (anchor_pos == 1). In that case
     # there are no earlier censuses and calling seq.int(anchor_pos - 1L, 1L, by = -1L)
@@ -1063,7 +1066,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             mat_cc <- state_mats[[p]]
             n_states_cc <- nrow(mat_cc)
 
-            t_cc0 <- tic()
+            if (verbose) t_cc0 <- tic()
             vcat(prefix, "Backward step CensusID=", cc, ": n_assignment_states=", n_states_cc, ", n_next_full_states=", length(keys_full[[p + 1L]]))
 
         next_keys <- keys_full[[p + 1L]]
@@ -1105,14 +1108,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             return(finalize_out(out))
         }
 
-        # Pre-decode next phases and next track-DBH vectors (shared across all current states)
+        # Pre-decode next phase vectors
         phase_tp1_by_next <- vector("list", n_next)
         for (j in seq_len(n_next)) {
             phase_tp1_by_next[[j]] <- decode_full_key(next_keys[[j]])$phase
-        }
-        tdbh1_by_next <- vector("list", n_next)
-        for (j in seq_len(n_next)) {
-            tdbh1_by_next[[j]] <- track_dbh_by_state[[p + 1L]][[next_assign_row_idx[[j]]]]
         }
 
         # Interval (years) between cc and next_cc (pair_interval precomputed above the loop)
@@ -1135,9 +1134,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # -----------------------------------------------------------------------
 
         # Build input matrices (rows = states/next-states, cols = tracks K)
-        tdbh0_mat  <- do.call(rbind, track_dbh_by_state[[p]])  # n_cc   × K
-        tdbh1_mat  <- do.call(rbind, tdbh1_by_next)             # n_next × K
-        phase_tp1_mat <- do.call(rbind, phase_tp1_by_next)      # n_next × K; integer
+        tdbh0_mat     <- track_dbh_by_state[[p]]                                             # already n_cc   × K
+        tdbh1_mat     <- track_dbh_by_state[[p + 1L]][next_assign_row_idx, , drop = FALSE]  # n_next × K
+        phase_tp1_mat <- do.call(rbind, phase_tp1_by_next)                                  # n_next × K; integer
 
         # Resprout matrix: n_next × K (zero-row means "no resprouts")
         if (any(is_resprout_obs[[p + 1L]])) {
@@ -1183,8 +1182,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # phase key: apply encode_phase_key row-wise (compact char-vector encoding)
         if (n_feasible > 0L) {
             fe_assign_keys <- state_keys[[p]][fe_from]  # assign key portion (precomputed)
-            fe_phase_keys  <- apply(fe_phase, 1L, encode_phase_key)
-            fe_full_keys   <- paste0(fe_assign_keys, "|", fe_phase_keys)
+            # Vectorized phase key encoding: avoids per-row apply + rawToChar overhead
+            .phase_chars  <- c("0", "1", "2")
+            fe_phase_keys <- do.call(paste0, lapply(seq_len(K), function(k) .phase_chars[fe_phase[, k] + 1L]))
+            fe_full_keys  <- paste0(fe_assign_keys, "|", fe_phase_keys)
         }
 
         # Dynamic creation of current full-states
@@ -1209,13 +1210,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             for (i_key in names(by_i)) {
                 i_val   <- as.integer(i_key)
                 rows    <- by_i[[i_key]]
-                tdbh0   <- track_dbh_by_state[[p]][[i_val]]
+                tdbh0   <- track_dbh_by_state[[p]][i_val, ]
                 assign0 <- mat_cc[i_val, ]
                 j_vals  <- fe_to[rows]
                 f_keys  <- fe_full_keys[rows]
-                f_tdbh1 <- lapply(j_vals, function(jj) tdbh1_by_next[[jj]])
+                f_tdbh1 <- lapply(j_vals, function(jj) tdbh1_mat[jj, ])
 
-                t_tc0 <- tic()
+                if (verbose) t_tc0 <- tic()
                 c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
                     track_dbh_t   = tdbh0,
                     track_dbh_tp1 = f_tdbh1,
@@ -1246,9 +1247,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     recruit_lambda  = Bio_Recruitment_lambda,
                     eps_tiebreak    = eps_tiebreak
                 )
-                t_tc1 <- tic()
-                transition_cost_time  <- transition_cost_time  + (t_tc1 - t_tc0)
                 transition_cost_calls <- transition_cost_calls + 1L
+                if (verbose) transition_cost_time <- transition_cost_time + (tic() - t_tc0)
 
                 for (e in seq_along(rows)) {
                     j        <- j_vals[[e]]
@@ -1320,7 +1320,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             logw     = logw[seq_len(used_edges)]
         )
 
-        vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[p]]), ", edges=", used_edges, ", dt=", sprintf("%.2fs", tic() - t_cc0))
+        vcat(prefix, "Finished CensusID=", cc, ": full_states=", length(keys_full[[p]]), ", edges=", used_edges, if (verbose) paste0(", dt=", sprintf("%.2fs", tic() - t_cc0)) else "")
     }
     }
 
@@ -1356,7 +1356,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     for (p in seq_len(n_census)) {
         cc <- census_range[p]
-        obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+        obs_idx <- obs_row_idx[[p]]
         if (length(obs_idx) == 0L) next
         sv <- assign_full[[p]][[map_idx[p]]]
         if (length(sv) != length(obs_idx)) {
@@ -1433,7 +1433,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     for (p in seq_len(n_census)) {
         cc <- census_range[p]
-        obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+        obs_idx <- obs_row_idx[[p]]
         if (length(obs_idx) == 0L) next
 
         # State posterior weights at this census
@@ -1588,7 +1588,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 assign_vec <- assign_full[[p]][[sampled_idx[p]]]
                 track_ids_loc <- track_ids[assign_vec]
                 # attach as multiple rows (one per observed tree)
-                obs_idx <- tree_data[CensusID == cc & !is.na(DBH), which = TRUE]
+                obs_idx <- obs_row_idx[[p]]
                 if (length(obs_idx) > 0) {
                     obs_row_ids <- tree_data$obs_row_id[obs_idx]
                     sample_dt <- rbind(sample_dt, data.table::data.table(Tag = tag_local, Sample = m, CensusID = rep(cc, length(obs_idx)), ReconstructedStemID = track_ids_loc, ObsRowID = obs_row_ids))
