@@ -760,14 +760,17 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     .has_tsm <- "ListOfTSM" %in% names(tree_data)
     .obs_row_idx_pre <- vector("list", n_census)
     .is_resprout_pre <- vector("list", n_census)
+    .is_m_pre        <- vector("list", n_census)   # TRUE where ListOfTSM contains \\bM\\b
     for (.p0 in seq_len(n_census)) {
         .idx0 <- tree_data[CensusID == census_range[.p0] & !is.na(DBH), which = TRUE]
         .obs_row_idx_pre[[.p0]] <- .idx0
         if (length(.idx0) > 0L && .has_tsm) {
             .tsm0 <- tree_data$ListOfTSM[.idx0]
             .is_resprout_pre[[.p0]] <- !is.na(.tsm0) & grepl(resprout_regex, .tsm0)
+            .is_m_pre[[.p0]]        <- !is.na(.tsm0) & grepl("\\bM\\b", .tsm0)
         } else {
             .is_resprout_pre[[.p0]] <- rep(FALSE, length(.idx0))
+            .is_m_pre[[.p0]]        <- rep(FALSE, length(.idx0))
         }
     }
     n_resprout_total <- sum(vapply(.is_resprout_pre, function(x) sum(x), integer(1L)))
@@ -830,6 +833,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     obs_dbh <- vector("list", n_census)
     obs_row_idx <- vector("list", n_census)    # precomputed row indices per census (avoids repeated [.data.table)
     is_resprout_obs <- vector("list", n_census)
+    is_m_obs        <- vector("list", n_census)   # TRUE where obs has \\bM\\b in ListOfTSM
     state_mats <- vector("list", n_census)
     state_keys <- vector("list", n_census)
     for (p in seq_len(n_census)) {
@@ -839,6 +843,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         obs_dbh[[p]] <- tree_data$DBH[idx]
         n_obs <- length(obs_dbh[[p]])
         is_resprout_obs[[p]] <- .is_resprout_pre[[p]]  # reuse pre-computed flags (eliminates grepl call)
+        is_m_obs[[p]]        <- .is_m_pre[[p]]         # reuse pre-computed M flags
         mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
 
         if (is.null(mat)) {
@@ -1152,6 +1157,46 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         fe_to    <- feasible_result$to_j     # 1-based next full-state indices
         fe_phase <- feasible_result$phase_t  # n_feasible × K integer matrix
         n_feasible <- length(fe_from)
+
+        # -----------------------------------------------------------------------
+        # M-coded main-stem continuity constraint
+        # At a branching census (obs count increases going forward in time), any
+        # observation bearing \\bM\\b in ListOfTSM is the main bole — it must have
+        # a predecessor at census p (it cannot be a new recruit going backward).
+        # Applied ONLY when n_obs(p+1) > n_obs(p) AND at least one M obs exists.
+        # Stable-count M (legacy annotation) is intentionally left unconstrained.
+        # -----------------------------------------------------------------------
+        if (n_feasible > 0L) {
+            .n_obs_p  <- length(obs_dbh[[p]])
+            .n_obs_p1 <- length(obs_dbh[[p + 1L]])
+            .m_pos_p1 <- which(is_m_obs[[p + 1L]])  # positions of M obs in p+1 ordering
+            if (.n_obs_p1 > .n_obs_p && length(.m_pos_p1) > 0L) {
+                # For each feasible pair: M-coded obs at p+1 must map to a track
+                # that was occupied at p (i.e., not born as a new recruit backward).
+                # next_assign_mat rows are in the same order as next_keys (fe_to indexes it).
+                .m_tracks  <- next_assign_mat[fe_to, .m_pos_p1, drop = FALSE]  # n_feasible × n_m
+                .p_assign  <- state_mats[[p]][fe_from, , drop = FALSE]          # n_feasible × n_obs_p
+                .keep_m    <- rep(TRUE, n_feasible)
+                for (.mj in seq_len(ncol(.m_tracks))) {
+                    .mt <- .m_tracks[, .mj]  # which track M obs .mj is on, per feasible pair
+                    # row k passes iff .mt[k] appears anywhere in .p_assign[k, ]
+                    .hit <- matrix(FALSE, nrow = n_feasible, ncol = .n_obs_p)
+                    for (.pc in seq_len(.n_obs_p)) {
+                        .hit[, .pc] <- .mt == .p_assign[, .pc]
+                    }
+                    .keep_m <- .keep_m & (rowSums(.hit) > 0L)
+                }
+                if (any(!.keep_m)) {
+                    .n_m_pruned <- sum(!.keep_m)
+                    vcat(prefix, "  M-pin: pruned ", .n_m_pruned, " of ", n_feasible,
+                         " transitions (M stem must continue, not recruit) at census ", next_cc)
+                    fe_from    <- fe_from[.keep_m]
+                    fe_to      <- fe_to[.keep_m]
+                    fe_phase   <- fe_phase[.keep_m, , drop = FALSE]
+                    n_feasible <- length(fe_from)
+                }
+            }
+        }
 
         # Update prune diagnostics
         if (isTRUE(prune_hard)) {
