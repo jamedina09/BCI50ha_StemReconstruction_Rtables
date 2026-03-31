@@ -1395,7 +1395,15 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Decode MAP path
     # -----------------
     vcat(prefix, "Decoding best reconstruction path ...")
-    start_idx <- which.min(vit_cost[[1L]])
+    # Stable tie-breaker: among states with equal minimum cost, always pick the
+    # lowest enumeration index (enumerate_states_injective is deterministic, so
+    # this makes which.min deterministic across parallel runs and platforms).
+    {
+        .vc <- vit_cost[[1L]]
+        .min_cost <- min(.vc, na.rm = TRUE)
+        .tied <- which(.vc == .min_cost)
+        start_idx <- .tied[1L]   # lowest index wins any tie
+    }
     if (length(start_idx) == 0L || !is.finite(vit_cost[[1L]][start_idx])) {
         fallback_reason <- "decode_failure"
         out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
