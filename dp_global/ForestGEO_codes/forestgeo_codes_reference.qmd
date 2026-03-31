@@ -1,0 +1,1112 @@
+---
+title: "ForestGEO Tree Census Code Reference"
+subtitle: "A Complete Guide to `codes`, `DFstatus`, and `status` Fields"
+author: "JA Medina-Vega"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    highlight-style: github
+    embed-resources: true
+    fig-align: center
+    df-print: kable
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    colorlinks: true
+    geometry:
+      - top=25mm
+      - bottom=25mm
+      - left=25mm
+      - right=25mm
+execute:
+  echo: true
+  warning: false
+  message: false
+# bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+```
+
+# Introduction
+
+This document provides a complete reference for the three coded fields present in ForestGEO (Forest Global Earth Observatory, formerly CTFS — Center for Tropical Forest Science) tree and stem census data:
+
+- **`codes`** — Field-recorded TSM (Tree/Stem Measurement) attribute codes describing the physical condition of each stem at the time of census measurement.
+- **`DFstatus`** — A derived stem-level status label computed from the codes and measurement data by the CTFS database system.
+- **`status`** — An abbreviated stem- or tree-level vitality flag, used for demographic analyses and compatible with older versions of the CTFS R package.
+
+These fields operate at different levels of abstraction. `codes` is the raw, directly observed field record. `DFstatus` is derived from `codes` plus measurement validity (e.g., whether DBH is null or negative). `status` is a further abstraction, calculated from the history of the stem across censuses.
+
+Understanding the distinction between these three fields is essential for correctly filtering stems for growth, mortality, and recruitment analyses.
+
+> **Scope of this document.** The statistics presented here describe **code frequency** — how often each field code or DFstatus category appears in the census records. They are **not demographic rates**. Because many stem records carry no code at all (the `codes` field is `NA`), the percentages reflect the relative occurrence of codes among coded records or the share of coded vs. uncoded observations, not per-capita vital rates such as mortality or growth. For demographic analyses (e.g., annualized mortality, growth, or recruitment rates), additional information — including census intervals, stem-level tracking, and proper exclusion criteria — is required.
+
+## BCI Census Dates
+
+The BCI 50-ha plot has been censused nine times between 1981 and 2023. The table below provides reference dates for each census.
+
+```{r census-dates, echo=FALSE}
+census_dates <- read.csv("../census_dates_summary.csv")
+census_dates$CensusID <- as.integer(census_dates$CensusID)
+kbl(census_dates,
+    caption = "Census date ranges for the BCI 50-ha plot. MinDate and MaxDate indicate the first and last measurement days; MeanDate and MedianDate summarise the central tendency of measurement effort.",
+    col.names = c("Census", "Start date", "End date", "Mean date", "Median date"),
+    align   = c("c","c","c","c","c"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE)
+```
+
+---
+
+# The `codes` Field
+
+## Overview
+
+The `codes` field contains one or more semicolon-delimited codes assigned to a stem during field census. Codes are recorded by field workers and describe:
+
+1. **Stem physical form** (e.g., buttressed, leaning, forked)
+2. **Measurement method or point-of-measure (POM) circumstances** (e.g., POM changed, cylinder method used)
+3. **Damage or breakage** (e.g., broken below breast height, top broken)
+4. **Mortality type** (e.g., dead standing, dead fallen, cut)
+5. **Uncertainty or special conditions** (e.g., missing from field, species misidentified)
+6. **Stem fate** (e.g., resprouting, newly tagged)
+
+Multiple codes may be combined for the same stem. For example, `"B;L;cylN"` indicates a stem that is buttressed, leaning, and was measured with a tape (not cylinder method).
+
+## Code Categories
+
+### Death and Mortality Codes
+
+These codes are exclusive to or strongly associated with dead or dying stems. They are the primary drivers of `DFstatus = "dead"`.
+
+```{r death-codes-table, echo=FALSE}
+death_codes <- tibble::tribble(
+  ~Code,  ~`Full Name`,                     ~Description,                                                                                         ~`DFstatus Association`,
+  "D",    "Dead",                           "The stem is dead. Primary death code. Always present in dead stems.",                                 "dead",
+  "DB",   "Dead — base rotted",             "Dead stem with base decay; standing but structurally compromised at the base.",                       "dead",
+  "DF",   "Dead — fallen",                  "Dead stem that has fallen to the ground.",                                                            "dead / missing",
+  "DH",   "Dead — standing (snag)",         "Dead stem still standing upright; a snag.",                                                           "dead",
+  "DT",   "Dead — top broken",              "Dead stem whose top has broken off.",                                                                  "dead",
+  "DU",   "Dead — unknown / unclassified",  "Dead stem where the cause or type of mortality could not be determined.",                              "dead",
+  "MC",   "Mortality — crushing",           "Stem killed by being crushed under a fallen tree or branch.",                                         "dead",
+  "MT",   "Mortality — toppled/uprooted",   "Stem killed by toppling or uprooting (windthrow, etc.).",                                             "dead",
+  "MF",   "Missing from field",             "Stem could not be located in the field. May reflect mortality or tag loss. Not the same as DFstatus = 'missing'.", "dead / missing"
+)
+
+kbl(death_codes,
+    caption = "Table 1. Death and mortality codes in ForestGEO census data.",
+    align   = c("l","l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(3, width = "30em") |>
+  column_spec(4, italic = TRUE)
+```
+
+### Breakage and Structural Damage Codes
+
+These codes indicate that the stem has broken below the standard breast-height measurement point. They are the primary drivers of `DFstatus = "broken below"`.
+
+```{r breakage-codes-table, echo=FALSE}
+break_codes <- tibble::tribble(
+  ~Code,  ~`Full Name`,              ~Description,                                                                                              ~`DFstatus Association`,
+  "R",    "Broken",                  "Stem is broken below breast height (1.3 m). The primary broken-below trigger code.",                     "broken below",
+  "RP",   "Broken — resprout",       "Stem broken below breast height, but a new resprout is present. The most frequent broken-below code.",   "broken below",
+  "RF",   "Broken — fallen",         "Broken stem that has also fallen to the ground.",                                                        "broken below",
+  "RT",   "Broken — at top",         "Broken at or above the measurement point but below a usable height for DBH re-measurement.",            "broken below",
+  "OR",   "Other breakage",          "Breakage or structural damage not captured by R, RP, RF, or RT (e.g. partial splits, hinge breaks).",    "broken below"
+)
+
+kbl(break_codes,
+    caption = "Table 2. Breakage and structural damage codes.",
+    align   = c("l","l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(3, width = "30em") |>
+  column_spec(4, italic = TRUE)
+```
+
+### Stem-Dead Codes
+
+These codes indicate that an individual stem has died, but they appear **without** `D` — meaning the broader tree individual may still be alive through other stems or basal resprouting. They drive `DFstatus = "stem dead"`.
+
+```{r stem-dead-codes-table, echo=FALSE}
+stemdc <- tibble::tribble(
+  ~Code,  ~`Full Name`,                     ~Description,                                                                                            ~`Sprouting Variant`,
+  "N",    "No live tissue",                  "No leaves or live tissue visible on this stem. Stem is dead.",                                           "Ns",
+  "S",    "Stem dead (standing)",            "Stem is dead and standing. Common in multi-stemmed individuals where other stems survive.",               "Ss",
+  "T",    "Top-killed stem",                 "Stem is dead from top-kill (e.g. fire, herbivory, frost). May or may not resprout from base.",           "Ts",
+  "C",    "Cut / harvested",                 "Stem was cut or removed by human activity (logging, clearing, research).",                               "Cs"
+)
+
+kbl(stemdc,
+    caption = "Table 3. Stem-dead codes and their sprouting variants. The lowercase 's' suffix (Ns, Ss, Ts, Cs) denotes that the stem base is actively resprouting even though the stem above is dead.",
+    align   = c("l","l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(3, width = "25em") |>
+  column_spec(4, monospace = TRUE)
+```
+
+> **Key distinction:** Codes `N`, `S`, `T`, `C` (and their sprouting variants `Ns`, `Ss`, `Ts`, `Cs`) appear **without** the `D` code. The presence of `D` always drives `DFstatus = "dead"`. Without `D`, these codes drive `DFstatus = "stem dead"` — the stem is dead but the plant may persist.
+
+### Stem Morphology and Measurement Condition Codes
+
+These codes describe the physical form of the stem or the circumstances of the DBH measurement. They are **neutral with respect to vitality** — they appear across alive, broken below, dead, and missing stems. They do not by themselves determine whether a stem is alive or dead.
+
+```{r morphology-codes-table, echo=FALSE}
+morph_codes <- tibble::tribble(
+  ~Code,  ~`Full Name`,                       ~Description,
+  "B",    "Buttressed",                        "Stem has buttresses; DBH was measured above the buttress, at a non-standard height.",
+  "Q",    "DBH irregular / approximate",       "DBH is irregular (e.g. oval cross-section, fused stems, wounds). Measurement is approximate.",
+  "M",    "Multiple stems",                    "The tree individual has multiple stems; this record is for one of them.",
+  "L",    "Leaning",                           "Stem is leaning at an angle greater than ~15° from vertical.",
+  "A",    "Alternate measurement point",       "DBH taken at a non-standard height due to an obstacle (e.g. wound, swelling).",
+  "P",    "POM changed",                       "The point of measure (POM / HOM) changed from the previous census.",
+  "F",    "Forked stem",                       "Stem forks below breast height; DBH was measured below the fork.",
+  "G",    "Growing on substrate",              "Stem is growing on top of or over another object (fallen log, rock, etc.).",
+  "H",    "High measurement",                  "DBH measurement taken higher than standard due to a stem obstacle.",
+  "I",    "Irregular growth form",             "General irregular growth form not captured by other codes.",
+  "V",    "Vine-covered",                      "Vines are present on the stem and may be interfering with the measurement.",
+  "X",    "Uncertain / needs recheck",         "Measurement is uncertain or flagged for re-verification in the next census.",
+  "E",    "Epiphytic / unusual substrate",     "Stem is epiphytic or growing in an unusual substrate.",
+  "Z",    "Previously dead, now alive",        "Stem was recorded as dead in a prior census but has resprouted and is now alive.",
+  "U",    "Unknown status",                    "Status cannot be determined. Appears in dead stems with ambiguous mortality records.",
+  "2",    "Secondary / second stem",           "Denotes the secondary or second stem of a multi-stemmed individual.",
+  "Y",    "Site-specific flag",                "Site-specific measurement flag (meaning varies by plot; typically a data quality note)."
+)
+
+kbl(morph_codes,
+    caption = "Table 4. Stem morphology and measurement condition codes. These codes are vitality-neutral and may appear in any DFstatus category.",
+    align   = c("l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(3, width = "35em")
+```
+
+### Administrative and Data Quality Codes
+
+These codes record administrative events (e.g., re-tagging) or data quality flags.
+
+```{r admin-codes-table, echo=FALSE}
+admin_codes <- tibble::tribble(
+  ~Code,  ~`Full Name`,              ~Description,
+  "Re",   "Re-measured / re-tagged", "Stem was re-tagged or its identity was re-confirmed in this census.",
+  "Nt",   "New tag",                 "Tag is new — either a newly recruited stem or a replacement tag for a lost one.",
+  "Pr",   "Prior record",            "Stem was recorded in a prior census; indicates census continuity.",
+  "Su",   "Suppressed",              "Stem is suppressed — experiencing very slow growth, typically in deep shade.",
+  "Mi",   "Misidentified species",   "Species code was found to be incorrect; species may have been corrected in this or a later census.",
+  "MF",   "Missing from field",      "Stem could not be located in the field during census."
+)
+
+kbl(admin_codes,
+    caption = "Table 5. Administrative and data quality codes.",
+    align   = c("l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(3, width = "35em")
+```
+
+### Measurement Method Codes
+
+These two codes indicate which method was used to measure DBH, and are recorded as `cylN` / `cylY`.
+
+```{r method-codes-table, echo=FALSE}
+method_codes <- tibble::tribble(
+  ~Code,    ~`Full Name`,                         ~Description,
+  "cylN",   "Cylinder method NOT used",            "Standard diameter tape was used to measure DBH directly (cylinder method was not applied).",
+  "cylY",   "Cylinder method used",                "The cylinder method was used to estimate DBH (applied when stem cross-section is irregular or non-circular)."
+)
+
+kbl(method_codes,
+    caption = "Table 6. DBH measurement method codes. These codes are distinct from two-letter morphology composites such as LB or IT.",
+    align   = c("l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(3, width = "35em")
+```
+
+### Two-Letter Composite Codes
+
+Many codes are two-letter composites formed by combining a **stem-type prefix** with a **condition suffix**. These are not separate root codes — they are shorthand combinations.
+
+**Prefix letters (stem type or circumstance):**
+
+| Prefix | Meaning |
+|--------|---------|
+| `L`    | Leaning stem |
+| `I`    | Irregular form |
+| `P`    | POM (point of measure) changed |
+
+**Suffix letters (condition):**
+
+| Suffix | Meaning |
+|--------|---------|
+| `B`    | Buttressed |
+| `T`    | Top broken or damaged |
+| `N`    | Non-standard measurement point |
+| `V`    | Vine-covered |
+| `H`    | High measurement |
+| `O`    | Other / orientation |
+| `K`    | Unknown / other condition |
+
+```{r composite-codes-table, echo=FALSE}
+composite_codes <- tibble::tribble(
+  ~Code,  ~`Prefix Meaning`,        ~`Suffix Meaning`,          ~`Full Interpretation`,
+  "LB",   "Leaning",                "Buttressed",               "Leaning stem with buttresses; DBH above buttresses at non-standard height.",
+  "LT",   "Leaning",                "Top broken",               "Leaning stem with broken top.",
+  "LN",   "Leaning",                "Non-standard POM",         "Leaning stem measured at a non-standard point of measure.",
+  "LV",   "Leaning",                "Vine-covered",             "Leaning stem with interfering vines.",
+  "LH",   "Leaning",                "High measurement",         "Leaning stem measured higher than standard due to obstacle.",
+  "LK",   "Leaning",                "Unknown condition",        "Leaning stem with an unspecified additional condition.",
+  "IB",   "Irregular form",         "Buttressed",               "Irregular-form stem that is also buttressed.",
+  "IO",   "Irregular form",         "Orientation / other",      "Irregular stem orientation or other irregular condition.",
+  "IT",   "Irregular form",         "Top broken",               "Irregular-form stem with a broken top.",
+  "IH",   "Irregular form",         "High measurement",         "Irregular stem measured at a non-standard high point.",
+  "PB",   "POM changed",            "Buttressed",               "Point of measure changed and stem is buttressed.",
+  "PN",   "POM changed",            "Non-standard POM",         "Point of measure changed to a non-standard height.",
+  "PT",   "POM changed",            "Top broken",               "POM changed because top is broken.",
+  "PV",   "POM changed",            "Vine-covered",             "POM changed in context of vine interference.",
+  "PK",   "POM changed",            "Unknown condition",        "POM changed; additional condition unspecified."
+)
+
+kbl(composite_codes,
+    caption = "Table 7. Two-letter composite codes. Each is formed by a stem-type prefix and a condition suffix.",
+    align   = c("l","l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(4, width = "25em")
+```
+
+---
+
+# The `DFstatus` Field
+
+## Overview
+
+`DFstatus` stands for **Data Format status**. It is taken directly from the `DFtemp` (or `TSMAttributes`) table of the CTFS database and reflects the status of the **stem** — not the whole tree — as recorded during a specific census. It is a *derived* field, computed from a combination of the field codes and the validity of the DBH measurement (e.g., null or negative DBH triggers `"missing"`).
+
+> **Important:** `DFstatus` refers to the stem, not the tree. In tree-level tables, `DFstatus` is not meaningful if a tree has multiple stems. Use `status` (see @sec-status) for tree-level analyses.
+
+## DFstatus Values
+
+```{r dfstatus-table, echo=FALSE}
+dfstatus_vals <- tibble::tribble(
+  ~`DFstatus Value`, ~`Trigger Conditions`,                                                                                                                ~`Ecological Meaning`,                                                                                   ~`Typical codes present`,
+  "alive",           "None of the death, breakage, or stem-dead codes present; DBH is valid (non-null, > 0).",                                            "The stem is alive and was successfully measured. The primary class for growth and survival analyses.",   "B, Q, L, M, P, F, A, G, H, I, V, X, Z, Re, Su, Nt, Pr, cyl*, LB, LT, LN, LV, IB, IO, IT, PB, PN, PT, PV, etc.",
+  "broken below",    "At least one of: R, RP, RF, RT, OR. Stem is physically broken below the standard DBH measurement point.",                            "The stem has broken below breast height. The tree may still be alive via resprouting. Stem is lost for standard DBH tracking.",  "R, RP, RF, RT, OR — plus any morphology codes (L, M, Q, B, IT, LN, etc.)",
+  "dead",            "The code D is present, alone or with mortality sub-codes (DB, DF, DH, DT, DU, MC, MT). May include stem-dead codes N, S, T, C.",    "The entire stem (and usually the tree) is dead. All censused stems must be dead for tree status = D.",              "D, DB, DF, DH, DT, DU, MC, MT, N, S, T, C — plus context codes",
+  "stem dead",       "Codes N, S, T, C, Ns, Ss, Ts, or Cs present — but WITHOUT the D code. DBH is valid.",                                              "This individual stem is dead, but the tree is still alive (other stems, or basal resprouting). Critical for multi-stemmed tree analyses.", "N, S, T, C, Ns, Ss, Ts, Cs — plus morphology codes",
+  "missing",         "DBH is null or <= 0 AND codes are null; OR TSMAttributes flags status as 'missing'; OR MF code present.",                            "The stem could not be measured or located. It is unknown whether the stem is alive or dead. Exclude from growth analyses.",     "Any code, or no code at all. MF is a direct 'missing from field' flag. Many missing stems have ordinary morphology codes."
+)
+
+kbl(dfstatus_vals,
+    caption = "Table 8. DFstatus field values, trigger conditions, ecological meaning, and typical associated codes.",
+    align   = c("l","l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE, width = "8em") |>
+  column_spec(2, width = "20em") |>
+  column_spec(3, width = "20em") |>
+  column_spec(4, width = "20em", monospace = TRUE)
+```
+
+## Codes That Exclusively Determine DFstatus
+
+Some codes appear in **only one** DFstatus category, making them deterministic classifiers:
+
+```{r exclusive-codes-table, echo=FALSE}
+excl_codes <- tibble::tribble(
+  ~Code,   ~`Exclusive DFstatus`,  ~Notes,
+  "D",     "dead",                 "Always and only in dead stems.",
+  "DB",    "dead",                 "Dead sub-code, always with D.",
+  "DH",    "dead",                 "Dead sub-code, always with D.",
+  "DT",    "dead",                 "Dead sub-code, always with D.",
+  "DU",    "dead",                 "Dead sub-code, always with D.",
+  "DF",    "dead",                 "Dead sub-code (dead fallen). In the BCI dataset, exclusively appears with D (as D;DF) and always drives DFstatus = dead.",
+  "MC",    "dead",                 "Mortality cause code. Typically with D (e.g. D;MC). In BCI census 2, also appears without D: 170 standalone MC and 1 V;MC record still drive DFstatus = dead.",
+  "MT",    "dead",                 "Mortality cause code. Typically with D (e.g. D;MT). In BCI census 2, also appears without D: 24 standalone MT records still drive DFstatus = dead.",
+  "RF",    "broken below",         "Broken and fallen — only in broken below.",
+  "RP",    "broken below",         "Broken with resprout — only in broken below.",
+  "RT",    "broken below",         "Broken at top — only in broken below.",
+  "OR",    "broken below",         "Other breakage — only in broken below.",
+  "Cs",    "stem dead",            "Cut + sprouting — predominantly in stem dead (3,960 records). Four records in census 9 co-occur with R/OR and map to broken below.",
+  "Ns",    "stem dead",            "No tissue + sprouting — predominantly in stem dead (25,049 records). In census 9, 17 records co-occur with R/OR and map to broken below.",
+  "Ts",    "stem dead",            "Top-killed + sprouting — only in stem dead.",
+  "Ss",    "stem dead",            "Standing + sprouting — predominantly in stem dead (2,074 in BCI census 8; 1,762 in census 9). One R;Ss instance maps to broken below in census 8.",
+  "Nt",    "alive",                "New tag — only in alive stems.",
+  "Re",    "alive",                "Re-tagged — only in alive stems.",
+  "Pr",    "alive",                "Prior record — only in alive stems.",
+  "2",     "alive",                "Secondary stem marker — only in alive stems.",
+  "E",     "alive",                "Epiphytic — only in alive stems.",
+  "G",     "alive",                "Growing on substrate — only in alive stems.",
+  "H",     "alive",                "High measurement — only in alive stems.",
+  "Y",     "alive",                "Site-specific flag — only in alive stems.",
+  "IH",    "alive",                "Irregular + high — only in alive stems.",
+  "LH",    "alive",                "Leaning + high — only in alive stems.",
+  "LK",    "alive",                "Leaning + unknown — only in alive stems."
+)
+
+kbl(excl_codes,
+    caption = "Table 9. Codes that appear exclusively within a single DFstatus category, making them deterministic classifiers.",
+    align   = c("l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(2, italic = TRUE) |>
+  column_spec(3, width = "25em")
+```
+
+## Codes That Cross DFstatus Boundaries
+
+Many codes appear across multiple DFstatus categories because they describe physical form, not vitality. Understanding this is critical for filtering:
+
+```{r cross-codes-table, echo=FALSE}
+cross_codes <- tibble::tribble(
+  ~Code,  ~`DFstatus categories`,                                        ~Interpretation,
+  "B",    "alive, broken below, dead, stem dead",               "Buttress is a physical trait — present regardless of whether the stem is alive or dead. Not observed with DFstatus = missing in the BCI data.",
+  "L",    "alive, broken below, dead, stem dead",               "Leaning is a physical trait — occurs in any condition. Not observed with DFstatus = missing in the BCI data.",
+  "M",    "alive, broken below, dead, stem dead",               "Multi-stemmed individuals can be alive, dead, broken, or stem dead. Not observed with DFstatus = missing in the BCI data.",
+  "Q",    "alive, broken below, dead, stem dead",               "Irregular DBH shape is morphological, not vital. Not observed with DFstatus = missing in the BCI data.",
+  "N",    "dead, stem dead",                                             "No live tissue — in dead stems (with D) and stem-dead stems (without D). Context determines the DFstatus.",
+  "S",    "dead, stem dead",                                             "Standing dead — with D = dead tree; without D = stem dead only.",
+  "T",    "dead, stem dead",                                             "Top-killed — with D = dead tree; without D = stem dead only.",
+  "C",    "dead, stem dead",                                             "Cut stem — with D = dead tree; without D = stem dead only.",
+  "R",    "broken below, dead",                                          "Broken code; primarily triggers broken below, but can co-occur with D in dead broken stems.",
+  "MF",   "dead, missing",                                               "Missing from field; drives 'missing' when no DBH, or 'dead' when found dead at next census.",
+  "IT",   "alive, broken below, dead",                          "Composite morphology + top condition — the top condition is descriptive, does not imply death. Not observed with DFstatus = missing or stem dead in the BCI data.",
+  "LN",   "alive, broken below, dead, stem dead",                        "Leaning + non-standard POM — can occur in any stem condition.",
+  "V",    "alive, broken below, dead",                          "Vine-covered — environmental condition, not a vital indicator. Not observed with DFstatus = missing or stem dead in the BCI data.",
+  "Z",    "alive, dead, broken below",                          "Previously dead now alive — mostly alive, but can co-occur with other conditions in edge cases. Not observed with DFstatus = missing or stem dead in the BCI data."
+)
+
+kbl(cross_codes,
+    caption = "Table 10. Codes that cross DFstatus category boundaries. These codes describe physical form or measurement context, not vitality.",
+    align   = c("l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(2, italic = TRUE, width = "20em") |>
+  column_spec(3, width = "30em")
+```
+
+---
+
+# The `status` Field {#sec-status}
+
+## Overview
+
+The `status` field is an **abbreviated, calculated** stem or tree vitality flag. It is computed from the history of the stem across censuses and is not directly observed in the field. It is designed for compatibility with CTFS R package demographic functions.
+
+In **stem tables**, `status` refers to the individual stem. In **tree tables**, `status` is derived from the combined status of all stems on the tree:
+
+- If **any** stem is alive → tree status = `A`
+- Only when **every** stem is dead → tree status = `D`
+
+## Status Values
+
+```{r status-table, echo=FALSE}
+status_vals <- tibble::tribble(
+  ~`status`,  ~`Full Name`,                    ~`Level`,         ~Description,                                                                                                                             ~`Associated DFstatus`,
+  "A",        "Alive",                          "stem / tree",    "The stem (or tree) is alive and was successfully measured.",                                                                             "alive",
+  "D",        "Dead",                           "stem / tree",    "The stem (or tree) is dead. For trees: all stems must be dead.",                                                                         "dead",
+  "G",        "Gone",                           "stem",           "The stem was previously measured but no longer has a record in this census. The tree individual is still alive through other stems.",    "broken below / stem dead",
+  "M",        "Missing",                         "stem / tree",    "DBH and codes were not recorded for this stem. It is unknown whether the stem is alive or dead.",                                       "missing",
+  "AR",       "Alive — resprouting",             "stem",           "The stem is alive and is resprouting. Associated with stem-dead or broken stems that have produced new growth.",                         "stem dead / broken below",
+  "AM",       "Alive — measurement missing",     "stem",           "The tree individual is believed to be alive but the stem measurement is missing (DBH is null). Different from M — the tree is known alive by other evidence.", "missing",
+  "AD",       "Alive tree — dead stem",          "stem",           "The tree is alive (other stems confirm this) but this particular stem is dead.",                                                         "dead / stem dead"
+)
+
+kbl(status_vals,
+    caption = "Table 11. status field values with full descriptions and associated DFstatus categories.",
+    align   = c("l","l","l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE) |>
+  column_spec(4, width = "25em") |>
+  column_spec(5, italic = TRUE)
+```
+
+## Cross-Tabulation: DFstatus × status
+
+The relationship between `DFstatus` and `status` is not one-to-one. The cross-tabulation below (from the Dryad dataset) reveals how these fields relate:
+
+```{r crosstab, echo=FALSE, eval=FALSE}
+# NOTE: This chunk requires a full stem-level file containing both DFstatus
+# and the tree-level status column. The file dryad_codes_status.csv was not
+# found at render time. Update the path below before re-rendering.
+df <- read.csv("../dryad_codes_status.csv")
+
+# Cross-tab
+ct <- df |>
+  count(DFstatus, status) |>
+  tidyr::pivot_wider(names_from = status, values_from = n, values_fill = 0)
+
+kbl(ct,
+    caption = "Table 12. Cross-tabulation of DFstatus × status values in the Dryad ForestGEO dataset (n = 490 unique code combinations).",
+    align   = c("l", rep("r", ncol(ct) - 1)),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE)
+```
+
+Key patterns in the cross-tabulation:
+
+- `DFstatus = "alive"` maps exclusively to `status = "A"`.
+- `DFstatus = "broken below"` maps to `status = "A"` (still alive tree), `"G"` (stem gone), or `"G"` re-coded as broken.
+- `DFstatus = "dead"` maps primarily to `status = "D"`, but also `"AD"` (alive tree, dead stem).
+- `DFstatus = "stem dead"` maps to `"A"` (tree alive), `"AR"` (alive, resprouting), and `"G"` (gone).
+- `DFstatus = "missing"` maps to `"M"`, `"AM"`, and `"AD"` — all forms of uncertain or partial-missing status.
+
+---
+
+# Practical Guide for R Analysis
+
+## Filtering for Common Use Cases
+
+```{r filtering-guide, eval=FALSE}
+library(tidyverse)
+
+# Load your stem census data
+stems <- read.csv("your_stem_data.csv")
+
+# ── Alive stems (for growth analysis) ──────────────────────────────────────
+alive <- stems |> filter(DFstatus == "alive")
+# or equivalently (stem table):
+alive <- stems |> filter(status == "A")
+
+# ── Dead stems (confirmed mortality) ──────────────────────────────────────
+dead <- stems |> filter(DFstatus == "dead")
+# For tree-level mortality (all stems dead):
+dead_trees <- stems |>
+  group_by(treeID) |>
+  summarise(all_dead = all(status == "D")) |>
+  filter(all_dead)
+
+# ── Stem dead (for multi-stem dynamics) ───────────────────────────────────
+stem_dead <- stems |> filter(DFstatus == "stem dead")
+
+# ── Broken below (for stem turnover) ──────────────────────────────────────
+broken <- stems |> filter(DFstatus == "broken below")
+
+# ── Missing stems (exclude from growth analyses) ──────────────────────────
+# Exclude from growth:
+for_growth <- stems |> filter(!DFstatus %in% c("missing"))
+
+# ── Resprouting stems ─────────────────────────────────────────────────────
+resprouts <- stems |> filter(status == "AR")
+
+# ── Gone stems (alive tree, lost stem) ────────────────────────────────────
+gone <- stems |> filter(status == "G")
+
+# ── Detect specific code flags ────────────────────────────────────────────
+# Check if a stem has the buttress code:
+stems <- stems |>
+  mutate(
+    has_buttress     = str_detect(codes, "\\bB\\b"),
+    has_broken       = str_detect(codes, "\\bR[PFT]?\\b|\\bOR\\b"),
+    pom_changed      = str_detect(codes, "\\bP\\b|^P[BNTVK]$"),
+    method_cylinder  = str_detect(codes, "cylY"),
+    was_resprout     = str_detect(codes, "\\bZ\\b"),
+    species_mismatch = str_detect(codes, "\\bMi\\b")
+  )
+```
+
+## Understanding `DFstatus = "missing"`: A Common Misconception
+
+A frequent error is assuming that `DFstatus = "missing"` is caused solely by the code `MF` (missing from field). This is **incorrect**. `MF` is one cause; a null or non-positive DBH with absent codes is another. Many missing-status records carry perfectly ordinary morphology codes (`B`, `L`, `Q`, `M`, etc.) — the missing status is about the **measurement** being absent, not the codes.
+
+```{r missing-note, eval=FALSE}
+# DFstatus = "missing" is assigned when:
+# 1. DBH is NULL or <= 0, AND codes are also NULL/empty  [database rule]
+# 2. TSMAttributes flags the stem as "missing"           [database rule]
+# 3. The code MF is present                              [field code]
+
+# So: many missing stems have non-null codes! 
+# Always use DFstatus == "missing" to filter, not str_detect(codes, "MF")
+stems |>
+  filter(DFstatus == "missing") |>
+  count(codes) |>
+  arrange(desc(n))
+```
+
+## The `N`, `S`, `T`, `C` Ambiguity
+
+These four codes appear in both `DFstatus = "dead"` and `DFstatus = "stem dead"`. The disambiguating rule is the presence or absence of `D`:
+
+```{r nstc-note, eval=FALSE}
+# Rule: D present → dead; N/S/T/C without D → stem dead
+# Verify:
+stems |>
+  filter(str_detect(codes, "\\b[NSTC]\\b")) |>
+  mutate(has_D = str_detect(codes, "\\bD\\b")) |>
+  count(DFstatus, has_D)
+```
+
+---
+
+# Empirical Code Frequency: BCI Censuses 1–9 {#sec-empirical}
+
+This section reports code frequencies from the BCI ForestGEO stem census dataset across nine census cycles (CensusID 1–9), based on `codes_identification.csv`. Each row in that file is a unique (CensusID × code-combination × DFstatus) triplet with its count `N`.
+
+## Code Vocabulary by Census
+
+The code vocabulary used at BCI changed substantially across census cycles:
+
+- **Census 1** contains only morphology and administrative codes (`L`, `M`, `F`, `G`, `H`, `Su`, `Nt`, `Re`, `Pr`, `X`, `2`). No death or breakage codes are present — expected, because deaths can only be confirmed from the second census onward.
+- **Census 2** uses the most complex vocabulary: the full set of two-letter composite codes (`LB`, `LN`, `LT`, `LV`, `IB`, `IO`, `IT`, `PB`, `PN`, `PT`, `PV`, `PK`) plus detailed mortality sub-codes (`D;DB`, `D;DF`, `D;DH`, `D;DT`, `D;DU`, `D;MC`, `D;MT`). This corresponds to the format used in the Dryad/Condit public dataset.
+- **Censuses 3–7** use a simplified vocabulary. Composite codes disappear; death is recorded as `D;N`, `D;S`, `D;T`, `D;C`. Measurement-method codes (`cylN`, `cylY`) and multi-stem code (`M`) become standard practice.
+- **Census 8** introduces sprouting variants (`Cs`, `Ns`, `Ss`, `Ts`) prominently and shifts to recording `D` alone for primary mortality (56,908 records).
+- **Census 9** sees `A` (alternate measurement point) become a major code (4,751 occurrences), `Ns` reach 19,205 occurrences, and `D` alone record 74,531 dead stems.
+
+## Census Overview
+
+```{r census-overview, echo=FALSE}
+codes_df <- read.csv("../codes_identification.csv")
+
+overview <- codes_df |>
+  group_by(CensusID) |>
+  summarise(
+    `Total records`       = format(sum(N), big.mark = ","),
+    `Uncoded alive (NA)`  = format(sum(N[is.na(ListOfTSM) & Status == "alive"], na.rm = TRUE), big.mark = ","),
+    `Coded stem-censuses` = format(sum(N[!is.na(ListOfTSM)]), big.mark = ","),
+    `Unique code strings` = n_distinct(ListOfTSM[!is.na(ListOfTSM)])
+  )
+
+kbl(overview,
+    caption = "Table A1. Census overview: total records, uncoded alive stems (NA codes), coded stem-censuses, and number of unique code-string combinations per census.",
+    align   = c("r","r","r","r","r"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE)
+```
+
+## Top 10 Code Combinations by Census
+
+```{r top-codes-per-census, echo=FALSE}
+top_codes <- codes_df |>
+  filter(!is.na(ListOfTSM)) |>
+  group_by(CensusID) |>
+  slice_max(order_by = N, n = 10) |>
+  arrange(CensusID, desc(N)) |>
+  select(Census        = CensusID,
+         `Code string` = ListOfTSM,
+         DFstatus      = Status,
+         N)
+
+kbl(top_codes,
+    caption = "Table A2. Top 10 most frequent code combinations per census (uncoded stems excluded). The dramatic shift in vocabulary across censuses reflects changes in data-entry protocol.",
+    align   = c("r","l","l","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(2, monospace = TRUE) |>
+  column_spec(3, italic    = TRUE)
+```
+
+## Death Code Frequencies by Census
+
+```{r death-codes-census, echo=FALSE}
+death_codes_freq <- codes_df |>
+  filter(Status == "dead", !is.na(ListOfTSM)) |>
+  group_by(CensusID) |>
+  slice_max(order_by = N, n = 8) |>
+  arrange(CensusID, desc(N)) |>
+  select(Census        = CensusID,
+         `Code string` = ListOfTSM,
+         N)
+
+kbl(death_codes_freq,
+    caption = "Table A3. Top 8 most frequent DFstatus = 'dead' code combinations per census. The shift from detailed sub-codes (census 2) through D;N/D;S/D;T/D;C (censuses 3–7) to bare D (censuses 8–9) reflects evolving data-entry protocols.",
+    align   = c("r","l","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(2, monospace = TRUE)
+```
+
+## Breakage and Stem-Dead Code Frequencies by Census
+
+```{r broken-stemdc-census, echo=FALSE}
+bb_sd_freq <- codes_df |>
+  filter(Status %in% c("broken below", "stem dead"), !is.na(ListOfTSM)) |>
+  group_by(CensusID, Status) |>
+  slice_max(order_by = N, n = 5) |>
+  arrange(CensusID, Status, desc(N)) |>
+  select(Census        = CensusID,
+         DFstatus      = Status,
+         `Code string` = ListOfTSM,
+         N)
+
+kbl(bb_sd_freq,
+    caption = "Table A4. Top 5 most frequent broken-below and stem-dead code combinations per census. Note the rise of OR as the dominant broken-below code from census 5 onward (5,968–9,023 records/census), and the emergence of sprouting variants (Ns, Ss, Ts, Cs) from census 7 onward.",
+    align   = c("r","l","l","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(2, italic    = TRUE) |>
+  column_spec(3, monospace = TRUE)
+```
+
+## Documentation Cross-Check
+
+Cross-referencing the reference tables (Sections 2–3) against the BCI empirical data identified the following issues. Corrections to Table 9 have already been applied in this document.
+
+```{r doc-crosscheck, echo=FALSE}
+issues <- tibble::tribble(
+  ~Item,                   ~`Documentation stated`,                               ~`Empirical finding (BCI data)`,                                                                          ~`Action taken`,
+  "MC — Table 9",          "\"always with D\"",                                   "Census 2: 170 standalone MC and 1 V;MC record drive DFstatus = dead without D.",                         "Note updated in Table 9.",
+  "MT — Table 9",          "\"always with D\"",                                   "Census 2: 24 standalone MT records drive DFstatus = dead without D.",                                    "Note updated in Table 9.",
+  "DF — Table 9",          "DF absent from exclusive-codes table",                "In BCI data DF exclusively appears as D;DF and always drives DFstatus = dead.",                         "DF row added to Table 9.",
+  "Ss — Table 9",          "Ss absent from exclusive-codes table",                "Census 8–9: Ss predominantly steam dead (2,074 / 1,762 records); one R;Ss maps to broken below.",       "Ss row with caveat added to Table 9.",
+  "OR frequency",          "Described as edge-case breakage",                     "OR is the dominant broken-below code from census 5 onward (5,968–9,023 records per census).",            "Frequency shown in Tables A2 & A4.",
+  "Census 1 death codes",  "No note on absence of death records in census 1",     "Census 1 has zero death/breakage codes — the first census cannot record deaths.",                       "Noted in census overview above.",
+  "Code vocabulary scope", "Tables present codes as census-invariant",            "Vocabulary changed substantially across 9 censuses (composite codes, cylN/cylY, sprouting variants).", "New section added (this section).",
+  "Cross-tab CSV path",    "Hard-coded absolute path to dryad_codes_status.csv",  "File not found at render time.",                                                                         "Chunk set to eval=FALSE; path updated to relative."
+)
+
+kbl(issues,
+    caption = "Table A5. Documentation cross-check: discrepancies found between the reference tables and BCI empirical data, and corrective actions taken.",
+    align   = c("l","l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE, monospace = TRUE, width = "9em") |>
+  column_spec(2, width = "12em") |>
+  column_spec(3, width = "20em") |>
+  column_spec(4, width = "10em")
+```
+
+---
+
+# Code Patterns by Growth Form and Taxonomy {#sec-species}
+
+This section analyses how `DFstatus` codes relate to plant growth forms, families, and key species at BCI, using `codes_identification_by_species.csv` (aggregated across all nine censuses).
+
+```{r sp-setup, echo=FALSE}
+sp_file  <- "../codes_identification_by_species.csv"
+tax_file <- "../../DATA/RAW/ViewFiles_bci_allcensuses/ViewTaxonomy_bci.csv"
+
+df_sp  <- read.csv(sp_file,  stringsAsFactors = FALSE)
+tax    <- read.csv(tax_file, sep = "\t", stringsAsFactors = FALSE)
+
+# Build species → Family lookup
+tax_lkp <- tax |>
+  dplyr::mutate(Species = paste(Genus, SpeciesName)) |>
+  dplyr::select(Species, Family, Genus) |>
+  dplyr::distinct()
+
+df_sp <- dplyr::left_join(df_sp, tax_lkp, by = "Species")
+```
+
+## DFstatus Breakdown by Growth Form
+
+The six growth forms in the BCI dataset show very different code profiles. Palms stand out with low breakage and high stem-dead frequency; tree ferns (small sample) and pioneer trees show the highest proportion of dead codes.
+
+```{r gf-table, echo=FALSE}
+gf_tbl <- df_sp |>
+  dplyr::filter(!is.na(Status)) |>
+  dplyr::group_by(`Growth form` = growth_form) |>
+  dplyr::summarise(
+    `N species`    = dplyr::n_distinct(Species),
+    `Total records`= sum(N, na.rm = TRUE),
+    `% alive`      = round(100 * sum(N[Status == "alive"],        na.rm = TRUE) / sum(N, na.rm = TRUE), 1),
+    `% broken`     = round(100 * sum(N[Status == "broken below"], na.rm = TRUE) / sum(N, na.rm = TRUE), 1),
+    `% dead`       = round(100 * sum(N[Status == "dead"],         na.rm = TRUE) / sum(N, na.rm = TRUE), 1),
+    `% stem dead`  = round(100 * sum(N[Status == "stem dead"],    na.rm = TRUE) / sum(N, na.rm = TRUE), 1),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(dplyr::desc(`Total records`))
+
+kbl(gf_tbl,
+    caption = "Table B1. DFstatus breakdown by growth form (all censuses combined). Missing-status records excluded. Palms have the highest stem-dead frequency, driven by multi-stemmed species; pioneers (trees_shrubs pioneers such as Cecropia) drive the high proportion of dead codes in that category.",
+    align   = c("l","r","r","r","r","r","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE)
+```
+
+## Most Common Code Strings per Growth Form
+
+```{r gf-codes-table, echo=FALSE}
+gf_codes <- df_sp |>
+  dplyr::filter(!is.na(ListOfTSM)) |>
+  dplyr::group_by(`Growth form` = growth_form, `Code string` = ListOfTSM, DFstatus = Status) |>
+  dplyr::summarise(N = sum(N, na.rm = TRUE), .groups = "drop") |>
+  dplyr::group_by(`Growth form`) |>
+  dplyr::slice_max(order_by = N, n = 5) |>
+  dplyr::arrange(`Growth form`, dplyr::desc(N))
+
+kbl(gf_codes,
+    caption = "Table B2. Top 5 most frequent code strings per growth form (across all censuses, excluding uncoded NA stems). Code M (multi-stemmed) is dominant in palms; bare D dominates in trees and shrubs.",
+    align   = c("l","l","l","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(2, monospace = TRUE) |>
+  column_spec(3, italic    = TRUE)
+```
+
+### Growth form notes
+
+- **`trees_shrubs`**: The dominant form (303 species, >2.7 M records). Every code category is represented. Breakage (`R`, `OR`) and death (`D`, `D;N`, `D;T`, `D;C`) are the most frequent coded states. Buttress codes (`B`, `cylN`, `cylY`) are almost exclusive to this group.
+- **`palm`**: 11 species, ~96 K records. Multi-stem code `M` is the dominant code. Stem-dead codes (`Ns`, `Ss`) are more common than in other forms because palms readily produce suckers. The broken-below proportion (3.2%) is low — palm stems carry breakage codes less often than dicot stems. *Oenocarpus mapora* alone contributes 78 K of 96 K palm records.
+- **`fig`** (non-strangler): 4 species, modest sample (780 total records, 296 coded). Death codes (`D`, `D;C`, `D;N`) are frequent — figs have fast demographic turnover. Buttress code `B;cylY` appears in ~12% of coded records; any `B` code in ~21%.
+- **`strangler_fig`**: 8 *Ficus* species, ~570 records. Notable for a high buttress frequency: 43% of coded records carry `B`. `B;cylN` is the single most common coded state.
+- **`tree_fern`**: A single species (*Cyathea petiolata*), very small sample (20 records). No breakage events; high apparent proportion of dead codes (40%) is based on only 8 dead records and should be interpreted cautiously.
+
+## Family-Level Code Profiles
+
+### Top 20 Families by Abundance
+
+```{r fam-abundance, echo=FALSE}
+fam_tbl <- df_sp |>
+  dplyr::filter(!is.na(Status), !is.na(Family)) |>
+  dplyr::group_by(Family) |>
+  dplyr::summarise(
+    `N spp.`   = dplyr::n_distinct(Species),
+    Total      = sum(N, na.rm = TRUE),
+    `% alive`  = round(100 * sum(N[Status == "alive"],        na.rm = TRUE) / sum(N, na.rm = TRUE), 1),
+    `% broken` = round(100 * sum(N[Status == "broken below"], na.rm = TRUE) / sum(N, na.rm = TRUE), 1),
+    `% dead`   = round(100 * sum(N[Status == "dead"],         na.rm = TRUE) / sum(N, na.rm = TRUE), 1),
+    `% stem dead` = round(100 * sum(N[Status == "stem dead"], na.rm = TRUE) / sum(N, na.rm = TRUE), 1),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(dplyr::desc(Total)) |>
+  head(20)
+
+kbl(fam_tbl,
+    caption = "Table B3. Top 20 most abundant families at BCI. Violaceae (led by Hybanthus prunifolius, 467 K records) and Rubiaceae (led by Faramea occidentalis, 279 K records) together account for >1 M records. Lauraceae and Sapindaceae have the highest broken-below frequency among major families; Euphorbiaceae and Melastomataceae have the highest proportion of dead codes.",
+    align   = c("l","r","r","r","r","r","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE)
+```
+
+### Families with High Broken-Below Frequency
+
+`DFstatus = "broken below"` (codes `R`, `OR`, `RP`, `RF`, `RT`) varies substantially among families. The following families exceed the dataset-wide average of ~5%:
+
+```{r fam-broken, echo=FALSE}
+fam_bb <- df_sp |>
+  dplyr::filter(!is.na(Status), !is.na(Family)) |>
+  dplyr::group_by(Family) |>
+  dplyr::summarise(
+    `N spp.`   = dplyr::n_distinct(Species),
+    alive      = sum(N[Status == "alive"],        na.rm = TRUE),
+    broken     = sum(N[Status == "broken below"], na.rm = TRUE),
+    dead       = sum(N[Status == "dead"],         na.rm = TRUE),
+    total      = sum(N,                           na.rm = TRUE),
+    .groups    = "drop"
+  ) |>
+  dplyr::filter(total >= 500) |>
+  dplyr::mutate(`% broken` = round(100 * broken / total, 1)) |>
+  dplyr::arrange(dplyr::desc(`% broken`)) |>
+  head(15) |>
+  dplyr::select(Family, `N spp.`, total, broken, `% broken`)
+
+kbl(fam_bb,
+    caption = "Table B4. Families with the highest broken-below frequency (minimum 500 total records). Polygonaceae (Coccoloba), Sapindaceae (Cupania), Capparaceae (Capparidastrum frondosum), and Lauraceae show the highest fragility. The Lauraceae pattern is driven by Ocotea and Nectandra species that frequently carry breakage codes.",
+    align   = c("l","r","r","r","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE)
+```
+
+### Families with High Proportion of Dead Codes
+
+```{r fam-dead, echo=FALSE}
+fam_dead <- df_sp |>
+  dplyr::filter(!is.na(Status), !is.na(Family)) |>
+  dplyr::group_by(Family) |>
+  dplyr::summarise(
+    `N spp.` = dplyr::n_distinct(Species),
+    alive    = sum(N[Status == "alive"],        na.rm = TRUE),
+    dead     = sum(N[Status == "dead"],         na.rm = TRUE),
+    total    = sum(N,                           na.rm = TRUE),
+    .groups  = "drop"
+  ) |>
+  dplyr::filter(total >= 500) |>
+  dplyr::mutate(`% dead` = round(100 * dead / total, 1)) |>
+  dplyr::arrange(dplyr::desc(`% dead`)) |>
+  head(15) |>
+  dplyr::select(Family, `N spp.`, total, dead, `% dead`)
+
+kbl(fam_dead,
+    caption = "Table B5. Families with the highest proportion of dead codes (minimum 500 total records). Urticaceae (Cecropia spp.) tops the list at 34.4% — these are fast-growing pioneers with high turnover. Solanaceae, Rutaceae, and Euphorbiaceae also show high dead-code frequency, consistent with weedy or light-demanding life-history strategies.",
+    align   = c("l","r","r","r","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE)
+```
+
+### Families with Highest Buttress Frequency
+
+The `B` code (buttressed), recorded alongside `cylN`/`cylY` (measurement method), clusters strongly in certain families:
+
+```{r fam-buttress, echo=FALSE}
+fam_butt <- df_sp |>
+  dplyr::filter(!is.na(ListOfTSM), !is.na(Family)) |>
+  dplyr::mutate(
+    has_B    = grepl("\\bB\\b", ListOfTSM),
+    has_cylN = grepl("cylN",    ListOfTSM),
+    has_cylY = grepl("cylY",    ListOfTSM)
+  ) |>
+  dplyr::group_by(Family) |>
+  dplyr::summarise(
+    `N_B`    = sum(N[has_B],    na.rm = TRUE),
+    `N_cylN` = sum(N[has_cylN], na.rm = TRUE),
+    `N_cylY` = sum(N[has_cylY], na.rm = TRUE),
+    total    = sum(N,           na.rm = TRUE),
+    .groups  = "drop"
+  ) |>
+  dplyr::filter(total >= 200) |>
+  dplyr::mutate(`% B` = round(100 * N_B / total, 1)) |>
+  dplyr::arrange(dplyr::desc(`% B`)) |>
+  head(15) |>
+  dplyr::select(Family, total, N_B, N_cylN, N_cylY, `% B`)
+
+kbl(fam_butt,
+    caption = "Table B6. Families with the highest buttress-code frequency among coded stem records. Combretaceae (46%) and Malvaceae (31%) lead — Combretaceae includes Terminalia oblonga, a large-buttressed canopy tree. Strangler figs (Moraceae/Ficus) also show elevated buttress frequency. cylN = tape method used; cylY = cylinder method used.",
+    align   = c("l","r","r","r","r","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, bold = TRUE) |>
+  column_spec(6, bold = TRUE)
+```
+
+## Key Species to Flag in Analyses
+
+### Species with High Broken-Below Frequency
+
+These species carry breakage codes at unusually high frequency. For growth analyses, broken stems are lost from the DBH time-series — excluding these species or accounting for their broken-below events is important.
+
+```{r sp-broken, echo=FALSE}
+sp_broken <- df_sp |>
+  dplyr::filter(!is.na(Status)) |>
+  dplyr::group_by(Species, Family, `Growth form` = growth_form) |>
+  dplyr::summarise(
+    alive   = sum(N[Status == "alive"],        na.rm = TRUE),
+    broken  = sum(N[Status == "broken below"], na.rm = TRUE),
+    dead    = sum(N[Status == "dead"],         na.rm = TRUE),
+    total   = sum(N,                           na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::filter(total >= 1000) |>
+  dplyr::mutate(`% broken` = round(100 * broken / total, 1)) |>
+  dplyr::arrange(dplyr::desc(`% broken`)) |>
+  head(15) |>
+  dplyr::select(Species, Family, `Growth form`, total, broken, `% broken`)
+
+kbl(sp_broken,
+    caption = "Table B7. Top 15 species by broken-below frequency (minimum 1,000 total records). Ocotea cernua (Lauraceae) leads at 25.7%, followed by Cupania rufescens and Ormosia macrocalyx. Lauraceae species dominate this list — their wood properties and stem architecture make them particularly prone to breakage at breast height.",
+    align   = c("l","l","l","r","r","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, italic = TRUE, width = "14em") |>
+  column_spec(2, width = "10em")
+```
+
+### Species with High Proportion of Dead Codes
+
+These are predominantly pioneer or light-demanding species. Their high proportion of dead codes requires attention when computing survival or growth: including them in shade-tolerant species analyses, or pooling them with slow-growing species, will inflate apparent mortality.
+
+```{r sp-dead, echo=FALSE}
+sp_dead <- df_sp |>
+  dplyr::filter(!is.na(Status)) |>
+  dplyr::group_by(Species, Family, `Growth form` = growth_form) |>
+  dplyr::summarise(
+    alive   = sum(N[Status == "alive"],        na.rm = TRUE),
+    broken  = sum(N[Status == "broken below"], na.rm = TRUE),
+    dead    = sum(N[Status == "dead"],         na.rm = TRUE),
+    total   = sum(N,                           na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::filter(total >= 1000) |>
+  dplyr::mutate(`% dead` = round(100 * dead / total, 1)) |>
+  dplyr::arrange(dplyr::desc(`% dead`)) |>
+  head(15) |>
+  dplyr::select(Species, Family, `Growth form`, total, dead, `% dead`)
+
+kbl(sp_dead,
+    caption = "Table B8. Top 15 species by proportion of dead codes (minimum 1,000 total records). Hampea appendiculata and Palicourea guianensis exceed 40% dead records — reflecting very high turnover in canopy gaps and the understory. Croton billbergianus, Miconia argentea, and the Cecropia species are classic pioneers.",
+    align   = c("l","l","l","r","r","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, italic = TRUE, width = "14em") |>
+  column_spec(2, width = "10em")
+```
+
+### Species with High Stem-Dead Frequency
+
+Stem-dead codes (`N`, `S`, `T`, `C`, `Ns`, `Ss`, `Ts`, `Cs`) indicate that individual stems within a multi-stemmed individual have died. High frequency of these codes flags species where stem-level analyses can diverge substantially from tree-level analyses.
+
+```{r sp-stemdc, echo=FALSE}
+sp_sd <- df_sp |>
+  dplyr::filter(!is.na(Status)) |>
+  dplyr::group_by(Species, Family, `Growth form` = growth_form) |>
+  dplyr::summarise(
+    alive   = sum(N[Status == "alive"],        na.rm = TRUE),
+    broken  = sum(N[Status == "broken below"], na.rm = TRUE),
+    dead    = sum(N[Status == "dead"],         na.rm = TRUE),
+    stemdc  = sum(N[Status == "stem dead"],    na.rm = TRUE),
+    total   = sum(N,                           na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::filter(total >= 500) |>
+  dplyr::mutate(`% stem dead` = round(100 * stemdc / total, 1)) |>
+  dplyr::arrange(dplyr::desc(`% stem dead`)) |>
+  head(15) |>
+  dplyr::select(Species, Family, `Growth form`, total, stemdc, `% stem dead`)
+
+kbl(sp_sd,
+    caption = "Table B9. Top 15 species by stem-dead frequency (minimum 500 total records). Cespedesia spathulata (Ochnaceae) and Psychotria limonensis (Rubiaceae) top the list. The palms Bactris major and Oenocarpus mapora are notable — they are clonal and regularly lose individual ramets while the genet survives. For these species, stem-level vs. tree-level status diverges substantially.",
+    align   = c("l","l","l","r","r","r"),
+    booktabs = TRUE,
+    format.args = list(big.mark = ",")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, italic = TRUE, width = "14em") |>
+  column_spec(2, width = "10em")
+```
+
+## Analytical Recommendations
+
+Based on the growth-form and taxonomic patterns above, the following considerations apply when filtering or modelling BCI stem census data:
+
+1. **Lauraceae breakage bias**: Species such as *Ocotea cernua* (25.7% broken), *Cupania rufescens* (Sapindaceae, 24.8%), and *Nectandra* / *Ocotea* spp. generally have broken-below proportions 3–5× the dataset mean. Growth analysis using consecutive alive DBH measurements will underestimate true stem turnover if these species are excluded without accounting for broken stems.
+
+2. **Pioneer mortality pulse**: *Palicourea guianensis* (42% dead), *Hampea appendiculata* (43%), *Cecropia* spp. (35–40%), *Croton billbergianus* (38%), and *Miconia argentea* (37%) are pioneer species with inherently high turnover. In multi-census survival analyses, their mortality records should be treated as ecologically expected, not as data errors.
+
+3. **Palm stem-dead codes**: *Oenocarpus mapora* and *Bactris major* accumulate `Ns`/`Ss` codes because clonal palm genets lose ramets regularly. For palms, tree-level status (`status = "A"`) and stem-level status can diverge; always use the tree-level table for palm survival analyses.
+
+4. **Strangler figs and buttresses**: *Ficus* strangler species have 43% buttress frequency in coded records (`B;cylN` or `B;cylY`). Buttress codes mean the measurement height (HOM) was raised above the standard 1.3 m — this must be accounted for in taper corrections and in comparisons across censuses.
+
+5. **Euphorbiaceae and Melastomataceae**: Both families have dead-code proportions (~18–22%) well above the 12% dataset average, driven by species with high light requirements (*Acalypha* spp., *Miconia* spp.). Flag these families when examining mortality in light-gradient studies.
+
+---
+
+# Summary Reference Table
+
+```{r summary-table, echo=FALSE}
+summary_tbl <- tibble::tribble(
+  ~`Code(s)`,                             ~Category,               ~`Drives DFstatus`,  ~`Vitality indicator?`,
+  "D, DB, DF, DH, DT, DU",               "Primary death",         "dead",               "Yes — dead",
+  "MC, MT",                               "Mortality cause",        "dead",               "Yes — dead",
+  "N, S, T, C (WITH D)",                  "Death + stem status",   "dead",               "Yes — dead",
+  "N, S, T, C (WITHOUT D)",               "Stem-dead only",        "stem dead",          "Partial — stem dead, tree may live",
+  "Ns, Ss, Ts, Cs",                       "Stem-dead + sprouting", "stem dead",          "Partial — resprouting",
+  "R, RP, RF, RT, OR",                    "Breakage",              "broken below",       "Partial — tree may resprout",
+  "MF",                                   "Missing from field",    "missing / dead",     "Uncertain",
+  "B, Q, L, M, A, P, F, G, H, I, V, X",  "Morphology",            "(none alone)",       "No — physical description only",
+  "LB, LT, LN, LV, LH, LK",              "Composite: leaning",    "(none alone)",       "No",
+  "IB, IO, IT, IH",                       "Composite: irregular",  "(none alone)",       "No",
+  "PB, PN, PT, PV, PK",                  "Composite: POM changed","(none alone)",       "No",
+  "cylN, cylY",                           "Measurement method",    "(none alone)",       "No",
+  "Re, Nt, Pr, Su, Mi, Z, E, Y, 2",      "Admin / quality",       "(none alone)",       "No",
+)
+
+kbl(summary_tbl,
+    caption = "Table 13. Master summary of all code categories, their DFstatus association, and whether they carry vitality information.",
+    align   = c("l","l","l","l"),
+    booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                latex_options     = c("striped","hold_position","scale_down"),
+                full_width        = FALSE) |>
+  column_spec(1, monospace = TRUE, width = "18em") |>
+  column_spec(3, italic = TRUE) |>
+  column_spec(4, width = "15em")
+```
+
+---
+
+# References and Further Reading
+
+- Condit, R. (1998). *Tropical Forest Census Plots: Methods and Results from Barro Colorado Island, Panama and a Comparison with Other Plots*. Springer / R.G. Landes Company.
+- Condit, R., Lao, S., Pérez, R., Dolins, S. B., Foster, R., & Hubbell, S. (2012). *Barro Colorado Forest Census Plot Data* (Version 2012). Center for Tropical Forest Science Databases.
+- ForestGEO. (2020). *Tips and FAQs for CTFSWEB Data Entry* (updated November 5, 2020). Smithsonian Institution, ForestGEO.
+- `fgeo` R package documentation: <https://forestgeo.github.io/fgeo/>
+- ForestGEO protocols: <https://forestgeo.si.edu/protocols/forest-census>
+- CTFS R Package output description: <http://ctfs.si.edu/Public/CTFSRPackage/files/help/RoutputFull.pdf>
+
+---
+
+*Document generated using Quarto. Data source: Dryad ForestGEO stem census codes dataset.*
