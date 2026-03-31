@@ -228,3 +228,6 @@ if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
 # ----------------------------------------------------------------
 writeLines(as.character(Sys.time()), file.path(out_dir, "run_finished.txt"))
 message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
+
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115427
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=119453
