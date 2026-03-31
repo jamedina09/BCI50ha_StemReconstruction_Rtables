@@ -169,7 +169,17 @@ for (sp in tag_sp) {
 #    species, so attach_bio_columns would fail on other species.
 # ----------------------------------------------------------------
 xrun_tag <- xrun[species %in% tag_sp]
+
 xrun_tag <- attach_bio_columns(xrun_tag, bio_pars)
+
+xrun_tag[
+    species %in% c("all_palm_tree_fern"),
+    `:=`(
+        Bio_Mu_Growth = 0,
+        Bio_Gamma_Growth = 0
+    )
+]
+
 dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) {
     auto_dp_max_tracks(xrun_tag)
 } else {
@@ -188,6 +198,7 @@ out <- xrun_tag[Tag == WHICH_TAG,
     run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local),
     by = .(Tag, species)
 ]
+
 out <- maybe_add_posterior_bins(out)
 if (!is.null(out)) {
     out[, run_out_dir := basename(out_dir)]
@@ -231,3 +242,5 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115427
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=119453
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
+

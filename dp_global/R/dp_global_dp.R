@@ -472,6 +472,29 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # restrict tree_data to pre-anchor censuses for DP computation
         tree_data <- original_tree_data[CensusID <= anchor_start]
 
+        # If the nominal anchor census has no living stems (e.g. all rows have NA DBH due to a
+        # resprout/die event), look forward for the first post-anchor census that has living stems.
+        # Prefer the first such census that also carries known TrueStemIDs (giving the DP a real
+        # anchor to work from).  Without this, tree_data is scoped to a dead census and the
+        # downstream anchor-id check always fails → igraph fallback.
+        .nominal_anchor_live <- original_tree_data[CensusID == anchor_start & !is.na(DBH)]
+        if (nrow(.nominal_anchor_live) == 0L) {
+            .post_live <- original_tree_data[CensusID > anchor_start & !is.na(DBH)]
+            if (nrow(.post_live) > 0L) {
+                # First post-anchor census with TrueStemID (preferred), else first with any DBH
+                .post_with_id <- .post_live[!is.na(TrueStemID)]
+                .extended_anchor <- if (nrow(.post_with_id) > 0L) {
+                    as.integer(min(.post_with_id$CensusID))
+                } else {
+                    as.integer(min(.post_live$CensusID))
+                }
+                vcat(prefix, "Nominal anchor C", anchor_start, " has no living stems; extending DP scope to C",
+                     .extended_anchor, " (first post-anchor census with living stems)")
+                anchor_start <- .extended_anchor
+                tree_data    <- original_tree_data[CensusID <= anchor_start]
+            }
+        }
+
         # If scoping removes all observations (e.g., all observations are after the requested
         # anchor), return a one-row placeholder so the Tag is represented in outputs.
         if (nrow(tree_data) == 0L) {
@@ -1216,6 +1239,46 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     fe_from    <- fe_from[.keep_m]
                     fe_to      <- fe_to[.keep_m]
                     fe_phase   <- fe_phase[.keep_m, , drop = FALSE]
+                    n_feasible <- length(fe_from)
+                }
+            }
+        }
+
+        # -----------------------------------------------------------------------
+        # R-recruit constraint
+        # An observation with a resprout code (R/RP/RF/RT/QR) AND non-NA DBH at
+        # census p+1 is a NEW organism going backward in time — the track it
+        # occupies at p+1 MUST BE EMPTY at p (it cannot be a continuation of any
+        # stem at p).  This prevents connecting pre-resprout stems to post-resprout
+        # boles when the field team recorded DBH > 0 even on the resprout row
+        # (rather than leaving it NA).
+        # Skipped when census p has 0 observations (all tracks already empty).
+        # -----------------------------------------------------------------------
+        if (n_feasible > 0L) {
+            .r_pos_p1 <- which(is_resprout_obs[[p + 1L]])  # R-coded LIVING obs at p+1
+            .n_obs_p  <- length(obs_dbh[[p]])
+            if (length(.r_pos_p1) > 0L && .n_obs_p > 0L) {
+                # For each feasible pair: R-coded obs at p+1 must map to a track
+                # that was EMPTY at p (does not appear in the assignment at p).
+                .r_tracks <- next_assign_mat[fe_to, .r_pos_p1, drop = FALSE]  # n_feasible × n_r
+                .p_assign <- state_mats[[p]][fe_from, , drop = FALSE]           # n_feasible × n_obs_p
+                .keep_r   <- rep(TRUE, n_feasible)
+                for (.rj in seq_len(ncol(.r_tracks))) {
+                    .rt <- .r_tracks[, .rj]  # track occupied by R obs .rj at p+1, per pair
+                    # pair k fails iff .rt[k] appears anywhere in .p_assign[k, ]
+                    .occupied <- matrix(FALSE, nrow = n_feasible, ncol = .n_obs_p)
+                    for (.pc in seq_len(.n_obs_p)) {
+                        .occupied[, .pc] <- .rt == .p_assign[, .pc]
+                    }
+                    .keep_r <- .keep_r & (rowSums(.occupied) == 0L)
+                }
+                if (any(!.keep_r)) {
+                    .n_r_pruned <- sum(!.keep_r)
+                    vcat(prefix, "  R-recruit: pruned ", .n_r_pruned, " of ", n_feasible,
+                         " transitions (R-coded stem must be new recruit, not continuation) at census ", next_cc)
+                    fe_from    <- fe_from[.keep_r]
+                    fe_to      <- fe_to[.keep_r]
+                    fe_phase   <- fe_phase[.keep_r, , drop = FALSE]
                     n_feasible <- length(fe_from)
                 }
             }
