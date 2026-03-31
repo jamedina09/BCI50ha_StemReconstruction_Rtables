@@ -1403,6 +1403,135 @@ dt_complete_extra <- rbindlist(list(
     tag_88
 ), use.names = TRUE, fill = TRUE)
 
+############################################################
+### M-CODE TEST TAGS
+### Three tags designed to test the M-coded main-stem constraint.
+### OriginalStemID is provided for post-hoc validation ONLY —
+### the DP algorithm must not use it.
+############################################################
+
+# tag_M1 (tag 901):
+# 1 stem at C1-C2, branches to 2 stems at C3.
+# M on stem_M (5.2 cm) — nearly same size as stem_X (5.1 cm).
+# Without M: both assignments are growth-feasible; ambiguous.
+# With M: stem_M must trace back to the single C1/C2 stem.
+# TrueStemID at anchor C7: stem_M = 9011, stem_X = 9012.
+#
+#    Tag CensusID  ExactDate  DBH OriginalStemID TrueStemID ListOfTSM
+#  1: 901        1 1982-01-01  5.0          9011         NA      <NA>
+#  2: 901        2 1987-01-01  5.1          9011         NA      <NA>
+#  3: 901        3 1992-01-01  5.2          9011         NA         M   <- branching + M
+#  4: 901        3 1992-01-01  5.1          9012         NA      <NA>   <- new branch (no M)
+#  5: 901        4 1997-01-01  5.3          9011         NA      <NA>
+#  6: 901        4 1997-01-01  5.2          9012         NA      <NA>
+#  7: 901        5 2002-01-01  5.5          9011         NA      <NA>
+#  8: 901        5 2002-01-01  5.4          9012         NA      <NA>
+#  9: 901        6 2007-01-01  5.7          9011         NA      <NA>
+# 10: 901        6 2007-01-01  5.6          9012         NA      <NA>
+# 11: 901        7 2012-01-01  5.9          9011       9011      <NA>   <- anchor
+# 12: 901        7 2012-01-01  5.8          9012       9012      <NA>   <- anchor
+tag_M1 <- data.table(
+    Species        = "sp1",
+    Tag            = 901L,
+    OriginalStemID = c(9011L, 9011L, 9011L, 9012L, 9011L, 9012L, 9011L, 9012L, 9011L, 9012L, 9011L, 9012L),
+    TrueStemID     = c(NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 9011L, 9012L),
+    CensusID       = c(1L, 2L, 3L, 3L, 4L, 4L, 5L, 5L, 6L, 6L, 7L, 7L),
+    ExactDate      = as.Date(c(
+        "1982-01-01", "1987-01-01",
+        "1992-01-01", "1992-01-01",
+        "1997-01-01", "1997-01-01",
+        "2002-01-01", "2002-01-01",
+        "2007-01-01", "2007-01-01",
+        "2012-01-01", "2012-01-01"
+    )),
+    DBH            = c(5.0, 5.1, 5.2, 5.1, 5.3, 5.2, 5.5, 5.4, 5.7, 5.6, 5.9, 5.8),
+    ListOfTSM      = c(NA_character_, NA_character_,
+                       "M", NA_character_,          # C3 branching: M on bole
+                       NA_character_, NA_character_,
+                       NA_character_, NA_character_,
+                       NA_character_, NA_character_,
+                       NA_character_, NA_character_)
+)
+
+# tag_M2 (tag 902):
+# Same structure as tag_M1 but M appears at EVERY census from C3 onwards
+# (legacy M annotation after branching, stable stem count).
+# Only C3 is a branching event. C4-C6 stable-count M must NOT constrain.
+# Expected output: identical TrueStemID assignment to tag_M1.
+tag_M2 <- data.table(
+    Species        = "sp1",
+    Tag            = 902L,
+    OriginalStemID = c(9021L, 9021L, 9021L, 9022L, 9021L, 9022L, 9021L, 9022L, 9021L, 9022L, 9021L, 9022L),
+    TrueStemID     = c(NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 9021L, 9022L),
+    CensusID       = c(1L, 2L, 3L, 3L, 4L, 4L, 5L, 5L, 6L, 6L, 7L, 7L),
+    ExactDate      = as.Date(c(
+        "1982-01-01", "1987-01-01",
+        "1992-01-01", "1992-01-01",
+        "1997-01-01", "1997-01-01",
+        "2002-01-01", "2002-01-01",
+        "2007-01-01", "2007-01-01",
+        "2012-01-01", "2012-01-01"
+    )),
+    DBH            = c(5.0, 5.1, 5.2, 5.1, 5.3, 5.2, 5.5, 5.4, 5.7, 5.6, 5.9, 5.8),
+    ListOfTSM      = c(NA_character_, NA_character_,
+                       "M", NA_character_,           # C3 branching: M on bole
+                       "M", NA_character_,           # C4 stable: legacy M (must not constrain)
+                       "M", NA_character_,           # C5 stable: legacy M
+                       "M", NA_character_,           # C6 stable: legacy M
+                       NA_character_, NA_character_)
+)
+
+# tag_M3 (tag 903):
+# M is on the SMALLER stem at branching (reverse of "pick largest" heuristic).
+# stem_M = 2.0 cm (M-coded bole), stem_X = 8.0 cm (no M, larger stem).
+# Without M: DBH-based cost would likely mis-assign the large stem as the
+# continuation of the C1/C2 single stem (5 cm). With M: stem_M is pinned as
+# the continuing bole despite being smaller.
+# TrueStemID at anchor C7: stem_M = 9031, stem_X = 9032.
+#
+#    Tag CensusID  ExactDate  DBH OriginalStemID TrueStemID ListOfTSM
+#  1: 903        1 1982-01-01  5.0          9031         NA      <NA>
+#  2: 903        2 1987-01-01  4.8          9031         NA      <NA>
+#  3: 903        3 1992-01-01  2.0          9031         NA         M   <- branching + M (smaller bole)
+#  4: 903        3 1992-01-01  8.0          9032         NA      <NA>   <- new branch (larger, no M)
+#  5: 903        4 1997-01-01  2.2          9031         NA      <NA>
+#  6: 903        4 1997-01-01  8.5          9032         NA      <NA>
+#  7: 903        5 2002-01-01  2.5          9031         NA      <NA>
+#  8: 903        5 2002-01-01  9.0          9032         NA      <NA>
+#  9: 903        6 2007-01-01  2.8          9031         NA      <NA>
+# 10: 903        6 2007-01-01  9.5          9032         NA      <NA>
+# 11: 903        7 2012-01-01  3.1          9031       9031      <NA>   <- anchor
+# 12: 903        7 2012-01-01 10.0          9032       9032      <NA>   <- anchor
+tag_M3 <- data.table(
+    Species        = "sp1",
+    Tag            = 903L,
+    OriginalStemID = c(9031L, 9031L, 9031L, 9032L, 9031L, 9032L, 9031L, 9032L, 9031L, 9032L, 9031L, 9032L),
+    TrueStemID     = c(NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 9031L, 9032L),
+    CensusID       = c(1L, 2L, 3L, 3L, 4L, 4L, 5L, 5L, 6L, 6L, 7L, 7L),
+    ExactDate      = as.Date(c(
+        "1982-01-01", "1987-01-01",
+        "1992-01-01", "1992-01-01",
+        "1997-01-01", "1997-01-01",
+        "2002-01-01", "2002-01-01",
+        "2007-01-01", "2007-01-01",
+        "2012-01-01", "2012-01-01"
+    )),
+    DBH            = c(5.0, 4.8, 2.0, 8.0, 2.2, 8.5, 2.5, 9.0, 2.8, 9.5, 3.1, 10.0),
+    ListOfTSM      = c(NA_character_, NA_character_,
+                       "M", NA_character_,          # C3 branching: M on smaller bole
+                       NA_character_, NA_character_,
+                       NA_character_, NA_character_,
+                       NA_character_, NA_character_,
+                       NA_character_, NA_character_)
+)
+
+dt_complete_extra <- rbindlist(list(
+    dt_complete_extra,
+    tag_M1,
+    tag_M2,
+    tag_M3
+), use.names = TRUE, fill = TRUE)
+
 # Include additional information about growth forms, trees, vs figs
 growth_forms <- data.table(
     Species = c("sp1", "sp2", "sp3"),
