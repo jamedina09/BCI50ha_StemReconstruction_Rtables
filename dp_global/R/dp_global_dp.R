@@ -231,7 +231,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if ("ListOfTSM" %in% names(tree_data)) {
         is_mf_anchor <- is.na(tree_data$DBH) &
             !is.na(tree_data$ListOfTSM) &
-            grepl("\\bMF\\b", tree_data$ListOfTSM)
+            grepl("\\bMF\\b", tree_data$ListOfTSM, perl = TRUE)
 
         if (any(is_mf_anchor)) {
             episode_idx <- which(is_mf_anchor)
@@ -264,6 +264,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     #   1. ALL rows at that census have is.na(DBH)
     #   2. There exists at least one earlier census with non-NA DBH
     #   3. There exists at least one later census with non-NA DBH
+    #   4. NO rows at that census carry a resprout/death code (R, RP, RF, RT, QR)
+    #      — those censuses mark a genuine biological event, not a measurement gap
+    resprout_regex_mf <- "\\b(R|RP|RF|RT|QR)\\b"
     all_censuses_sorted <- sort(unique(tree_data$CensusID))
     censuses_with_dbh <- sort(unique(tree_data$CensusID[!is.na(tree_data$DBH)]))
 
@@ -277,7 +280,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             rows_at_cc <- which(tree_data$CensusID == cc)
             if (length(rows_at_cc) == 0L) next
             if (all(is.na(tree_data$DBH[rows_at_cc]))) {
-                # Sandwiched all-NA census → implicit MF
+                # Skip if any row has a resprout/death code — that is a real event,
+                # not a measurement gap, and must not be stashed as MF
+                has_resprout_code <- "ListOfTSM" %in% names(tree_data) &&
+                    any(!is.na(tree_data$ListOfTSM[rows_at_cc]) &
+                        grepl(resprout_regex_mf, tree_data$ListOfTSM[rows_at_cc], perl = TRUE))
+                if (has_resprout_code) next
+                # Sandwiched all-NA census with no resprout code → implicit MF
                 episode_idx <- c(episode_idx, rows_at_cc)
             }
         }
@@ -758,19 +767,29 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # state enumeration loop after K is determined, eliminating duplicate
     # [.data.table subset calls from those two loops.
     .has_tsm <- "ListOfTSM" %in% names(tree_data)
-    .obs_row_idx_pre <- vector("list", n_census)
-    .is_resprout_pre <- vector("list", n_census)
-    .is_m_pre        <- vector("list", n_census)   # TRUE where ListOfTSM contains \\bM\\b
+    .obs_row_idx_pre    <- vector("list", n_census)
+    .is_resprout_pre    <- vector("list", n_census)
+    .is_m_pre           <- vector("list", n_census)   # TRUE where ListOfTSM contains \\bM\\b
+    .has_na_r_barrier   <- logical(n_census)           # TRUE: census has 0 live stems AND NA-DBH R-coded rows
     for (.p0 in seq_len(n_census)) {
         .idx0 <- tree_data[CensusID == census_range[.p0] & !is.na(DBH), which = TRUE]
         .obs_row_idx_pre[[.p0]] <- .idx0
         if (length(.idx0) > 0L && .has_tsm) {
             .tsm0 <- tree_data$ListOfTSM[.idx0]
-            .is_resprout_pre[[.p0]] <- !is.na(.tsm0) & grepl(resprout_regex, .tsm0)
-            .is_m_pre[[.p0]]        <- !is.na(.tsm0) & grepl("\\bM\\b", .tsm0)
+            .is_resprout_pre[[.p0]] <- !is.na(.tsm0) & grepl(resprout_regex, .tsm0, perl = TRUE)
+            .is_m_pre[[.p0]]        <- !is.na(.tsm0) & grepl("\\bM\\b", .tsm0, perl = TRUE)
         } else {
             .is_resprout_pre[[.p0]] <- rep(FALSE, length(.idx0))
             .is_m_pre[[.p0]]        <- rep(FALSE, length(.idx0))
+            # Detect NA-R barriers: 0 live stems AND at least one NA-DBH R-coded row
+            # (these mark hard resprout boundaries where track identities must be split)
+            if (.has_tsm && length(.idx0) == 0L) {
+                .na_rows <- tree_data[CensusID == census_range[.p0] & is.na(DBH), which = TRUE]
+                if (length(.na_rows) > 0L) {
+                    .na_tsm <- tree_data$ListOfTSM[.na_rows]
+                    .has_na_r_barrier[.p0] <- any(!is.na(.na_tsm) & grepl(resprout_regex, .na_tsm, perl = TRUE))
+                }
+            }
         }
     }
     n_resprout_total <- sum(vapply(.is_resprout_pre, function(x) sum(x), integer(1L)))
@@ -1170,7 +1189,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             .n_obs_p  <- length(obs_dbh[[p]])
             .n_obs_p1 <- length(obs_dbh[[p + 1L]])
             .m_pos_p1 <- which(is_m_obs[[p + 1L]])  # positions of M obs in p+1 ordering
-            if (.n_obs_p1 > .n_obs_p && length(.m_pos_p1) > 0L) {
+            # M-pin only applies when stem count increases AND there are stems at
+            # the previous census to continue from.  When .n_obs_p == 0 (all stems
+            # died / resprout boundary), the M stem at p+1 is necessarily a new
+            # recruit going backward — do not constrain it.
+            if (.n_obs_p > 0L && .n_obs_p1 > .n_obs_p && length(.m_pos_p1) > 0L) {
                 # For each feasible pair: M-coded obs at p+1 must map to a track
                 # that was occupied at p (i.e., not born as a new recruit backward).
                 # next_assign_mat rows are in the same order as next_keys (fe_to indexes it).
@@ -1447,6 +1470,61 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         obs_to_mark <- obs_idx[is.na(tree_data$TrueStemID[obs_idx])]
         if (length(obs_to_mark) > 0L) {
             tree_data[obs_to_mark, ReconstructionMethod := "dp"]
+        }
+    }
+
+    # -----------------------------------------------------------------
+    # NA-R barrier post-processing
+    # When a census has 0 live stems AND NA-DBH R-coded rows, it is a
+    # hard resprout boundary: stems before the barrier cannot share the
+    # same track identity as stems after it.  Re-assign pre-barrier
+    # stems to new synthetic IDs, and assign the NA-R rows themselves
+    # (the dying original stem) to those same pre-barrier IDs.
+    # -----------------------------------------------------------------
+    barrier_positions <- which(.has_na_r_barrier & seq_len(n_census) < anchor_pos)
+    if (length(barrier_positions) > 0L) {
+        .cur_max_id <- suppressWarnings(max(tree_data$ReconstructedStemID, na.rm = TRUE))
+        if (!is.finite(.cur_max_id)) .cur_max_id <- 0L
+        for (.p_bar in barrier_positions) {
+            .cc_bar       <- census_range[.p_bar]
+            .cens_before  <- census_range[seq_len(.p_bar - 1L)]
+            if (length(.cens_before) == 0L) next   # barrier at earliest census, nothing to do
+            .ids_before <- unique(tree_data[CensusID %in% .cens_before & !is.na(ReconstructedStemID), ReconstructedStemID])
+            .ids_after  <- unique(tree_data[CensusID >  .cc_bar        & !is.na(ReconstructedStemID), ReconstructedStemID])
+            .crossing   <- intersect(.ids_before, .ids_after)
+            if (length(.crossing) > 0L) {
+                vcat(prefix, "NA-R barrier at census ", .cc_bar, ": splitting ", length(.crossing),
+                     " track(s) that cross the barrier into new synthetic IDs")
+                for (.old_id in .crossing) {
+                    .new_id <- as.integer(.cur_max_id) + 1L
+                    .cur_max_id <- .new_id
+                    tree_data[CensusID %in% .cens_before & ReconstructedStemID == .old_id,
+                              ReconstructedStemID := .new_id]
+                    tree_data[CensusID %in% .cens_before & ReconstructedStemID == .new_id &
+                              is.na(TrueStemID), ReconstructionMethod := "dp"]
+                }
+            }
+            # Assign NA-R rows at the barrier census itself to the (now re-IDed)
+            # pre-barrier identities — they represent the original stem dying.
+            if (.has_tsm) {
+                .barrier_na_r_rows <- tree_data[
+                    CensusID == .cc_bar & is.na(DBH) & !is.na(ListOfTSM) &
+                    grepl(resprout_regex, ListOfTSM, perl = TRUE), which = TRUE
+                ]
+                .prev_cc  <- census_range[.p_bar - 1L]
+                .prev_ids <- tree_data[CensusID == .prev_cc & !is.na(ReconstructedStemID),
+                                       ReconstructedStemID]
+                if (length(.barrier_na_r_rows) > 0L && length(.prev_ids) > 0L) {
+                    for (.ri in seq_along(.barrier_na_r_rows)) {
+                        .pid <- if (.ri <= length(.prev_ids)) .prev_ids[.ri] else .prev_ids[length(.prev_ids)]
+                        tree_data[.barrier_na_r_rows[.ri], ReconstructedStemID := .pid]
+                    }
+                    tree_data[.barrier_na_r_rows[is.na(tree_data$TrueStemID[.barrier_na_r_rows])],
+                              ReconstructionMethod := "dp"]
+                    vcat(prefix, "NA-R barrier at census ", .cc_bar, ": assigned ",
+                         length(.barrier_na_r_rows), " NA-R dying-stem row(s) to pre-barrier IDs")
+                }
+            }
         }
     }
 
