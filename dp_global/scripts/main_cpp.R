@@ -1168,8 +1168,6 @@ if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
     message("[dp_global main_cpp.R] Skipping bio_pars report: 'res$bio_pars' not available (chunked run or earlier error).")
 }
 
-# Rscript dp_global/scripts/main_cpp.R --POSTERIOR_SAMPLES=10 --POSTERIOR_SAMPLES_FORMAT=csv --POSTERIOR_SAMPLE_SEED=123 --RUN_REALISM_REPORT=TRUE --SENSITIVITY_MODE=run+write+pdf --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=1 --WRITE_DP_PDF=TRUE --WHICH_TAG=2747 --RUN_ALL_TAGS=FALSE --DP_FALLBACK_GROWTH_FORMS="fig"
-
 ############################################################
 ### Usage guide
 ############################################################
