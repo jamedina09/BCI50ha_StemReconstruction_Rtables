@@ -264,9 +264,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     #   1. ALL rows at that census have is.na(DBH)
     #   2. There exists at least one earlier census with non-NA DBH
     #   3. There exists at least one later census with non-NA DBH
-    #   4. NO rows at that census carry a resprout/death code (R, RP, RF, RT, QR)
+    #   4. NO rows at that census carry a resprout/breakage code (R, RP, RF, RT, QR, OR)
     #      — those censuses mark a genuine biological event, not a measurement gap
-    resprout_regex_mf <- "\\b(R|RP|RF|RT|QR)\\b"
+    resprout_regex_mf <- "\\b(R|RP|RF|RT|QR|OR)\\b"
     all_censuses_sorted <- sort(unique(tree_data$CensusID))
     censuses_with_dbh <- sort(unique(tree_data$CensusID[!is.na(tree_data$DBH)]))
 
@@ -781,10 +781,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     K_base <- max(length(anchor_ids), max_obs, K_from_counts)
 
     # ---- Resprout barrier: increase K for resprout observations ----
-    # Each resprout (R|RP|RF|RT|QR code with non-NA DBH) forces the track into
+    # Each resprout (R|RP|RF|RT|QR|OR code with non-NA DBH) forces the track into
     # phase 0 at the preceding census, effectively creating a new identity that
     # needs its own track slot.  Add one extra track per resprout observation.
-    resprout_regex <- "\\b(R|RP|RF|RT|QR)\\b"
+    resprout_regex <- "\\b(R|RP|RF|RT|QR|OR)\\b"
     # Pre-compute per-census row indices and resprout flags ONCE here.
     # This single pass is reused in both the resprout count below and the
     # state enumeration loop after K is determined, eliminating duplicate

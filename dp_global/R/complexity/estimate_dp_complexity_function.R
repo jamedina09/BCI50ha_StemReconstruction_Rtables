@@ -527,7 +527,7 @@ estimate_dp_complexity <- function(data,
         ]
 
         # 7f. Resprouts (one grep pass on full data, then aggregate per tag)
-        resprout_regex <- "\\b(R|RP|RF|RT|QR)\\b"
+        resprout_regex <- "\\b(R|RP|RF|RT|QR|OR)\\b"
         if ("ListOfTSM" %in% names(data)) {
             resp_sum <- data[
                 !is.na(DBH) & !is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE),
@@ -721,7 +721,7 @@ estimate_dp_complexity <- function(data,
     setkey(data, Tag, CensusID)
     obs_summary_pre <- data[!is.na(DBH), .N, by = .(Tag, CensusID)]
     setkey(obs_summary_pre, Tag, CensusID)
-    resprout_regex_pre <- "\\b(R|RP|RF|RT|QR)\\b"
+    resprout_regex_pre <- "\\b(R|RP|RF|RT|QR|OR)\\b"
     if ("ListOfTSM" %in% names(data)) {
         resprout_summary_pre <- data[
             !is.na(DBH) & !is.na(ListOfTSM) & grepl(resprout_regex_pre, ListOfTSM, perl = TRUE),
