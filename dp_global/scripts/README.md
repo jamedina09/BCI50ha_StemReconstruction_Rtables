@@ -67,11 +67,32 @@ DP / reconstruction option
   semicolon-separated list of values in the `growth_form` column that should
   trigger an immediate igraph fallback and prevent the DP solver from running
   on that tag. The driver automatically splits the string into a vector.
-- `PALM_PRUNE_MIN_GROWTH` — default: `-0.5` cm/year (`main_cpp.R` and `main_cpp_chunk.R` only); lower growth
-  bound used during pruning specifically for palm entries (where `growth_form == "palm"`). Set to `NULL` to disable
-  palm-specific pruning and use the general bounds instead.
-- `PALM_PRUNE_MAX_GROWTH` — default: `0.5` cm/year (`main_cpp.R` and `main_cpp_chunk.R` only); upper growth
-  bound for palm entries during pruning. Set to `NULL` to disable.
+- `NON_TAPER_CORRECTED_GROWTH_FORMS` — default: `c("palm", "strangler_fig", "tree_fern")`;
+  growth forms whose DBH is NOT taper-corrected. These forms exhibit both real
+  biological DBH growth (palms: 1–3 cm/yr; strangler figs: variable as they
+  encircle hosts) and apparent DBH shifts when the measurement height (HOM)
+  changes between censuses. Because their trunk geometry does not allow taper
+  correction, any HOM change produces an uncompensated apparent DBH change.
+  The DP solver replaces the general pruning bounds with wide base bounds
+  (see below) and optionally applies HOM-proportional widening on top.
+- `NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH` — default: `-0.625` cm/year
+  (`1.25 × MAX_SHRINK_FIXED`); lower annual growth bound used during pruning
+  for non-taper-corrected growth forms. Replaces the general effective pruning
+  minimum when the tag's `growth_form` matches `NON_TAPER_CORRECTED_GROWTH_FORMS`.
+  Note: in the default driver configuration the general `prune_min_growth` is
+  also `1.25 × MAX_SHRINK_FIXED`, so this override is only active when
+  `prune_use_bio_bounds = TRUE` or narrower general bounds are set.
+- `NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH` — default: `6.25` cm/year
+  (`1.25 × MAX_GROWTH_FIXED`); upper annual growth bound for non-taper-corrected
+  growth forms during pruning. Same interplay with the general bounds as above.
+- `HOM_TOLERANCE_SCALE` — default: `2.0` (cm/year per meter of HOM deviation);
+  when a non-taper-corrected tag has a `hom` (or `HOM`) column in its data,
+  the prune bounds are widened for each census pair by
+  `hom_tolerance_scale × max(|HOM − 1.3|) / interval_years`.
+  This is where the effective differentiation between regular trees and
+  non-taper-corrected forms occurs in the default configuration. NA HOM values
+  are treated as 1.3 (zero contribution). Set to `0` to disable
+  HOM widening while keeping the wide base bounds.
 
 **Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was used by the DP are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows without DP assignments receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and observed `TrueStemID` values are treated as `given` while other rows are labeled `none_after_anchor`.
 
