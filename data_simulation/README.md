@@ -171,6 +171,16 @@ events = list(
 - `anchor_start_census`: Censuses from this point have trusted IDs (7)
 - Earlier censuses have `TrueStemID = NA`
 
+### M-Code Test Tags (901–903)
+
+Three additional tags (901, 902, 903) are appended to the simulated dataset to validate the M-coded main-stem constraint in the DP solver:
+
+- **Tag 901**: 1 stem at C1–C2, branches to 2 stems at C3. Stem with M code (5.2 cm) is nearly the same size as the other stem (5.1 cm). Without M-pinning, the assignment is ambiguous; with M-pinning, the M-coded stem must trace back to the single pre-branching stem.
+- **Tag 902**: M code present only in the anchor census (legacy scenario). Tests that M codes at the anchor do not interfere with the DP solver.
+- **Tag 903**: M code applied to the smaller of two stems (2.0 cm vs 8.0 cm). Tests that M-pinning overrides growth-based preference (which would favor matching the larger stem).
+
+All three tags include a `ListOfTSM` column carrying the `M` code. The `OriginalStemID` column provides ground truth for validation but is not used by the DP algorithm.
+
 Note: The DP workflow includes an option to use a provisional anchor when the requested anchor census lacks `TrueStemID` but has DBH observations. This behavior is controlled by `allow_provisional_anchor` in the DP API (and `ALLOW_PROVISIONAL_DP_ANCHOR` at the CLI level) and defaults to `TRUE`. When enabled, the DP can assign provisional anchor IDs at the last observed DBH census and proceed with reconstruction; those provisional anchors are annotated with `ReconstructionMethod = "provisional_dp"` in outputs.
 
 ### Visualization
@@ -268,12 +278,11 @@ This simulated data is designed for:
 ```
 data_simulation/
 ├── simulate_data.R          # Main simulation script (organized in sections)
-├── README.md               # This documentation
-├── data/                   # Output directory
-│   ├── simulated_data_1.csv                    # Main dataset
-│   ├── simulated_data_1.pdf                    # Species-level trajectory plots
-│   └── simulated_data_tag_level_trajectories_1.pdf  # Tag-level trajectory plots
-└── [other files]
+├── README.md                # This documentation
+└── data/                    # Output directory
+    ├── simulated_data_1.csv                    # Main dataset
+    ├── simulated_data_1.pdf                    # Species-level trajectory plots (not tracked by git)
+    └── simulated_data_tag_level_trajectories_1.pdf  # Tag-level trajectory plots (not tracked by git)
 ```
 
 ## Notes
@@ -286,8 +295,3 @@ data_simulation/
 - Growth scaling enables controlled disturbance experiments
 - Stem ID masking creates realistic identification challenges
 - Code is organized into clear sections for maintainability
-
-
-## Building This Documentation
-
-Use `pandoc` (if available) to render `README.md` to HTML, or use your preferred tooling.

@@ -3,8 +3,9 @@
 This document describes the current behavior of the `dp_global` driver scripts:
 - `dp_global/scripts/main_cpp.R` — the interactive/CLI driver for single-tag or targeted runs.
 - `dp_global/scripts/main_cpp_chunk.R` — the chunked driver optimized for large runs.
+- `dp_global/scripts/main_cpp_bci.R` — the BCI debug driver for single-tag runs on BCI census data.
 
-Both scripts accept command-line overrides of defaults using `--KEY=VALUE` flags. Keys are case-insensitive and may use `-` or `_` as separators.
+Both `main_cpp.R` and `main_cpp_chunk.R` accept command-line overrides of defaults using `--KEY=VALUE` flags. Keys are case-insensitive and may use `-` or `_` as separators. `main_cpp_bci.R` inherits the same CLI interface from `main_cpp.R`.
 
 ---
 
@@ -190,6 +191,42 @@ Runner integration
 
 - `main_cpp.R` and `main_cpp_chunk.R` are the primary entrypoints and are designed to be invoked directly with `Rscript`. External orchestrators can build CLI flags using the canonical names in `CLI_REFERENCE` (defined in each script); keys are case-insensitive and can use `-` or `_`.
 
+
+---
+
+## BCI Debug Driver (`main_cpp_bci.R`)
+
+`main_cpp_bci.R` is a lightweight wrapper around `main_cpp.R` designed for debugging single tags from the BCI (Barro Colorado Island) multi-stem census dataset. It:
+
+1. Sources `main_cpp.R` to load all helper functions and infrastructure modules.
+2. Loads `bci_data/bci_multistem_xrun_debug.rds` (an RDS file, not tracked by git) as input.
+3. Maps BCI-specific column names to the standard DP schema (e.g., `stemID` → `TrueStemID`, `dbh` → `DBH`, `censusID` → `CensusID`).
+4. Runs the full DP pipeline for a single tag (default or `--WHICH_TAG=<id>`).
+
+### BCI-specific defaults
+
+- Input: `bci_data/bci_multistem_xrun_debug.rds` (loaded via `readRDS()`)
+- Output: written to `dp_global/output/` under a BCI-specific run directory
+- Uses `withr::with_dir()` for bundle sourcing compatibility
+- `ANCHOR_START_CENSUS` defaults per the script configuration
+
+### Example invocations
+
+```bash
+# Default tag
+Rscript dp_global/scripts/main_cpp_bci.R
+
+# Specific tag
+Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
+
+# Quiet mode
+Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=187064 --DP_VERBOSE=FALSE
+```
+
+### Prerequisites
+
+- R packages: `data.table`, `here`, `withr` (in addition to standard DP prerequisites)
+- `bci_data/bci_multistem_xrun_debug.rds` must exist (not tracked by git; prepared separately)
 
 ---
 
