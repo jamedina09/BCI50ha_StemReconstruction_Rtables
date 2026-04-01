@@ -48,8 +48,10 @@ DP_VERBOSE                          <- TRUE
 DP_POSTERIOR_TOP_K                  <- 2L
 DP_MAX_TRACKS                       <- NULL      # auto-detect
 DP_FALLBACK_GROWTH_FORMS            <- character(0)
-PALM_PRUNE_MIN_GROWTH               <- -0.5
-PALM_PRUNE_MAX_GROWTH               <-  0.5
+NON_TAPER_CORRECTED_GROWTH_FORMS    <- c("palm", "strangler_fig", "tree_fern")
+NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH <- 1.25 * MAX_SHRINK_FIXED
+NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH <- 1.25 * MAX_GROWTH_FIXED
+HOM_TOLERANCE_SCALE                 <- 2.0
 USE_MEASUREMENT_ERROR               <- TRUE
 ALLOW_PROVISIONAL_DP_ANCHOR         <- TRUE
 POSTERIOR_SAMPLES                   <- 0L        # disable posteriors; set >0 to enable

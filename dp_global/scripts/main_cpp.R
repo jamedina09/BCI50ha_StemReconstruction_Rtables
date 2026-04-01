@@ -157,10 +157,17 @@ DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
 #   column of the input dataset.  Pass to the DP function via
 #   `fallback_growth_forms` argument.
 DP_FALLBACK_GROWTH_FORMS <- character(0)
-# Palm-specific tight pruning bounds — override eff_min_grow / eff_max_grow when
-# growth_form == "palm".  Units: cm/year.  Set to NULL to disable palm overrides.
-PALM_PRUNE_MIN_GROWTH <- -0.5
-PALM_PRUNE_MAX_GROWTH <-  0.5
+# Non-taper-corrected growth forms (palms, strangler figs, tree ferns):
+# These show real DBH growth plus large apparent variation when HOM changes.
+# Wide base prune bounds (1.25× standard limits) prevent spurious pruning.
+# HOM tolerance adds per-census-pair widening when a HOM column is present.
+# Units: cm/year.  Set to NULL to disable the override.
+NON_TAPER_CORRECTED_GROWTH_FORMS <- c("palm", "strangler_fig", "tree_fern")
+NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH <- 1.25 * MAX_SHRINK_FIXED
+NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH <- 1.25 * MAX_GROWTH_FIXED
+# HOM tolerance scale: cm of annual DBH tolerance per meter of HOM deviation
+# from 1.3 m.  Set 0 to disable HOM widening.
+HOM_TOLERANCE_SCALE <- 2.0
 
 # Posterior sampling defaults (disabled by default)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
@@ -251,8 +258,10 @@ CLI_REFERENCE <- list(
     DP_PDF_INCLUDE_REFERENCE = "DP_PDF_INCLUDE_REFERENCE",
     DP_MAX_STATES = "DP_MAX_STATES",
     DP_FALLBACK_GROWTH_FORMS = "DP_FALLBACK_GROWTH_FORMS",
-    PALM_PRUNE_MIN_GROWTH = "PALM_PRUNE_MIN_GROWTH",
-    PALM_PRUNE_MAX_GROWTH = "PALM_PRUNE_MAX_GROWTH",
+    NON_TAPER_CORRECTED_GROWTH_FORMS = "NON_TAPER_CORRECTED_GROWTH_FORMS",
+    NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH = "NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH",
+    NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH = "NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH",
+    HOM_TOLERANCE_SCALE = "HOM_TOLERANCE_SCALE",
     DP_SLACK_TRACKS = "DP_SLACK_TRACKS",
     DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE",
     DP_SLACK_REQUIRE_ANCHOR_EPS = "DP_SLACK_REQUIRE_ANCHOR_EPS",
@@ -685,8 +694,10 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         posterior_top_k = DP_POSTERIOR_TOP_K,
         # growth-form bypass list
         fallback_growth_forms = DP_FALLBACK_GROWTH_FORMS,
-        palm_prune_min_growth = PALM_PRUNE_MIN_GROWTH,
-        palm_prune_max_growth = PALM_PRUNE_MAX_GROWTH,
+        non_taper_corrected_growth_forms = NON_TAPER_CORRECTED_GROWTH_FORMS,
+        non_taper_corrected_prune_min_growth = NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH,
+        non_taper_corrected_prune_max_growth = NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH,
+        hom_tolerance_scale = HOM_TOLERANCE_SCALE,
         # posterior sampling controls (disabled by default)
         posterior_samples = POSTERIOR_SAMPLES,
         posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,

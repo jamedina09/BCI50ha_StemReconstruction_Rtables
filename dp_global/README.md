@@ -136,7 +136,7 @@ Forest census measurements track multiple stems per tree over time:
 - Local greedy matching can trap in suboptimal solutions
 
 Note on measurement heights (HOM):
-If DBH measurements were taken at differing heights, include a `HOM` column and convert DBH to a common reference height (1.3 m) prior to running the workflow. If conversion is not possible, document measurement heights; preprocessing may be required.
+If DBH measurements were taken at differing heights, include a `HOM` column (or `hom`; detection is case-insensitive) and convert DBH to a common reference height (1.3 m) prior to running the workflow for taper-corrected growth forms (trees, shrubs, figs, unknown). For **non-taper-corrected** growth forms (palms, strangler figs, tree ferns) where taper correction is not applicable, the DP solver uses wide base pruning bounds (default 1.25× the standard growth/shrink limits) because these forms exhibit real biological DBH growth and, when the measurement point (HOM) changes between censuses, the recorded DBH can shift substantially even if the true diameter at a fixed height has not changed. When a `HOM` column is present, the solver additionally widens bounds per census pair in proportion to the worst-case HOM deviation from 1.3 m (controlled by `hom_tolerance_scale`, default 2.0 cm/yr per meter of deviation). NA HOM values are treated as 1.3 m (zero deviation). If no HOM column is present, HOM widening is disabled and only the wide base bounds apply.
 
 ---
 
@@ -1063,6 +1063,39 @@ We separate pruning thresholds from the biological (`Bio_*`) parameters so you c
 - `prune_recruit_max_dbh` (numeric | NULL): override for the recruit-size cut used during pruning. If `NULL` the biological `Bio_Recruit_MaxDBH_unit` is used. If `prune_use_bio_recruit = TRUE` (default) and both are finite, we use the more conservative value `min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)`; otherwise the explicit override is used.
 - `prune_use_bio_recruit` (logical, default TRUE): controls whether the biological recruit bound should be intersected with `prune_recruit_max_dbh`. If TRUE, we select the minimum as min(prune_recruit_max_dbh, maximum recruitment dbh). Note: maximum recruitment dbh could be either the 0.999 quantile of recruitment DBH or a fixed value defined earlier when estimating the parameters.
 
+#### Non-taper-corrected growth form override
+
+Growth forms that are **not taper-corrected** (default: `"palm"`, `"strangler_fig"`, `"tree_fern"`) need wider pruning bounds than standard trees for two reasons:
+
+1. **Real biological growth.** Palms, strangler figs, and tree ferns grow in DBH — palms can add 1–3 cm/yr, and strangler figs can change diameter substantially as they encircle or replace their host.
+2. **Apparent DBH variation from HOM changes.** When the measurement height (HOM) shifts between censuses, the recorded DBH can change dramatically even if the true diameter at a fixed height remained constant. Because these growth forms lack the tapered trunk geometry that allows taper correction, any HOM shift produces an uncompensated apparent DBH change.
+
+For these reasons, the non-taper-corrected override **replaces** the general effective pruning bounds with values that are wider than (or at least as wide as) the standard growth/shrink limits, rather than tighter. The default bounds are 1.25× the standard limits (`MAX_SHRINK_FIXED` and `MAX_GROWTH_FIXED`). An optional HOM-proportional widening layer then extends the bounds further on a per-census-pair basis when HOM data are available.
+
+**Parameters:**
+
+- `non_taper_corrected_growth_forms` (character vector, default `c("palm", "strangler_fig", "tree_fern")`): growth forms whose DBH measurements are not taper-corrected. When a tag's `growth_form` matches any entry in this list, the non-taper override is activated. Accepts comma- or semicolon-separated strings.
+- `non_taper_corrected_prune_min_growth` (numeric, default `-0.625`): lower prune bound (cm/year) that replaces the general effective minimum for matching growth forms. Default is `1.25 × MAX_SHRINK_FIXED`.
+- `non_taper_corrected_prune_max_growth` (numeric, default `6.25`): upper prune bound (cm/year) that replaces the general effective maximum for matching growth forms. Default is `1.25 × MAX_GROWTH_FIXED`.
+- `hom_tolerance_scale` (numeric, default `2.0`): additional annual DBH tolerance (cm/yr) per meter of HOM deviation from 1.3 m. When a `hom` (or `HOM`) column is present in the data and the tag is non-taper-corrected, the prune bounds are widened for each census pair by:
+
+  ```
+  hom_tol = hom_tolerance_scale × max(|HOM − 1.3|, na.rm=TRUE) / interval_years
+  eff_min_grow_pair = non_taper_corrected_prune_min_growth − hom_tol
+  eff_max_grow_pair = non_taper_corrected_prune_max_growth + hom_tol
+  ```
+
+  where `max(|HOM − 1.3|)` is the worst-case deviation across all stems at the two censuses being compared. NA HOM values are treated as 1.3 m (zero deviation contribution). Set `hom_tolerance_scale = 0` to disable HOM widening.
+
+**How the override layers interact:**
+
+1. **User layer**: general prune bounds are set from `prune_min/max_growth` (or `min/max_growth` if NULL).
+2. **Bio layer**: if `prune_use_bio_bounds = TRUE`, general bounds are tightened by intersecting with biological hard limits (`Bio_Max_Shrink`, `Bio_Max_Growth`).
+3. **Non-taper override**: if the tag's `growth_form` matches `non_taper_corrected_growth_forms`, the effective bounds from steps 1–2 are **replaced** with `non_taper_corrected_prune_min/max_growth`. This ensures non-taper forms always get wide bounds regardless of how tight the bio-constrained general bounds may be.
+4. **HOM widening**: if a `HOM` column is present and `hom_tolerance_scale > 0`, the bounds from step 3 are **widened symmetrically** for each census pair based on the worst-case HOM deviation.
+
+**Note on the default driver configuration:** The driver scripts (`main_cpp_chunk.R`, `main_cpp.R`) pass `prune_min_growth = 1.25 × MAX_SHRINK_FIXED` and `prune_max_growth = 1.25 × MAX_GROWTH_FIXED` with `prune_use_bio_bounds = FALSE`. This means the general bounds already match the non-taper defaults, so in the default configuration the non-taper override at step 3 is a no-op — all trees (taper-corrected or not) receive the same base prune window of `[-0.625, 6.25]`. The effective differentiation for non-taper forms comes from step 4 (HOM widening), and the non-taper override provides an independent lever when users tighten the general bounds (e.g. via `prune_use_bio_bounds = TRUE` or narrower `prune_min/max_growth`).
+
 Notes:
 - These pruning parameters affect only the *pre-filtering* step (they do not change the transition cost function or post-hoc diagnostics beyond recording the effective prune values).
 - If interval length between censuses is invalid or not finite for a pair, growth-based pruning is skipped for that pair and only recruit-size pruning (if applicable) is used.
@@ -1302,7 +1335,7 @@ Key computations and helpers:
   - Uses per-census mean `ExactDate` to compute `interval_val` (years) between census pairs. If `interval_val` is NA or non-finite, growth-based pruning is skipped for that pair.
 
 - Conservative pruning (pre-filters)
-  - Controlled by: `prune_hard` (logical); `prune_min_growth`, `prune_max_growth`, `prune_use_bio_bounds`, `prune_recruit_max_dbh`, `prune_use_bio_recruit`.
+  - Controlled by: `prune_hard` (logical); `prune_min_growth`, `prune_max_growth`, `prune_use_bio_bounds`, `prune_recruit_max_dbh`, `prune_use_bio_recruit`; `non_taper_corrected_growth_forms`, `non_taper_corrected_prune_min/max_growth`, `hom_tolerance_scale`.
   - Effective pruning thresholds computed as
 
     user_min = prune_min_growth (if given) else min_growth
@@ -1315,6 +1348,24 @@ Key computations and helpers:
     else:
       eff_min_grow = user_min
       eff_max_grow = user_max
+
+    # Non-taper-corrected override: replace effective bounds with wide
+    # base values so palms/strangler figs/tree ferns are not spuriously
+    # pruned. This step matters when prune_use_bio_bounds=TRUE (which
+    # would tighten the general bounds); in the default driver config
+    # (prune_use_bio_bounds=FALSE, general bounds already 1.25×) it is
+    # a no-op because the values are the same.
+    if growth_form in non_taper_corrected_growth_forms:
+      eff_min_grow = non_taper_corrected_prune_min_growth  (override)
+      eff_max_grow = non_taper_corrected_prune_max_growth  (override)
+
+    # HOM widening: per census pair, widen bounds symmetrically by the
+    # worst-case HOM deviation across both censuses. This is the main
+    # source of differentiation for non-taper forms in the default config.
+    Per census pair, if HOM column present and hom_tolerance_scale > 0:
+      hom_tol = hom_tolerance_scale × max(|HOM − 1.3|) / interval_years
+      eff_min_grow_pair = eff_min_grow − hom_tol
+      eff_max_grow_pair = eff_max_grow + hom_tol
 
     eff_recruit_max chosen from `prune_recruit_max_dbh` and `Bio_Recruit_MaxDBH_unit` depending on flags.
 

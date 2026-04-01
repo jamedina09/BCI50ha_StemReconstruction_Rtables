@@ -40,11 +40,18 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            prune_recruit_max_dbh = NULL,
                                                            # NOTE: Check the TODO in the code about possibly adding a margin when using biological recruit max DBH
                                                            prune_use_bio_recruit = TRUE,
-                                                           # --- palm-specific tight prune bounds ---
-                                                           # When the tree is a palm (growth_form == "palm"), override eff_min_grow / eff_max_grow
-                                                           # with these tight bounds (DBH is stable, not growing).
-                                                           palm_prune_min_growth = -0.5,
-                                                           palm_prune_max_growth =  0.5,
+                                                           # --- non-taper-corrected growth form prune bounds ---
+                                                           # Growth forms whose DBH measurements are NOT taper-corrected
+                                                           # (palms, strangler figs, tree ferns) exhibit real DBH growth
+                                                           # plus large apparent variation from HOM changes. They receive
+                                                           # wide base prune bounds (default 1.25× standard limits) and
+                                                           # optional HOM-proportional widening per census pair.
+                                                           non_taper_corrected_growth_forms = c("palm", "strangler_fig", "tree_fern"),
+                                                           non_taper_corrected_prune_min_growth = -0.625,
+                                                           non_taper_corrected_prune_max_growth =  6.25,
+                                                           # HOM tolerance scale: cm of annual DBH tolerance per meter
+                                                           # of HOM deviation from 1.3 m.  Set 0 to disable HOM widening.
+                                                           hom_tolerance_scale = 2.0,
                                                            verbose = FALSE,
                                                            chunk_id = NULL) {
     # Safety
@@ -602,19 +609,43 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     prune_use_bio_bounds <- isTRUE(prune_use_bio_bounds)
     if (!is.null(prune_recruit_max_dbh)) prune_recruit_max_dbh <- as.numeric(prune_recruit_max_dbh)
     prune_use_bio_recruit <- isTRUE(prune_use_bio_recruit)
-    palm_prune_min_growth <- as.numeric(palm_prune_min_growth)
-    palm_prune_max_growth <- as.numeric(palm_prune_max_growth)
+    non_taper_corrected_prune_min_growth <- as.numeric(non_taper_corrected_prune_min_growth)
+    non_taper_corrected_prune_max_growth <- as.numeric(non_taper_corrected_prune_max_growth)
+    hom_tolerance_scale   <- as.numeric(hom_tolerance_scale)
 
-    # --- Palm detection (tight DBH-stability prune bounds when growth_form == "palm")
+    # --- Non-taper-corrected growth-form detection ---
+    # Interpret comma/semicolon-separated string as a vector (like fallback_growth_forms).
+    if (length(non_taper_corrected_growth_forms) == 1L && grepl("[,;]", non_taper_corrected_growth_forms)) {
+        ff <- strsplit(non_taper_corrected_growth_forms, "[,;]")[[1L]]
+        ff <- trimws(ff)
+        ff <- ff[nzchar(ff)]
+        non_taper_corrected_growth_forms <- ff
+    }
+    non_taper_corrected_growth_forms <- as.character(non_taper_corrected_growth_forms)
+
+    is_non_taper_corrected <- FALSE
     if ("growth_form" %in% names(tree_data)) {
         gf_vals <- unique(tree_data$growth_form)
         if (length(gf_vals) > 1L) {
-            warning(prefix, "Multiple growth_form values found; using most common to determine palm status.")
+            warning(prefix, "Multiple growth_form values found; using most common to determine non-taper-corrected status.")
             gf_vals <- names(sort(table(tree_data$growth_form), decreasing = TRUE))[1L]
         }
-        is_palm <- isTRUE(gf_vals == "palm")
-    } else {
-        is_palm <- FALSE
+        is_non_taper_corrected <- isTRUE(gf_vals %in% non_taper_corrected_growth_forms)
+    }
+
+    # --- HOM column detection (for HOM-proportional widening) ---
+    use_hom_relax <- FALSE
+    hom_col <- NULL
+    if (is_non_taper_corrected && hom_tolerance_scale > 0) {
+        hom_candidates <- intersect(tolower(names(tree_data)), c("hom"))
+        if (length(hom_candidates) > 0L) {
+            # Find the actual column name matching case-insensitively
+            hom_col <- names(tree_data)[tolower(names(tree_data)) == "hom"][1L]
+            use_hom_relax <- TRUE
+            vcat(prefix, "HOM column detected ('", hom_col, "'); HOM-proportional widening enabled (scale=", hom_tolerance_scale, ").")
+        } else {
+            vcat(prefix, "Non-taper-corrected growth form but no HOM column found; HOM widening disabled.")
+        }
     }
 
     prune_stats <- list(
@@ -1030,17 +1061,41 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         eff_recruit_max <- Bio_Recruit_MaxDBH_unit
     }
 
-    # Palm override: DBH is stable in palms — collapse prune window to very tight bounds
-    if (isTRUE(is_palm)) {
-        eff_min_grow <- palm_prune_min_growth
-        eff_max_grow <- palm_prune_max_growth
+    # Non-taper-corrected override: replace effective bounds with wide values.
+    # Palms, strangler figs, and tree ferns show real DBH growth AND large
+    # apparent DBH variation when HOM changes between censuses. The wide base
+    # bounds (default 1.25× standard limits) prevent spurious pruning.
+    # HOM-proportional widening (applied later, per census pair) extends further.
+    if (isTRUE(is_non_taper_corrected)) {
+        eff_min_grow <- non_taper_corrected_prune_min_growth
+        eff_max_grow <- non_taper_corrected_prune_max_growth
     }
 
     prune_stats$eff_min_growth <- as.numeric(eff_min_grow)
     prune_stats$eff_max_growth <- as.numeric(eff_max_grow)
     prune_stats$eff_recruit_max <- as.numeric(eff_recruit_max)
+    prune_stats$is_non_taper_corrected <- is_non_taper_corrected
+    prune_stats$use_hom_relax <- use_hom_relax
 
-    vcat(prefix, "Pruning bounds: growth [", eff_min_grow, ", ", eff_max_grow, "] cm/yr, max recruit DBH=", eff_recruit_max, " cm")
+    vcat(prefix, "Pruning bounds: growth [", eff_min_grow, ", ", eff_max_grow, "] cm/yr, max recruit DBH=", eff_recruit_max, " cm",
+         if (is_non_taper_corrected) " [non-taper-corrected]" else "")
+
+    # --- Precompute per-census max HOM deviation (for HOM-proportional widening) ---
+    hom_max_dev_by_census <- NULL
+    if (isTRUE(use_hom_relax)) {
+        hom_max_dev_by_census <- setNames(numeric(n_census), as.character(census_range))
+        for (p_idx in seq_len(n_census)) {
+            cc_val  <- census_range[p_idx]
+            hom_raw <- tree_data[CensusID == cc_val, get(hom_col)]
+            # NA HOM treated as 1.3 -> zero deviation
+            hom_vals <- ifelse(is.na(hom_raw), 1.3, as.numeric(hom_raw))
+            dev_vals <- abs(hom_vals - 1.3)
+            mx <- if (length(dev_vals) > 0L) max(dev_vals, na.rm = TRUE) else 0
+            if (!is.finite(mx)) mx <- 0
+            hom_max_dev_by_census[as.character(cc_val)] <- mx
+        }
+        vcat(prefix, "HOM max deviation by census: ", paste(names(hom_max_dev_by_census), "=", round(hom_max_dev_by_census, 3), collapse = ", "))
+    }
 
     # Precompute track-wise DBH matrix for each census (rows = states, cols = tracks).
     # Vectorized: one matrix indexing operation per census instead of a per-state loop.
@@ -1183,6 +1238,22 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             resp_mat <- matrix(logical(0L), nrow = 0L, ncol = K)
         }
 
+        # --- HOM-proportional widening of prune bounds for this census pair ---
+        eff_min_grow_pair <- eff_min_grow
+        eff_max_grow_pair <- eff_max_grow
+        if (isTRUE(use_hom_relax) && is.finite(interval_val) && interval_val > 0) {
+            dev_cc   <- hom_max_dev_by_census[as.character(cc)]
+            dev_next <- hom_max_dev_by_census[as.character(next_cc)]
+            max_dev  <- max(dev_cc, dev_next, 0, na.rm = TRUE)
+            if (is.finite(max_dev) && max_dev > 0) {
+                hom_tol <- hom_tolerance_scale * max_dev / interval_val
+                eff_min_grow_pair <- eff_min_grow - hom_tol
+                eff_max_grow_pair <- eff_max_grow + hom_tol
+                vcat(prefix, "  HOM widening: max_dev=", round(max_dev, 3), "m, tol=", round(hom_tol, 3),
+                     " cm/yr -> bounds [", round(eff_min_grow_pair, 3), ", ", round(eff_max_grow_pair, 3), "]")
+            }
+        }
+
         feasible_result <- derive_phase_prev_batch_rcpp(
             tdbh0_mat      = tdbh0_mat,
             tdbh1_mat      = tdbh1_mat,
@@ -1190,8 +1261,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             resprout_mat   = resp_mat,
             prune_hard     = isTRUE(prune_hard),
             interval_val   = if (is.finite(interval_val)) interval_val else NaN,
-            eff_min_grow   = eff_min_grow,
-            eff_max_grow   = eff_max_grow,
+            eff_min_grow   = eff_min_grow_pair,
+            eff_max_grow   = eff_max_grow_pair,
             eff_recruit_max = if (is.finite(eff_recruit_max)) eff_recruit_max else Inf
         )
 
