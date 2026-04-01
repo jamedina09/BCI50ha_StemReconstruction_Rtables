@@ -1,6 +1,6 @@
 # Global Dynamic Programming Stem-ID Reconstruction with Biological Costs
 
-**Date:** 2026-01-16  
+**Date:** 2026-03-30  
 **Author:** José A. Medina-Vega
 
 ---
@@ -18,9 +18,10 @@
 9. [Outputs & Diagnostics](#outputs--diagnostics)
 10. [Parameter Estimation](#parameter-estimation)
 11. [Fallback Mechanisms](#fallback-mechanisms)
-12. [Pruning & Conservative Guards](#pruning--conservative-guards)
-13. [Workflows & Usage Patterns](#workflows--usage-patterns)
-14. [Implementation Reference](#implementation-reference)
+12. [ForestGEO Code Handling](#forestgeo-code-handling)
+13. [Pruning & Conservative Guards](#pruning--conservative-guards)
+14. [Workflows & Usage Patterns](#workflows--usage-patterns)
+15. [Implementation Reference](#implementation-reference)
 
 ---
 
@@ -86,7 +87,11 @@ dp_global/
 │   ├── check_functions.r             # Mortality parameter inspection and plotting utilities
 │   ├── complexity/
 │   │   ├── estimate_dp_complexity_function.R  # DP complexity estimator
-│   │   └── test_complexity_estimator.R        # Complexity estimator test/demo
+│   │   ├── test_complexity_estimator.R        # Complexity estimator test/demo
+│   │   ├── validate_run.R                     # Run validation (compare two outputs)
+│   │   ├── validate_tiebreaker.R              # Tie-breaker determinism validation
+│   │   ├── validate_m_implementation.R        # M-code pinning validation
+│   │   └── check_symmetry.R                   # Cost symmetry checks
 │   └── dpglobal_bundle/
 │       ├── dpglobal_bundle_loader.R      # Bundle builder (creates RData + manifest)
 │       ├── package_bundle.sh             # Packaging helper (creates tarball in dist/)
@@ -94,12 +99,14 @@ dp_global/
 │       └── dist/                         # Generated tarballs (not tracked by git)
 ├── scripts/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
-│   └── main_cpp_chunk.R              # Chunked driver for large runs
+│   ├── main_cpp_chunk.R              # Chunked driver for large runs
+│   └── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, withr bundle sourcing)
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
 │   └── transition_cost_rcpp.R        # R wrapper for Rcpp-compiled functions
-└── output/                           # Generated run artifacts (not tracked by git)
 ```
+
+Output artifacts (not tracked by git) are written to `dp_global/output/` at runtime.
 
 ---
 
@@ -271,7 +278,7 @@ Posterior path summaries (`*_paths.csv`) encode the `recon` column as `ObsRowID:
 **Practical recommendations**
 
 - Increase `posterior_samples` to raise the chance the MAP path is drawn and therefore present in `*_paths.csv`.
-- If you require the MAP path to be represented in per-path summaries, you can either (a) explicitly insert the MAP signature into `paths_summary` after sampling (and mark it), or (b) attach it directly to your main output using the `attach_paths_to_output()` helper (see `dp_global/R/error_propagation/process_posteriors.R`).
+- If you require the MAP path to be represented in per-path summaries, you can explicitly insert the MAP signature into `paths_summary` after sampling (and mark it).
 
 **Quick check example (R)**
 
@@ -930,6 +937,9 @@ The DP solver automatically falls back to `match_stems_optimal_backward()` when:
 #### Anchor fallback behavior
 If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back to the igraph matcher. If no such earlier census exists, the algorithm falls back to `match_stems_optimal_backward()`.
 
+#### Anchor extension (forward search)
+When the nominal anchor census has 0 living stems (all DBH values are `NA`), the algorithm extends the anchor search **forward** to post-anchor censuses. It selects the first census after the anchor that has at least one living stem with a non-NA `TrueStemID`. This prevents tags where the anchor census happens to have only dead stems from unnecessarily falling back to the igraph matcher when a later census has reliable identity information.
+
 Note: In addition, when the requested anchor census contains DBH observations but lacks `TrueStemID` values, setting the `ALLOW_PROVISIONAL_DP_ANCHOR` flag (default: `TRUE` in the chunk runner and the DP function) allows the DP to assign provisional `TrueStemID`/`ReconstructedStemID` values at the last-observed DBH census (marked with `ReconstructionMethod = "provisional_dp"`) and proceed with the DP instead of falling back to the igraph matcher.
 
 ### Fallback Method: `match_stems_optimal_backward()`
@@ -980,6 +990,48 @@ unique(na.omit(res$DP_FallbackReason))
 ```
 
 **Important:** `min_growth` and `max_growth` constraints affect **only** the fallback method and post-hoc diagnostics, not the DP objective.
+
+---
+
+## ForestGEO Code Handling
+
+The DP solver recognizes ForestGEO stem status codes that encode field-recorded events. These codes influence state enumeration and transition feasibility.
+
+### Resprout Codes (R, OR)
+
+**Recognized codes:** `R` (resprout from main stem) and `OR` (other breakage resprout).
+
+**R-recruit constraint:** When a living observation at census $t+1$ carries an R or OR code, the DP forces that stem to appear as a **new recruit** (empty track at census $t$). This prevents the algorithm from chaining a resprout observation to a pre-existing identity track, which would violate the biological meaning of the code: the stem broke and re-grew, so it is a new physical entity.
+
+The constraint is implemented as a hard filter in the backward transition loop: any candidate assignment that places an R/OR-coded living stem on a track that was already occupied at the prior census is removed from the feasible set.
+
+### Main-Stem Code (M)
+
+**Recognized code:** `M` (main stem).
+
+**M-pin constraint:** At branching events (censuses where $n_{obs} > 1$ at both the current and next census), any observation carrying an M code is **pinned to track 1**. This ensures the main stem retains identity priority and prevents the DP from swapping it with secondary stems during optimization.
+
+The constraint is applied only when:
+- The prior census has at least one observed stem ($n_{obs,t} > 0$)
+- Both the current and next census have multiple stems
+
+When triggered, the state enumeration is filtered to retain only assignments where the M-coded observation occupies track 1.
+
+### Missing-from-Field (MF) Detection
+
+The DP detects implicit "missing from field" events: censuses where all stems have `NA` DBH, sandwiched between censuses with observed stems. These are treated as temporary absences rather than mortality.
+
+**R-code exclusion:** Censuses where all observations are `NA` but carry resprout codes (R or OR) are excluded from MF detection. A resprout code on an unobserved stem indicates a known break event, not a temporary field absence.
+
+### Regex Implementation
+
+All ForestGEO code matching uses `grepl()` with `perl = TRUE` to ensure `\b` word-boundary anchors work correctly. The resprout regex pattern is:
+
+```r
+"\\b(R|OR)\\b"
+```
+
+This matches whole-word `R` or `OR` codes in fields that may contain multiple semicolon-separated codes (e.g., `"R;B"` matches, `"NORMAL"` does not).
 
 ## Pruning & Conservative Guards
 
@@ -1225,6 +1277,7 @@ out <- add_dp_posterior_bins(
 | Plotting | `plot_tag_to_pdf()` | `dp_global/R/dp_global_diag.R` |
 | Driver (interactive / single-tag) | `run_dp_one_group()` | `dp_global/scripts/main_cpp.R` |
 | Driver (chunked / large runs) | `run_main_chunked()` | `dp_global/scripts/main_cpp_chunk.R` |
+| Driver (BCI debug, single-tag) | (sources `main_cpp.R`) | `dp_global/scripts/main_cpp_bci.R` |
 
 ### match_stems_dp_global_backward_marginals_batch — Function reference (implementation details)
 
@@ -1233,7 +1286,7 @@ This implementation is the production-grade, batch-capable marginal DP solver. B
 Key computations and helpers:
 
 - Anchor selection
-  - If requested `anchor_start` has no DBH/TrueStemID, the function searches backward for the most recent census with at least one row having non-NA DBH and non-NA TrueStemID and uses that as the anchor. If none found, it falls back to `match_stems_optimal_backward()`.
+  - If requested `anchor_start` has no DBH/TrueStemID, the function searches backward for the most recent census with at least one row having non-NA DBH and non-NA TrueStemID and uses that as the anchor. If the anchor has 0 living stems, the function also searches forward for the first post-anchor census with living stems and a non-NA TrueStemID. If no valid anchor is found in either direction, it falls back to `match_stems_optimal_backward()`.
 
 - State enumeration
   - `enumerate_states_injective(K, n_obs, max_states)` enumerates injective assignments (permutation-based states). If enumeration exceeds `max_states` it falls back to igraph.
@@ -1481,4 +1534,4 @@ Chave, J., Condit, R., Aguilar, S., Hernandez, A., Lao, S., & Perez, R. (2004). 
 
 ## Building This Documentation
 
-Use `pandoc` (if available) to render `README.md` to HTML. An automated build script is provided (`dev/build_readme_html.sh`) that wraps common rendering steps.
+Use `pandoc` (if available) to render `README.md` to HTML, or use your preferred tooling.

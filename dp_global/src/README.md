@@ -1,11 +1,11 @@
 # Rcpp Acceleration for DP Global Stem Tracking
 
-C++ implementation and R wrapper for Rcpp-accelerated transition-cost computations used by the DP workflow.
+C++ implementation and R wrapper for Rcpp-accelerated transition-cost and phase-feasibility computations used by the DP workflow.
 
 ## Files
 
-- `src/transition_cost_rcpp.cpp`: C++ implementation of transition cost computation
-- `R/transition_cost_rcpp.R`: R wrapper function for the C++ code
+- `transition_cost_rcpp.cpp`: C++ implementation of transition cost computation and phase-feasibility batch checks
+- `transition_cost_rcpp.R`: R wrapper function for the C++ code
 
 ## Usage
 
@@ -68,6 +68,7 @@ The C++ implementation uses:
 
 - Direct C++ loops for per-track and per-batch iteration
 - Manual implementation of statistical functions (dnorm, dlnorm, log_sum_exp)
+- Batch phase-feasibility checking (`derive_phase_prev_batch_rcpp`) for all (i, j) assignment pairs
 - Optimized memory access patterns
 - Reduced function call overhead relative to equivalent R code
 

@@ -1,65 +1,59 @@
 # STEM_IDENTIFICATION_TEST
 
 ## Overview
-A collection of scripts and R modules for running and testing the DP stem-identification workflow.
 
-Quick pointers:
+Biologically informed dynamic-programming (DP) solver that reconstructs stem identities across forest censuses backward in time from a known anchor census.  Given multi-stem tree measurements and a late-census anchor with trusted `TrueStemID`, the algorithm assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, and recruitment biology.  Uncertainty is quantified via forward-backward marginals and optional posterior sampling.
 
-- See `dp_global/README.md` for details on the DP implementation and R modules.
-- Run `dp_global/scripts/main_cpp.R` for single-tag or small-dataset runs. For large datasets, use `dp_global/scripts/main_cpp_chunk.R` which writes outputs incrementally and supports resume.
-- See `dp_global/scripts/README.md` for a full CLI flag reference, chunking details, and example invocations.
-- You can force the DP solver to skip particular growth forms by passing
-  `--DP_FALLBACK_GROWTH_FORMS=<form1,form2>` (for example, `tree` or `fig`) to
-  the driver; the flag accepts a comma‑ or semicolon‑separated list. Any tag
-  containing a row with a matching `growth_form` value will be reconstructed
-  with the igraph matcher.
+## Directory Layout
+
+```
+├── dp_global/                 # Core algorithm, drivers, and C++ acceleration
+│   ├── R/                     # R modules (sourced by dp_global_main.R)
+│   │   ├── complexity/        # DP complexity estimator (predict runtime)
+│   │   └── dpglobal_bundle/   # Portable deployment bundle builder
+│   ├── scripts/               # CLI driver scripts (main_cpp*.R)
+│   └── src/                   # C++ transition cost (Rcpp)
+├── data_simulation/           # Simulated forest-census data generator
+│   └── data/                  # Generated test datasets (CSV)
+└── Makefile                   # Convenience targets (smoke test)
+```
+
+**Not tracked by git** (see `.gitignore`): `dp_global/output/`, `dp_global/ForestGEO_codes/`, `dp_global/examples/`, `bci_data/`, `posteriors/`, `tests/`, `*.rds`, `*.pdf`, `*.log`.
 
 ## Prerequisites
 
-R (packages: `data.table`, `igraph`).
+R ≥ 4.0 with packages: `data.table`, `igraph`, `Rcpp`, `here`.
+Optional: `ggplot2`, `cowplot` (plotting), `arrow` (feather output), `withr` (bundle sourcing).
 
 ## Quickstart
 
-1. Install R and required packages (see `## Prerequisites`).
-
-2. Run a single tag to verify the pipeline:
-
 ```bash
-Rscript dp_global/scripts/main_cpp.R --WHICH_TAG=20
-```
-
-3. Run the smoke test to verify core functionality:
-
-```bash
+# Verify modules load
 make smoke
+
+# Single-tag run on simulated data
+Rscript dp_global/scripts/main_cpp.R --WHICH_TAG=20
+
+# Full run (all tags, chunked output with resume support)
+Rscript dp_global/scripts/main_cpp_chunk.R --RUN_ALL_TAGS=TRUE --DP_CHUNK_SIZE=7
+
+# BCI data (single tag)
+Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 ```
 
-Notes
------
-- Output directories are written under `dp_global/output/` by default. If you're using OneDrive or similar sync services, consider excluding this directory from sync to avoid I/O delays and accidental commits. ⚠️
+See `dp_global/scripts/README.md` for the full CLI flag reference.
 
-Conventions
------------
-- Driver scripts live under `dp_global/scripts/` (`main_cpp.R` for single-tag/small runs; `main_cpp_chunk.R` for large chunked runs). Module internals and helpers live under `dp_global/R/`.
-- Directory names are lowercase snake_case (e.g., `data_simulation`, `dp_global`). Most scripts and documentation follow this convention.
+## Key Documentation
 
-Testing & CI
-------------
-- Run `make smoke` to perform a lightweight smoke test: sources `dp_global/R/dp_global_main.R` to verify all R modules load without errors.
+| Document | Contents |
+|----------|----------|
+| `dp_global/README.md` | Algorithm details, cost model, data requirements, parameter estimation |
+| `dp_global/scripts/README.md` | CLI flags, chunking, resume, example invocations |
+| `dp_global/src/README.md` | C++ acceleration API and validation |
+| `data_simulation/README.md` | Simulation parameters, biological models, output format |
 
-## TODO / Future improvements
+## Conventions
 
-Short actionable items to stabilize the DP and posterior-attachment workflow and make downstream usage easier:
-
-- **Add a convenience alias `ObsRowID` → `obs_row_id` on final outputs** to simplify joins with posterior `paths.csv` (which use `ObsRowID`). Keep `obs_row_id` as the canonical internal name; create `ObsRowID` before export and add a unit test to assert equality.
-
-- **Convert ad-hoc validation scripts into formal tests (testthat) and add to CI**:
-  - Add tests for anchor-scoping semantics (anchor at first census, anchor > last observed census, post-anchor preservation, and provisional anchor behavior).
-  - Add tests for posterior-path attachment (`attach_paths_to_output()`) covering `ObsRowID` mapping, alternative reconstruction formats, expand/aggregate correctness, and failure modes.
-  - Add a regression test asserting the `DP_PruneInfo` attribute exists (defensive init) and that early-return branches do not error.
-
-- **Document `obs_row_id`/`ObsRowID` expectations** in `dp_global/README.md` (how posterior reconstructions map back to output rows).
-
-- **Other improvements / robustness**:
-  - Ensure posterior sampling output (feather/csv/rds) preserves `ObsRowID` when requested.
-  - Consider adding tests for pruning diagnostics and timing under realistic small examples.
+- Driver scripts: `dp_global/scripts/` — `main_cpp.R` (single-tag/small), `main_cpp_chunk.R` (large chunked), `main_cpp_bci.R` (BCI-specific with `withr` bundle sourcing).
+- Module internals: `dp_global/R/` — sourced in order by `dp_global_main.R`.
+- Output directories: auto-created under `dp_global/output/` (not tracked by git).
