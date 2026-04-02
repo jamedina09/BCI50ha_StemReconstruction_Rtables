@@ -33,7 +33,7 @@ source(here("dp_global", "scripts", "main_cpp.R"))
 #    below so they can still override these BCI defaults.
 # ----------------------------------------------------------------
 INPUT_FILE                          <- here("bci_data", "bci_multistem_xrun_debug.rds")
-WHICH_TAG                           <- 187064L
+WHICH_TAG                           <- 115203L
 FORCE_ONE_SPECIES_PARAMETERS        <- FALSE     # use real species from BCI data
 MAX_GROWTH_FIXED                    <- 5.0
 MAX_SHRINK_FIXED                    <- -0.5
@@ -130,57 +130,11 @@ message("[main_cpp_bci.R] Tag ", WHICH_TAG, " — species: ", paste(tag_sp, coll
 message("[main_cpp_bci.R] Tag ", WHICH_TAG, " — rows: ", nrow(xrun[Tag == WHICH_TAG]))
 
 # ----------------------------------------------------------------
-# 8. Estimate biological parameters (only for the tag's species)
-#    Estimation is run on the full dataset for that species so
-#    bio parameters are representative, not just from one tag.
-# ----------------------------------------------------------------
-message("[main_cpp_bci.R] Estimating bio parameters...")
-bio_pars <- list()
-for (sp in tag_sp) {
-    sp_n <- nrow(xrun[species == sp])
-    message("[main_cpp_bci.R]   species='", sp, "' (", sp_n, " rows)")
-    bio_pars[[sp]] <- estimate_bio_pars(
-        xrun[species == sp],
-        use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
-        max_shrink_source     = MAX_SHRINK_HARD_SOURCE,
-        max_shrink_fixed      = MAX_SHRINK_FIXED,
-        k_shrink_source       = K_SHRINK_SOURCE,
-        k_shrink_fixed        = K_SHRINK_FIXED,
-        k_growth_source       = K_GROWTH_SOURCE,
-        k_growth_fixed        = K_GROWTH_FIXED,
-        max_growth_source     = MAX_GROWTH_HARD_SOURCE,
-        max_growth_fixed      = MAX_GROWTH_FIXED,
-        shrink_hard_prob      = 1e-4,
-        shrink_data_quantile  = 0.001,
-        growth_hard_prob      = 1e-4,
-        growth_data_quantile  = 0.999,
-        growth_soft_quantile  = 0.99,
-        recruit_max_quantile  = 0.999,
-        recruit_max_source    = RECRUIT_MAX_SOURCE,
-        recruit_max_fixed     = as.numeric(RECRUIT_MAX_FIXED),
-        enforce_growth_bounds = TRUE,
-        growth_min_fixed      = MAX_SHRINK_FIXED,
-        growth_max_fixed      = MAX_GROWTH_FIXED,
-        enforce_recruit_max   = TRUE
-    )
-}
-
-# ----------------------------------------------------------------
-# 9. Attach bio columns and prepare for DP
+# 8. Attach bio columns and prepare for DP
 #    Subset to the tag's species only — bio_pars only covers that
 #    species, so attach_bio_columns would fail on other species.
 # ----------------------------------------------------------------
 xrun_tag <- xrun[species %in% tag_sp]
-
-xrun_tag <- attach_bio_columns(xrun_tag, bio_pars)
-
-xrun_tag[
-    species %in% c("all_palm_tree_fern"),
-    `:=`(
-        Bio_Mu_Growth = 0,
-        Bio_Gamma_Growth = 0
-    )
-]
 
 dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) {
     auto_dp_max_tracks(xrun_tag)
@@ -245,4 +199,5 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115427
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=119453
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115203
 
