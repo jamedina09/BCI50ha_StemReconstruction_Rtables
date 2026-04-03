@@ -38,7 +38,7 @@ FORCE_ONE_SPECIES_PARAMETERS        <- FALSE     # use real species from BCI dat
 MAX_GROWTH_FIXED                    <- 5.0
 MAX_SHRINK_FIXED                    <- -0.5
 RECRUIT_MAX_FIXED                   <- (MAX_GROWTH_FIXED * 5) + 0.9999
-DP_MAX_STATES                       <- 40000L
+DP_MAX_STATES                       <- 1039L
 DP_SLACK_TRACKS                     <- 1L
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 DP_SLACK_REQUIRE_ANCHOR_EPS         <- 1e-6
