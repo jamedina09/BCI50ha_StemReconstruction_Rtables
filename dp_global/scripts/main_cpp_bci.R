@@ -199,5 +199,9 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115427
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=119453
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
-### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115203
 
+##
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115203
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242799
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=277120
