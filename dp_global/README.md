@@ -1,6 +1,6 @@
 # Global Dynamic Programming Stem-ID Reconstruction with Biological Costs
 
-**Date:** 2026-03-30  
+**Date:** 2026-04-02  
 **Author:** José A. Medina-Vega
 
 ---
@@ -995,27 +995,47 @@ unique(na.omit(res$DP_FallbackReason))
 
 ## ForestGEO Code Handling
 
-The DP solver recognizes ForestGEO stem status codes that encode field-recorded events. These codes influence state enumeration and transition feasibility.
+The DP solver recognizes ForestGEO stem status codes that encode field-recorded events. These codes influence state enumeration, transition feasibility, and segment splitting.
 
 ### Resprout Codes (R, OR)
 
 **Recognized codes:** `R` (resprout from main stem) and `OR` (other breakage resprout).
 
-**R-recruit constraint:** When a living observation at census $t+1$ carries an R or OR code, the DP forces that stem to appear as a **new recruit** (empty track at census $t$). This prevents the algorithm from chaining a resprout observation to a pre-existing identity track, which would violate the biological meaning of the code: the stem broke and re-grew, so it is a new physical entity.
+When the DP encounters an R code at any census before the anchor, two mechanisms activate:
+
+#### 1. Resprout segment split
+
+The DP splits the problem into two independent sub-problems at the R boundary:
+
+- **Post-segment**: from the R census to the anchor. All stems at the R census are treated as new organisms (recruits) that are completely independent of stems in earlier censuses.
+- **Pre-segment**: from the earliest census to the census immediately before R, with a provisional anchor at the last observed census.
+
+The split is biologically motivated: R means the tree resprouted, so the stems at that census are entirely new physical entities — there is no identity continuity across the R boundary.
+
+Pre-segment IDs are offset by the maximum post-segment ID to prevent clashes. Sub-calls set `allow_segment_split = FALSE` to prevent cascading splits. Virtual census IDs (gaps in `seq.int()` not present in the sub-call's data) are filtered out.
+
+#### 2. Post-segment recruit continuity constraint
+
+In the post-segment, all stems at the first census (the R boundary) are known recruits. When the number of stems at the first census ≤ the number at the next census, the constraint requires that every first-census stem be on a track that is also occupied at the next census. The rationale: a freshly resprouted stem dying immediately while a new independent recruit simultaneously appears on a different track is far less parsimonious than all recruits continuing.
+
+This constraint prunes candidate assignments where any recruit's track is empty at the next census.
+
+#### 3. R-recruit constraint (forward direction)
+
+When a living observation at census $t+1$ carries an R or OR code, the DP forces that stem to appear as a **new recruit** (empty track at census $t$). This prevents the algorithm from chaining a resprout observation to a pre-existing identity track.
 
 The constraint is implemented as a hard filter in the backward transition loop: any candidate assignment that places an R/OR-coded living stem on a track that was already occupied at the prior census is removed from the feasible set.
 
 ### Main-Stem Code (M)
 
-**Recognized code:** `M` (main stem).
+**Recognized code:** `M` (multiple stems — indicates the presence of a new main stem with other branches growing from it).
 
-**M-pin constraint:** At branching events (censuses where $n_{obs} > 1$ at both the current and next census), any observation carrying an M code is **pinned to track 1**. This ensures the main stem retains identity priority and prevents the DP from swapping it with secondary stems during optimization.
+**M-pin constraint:** At censuses where the stem count increases going forward in time ($n_{obs,t+1} > n_{obs,t}$), any observation carrying an M code at $t+1$ must be on a track that was already occupied at $t$ — it cannot appear as a new recruit going backward. The M code marks the main stem in a branching event; since the main stem existed before branching, it must continue an existing track.
 
 The constraint is applied only when:
 - The prior census has at least one observed stem ($n_{obs,t} > 0$)
-- Both the current and next census have multiple stems
-
-When triggered, the state enumeration is filtered to retain only assignments where the M-coded observation occupies track 1.
+- Stem count increases ($n_{obs,t+1} > n_{obs,t}$)
+- No R code is present at $t+1$ (in a resprout event, all stems are new recruits and M-pin is suppressed)
 
 ### Missing-from-Field (MF) Detection
 

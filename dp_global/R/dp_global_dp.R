@@ -859,13 +859,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # lies before the anchor, split the DP into two independent sub-problems:
     #   pre-segment  : censuses 1 .. (r_boundary - 1), provisional anchor
     #   post-segment : censuses r_boundary .. anchor_start
-    # This eliminates M-pin / R-recruit conflicts that cross the boundary and
-    # prevents census history before the resprout from contaminating track
-    # assignments after it.  Prevents infinite recursion: the post sub-call
-    # starts at the R census (position 1 in its range), which does not satisfy
-    # .p0 >= 2, so it never triggers a further split.
-    # allow_segment_split=FALSE in recursive sub-calls prevents cascading splits
-    # (downstream R codes in the post-segment are handled by R-recruit constraints).
+    # Biological rationale: R means the tree resprouted — stems at the R
+    # census are entirely new physical entities with no identity continuity
+    # to stems at earlier censuses.  Splitting prevents pre-resprout census
+    # history from contaminating post-resprout track assignments.
+    # The post sub-call starts at position 1 in its range (does not satisfy
+    # .p0 >= 2), so it never triggers a further split.  Additionally,
+    # allow_segment_split=FALSE in recursive sub-calls prevents cascading
+    # splits; downstream R codes are handled by R-recruit constraints.
     # -----------------------------------------------------------------------
     .r_boundary_pos <- NULL
     if (isTRUE(allow_segment_split)) for (.chk_p in seq_len(n_census)) {
@@ -1414,11 +1415,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         # -----------------------------------------------------------------------
         # M-coded main-stem continuity constraint
-        # At a branching census (obs count increases going forward in time), any
-        # observation bearing \\bM\\b in ListOfTSM is the main bole — it must have
-        # a predecessor at census p (it cannot be a new recruit going backward).
-        # Applied ONLY when n_obs(p+1) > n_obs(p) AND at least one M obs exists.
-        # Stable-count M (legacy annotation) is intentionally left unconstrained.
+        # M = "Multiple" — indicates the presence of a new main stem with other
+        # branches growing from it.  At a census where stem count increases
+        # (n_obs(p+1) > n_obs(p)), any observation carrying M at p+1 must be on
+        # a track that was occupied at p (it cannot be a new recruit going
+        # backward).  The main stem existed before the branching event, so it
+        # must continue an existing track.
+        # Suppressed when any R code is present at p+1 (resprout event: all
+        # stems are new organisms, M-pin is inapplicable).
         # -----------------------------------------------------------------------
         if (n_feasible > 0L) {
             .n_obs_p  <- length(obs_dbh[[p]])
