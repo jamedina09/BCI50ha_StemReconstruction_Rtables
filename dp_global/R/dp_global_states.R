@@ -66,6 +66,65 @@ enumerate_states_injective <- function(K, n_obs, max_states) {
     mat
 }
 
+enumerate_states_constrained <- function(K, n_obs, allowed_tracks, max_states) {
+    # PURPOSE
+    # - Like enumerate_states_injective(), but restricts each observation to a
+    #   subset of tracks.  This eliminates provably infeasible assignments
+    #   (e.g., growth bounds violation over the cumulative span to the anchor)
+    #   BEFORE enumerating, dramatically reducing the state count when many
+    #   tracks are biologically impossible for a given observation.
+    #
+    # INPUTS
+    # - K: integer; number of tracks.
+    # - n_obs: integer; number of observed stems.
+    # - allowed_tracks: list of length n_obs.  allowed_tracks[[i]] is an integer
+    #   vector of track indices that observation i may be assigned to.
+    # - max_states: hard cap on enumerated states.
+    #
+    # OUTPUT
+    # - Matrix with one row per feasible injective assignment, n_obs columns.
+    # - Returns NULL when no feasible assignment exists or max_states exceeded.
+
+    if (n_obs == 0L) {
+        return(matrix(integer(0), nrow = 1L, ncol = 0L))
+    }
+    if (n_obs > K) return(NULL)
+    if (length(allowed_tracks) != n_obs) {
+        stop("allowed_tracks must have length n_obs (", n_obs, "), got ", length(allowed_tracks))
+    }
+    # Fast check: any obs with 0 allowed tracks means no solution
+    if (any(lengths(allowed_tracks) == 0L)) return(NULL)
+
+    # Pre-allocate output matrix and fill via recursive backtracking
+    mat <- matrix(0L, nrow = max_states, ncol = n_obs)
+    row_ctr <- 1L
+    current_row <- integer(n_obs)
+    avail <- rep(TRUE, K)  # tracks not yet used by earlier obs
+
+    fill <- function(col) {
+        if (col > n_obs) {
+            if (row_ctr > max_states) return()
+            mat[row_ctr, ] <<- current_row
+            row_ctr <<- row_ctr + 1L
+            return()
+        }
+        for (t in allowed_tracks[[col]]) {
+            if (!avail[t]) next  # injectivity: track already used
+            if (row_ctr > max_states) return()
+            current_row[col] <<- t
+            avail[t] <<- FALSE
+            fill(col + 1L)
+            avail[t] <<- TRUE
+        }
+    }
+    fill(1L)
+
+    n_actual <- row_ctr - 1L
+    if (n_actual == 0L) return(NULL)
+    if (n_actual > max_states) return(NULL)
+    mat[seq_len(n_actual), , drop = FALSE]
+}
+
 state_key <- function(state_vec) {
     # PURPOSE
     # - Canonical string key for a census "state" (injective observation->track map).

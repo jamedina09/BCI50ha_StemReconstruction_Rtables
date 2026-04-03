@@ -1052,20 +1052,144 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (!is.finite(current_max)) current_max <- 0
     track_ids <- c(anchor_ids, if (n_extra > 0L) seq.int(from = current_max + 1L, length.out = n_extra) else integer(0))
 
-    # Pre-enumerate assignment states (injective obs->track) for each census in census_range
+    # -----------------------------------------------------------------------
+    # Constrained enumeration: backward per-interval arc consistency.
+    # For each observation at census p, restrict which tracks are feasible
+    # by checking whether a growth-compatible observation exists at census
+    # p+1 that can also use that track (as determined at the previous
+    # backward step).  Constraints compound across intervals because each
+    # census inherits the tighter filtering from its successor.
+    #
+    # Anchor tracks vs slack tracks:
+    #   Anchor tracks have a known identity at the anchor census.
+    #   Slack tracks are empty at the anchor (created for recruits/deaths)
+    #   and are always allowed for every observation.
+    # -----------------------------------------------------------------------
+    .anchor_track_set <- which(track_ids %in% anchor_ids)   # tracks with anchor obs
+    .slack_track_set  <- which(!(track_ids %in% anchor_ids)) # tracks empty at anchor
+
+    # Median date per census for per-interval dt computation
+    .has_exact_date <- "ExactDate" %in% names(tree_data)
+    .census_median_date <- setNames(rep(NA_real_, n_census), as.character(census_range))
+    if (.has_exact_date) {
+        for (.ci in seq_len(n_census)) {
+            .dates <- tree_data[CensusID == census_range[.ci] & !is.na(DBH), ExactDate]
+            if (length(.dates) > 0L) {
+                .census_median_date[.ci] <- as.numeric(median(.dates, na.rm = TRUE))
+            }
+        }
+    }
+
+    # Conservative growth bounds for constrained enumeration.
+    # Must be at least as wide as actual effective prune bounds (computed later)
+    # to avoid falsely excluding feasible track assignments.
+    # For non-taper-corrected species: multiply by 2 to account for possible
+    # HOM-proportional widening that is applied per interval during the
+    # backward pass.
+    if (isTRUE(is_non_taper_corrected)) {
+        .ce_min_grow <- 2.0 * non_taper_corrected_prune_min_growth
+        .ce_max_grow <- 2.0 * non_taper_corrected_prune_max_growth
+    } else {
+        .ce_min_grow <- if (!is.null(prune_min_growth)) prune_min_growth else min_growth
+        .ce_max_grow <- if (!is.null(prune_max_growth)) prune_max_growth else max_growth
+    }
+
+    # --- Pass 1 (forward): gather observation data per census ---------------
     obs_dbh <- vector("list", n_census)
-    obs_row_idx <- vector("list", n_census)    # precomputed row indices per census (avoids repeated [.data.table)
+    obs_row_idx <- vector("list", n_census)
     is_resprout_obs <- vector("list", n_census)
-    state_mats <- vector("list", n_census)
-    state_keys <- vector("list", n_census)
     for (p in seq_len(n_census)) {
-        cc <- census_range[p]
-        idx <- .obs_row_idx_pre[[p]]    # reuse pre-computed indices (eliminates [.data.table call)
+        idx <- .obs_row_idx_pre[[p]]
         obs_row_idx[[p]] <- idx
         obs_dbh[[p]] <- tree_data$DBH[idx]
+        is_resprout_obs[[p]] <- .is_resprout_pre[[p]]
+    }
+
+    # --- Pass 2 (backward): enumerate states with per-interval constraints --
+    state_mats <- vector("list", n_census)
+    state_keys <- vector("list", n_census)
+    .allowed_at_census <- vector("list", n_census)  # per-obs allowed tracks
+
+    for (p in seq.int(n_census, 1L, by = -1L)) {
+        cc <- census_range[p]
         n_obs <- length(obs_dbh[[p]])
-        is_resprout_obs[[p]] <- .is_resprout_pre[[p]]  # reuse pre-computed flags (eliminates grepl call)
-        mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
+
+        # --- Determine allowed tracks for each observation ------------------
+        .use_constrained <- FALSE
+
+        if (p == n_census) {
+            # Anchor census: each obs is PINNED to its specific track via
+            # TrueStemID.  Setting allowed to exactly that one track (rather
+            # than all K) gives the backward propagation a tight starting
+            # point — the first hop checks "can obs_i grow to the exact
+            # anchor DBH for track k?", and subsequent hops compound.
+            if (n_obs > 0L) {
+                .anchor_obs_pre <- tree_data[CensusID == anchor_start & !is.na(DBH)]
+                .anchor_tidx <- match(.anchor_obs_pre$TrueStemID, track_ids)
+                .allowed_at_census[[p]] <- lapply(seq_len(n_obs), function(.j) {
+                    if (!is.na(.anchor_tidx[.j])) .anchor_tidx[.j] else seq_len(K)
+                })
+            }
+        } else if (n_obs > 0L && .has_exact_date &&
+                   is.finite(.census_median_date[p]) &&
+                   is.finite(.census_median_date[p + 1L]) &&
+                   length(obs_dbh[[p + 1L]]) > 0L &&
+                   length(.anchor_track_set) > 0L) {
+            # Per-interval backward propagation: for each obs i at census p,
+            # track k is feasible iff there exists some obs j at census p+1
+            # with k in allowed_at_census[[p+1]][[j]] AND the growth rate
+            # (DBH_j - DBH_i) / dt is within bounds.
+            .dt <- (.census_median_date[p + 1L] - .census_median_date[p]) / 365.25
+            if (is.finite(.dt) && .dt > 0) {
+                .dbh_next <- obs_dbh[[p + 1L]]
+                .n_obs_next <- length(.dbh_next)
+                .allowed_next <- .allowed_at_census[[p + 1L]]  # already computed
+                .allowed <- vector("list", n_obs)
+                for (.oi in seq_len(n_obs)) {
+                    .dbh_i <- obs_dbh[[p]][.oi]
+                    .ok_tracks <- integer(0)
+                    # Check each anchor track
+                    for (.tk in .anchor_track_set) {
+                        .feasible <- FALSE
+                        for (.oj in seq_len(.n_obs_next)) {
+                            if (!(.tk %in% .allowed_next[[.oj]])) next
+                            .rate <- (.dbh_next[.oj] - .dbh_i) / .dt
+                            if (.rate >= .ce_min_grow && .rate <= .ce_max_grow) {
+                                .feasible <- TRUE
+                                break
+                            }
+                        }
+                        if (.feasible) .ok_tracks <- c(.ok_tracks, .tk)
+                    }
+                    # Slack tracks are always allowed
+                    .ok_tracks <- c(.ok_tracks, .slack_track_set)
+                    .allowed[[.oi]] <- sort(.ok_tracks)
+                }
+                .allowed_at_census[[p]] <- .allowed
+                if (!all(lengths(.allowed) == K)) {
+                    .use_constrained <- TRUE
+                }
+            } else {
+                # dt not valid: all tracks allowed
+                if (n_obs > 0L) {
+                    .allowed_at_census[[p]] <- replicate(n_obs, seq_len(K), simplify = FALSE)
+                }
+            }
+        } else {
+            # No ExactDate or no obs at next census: all tracks allowed
+            if (n_obs > 0L) {
+                .allowed_at_census[[p]] <- replicate(n_obs, seq_len(K), simplify = FALSE)
+            }
+        }
+
+        # --- Enumerate states -----------------------------------------------
+        if (.use_constrained) {
+            vcat(prefix, "Census ", cc, ": constrained enum per-obs tracks = [",
+                 paste(lengths(.allowed_at_census[[p]]), collapse = ","), "] (of K=", K, ")")
+            mat <- enumerate_states_constrained(K, n_obs, .allowed_at_census[[p]], max_states)
+        } else {
+            mat <- enumerate_states_injective(K, n_obs, max_states = max_states)
+        }
 
         if (is.null(mat)) {
             vcat(prefix, "Too many states at census ", cc, " (", n_obs, " stems, exceeds max_states=", max_states, "); falling back to igraph matcher")
@@ -1078,8 +1202,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             return(finalize_out(out))
         }
         state_mats[[p]] <- mat
-        # Vectorized state key computation: avoids per-row paste() calls from apply().
-        # do.call(paste, list_of_columns) produces comma-separated strings in R's C layer.
         state_keys[[p]] <- if (ncol(mat) == 0L) {
             rep("", nrow(mat))
         } else {
@@ -1519,8 +1641,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             fe_full_keys  <- paste0(fe_assign_keys, "|", fe_phase_keys)
         }
 
-        # Dynamic creation of current full-states
-        key_to_idx <- new.env(parent = emptyenv())
+        # Dynamic creation of current full-states (batched: no per-i loop)
         curr_keys_list <- list()
         curr_assign_list <- list()
         curr_logB <- numeric(0)
@@ -1533,24 +1654,16 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         logw     <- numeric(n_feasible)
         used_edges <- 0L
 
-        # Process feasible pairs grouped by from_i (i-order is guaranteed by C++ loop order).
-        # split() creates one group per unique from_i — only i values with ≥1 feasible j appear.
+        # Batched cost computation + vectorized state registration + aggregation
         if (n_feasible > 0L) {
-            by_i <- split(seq_len(n_feasible), fe_from)
+            # --- 1. Single C++ call for ALL feasible transitions ---
+            .tdbh0_all <- track_dbh_by_state[[p]][fe_from, , drop = FALSE]
+            .tdbh1_all <- tdbh1_mat[fe_to, , drop = FALSE]
 
-            for (i_key in names(by_i)) {
-                i_val   <- as.integer(i_key)
-                rows    <- by_i[[i_key]]
-                tdbh0   <- track_dbh_by_state[[p]][i_val, ]
-                assign0 <- mat_cc[i_val, ]
-                j_vals  <- fe_to[rows]
-                f_keys  <- fe_full_keys[rows]
-                f_tdbh1 <- lapply(j_vals, function(jj) tdbh1_mat[jj, ])
-
-                if (verbose) t_tc0 <- tic()
-                c_trans_vec <- transition_cost_tracks_bio_batch_rcpp(
-                    track_dbh_t   = tdbh0,
-                    track_dbh_tp1 = f_tdbh1,
+            if (verbose) t_tc0 <- tic()
+            .all_costs <- transition_cost_paired_rcpp(
+                    tdbh0_mat = .tdbh0_all,
+                    tdbh1_mat = .tdbh1_all,
                     interval_years = interval_val,
                     # --- growth model ---
                     mu_const = Bio_Mu_Growth_unit,
@@ -1568,92 +1681,54 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     meas_sd1_b = meas_sd1_b,
                     meas_sd2   = meas_sd2,
                     meas_p_big = meas_p_big,
-                                    # --- mortality model ---
+                    # --- mortality model ---
                     h0             = Bio_H0_Mortality,
                     beta           = Bio_Beta_Mortality,
-                                    # --- recruitment model ---
+                    # --- recruitment model ---
                     recruit_meanlog = Bio_Recruit_Meanlog_unit,
                     recruit_sdlog   = Bio_Recruit_Sdlog_unit,
                     recruit_max_dbh = Bio_Recruit_MaxDBH_unit,
                     recruit_lambda  = Bio_Recruitment_lambda,
                     eps_tiebreak    = eps_tiebreak
-                )
-                transition_cost_calls <- transition_cost_calls + 1L
-                if (verbose) transition_cost_time <- transition_cost_time + (tic() - t_tc0)
+            )
+            transition_cost_calls <- transition_cost_calls + 1L
+            if (verbose) transition_cost_time <- transition_cost_time + (tic() - t_tc0)
 
-                # Step 1: sequential state registration (new keys need sequential idx)
-                n_e <- length(rows)
-                c_trans_num <- unlist(c_trans_vec, use.names = FALSE)
-                edge_idx <- integer(n_e)
-                for (e in seq_len(n_e)) {
-                    curr_key <- f_keys[[e]]
-                    idx <- key_to_idx[[curr_key]]
-                    if (is.null(idx)) {
-                        idx <- length(curr_keys_list) + 1L
-                        key_to_idx[[curr_key]] <- idx
-                        curr_keys_list[[idx]]  <- curr_key
-                        curr_assign_list[[idx]] <- as.integer(assign0)
-                        curr_logB[idx] <- -Inf
-                        curr_vit[idx]  <- Inf
-                        curr_ptr[idx]  <- NA_integer_
-                    }
-                    edge_idx[[e]] <- idx
-                }
-                # Step 2: vectorized cost accumulation — eliminates per-edge log_add_exp R calls
-                .logw_v     <- -c_trans_num / temperature
-                .cand_vit_v <- c_trans_num + vit_next[j_vals]
-                .cand_log_v <- .logw_v + logB_next[j_vals]
-                if (n_e == 1L) {
-                    # Single-edge fast path
-                    .ix <- edge_idx[1L]
-                    if (!is.finite(curr_vit[.ix]) || .cand_vit_v[1L] < curr_vit[.ix]) {
-                        curr_vit[.ix] <- .cand_vit_v[1L]; curr_ptr[.ix] <- j_vals[1L]
-                    }
-                    .lb <- curr_logB[.ix]
-                    curr_logB[.ix] <- if (!is.finite(.lb)) .cand_log_v[1L] else {
-                        .m <- max(.lb, .cand_log_v[1L])
-                        .m + log(exp(.lb - .m) + exp(.cand_log_v[1L] - .m))
-                    }
-                    used_edges <- used_edges + 1L
-                    from_idx[[used_edges]] <- .ix; to_idx[[used_edges]] <- j_vals[1L]
-                    logw[[used_edges]] <- .logw_v[1L]
-                } else if (!anyDuplicated(edge_idx)) {
-                    # No duplicate indices: fully vectorized Viterbi + logB updates
-                    .vit_old <- curr_vit[edge_idx]
-                    .upd <- !is.finite(.vit_old) | (.cand_vit_v < .vit_old)
-                    if (any(.upd)) {
-                        curr_vit[edge_idx[.upd]] <- .cand_vit_v[.upd]
-                        curr_ptr[edge_idx[.upd]] <- j_vals[.upd]
-                    }
-                    .lb_old <- curr_logB[edge_idx]
-                    .fin    <- is.finite(.lb_old)
-                    if (any(.fin)) {
-                        .m <- pmax(.lb_old[.fin], .cand_log_v[.fin])
-                        curr_logB[edge_idx[.fin]] <- .m + log(
-                            exp(.lb_old[.fin] - .m) + exp(.cand_log_v[.fin] - .m))
-                    }
-                    if (any(!.fin)) curr_logB[edge_idx[!.fin]] <- .cand_log_v[!.fin]
-                    .e_rng <- seq.int(used_edges + 1L, used_edges + n_e)
-                    from_idx[.e_rng] <- edge_idx; to_idx[.e_rng] <- j_vals; logw[.e_rng] <- .logw_v
-                    used_edges <- used_edges + n_e
-                } else {
-                    # Fallback: duplicate edge_idx values (rare — two j's yield same full-key)
-                    for (e in seq_len(n_e)) {
-                        .ix <- edge_idx[e]
-                        if (!is.finite(curr_vit[.ix]) || .cand_vit_v[e] < curr_vit[.ix]) {
-                            curr_vit[.ix] <- .cand_vit_v[e]; curr_ptr[.ix] <- j_vals[e]
-                        }
-                        .lb <- curr_logB[.ix]
-                        curr_logB[.ix] <- if (!is.finite(.lb)) .cand_log_v[e] else {
-                            .m <- max(.lb, .cand_log_v[e])
-                            .m + log(exp(.lb - .m) + exp(.cand_log_v[e] - .m))
-                        }
-                        used_edges <- used_edges + 1L
-                        from_idx[[used_edges]] <- .ix; to_idx[[used_edges]] <- j_vals[e]
-                        logw[[used_edges]] <- .logw_v[e]
-                    }
-                }
-            }
+            # --- 2. Vectorized state registration (unique + match) ---
+            .uniq_keys   <- unique(fe_full_keys)
+            .n_unique    <- length(.uniq_keys)
+            .edge_sidx   <- match(fe_full_keys, .uniq_keys)
+
+            # Extract assignment for each unique state from its first occurrence
+            .first_occ   <- match(.uniq_keys, fe_full_keys)
+            .first_from  <- fe_from[.first_occ]
+            curr_keys_list   <- as.list(.uniq_keys)
+            curr_assign_list <- lapply(.first_from, function(i) as.integer(mat_cc[i, ]))
+
+            # --- 3. Vectorized cost accumulation ---
+            .logw_all     <- -.all_costs / temperature
+            .cand_vit_all <- .all_costs + vit_next[fe_to]
+            .cand_log_all <- .logw_all + logB_next[fe_to]
+
+            # Viterbi: min cost per state via order + first-in-group
+            .ord <- order(.edge_sidx, .cand_vit_all)
+            .sorted_sidx  <- .edge_sidx[.ord]
+            .first_in_grp <- c(TRUE, diff(.sorted_sidx) != 0L)
+            .best_idx     <- .ord[.first_in_grp]
+            curr_vit <- .cand_vit_all[.best_idx]
+            curr_ptr <- fe_to[.best_idx]
+
+            # LogB: log-sum-exp per state
+            curr_logB <- rep(-Inf, .n_unique)
+            .dt_lb  <- data.table::data.table(s = .edge_sidx, v = .cand_log_all)
+            .lb_agg <- .dt_lb[, { m <- max(v); list(lb = m + log(sum(exp(v - m)))) }, by = s]
+            curr_logB[.lb_agg$s] <- .lb_agg$lb
+
+            # Edge storage (all feasible transitions)
+            used_edges <- n_feasible
+            from_idx   <- .edge_sidx
+            to_idx     <- fe_to
+            logw       <- .logw_all
         }
 
         if (length(curr_keys_list) == 0L) {
