@@ -53,7 +53,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            # of HOM deviation from 1.3 m.  Set 0 to disable HOM widening.
                                                            hom_tolerance_scale = 2.0,
                                                            verbose = FALSE,
-                                                           chunk_id = NULL) {
+                                                           chunk_id = NULL,
+                                                           allow_segment_split = TRUE,
+                                                           post_segment_all_recruits = FALSE) {
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
     if (!is.finite(posterior_top_k) || is.na(posterior_top_k) || posterior_top_k < 1L) {
@@ -562,6 +564,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (isTRUE(has_mf_stash) && length(mf_emptied_censuses) > 0L) {
         census_range <- census_range[!census_range %in% mf_emptied_censuses]
     }
+    # Remove virtual census IDs with no rows in tree_data (e.g. gaps left by an
+    # upstream MF-removal pass that the sub-call's own MF detection does not see).
+    census_range <- census_range[census_range %in% unique(tree_data$CensusID)]
     n_census <- length(census_range)
     vcat(prefix, "Census range: ", paste(census_range, collapse = ", "), " (first observed=", first_obs_census, ", anchor=", anchor_start, ")")
     obs_counts <- vapply(
@@ -671,6 +676,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             if (isTRUE(has_mf_stash) && length(mf_emptied_censuses) > 0L) {
                 census_range <- census_range[!census_range %in% mf_emptied_censuses]
             }
+            census_range <- census_range[census_range %in% unique(tree_data$CensusID)]
             n_census <- length(census_range)
             vcat(prefix, "Adjusted census range: ", paste(census_range, collapse = ", "))
             obs_counts <- vapply(
@@ -705,6 +711,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 if (isTRUE(has_mf_stash) && length(mf_emptied_censuses) > 0L) {
                     census_range <- census_range[!census_range %in% mf_emptied_censuses]
                 }
+                census_range <- census_range[census_range %in% unique(tree_data$CensusID)]
                 n_census <- length(census_range)
                 vcat(prefix, "Adjusted census range: ", paste(census_range, collapse = ", "))
                 obs_counts <- vapply(
@@ -846,10 +853,144 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             }
         }
     }
-    n_resprout_total <- sum(vapply(.is_resprout_pre, function(x) sum(x), integer(1L)))
-    if (n_resprout_total > 0L) {
-        K_base <- K_base + n_resprout_total
-        vcat(prefix, "Resprout barrier: adding ", n_resprout_total, " extra track(s) for resprout observations")
+    # -----------------------------------------------------------------------
+    # Resprout segment split
+    # When any census p0 >= 2 (not the first in range) carries an R code and
+    # lies before the anchor, split the DP into two independent sub-problems:
+    #   pre-segment  : censuses 1 .. (r_boundary - 1), provisional anchor
+    #   post-segment : censuses r_boundary .. anchor_start
+    # This eliminates M-pin / R-recruit conflicts that cross the boundary and
+    # prevents census history before the resprout from contaminating track
+    # assignments after it.  Prevents infinite recursion: the post sub-call
+    # starts at the R census (position 1 in its range), which does not satisfy
+    # .p0 >= 2, so it never triggers a further split.
+    # allow_segment_split=FALSE in recursive sub-calls prevents cascading splits
+    # (downstream R codes in the post-segment are handled by R-recruit constraints).
+    # -----------------------------------------------------------------------
+    .r_boundary_pos <- NULL
+    if (isTRUE(allow_segment_split)) for (.chk_p in seq_len(n_census)) {
+        if (.chk_p >= 2L &&
+            any(.is_resprout_pre[[.chk_p]]) &&
+            census_range[.chk_p] < anchor_start) {
+            .r_boundary_pos <- .chk_p
+            break
+        }
+    }
+    if (!is.null(.r_boundary_pos) && isTRUE(allow_segment_split)) {
+        .r_boundary_census <- census_range[.r_boundary_pos]
+        vcat(prefix, "Resprout boundary at census ", .r_boundary_census,
+             ": splitting DP into pre- and post-resprout segments")
+
+        # Shared sub-call arguments (all params in scope, some coerced earlier)
+        .sub_args <- list(
+            min_growth                         = min_growth,
+            max_growth                         = max_growth,
+            max_tracks                         = max_tracks,
+            max_states                         = max_states,
+            temperature                        = temperature,
+            posterior_top_k                    = posterior_top_k,
+            eps_tiebreak                       = eps_tiebreak,
+            allow_provisional_anchor           = allow_provisional_anchor,
+            use_measurement_error              = use_measurement_error,
+            meas_sd1_a                         = meas_sd1_a,
+            meas_sd1_b                         = meas_sd1_b,
+            meas_sd2                           = meas_sd2,
+            meas_p_big                         = meas_p_big,
+            fallback_growth_forms              = fallback_growth_forms,
+            posterior_samples                  = 0L,  # disable posteriors in sub-calls
+            posterior_samples_format           = "csv",
+            posterior_samples_path             = NULL,
+            posterior_sample_seed              = NULL,
+            prune_hard                         = prune_hard,
+            prune_min_growth                   = prune_min_growth,
+            prune_max_growth                   = prune_max_growth,
+            prune_use_bio_bounds               = prune_use_bio_bounds,
+            prune_recruit_max_dbh              = prune_recruit_max_dbh,
+            prune_use_bio_recruit              = prune_use_bio_recruit,
+            non_taper_corrected_growth_forms   = non_taper_corrected_growth_forms,
+            non_taper_corrected_prune_min_growth = non_taper_corrected_prune_min_growth,
+            non_taper_corrected_prune_max_growth = non_taper_corrected_prune_max_growth,
+            hom_tolerance_scale                = hom_tolerance_scale,
+            verbose                            = verbose,
+            chunk_id                           = chunk_id,
+            allow_segment_split                = FALSE  # prevent cascading splits in sub-calls
+        )
+
+        # Post-resprout sub-call: censuses >= r_boundary with original anchor
+        .post_data <- original_tree_data[CensusID >= .r_boundary_census]
+        out_post <- do.call(
+            match_stems_dp_global_backward_marginals_batch,
+            c(list(tree_data    = .post_data,
+                   anchor_start = anchor_start,
+                   slack_tracks = slack_tracks,
+                   slack_require_anchor_recruitable = slack_require_anchor_recruitable,
+                   slack_require_anchor_eps         = slack_require_anchor_eps,
+                   post_segment_all_recruits        = TRUE),
+              .sub_args)
+        )
+
+        # Pre-resprout sub-call: censuses < r_boundary with provisional anchor
+        .pre_data <- original_tree_data[CensusID < .r_boundary_census]
+        .pre_anchor <- suppressWarnings(
+            max(.pre_data$CensusID[!is.na(.pre_data$DBH)], na.rm = TRUE)
+        )
+        if (is.finite(.pre_anchor)) {
+            out_pre <- do.call(
+                match_stems_dp_global_backward_marginals_batch,
+                c(list(tree_data    = .pre_data,
+                       anchor_start = as.integer(.pre_anchor),
+                       slack_tracks = slack_tracks,
+                       # No real anchor in pre-segment: disable recruitable check
+                       slack_require_anchor_recruitable = FALSE,
+                       slack_require_anchor_eps         = slack_require_anchor_eps),
+                  .sub_args)
+            )
+            # Offset pre-segment IDs so they do not clash with post-segment IDs
+            .max_post_id <- suppressWarnings(
+                max(out_post$ReconstructedStemID, na.rm = TRUE)
+            )
+            if (!is.finite(.max_post_id)) .max_post_id <- 0L
+            .offset <- as.integer(.max_post_id)
+            if (.offset > 0L) {
+                out_pre[!is.na(ReconstructedStemID),
+                        ReconstructedStemID := ReconstructedStemID + .offset]
+                # Offset posterior top-k IDs as well
+                for (.k in seq_len(posterior_top_k)) {
+                    .id_col <- paste0("DP_PosteriorTop", .k, "ID")
+                    if (.id_col %in% names(out_pre)) {
+                        out_pre[!is.na(get(.id_col)),
+                                (.id_col) := get(.id_col) + .offset]
+                    }
+                }
+            }
+            # Combine pre + post segments
+            .all_cols <- union(names(out_pre), names(out_post))
+            for (.c in setdiff(.all_cols, names(out_pre)))  out_pre[,  (.c) := NA]
+            for (.c in setdiff(.all_cols, names(out_post))) out_post[, (.c) := NA]
+            combined <- data.table::rbindlist(
+                list(out_pre, out_post), use.names = TRUE, fill = TRUE
+            )
+        } else {
+            combined <- out_post
+        }
+        if ("obs_row_id" %in% names(combined)) data.table::setorder(combined, obs_row_id)
+        return(finalize_out(combined))
+    }
+
+    # When any stem in a census carries an R code, ALL stems at that census must
+    # start on empty tracks (census-level resprout rule).  We therefore add the
+    # TOTAL obs count of each resprout census — not just the R-coded count — so
+    # that K is large enough to assign every stem in those censuses a fresh slot.
+    # Guard .p0 > 1L: when the R census is the FIRST in the range (position 1),
+    # there is no preceding census to conflict with, so no extra tracks are needed
+    # (this is the case for post-resprout sub-calls that start at the R census).
+    n_resprout_extra <- sum(vapply(seq_len(n_census), function(.p0) {
+        if (.p0 > 1L && any(.is_resprout_pre[[.p0]])) length(.obs_row_idx_pre[[.p0]]) else 0L
+    }, integer(1L)))
+    if (n_resprout_extra > 0L) {
+        K_base <- K_base + n_resprout_extra
+        vcat(prefix, "Resprout barrier: adding ", n_resprout_extra,
+             " extra track(s) for census-level resprout (all stems in resprout censuses)")
     }
 
     slack_tracks <- suppressWarnings(as.integer(slack_tracks))
@@ -1287,7 +1428,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # the previous census to continue from.  When .n_obs_p == 0 (all stems
             # died / resprout boundary), the M stem at p+1 is necessarily a new
             # recruit going backward — do not constrain it.
-            if (.n_obs_p > 0L && .n_obs_p1 > .n_obs_p && length(.m_pos_p1) > 0L) {
+            # Also suppressed when any R code is present at p+1: the entire census
+            # is a resprout event, so no predecessor can exist for any stem there.
+            if (.n_obs_p > 0L && .n_obs_p1 > .n_obs_p && length(.m_pos_p1) > 0L &&
+                !any(is_resprout_obs[[p + 1L]])) {
                 # For each feasible pair: M-coded obs at p+1 must map to a track
                 # that was occupied at p (i.e., not born as a new recruit backward).
                 # next_assign_mat rows are in the same order as next_keys (fe_to indexes it).
@@ -1316,6 +1460,45 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         # -----------------------------------------------------------------------
+        # Post-segment recruit continuity constraint
+        # When this DP is the post-segment of a resprout split, ALL stems at the
+        # first census (the R-boundary) are new organisms.  If the number of
+        # stems at the first census <= the number at the next census, every stem
+        # at p must be on a track that is also occupied at p+1 — a freshly
+        # resprouted stem dying immediately while another independent recruit
+        # appears is far less parsimonious than all recruits continuing.
+        # -----------------------------------------------------------------------
+        if (n_feasible > 0L && isTRUE(post_segment_all_recruits) && p == 1L) {
+            .n_obs_p  <- length(obs_dbh[[p]])
+            .n_obs_p1 <- length(obs_dbh[[p + 1L]])
+            if (.n_obs_p > 0L && .n_obs_p <= .n_obs_p1) {
+                .p_assign  <- state_mats[[p]][fe_from, , drop = FALSE]           # n_feasible × n_obs_p
+                .p1_tracks <- next_assign_mat[fe_to, seq_len(.n_obs_p1), drop = FALSE]  # n_feasible × n_obs_p1
+                .keep_rc   <- rep(TRUE, n_feasible)
+                for (.pj in seq_len(.n_obs_p)) {
+                    .trk <- .p_assign[, .pj]  # track of obs .pj at p
+                    # Check that this track is occupied at p+1
+                    .occ <- matrix(FALSE, nrow = n_feasible, ncol = .n_obs_p1)
+                    for (.qj in seq_len(.n_obs_p1)) {
+                        .occ[, .qj] <- .trk == .p1_tracks[, .qj]
+                    }
+                    .keep_rc <- .keep_rc & (rowSums(.occ) > 0L)
+                }
+                if (any(!.keep_rc)) {
+                    .n_rc_pruned <- sum(!.keep_rc)
+                    vcat(prefix, "  Post-segment recruit continuity: pruned ", .n_rc_pruned,
+                         " of ", n_feasible, " transitions (all ", .n_obs_p,
+                         " recruit(s) at census ", cc,
+                         " must continue to census ", next_cc, ")")
+                    fe_from    <- fe_from[.keep_rc]
+                    fe_to      <- fe_to[.keep_rc]
+                    fe_phase   <- fe_phase[.keep_rc, , drop = FALSE]
+                    n_feasible <- length(fe_from)
+                }
+            }
+        }
+
+        # -----------------------------------------------------------------------
         # R-recruit constraint
         # An observation with a resprout code (R/RP/RF/RT/QR) AND non-NA DBH at
         # census p+1 is a NEW organism going backward in time — the track it
@@ -1328,10 +1511,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (n_feasible > 0L) {
             .r_pos_p1 <- which(is_resprout_obs[[p + 1L]])  # R-coded LIVING obs at p+1
             .n_obs_p  <- length(obs_dbh[[p]])
+            .n_obs_p1 <- length(obs_dbh[[p + 1L]])
             if (length(.r_pos_p1) > 0L && .n_obs_p > 0L) {
-                # For each feasible pair: R-coded obs at p+1 must map to a track
-                # that was EMPTY at p (does not appear in the assignment at p).
-                .r_tracks <- next_assign_mat[fe_to, .r_pos_p1, drop = FALSE]  # n_feasible × n_r
+                # Census-level resprout: ALL stems at p+1 must be on empty tracks.
+                # Any R code in the census signals the whole individual broke/resprout,
+                # so no stem at p+1 can be a continuation of any stem at p.
+                .r_tracks <- next_assign_mat[fe_to, seq_len(.n_obs_p1), drop = FALSE]  # n_feasible × n_obs_p1
                 .p_assign <- state_mats[[p]][fe_from, , drop = FALSE]           # n_feasible × n_obs_p
                 .keep_r   <- rep(TRUE, n_feasible)
                 for (.rj in seq_len(ncol(.r_tracks))) {
@@ -1346,7 +1531,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 if (any(!.keep_r)) {
                     .n_r_pruned <- sum(!.keep_r)
                     vcat(prefix, "  R-recruit: pruned ", .n_r_pruned, " of ", n_feasible,
-                         " transitions (R-coded stem must be new recruit, not continuation) at census ", next_cc)
+                         " transitions (census-level resprout: all ", .n_obs_p1, " stem(s) must start fresh) at census ", next_cc)
                     fe_from    <- fe_from[.keep_r]
                     fe_to      <- fe_to[.keep_r]
                     fe_phase   <- fe_phase[.keep_r, , drop = FALSE]
