@@ -960,10 +960,11 @@ run_main_chunked <- function() {
                     g <- groups_ci[j]
                     dtg <- xrun[Tag == g$Tag & species == g$species]
 
-                    # Skip invalid groups (missing DBH/CensusID or all NA)
+                    # Return rows as-is for groups with missing DBH or CensusID (all NA)
                     if (!("DBH" %in% names(dtg)) || !("CensusID" %in% names(dtg)) || all(is.na(dtg$DBH)) || all(is.na(dtg$CensusID))) {
-                        log_msg(sprintf("Skipping Tag=%s species=%s in chunk %d: missing or all NA DBH/CensusID", g$Tag, g$species, ci), "WARN")
-                        return(NULL)
+                        log_msg(sprintf("Skipping Tag=%s species=%s in chunk %d: missing or all NA DBH/CensusID; returning rows as-is", g$Tag, g$species, ci), "WARN")
+                        dtg[, ReconstructionMethod := "skipped_no_data"]
+                        return(dtg)
                     }
 
                     run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local, chunk_id = ci)

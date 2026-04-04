@@ -556,6 +556,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                      .extended_anchor, " (first post-anchor census with living stems)")
                 anchor_start <- .extended_anchor
                 tree_data    <- original_tree_data[CensusID <= anchor_start]
+                # If the extended anchor now covers all observations, the DP is no
+                # longer scoped to a prefix — disable post-anchor reinsertion so
+                # the same rows are not appended a second time.
+                if (nrow(original_tree_data[CensusID > anchor_start]) == 0L) {
+                    dp_scoped_to_pre_anchor <- FALSE
+                }
             }
         }
 
@@ -2126,7 +2132,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # If DP was scoped to pre-anchor only, merge original post-anchor rows back into the returned dataset
     if (exists("dp_scoped_to_pre_anchor", inherits = FALSE) && isTRUE(dp_scoped_to_pre_anchor)) {
         processed <- tree_data
-        post_rows <- original_tree_data[CensusID > anchor_requested]
+        post_rows <- original_tree_data[CensusID > anchor_start]
         # Ensure both parts have the same set of columns (add missing ones as NA)
         all_cols <- union(names(processed), names(post_rows))
         missing_in_processed <- setdiff(all_cols, names(processed))
