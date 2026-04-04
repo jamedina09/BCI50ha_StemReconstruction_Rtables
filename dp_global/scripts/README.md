@@ -59,11 +59,10 @@ DP / reconstruction option
 - `DP_VERBOSE` — default: `TRUE`.
 - `DP_POSTERIOR_TOP_K` — default: `2L` - top=k posterior reconstructions to track. 
 - `DP_MAX_TRACKS` — default: `NULL` (auto-computed per data when `NULL`) — optionally force max tracks; if `NULL` auto-computed.
-- `DP_MAX_STATES` — default: `40000L` - limit DP max states to control memory/CPU.
+- `DP_MAX_STATES` — default: `40000L`. Maximum number of injective assignment states allowed per census. Also controls the inter-census cross-product limit (`max_states²`). When any census exceeds this limit, or when the cross-product of states between two adjacent censuses exceeds `max_states²`, the solver falls back to the probabilistic matcher. See the "Understanding `max_states`" section in `dp_global/README.md` for a table showing what values mean in practice and how to choose one for your data.
 - `DP_SLACK_TRACKS` — default: `1L` - slack (additional) tracks allowed for DP.
 - `DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE` — default: `TRUE` - require anchor to be recruitable (if DBH less than max recruitment size) before granting slack.
 - `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
-- `DP_MAX_EDGES` — default: `500000000L` (500M). Maximum number of cross-product edges between adjacent census states in the backward pass. If the product of state counts for two consecutive censuses exceeds this limit, the solver triggers a probabilistic fallback instead of attempting the full DP.
 - `PROB_N_SAMPLES` — default: `200L`. Number of Gumbel-noise stochastic samples drawn by the probabilistic greedy matching fallback. Higher values produce more accurate posterior estimates at the cost of computation time.
 - `DP_FALLBACK_GROWTH_FORMS` — default: `character(0)`; comma- or
   semicolon-separated list of values in the `growth_form` column that should

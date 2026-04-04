@@ -55,8 +55,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            chunk_id = NULL,
                                                            allow_segment_split = TRUE,
                                                            post_segment_all_recruits = FALSE,
-                                                           max_edges = 500000000L,
                                                            prob_n_samples = 200L) {
+    # Derive max_edges from max_states: the cross-product of two adjacent
+    # census state counts can be at most max_states^2.  Using that as the
+    # edge limit keeps a single user-facing knob (max_states) controlling
+    # both per-census enumeration and inter-census transition budgets.
+    max_edges <- as.double(max_states) * as.double(max_states)
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
     if (!is.finite(posterior_top_k) || is.na(posterior_top_k) || posterior_top_k < 1L) {
@@ -887,7 +891,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             verbose                            = verbose,
             chunk_id                           = chunk_id,
             allow_segment_split                = FALSE,  # prevent cascading splits in sub-calls
-            max_edges                          = max_edges,
             prob_n_samples                     = prob_n_samples
         )
 

@@ -1,179 +1,37 @@
-# dpglobal_bundle — Focused bundle folder (what's here)
+# dpglobal_bundle
 
-This folder contains a compact set of runtime artifacts and helpers that make it easy
-to run the `dp_global` codebase on another machine without checking out the full
-repository. Typical contents (when present):
+Portable packaging of the `dp_global` stem-identification algorithm for deployment on other machines.
 
-- `dpglobal_bundle_loader.R` — helper to build `dpglobal_bundle.RData` and `dpglobal_bundle_manifest.rds` on the source machine.
-- `dpglobal_bundle.RData` — optional pre-sourced R objects (convenience; not required).
-- `dpglobal_bundle_manifest.rds` — optional manifest listing suggested R packages.
-- `src/` and `transition_cost_rcpp.R` — C++ source and R wrapper for the transition-cost acceleration (compile on target with Rcpp::sourceCpp).
-- `package_bundle.sh` — packaging helper that creates a timestamped tarball in `dist/`.
+## Contents
 
-Quick RUN (recommended and minimal) ✅
+| File | Purpose |
+|------|---------|
+| `package_bundle.sh` | Creates a timestamped `.tar.gz` in `dist/` containing everything needed to run the algorithm |
+| `dpglobal_bundle_loader.R` | Generates `dpglobal_bundle.RData` and `dpglobal_bundle_manifest.rds` (run on source machine before packaging) |
+| `verify_bundle.R` | Optional smoke test for bundle integrity on the target machine |
+| `src/` | C++ source for transition-cost acceleration (compiled on target with `Rcpp::sourceCpp`) |
 
-1) Extract the bundle somewhere convenient (or place the extracted folder into your project directory):
+## 1. Build the bundle (source machine)
 
-```bash
-mkdir -p /path/to/extracted_bundle
-tar -xzf dpglobal_bundle_full_YYYYmmdd_HHMMSS.tar.gz -C /path/to/extracted_bundle
-```
-
-2) Run the main entrypoint from R with a temporary working directory — this avoids editing paths and keeps your session tidy.
-
-# Interactive R example (recommended)
-
-```r
-withr::with_dir('/path/to/extracted_bundle', source(file.path('dp_global', 'R', 'dp_global_main.R')))
-```
-
-Notes:
-- The packaged `INSTALL.txt` contains this same minimal example (the packaging script writes this quick-run snippet).
-- `withr::with_dir()` temporarily sets the working directory for the sourced code and automatically restores your original working directory after the call.
-- `dpglobal_bundle.RData` may be loaded to provide quick access to pre-sourced helper objects, but it is not required to run the code.
-
-Optional: compile C++ acceleration for speed (recommended if you need performance)
+From the project root:
 
 ```bash
-Rscript -e "Rcpp::sourceCpp('dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp')"
-```
-
-Manifest & packages
-
-- If present, the manifest at `dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds` lists recommended packages. Install missing packages with:
-
-```r
-manifest <- readRDS('dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds')
-pkgs <- unique(unlist(manifest$required_pkgs_by_file))
-pkgs <- pkgs[!pkgs %in% installed.packages()[, 'Package']]
-if (length(pkgs)) install.packages(pkgs)
-```
-
-Quick verification (optional)
-
-```r
-# load into a fresh environment to avoid polluting your session
-myenv <- new.env()
-load(file.path('/path/to/extracted_bundle', 'dp_global', 'dpglobal_bundle', 'dpglobal_bundle.RData'), envir = myenv)
-exists('estimate_bio_pars', envir = myenv, mode = 'function')  # should be TRUE if RData was created
-```
-
-Rebuilding the bundle (source machine)
-
-- Run `dpglobal_bundle_loader.R` to regenerate `dpglobal_bundle.RData` and the manifest, then re-run `package_bundle.sh`.
-
-```bash
-# from project root on the machine that has the full source
-Rscript -e "source('./dp_global/R/dpglobal_bundle/dpglobal_bundle_loader.R')"
 sh dp_global/R/dpglobal_bundle/package_bundle.sh --build-bundle
 ```
 
-Why this is simpler
+`--build-bundle` regenerates `dpglobal_bundle.RData` and the manifest before packaging. Output: `dist/dpglobal_bundle_full_<timestamp>.tar.gz` with a SHA256 checksum.
 
-- No path-editing or tricky sourcing: extract the bundle, point `withr::with_dir()` to the extracted bundle root, and `source('dp_global/R/dp_global_main.R')`.
-- Loading `dpglobal_bundle.RData` is optional and only a convenience to avoid sourcing many files manually.
-- The C++ compile step is independent and only required for performance.
+The script uses `rsync` (falls back to `cp -r`) and excludes `dp_global/output/`, `dist/`, and `.git/`. It also stages `data_simulation/data/` as example input and writes an `INSTALL.txt` inside the archive.
 
-Security & reproducibility
-
-- Record R and package versions used to build the bundle (e.g., `sessioninfo::session_info()`).
-- Do not run compiled code from untrusted bundles without verifying provenance.
-
-That's it — short and practical. A small `verify_bundle.R` script can be included in this folder; when present `package_bundle.sh` copies it into the staged bundle. `verify_bundle.R` performs a basic smoke test to validate bundle integrity on a target machine.
-
----
-
-package_bundle.sh — detailed behavior and usage
-
-Purpose
-- Create a timestamped tarball that contains everything needed to run `dp_global/scripts/main_cpp.R` on another machine.
-
-What it stages (full package, by default)
-- A copy of the `dp_global/` tree (it uses `rsync` if available) with these exclusions: `dp_global/output/`, `dp_global/R/dpglobal_bundle/dist/`, and `.git/` (keeps the archive free of large outputs and VCS metadata).
-- `data_simulation/data/` (example inputs) from the project root.
-- The bundle-local files: `dp_global/R/dpglobal_bundle/*` (if present) including `dpglobal_bundle.RData` and `dpglobal_bundle_manifest.rds` when available.
-- The R wrapper and C++ source for the transition-cost functions from `dp_global/src/`.
-- An `INSTALL.txt` auto-generated inside the archive with exact copy-paste commands to install packages, compile the C++, and run `main_cpp.R`.
-
-Key behavior and safeguards
-- Uses `rsync -av` when available; otherwise falls back to `cp -r` and removes known large dirs.
-- Prints a staged contents preview and runs simple sanity checks (warns if expected critical files are missing). The tarball will still be created but you are warned if something appears missing.
-- Generates a SHA256 checksum (`.sha256`) for the created tarball (if `shasum` or `sha256sum` is available).
-- Creates a temporary staging directory; the staging area is cleaned up automatically on exit (no changes to your repo files).
-
-Options
-- `--build-bundle` — before packaging, runs:
-    Rscript -e "source('dp_global/R/dpglobal_bundle/dpglobal_bundle_loader.R')"
-  This generates/updates `dpglobal_bundle.RData` and `dpglobal_bundle_manifest.rds` in `dp_global/R/dpglobal_bundle` and ensures the tarball contains the RData.
-- `--help` or `-h` — prints usage and exits.
-
-Where the tarball is written
-- `dp_global/R/dpglobal_bundle/dist/dpglobal_bundle_full_<timestamp>.tar.gz`
-- Checksum: `dp_global/R/dpglobal_bundle/dist/dpglobal_bundle_full_<timestamp>.tar.gz.sha256`
-
-How to produce a full package (copy-paste)
-- From the project root (recommended):
+## 2. Deploy on the target machine
 
 ```bash
-# Full package (uses existing dpglobal_bundle.RData if present)
-sh dp_global/R/dpglobal_bundle/package_bundle.sh
-
-# Full package and build dpglobal_bundle.RData first (recommended to include RData)
-sh dp_global/R/dpglobal_bundle/package_bundle.sh --build-bundle
+mkdir -p ~/dp_global_bundle
+tar -xzf dpglobal_bundle_full_<timestamp>.tar.gz -C ~/dp_global_bundle
+cd ~/dp_global_bundle
 ```
 
-How to use the package on the target machine (copy-paste)
-- Extract the tarball:
-
-```bash
-mkdir -p ~/projects/dp_global_bundle
-tar -xzf dpglobal_bundle_full_<timestamp>.tar.gz -C ~/projects/dp_global_bundle
-cd ~/projects/dp_global_bundle
-```
-
-- Follow `INSTALL.txt` inside the extracted archive or run these copy-paste commands directly (from the extracted root):
-
-```bash
-# Install R packages listed in the manifest (non-interactive):
-Rscript -e "manifest <- readRDS('dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds'); pkgs <- unique(unlist(manifest$required_pkgs_by_file)); pkgs <- pkgs[!pkgs %in% installed.packages()[, 'Package']]; if (length(pkgs)) install.packages(pkgs)"
-
-# Compile the C++ acceleration (recommended):
-Rscript -e "Rcpp::sourceCpp('dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp')"
-
-# Load the prebuilt functions (optional):
-Rscript -e "load('dp_global/R/dpglobal_bundle/dpglobal_bundle.RData')"
-```
-
-Notes and recommendations
-- The archive contains compiled-source (**not** compiled binaries). Always run `Rcpp::sourceCpp()` on the target machine to build the shared object locally (platform- and R-version-dependent).
-
----
-
-
-Minimal quickstart (copy-paste-ready commands)
-
-From the project root (recommended):
-
-```r
-# 1) Load the R functions into the global session (or into an environment)
-load("./dp_global/R/dpglobal_bundle/dpglobal_bundle.RData")
-
-# 2) Source the R wrapper (R-side wrapper for the C++ transition cost functions):
-sys.source("./dp_global/R/dpglobal_bundle/transition_cost_rcpp.R", envir = globalenv())
-
-# 3) Compile the C++ implementation (optional but recommended for speed):
-Rcpp::sourceCpp("./dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp")
-```
-
-Or, if you've cd'ed into the bundle directory (shorter paths):
-
-```r
-load("dpglobal_bundle.RData")
-sys.source("transition_cost_rcpp.R", envir = globalenv())
-Rcpp::sourceCpp("src/transition_cost_rcpp.cpp")
-```
-
-Install packages listed in the manifest (one-liner)
+### Install R packages
 
 ```r
 manifest <- readRDS("dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds")
@@ -182,22 +40,37 @@ pkgs <- pkgs[!pkgs %in% installed.packages()[, "Package"]]
 if (length(pkgs)) install.packages(pkgs)
 ```
 
-Quick verification (recommended)
+### Compile C++ acceleration (recommended)
 
 ```r
-# load into a new environment to avoid polluting global env
-myenv <- new.env()
-load("./dp_global/R/dpglobal_bundle/dpglobal_bundle.RData", envir = myenv)
-exists("estimate_bio_pars", envir = myenv, mode = "function")  # should be TRUE
-# check compiled symbol (once you've run Rcpp::sourceCpp):
-exists("transition_cost_tracks_bio_batch_rcpp_cpp", mode = "function", inherits = TRUE)
+Rcpp::sourceCpp("dp_global/src/transition_cost_rcpp.cpp")
 ```
 
-Rebuild the bundle (on the source machine)
+The archive contains source code, not binaries — always compile on the target machine.
 
-```bash
-# run from project root on the machine that has the full source code
-Rscript -e "source('./dp_global/R/dpglobal_bundle/dpglobal_bundle_loader.R')"
+### Run
+
+```r
+withr::with_dir("~/dp_global_bundle",
+  source(file.path("dp_global", "R", "dp_global_main.R")))
+```
+
+`withr::with_dir()` temporarily sets the working directory and restores it afterward. The bundled `INSTALL.txt` contains the same commands.
+
+## 3. Verify (optional)
+
+```r
+myenv <- new.env()
+load("dp_global/R/dpglobal_bundle/dpglobal_bundle.RData", envir = myenv)
+exists("estimate_bio_pars", envir = myenv, mode = "function")
+exists("match_stems_probabilistic", envir = myenv, mode = "function")
+```
+
+## Notes
+
+- `dpglobal_bundle.RData` is a convenience snapshot of pre-sourced R objects. It is **not required** — the `source()` path above loads everything directly from the R files.
+- The bundle includes the probabilistic matching module (`dp_probabilistic_matching.R`) which handles tags with very large state spaces.
+- Record your R and package versions for reproducibility (`sessioninfo::session_info()`).
 sh dp_global/R/dpglobal_bundle/package_bundle.sh --build-bundle
 ```
 

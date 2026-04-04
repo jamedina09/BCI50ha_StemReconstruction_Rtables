@@ -157,6 +157,46 @@ The DP uses **K latent tracks** (identity slots):
 **Number of states:**
 $$P(K, n_{obs}) = K \times (K-1) \times \cdots \times (K-n_{obs}+1)$$
 
+### Understanding `max_states` (DP_MAX_STATES)
+
+`max_states` is the single parameter that controls when the DP solver falls back to the probabilistic matcher. It limits both:
+1. **Per-census enumeration:** If $P(K, n_{obs}) > \text{max\_states}$ at any census, the solver falls back
+2. **Inter-census transitions:** If the cross-product of states between two adjacent censuses exceeds $\text{max\_states}^2$, the solver falls back
+
+**What the default value of 40,000 means in practice:**
+
+| Stems observed ($n$) | Tracks ($K$) | States $P(K,n)$ | Fits in 40,000? |
+|:-:|:-:|--:|:-:|
+| 2 | 4 | 12 | Yes |
+| 3 | 5 | 60 | Yes |
+| 4 | 6 | 360 | Yes |
+| 5 | 7 | 2,520 | Yes |
+| 6 | 8 | 20,160 | Yes |
+| 7 | 9 | 181,440 | No → probabilistic |
+| 8 | 10 | 1,814,400 | No → probabilistic |
+
+**How to choose a value for your data:**
+
+```r
+# 1. Find the most complex tags in your dataset
+library(data.table)
+dt <- fread("your_data.csv")
+obs_per_census <- dt[!is.na(DBH), .N, by = .(Tag, CensusID)]
+max_obs <- obs_per_census[, .(max_n = max(N)), by = Tag][order(-max_n)]
+head(max_obs, 10)  # top 10 most complex tags
+
+# 2. Compute states for a specific tag
+n <- 7   # max observed stems in any census
+K <- 9   # n + slack + births (typically n + 2)
+states <- prod(K:(K - n + 1))  # P(K, n) = 181,440
+
+# 3. Set DP_MAX_STATES above that to use exact DP, or below to use probabilistic
+# Example: exact DP for tags with ≤ 6 stems, probabilistic for 7+
+# Rscript dp_global/scripts/main_cpp_chunk.R --DP_MAX_STATES=40000
+```
+
+**Trade-off:** Higher `max_states` → exact DP for more tags (slower, more memory). Lower `max_states` → more tags use probabilistic fallback (faster, approximate).
+
 ### Life-Cycle Phase System
 
 Each track maintains a phase variable:
@@ -934,7 +974,7 @@ The DP solver automatically falls back when:
 
 1. Anchor census missing or has no observed stems → **igraph** fallback
 2. Any census has too many injective states (P(K, n_obs) > `max_states`) → **probabilistic** fallback
-3. Cross-product edges exceed `max_edges` during backward pass → **probabilistic** fallback
+3. Cross-product of adjacent census states exceeds `max_states²` → **probabilistic** fallback
 4. K insufficient ($K < \max$ observed stems) → **igraph** fallback
 5. DP recursion yields no feasible keys → **igraph** fallback
 
@@ -944,7 +984,7 @@ The DP solver automatically falls back when:
 
 ### Cross-Product Edge Guard
 
-Before evaluating backward transitions, the DP checks whether the cross-product of states between adjacent censuses exceeds `max_edges` (default 500M). If `n_states_cc * n_next > max_edges`, the solver triggers `do_fallback("edge_count_exceeded")` which routes to the probabilistic matcher.
+Before evaluating backward transitions, the DP checks whether the cross-product of states between adjacent censuses exceeds `max_states²`. If `n_states(t) × n_states(t+1) > max_states²`, the solver triggers `do_fallback("edge_count_exceeded")` which routes to the probabilistic matcher. This means `max_states` is the single parameter controlling both per-census enumeration limits and inter-census transition budgets.
 
 ### Segment Split Consistency
 
@@ -983,7 +1023,7 @@ To aid diagnostics the DP sets a `DP_FallbackReason` string on returned rows whe
 | `anchor_ids_missing` | No anchor IDs were found after attempting to locate an anchor census. | Inspect data or supply anchor IDs. |
 | `K_too_small` | Chosen `K` is smaller than the maximum per-census observed stems. | Increase `max_tracks` or `slack_tracks`. |
 | `enum_exceeded` | State enumeration exceeded `max_states` for a census (too many injective assignments). Routes to probabilistic matcher. | Increase `max_states` or reduce `K`. |
-| `edge_count_exceeded` | Cross-product of states between adjacent censuses exceeded `max_edges`. Routes to probabilistic matcher. | Increase `max_edges` (default 500M). |
+| `edge_count_exceeded` | Cross-product of adjacent census states exceeded `max_states²`. Routes to probabilistic matcher. | Increase `DP_MAX_STATES`. |
 | `anchor_truestem_not_found` | Anchor `TrueStemID` values could not be mapped to track indices. | Check for unexpected `TrueStemID` values or duplicates. |
 | `next_assign_row_mismatch` | Internal mismatch mapping assignment keys to enumerated rows. | Likely internal error — reproduce and report with a minimal example. |
 | `no_reachable_next_states` | No reachable next full-states in the backward recursion (all pruned/filtered). | Relax pruning bounds (`prune_hard=FALSE`, widen `prune_*`) or check data. |
@@ -1010,7 +1050,7 @@ unique(na.omit(res$DP_FallbackReason))
 
 ### Probabilistic Matching Fallback: `match_stems_probabilistic()`
 
-When the DP state space is too large (triggered by `enum_exceeded` or `edge_count_exceeded`), the solver routes to `match_stems_probabilistic()` (implemented in `dp_global/R/dp_probabilistic_matching.R`).
+When the DP state space is too large (triggered by `enum_exceeded` or `edge_count_exceeded`), the solver routes to `match_stems_probabilistic()`.
 
 **Algorithm:**
 
@@ -1563,7 +1603,6 @@ Tag 11 requires ~89 million transition computations, while most other tags requi
 | **Fallback Only** | `max_growth` | Fallback matcher | Edge constraint for stepwise | 10 cm/year |
 | **Diagnostic Only** | `min_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as fallback |
 | **Diagnostic Only** | `max_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as fallback |
-| **Probabilistic Fallback** | `max_edges` | DP backward pass | Cross-product guard triggers probabilistic fallback | 500,000,000 |
 | **Probabilistic Fallback** | `prob_n_samples` | Probabilistic matcher | Number of Gumbel-noise samples | 200 |
 
 ### Quantile Configuration Reference
@@ -1622,8 +1661,7 @@ Complete table of all quantiles used in parameter estimation:
 ### Performance Considerations
 
 - State space grows factorially: $O(K^{n_{obs}})$
-- Set `DP_MAX_STATES` based on memory availability (default 40,000)
-- Set `DP_MAX_EDGES` to limit cross-product size (default 500M); exceeding this triggers probabilistic fallback
+- Set `DP_MAX_STATES` based on memory availability (default 40,000); also controls the cross-product edge limit (`max_states²`)
 - Set `PROB_N_SAMPLES` to control probabilistic matching accuracy vs speed (default 200)
 - Parallel processing via `MANUAL_CORES_VALUE` (controlled by `MANUAL_CORES=TRUE`) for multiple tags
 - Consider fallback threshold adjustment for large datasets
