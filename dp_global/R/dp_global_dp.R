@@ -55,7 +55,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            verbose = FALSE,
                                                            chunk_id = NULL,
                                                            allow_segment_split = TRUE,
-                                                           post_segment_all_recruits = FALSE) {
+                                                           post_segment_all_recruits = FALSE,
+                                                           max_edges = 500000000L,
+                                                           prob_n_samples = 200L) {
     # Safety
     posterior_top_k <- as.integer(posterior_top_k)
     if (!is.finite(posterior_top_k) || is.na(posterior_top_k) || posterior_top_k < 1L) {
@@ -490,7 +492,21 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 )]
             }
         }
-        out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        # Route enum_exceeded / edge_count_exceeded to probabilistic matcher
+        if (reason %in% c("enum_exceeded", "edge_count_exceeded")) {
+            out <- match_stems_probabilistic(
+                tree_data, min_growth, max_growth, anchor_start,
+                n_samples     = prob_n_samples,
+                temperature   = temperature,
+                posterior_top_k = posterior_top_k,
+                posterior_samples_path   = posterior_samples_path,
+                posterior_samples_format = posterior_samples_format,
+                posterior_sample_seed    = posterior_sample_seed,
+                verbose       = verbose
+            )
+        } else {
+            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
+        }
         if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
         out[, DP_FallbackReason := reason]
         finalize_out(out)
@@ -871,7 +887,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             hom_tolerance_scale                = hom_tolerance_scale,
             verbose                            = verbose,
             chunk_id                           = chunk_id,
-            allow_segment_split                = FALSE  # prevent cascading splits in sub-calls
+            allow_segment_split                = FALSE,  # prevent cascading splits in sub-calls
+            max_edges                          = max_edges,
+            prob_n_samples                     = prob_n_samples
         )
 
         # Post-resprout sub-call: censuses >= r_boundary with original anchor
@@ -1137,7 +1155,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         if (is.null(mat)) {
-            vcat(prefix, "Too many states at census ", cc, " (", n_obs, " stems, exceeds max_states=", max_states, "); falling back to igraph matcher")
+            vcat(prefix, "Too many states at census ", cc, " (", n_obs, " stems, exceeds max_states=", max_states, "); falling back to probabilistic matcher")
             return(do_fallback("enum_exceeded"))
         }
         state_mats[[p]] <- mat
@@ -1383,6 +1401,18 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (any(is.na(next_assign_row_idx))) {
             # Should not happen; indicates mismatch in state enumeration.
             return(do_fallback("next_assign_row_mismatch"))
+        }
+
+        # --- Cross-product guard: prevent memory crash when the product
+        # of adjacent census state spaces exceeds max_edges.  The C++
+        # derive_phase_prev_batch_rcpp would try to allocate n_cc × n_next
+        # items, which can exceed available memory for large multi-stem tags.
+        n_cross <- as.double(n_states_cc) * as.double(n_next)
+        if (n_cross > as.double(max_edges)) {
+            vcat(prefix, "  Cross-product too large: ", format(n_cross, big.mark = ",", scientific = FALSE),
+                 " edges (n_cc=", n_states_cc, " × n_next=", n_next, ") exceeds max_edges=",
+                 format(as.double(max_edges), big.mark = ",", scientific = FALSE), "; falling back")
+            return(do_fallback("edge_count_exceeded", K_used = K))
         }
 
         # Pre-decode next phase vectors

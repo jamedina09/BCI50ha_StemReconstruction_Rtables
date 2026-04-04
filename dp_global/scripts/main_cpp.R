@@ -183,6 +183,13 @@ POSTERIOR_SAMPLE_SEED <- NULL
 # Option: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
 ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 
+# Cross-product guard: max allowed edges (n_states_cc × n_states_next) before
+# triggering probabilistic fallback. Default 500M is safe for ~16 GB RAM.
+DP_MAX_EDGES <- 500000000L
+# Number of stochastic samples drawn by the probabilistic greedy matcher
+# when DP falls back due to enum_exceeded or edge_count_exceeded.
+PROB_N_SAMPLES <- 200L
+
 ############################################################
 ### 3.3) Parallelism settings
 ############################################################
@@ -278,7 +285,9 @@ CLI_REFERENCE <- list(
     USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR",
     ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR",
     DP_MAX_TRACKS = "DP_MAX_TRACKS",
-    OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE"
+    OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE",
+    DP_MAX_EDGES = "DP_MAX_EDGES",
+    PROB_N_SAMPLES = "PROB_N_SAMPLES"
 )
 
 ############################################################
@@ -713,7 +722,9 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         prune_recruit_max_dbh = RECRUIT_MAX_FIXED * 1.25, # very high recruit max dbh
         prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
         allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
-        verbose = isTRUE(DP_VERBOSE)
+        verbose = isTRUE(DP_VERBOSE),
+        max_edges = DP_MAX_EDGES,
+        prob_n_samples = PROB_N_SAMPLES
     )
 }
 
