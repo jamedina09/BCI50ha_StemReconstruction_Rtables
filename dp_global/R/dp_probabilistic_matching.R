@@ -439,45 +439,100 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
     if (!("DP_PosteriorReconstructedProb" %in% names(tree_data)))
         tree_data[, DP_PosteriorReconstructedProb := NA_real_]
 
-    # For each observation (census x position), count how often each
-    # ReconstructedStemID was assigned across samples
+    # ---- Pass 1: compute per-obs marginal posteriors ----
+    all_posteriors <- vector("list", n_census)
     for (ci in seq_len(n_census)) {
         n_obs <- obs_data[[ci]]$n
         if (n_obs == 0L) next
-        idx <- obs_data[[ci]]$idx
+        census_posts <- vector("list", n_obs)
 
         for (oi in seq_len(n_obs)) {
-            # Collect all assigned IDs for this observation across samples
             assigned_ids <- vapply(stitched, function(s) {
                 if (length(s[[ci]]) >= oi) s[[ci]][oi] else NA_integer_
             }, integer(1))
 
-            # Count frequencies
             id_table <- table(assigned_ids[!is.na(assigned_ids)])
-            if (length(id_table) == 0L) next
-
+            if (length(id_table) == 0L) {
+                census_posts[[oi]] <- list(ids = integer(0), probs = numeric(0))
+                next
+            }
             sorted_ids <- sort(id_table, decreasing = TRUE)
-            probs <- as.numeric(sorted_ids) / n_samples
-            ids <- as.integer(names(sorted_ids))
+            census_posts[[oi]] <- list(
+                ids   = as.integer(names(sorted_ids)),
+                probs = as.numeric(sorted_ids) / n_samples
+            )
+        }
+        all_posteriors[[ci]] <- census_posts
+    }
 
-            # MAP assignment
+    # ---- Pass 2: resolve per-census conflicts (unique StemID per census) ----
+    # Per-obs MAP is marginal; two observations may share the same best ID.
+    # Greedy assignment sorted by confidence resolves conflicts while
+    # respecting the posterior ordering.
+    for (ci in seq_len(n_census)) {
+        n_obs <- obs_data[[ci]]$n
+        if (n_obs == 0L) next
+        idx <- obs_data[[ci]]$idx
+        census_posts <- all_posteriors[[ci]]
+
+        # Greedy: sort obs by max posterior prob (descending)
+        max_probs <- vapply(census_posts, function(p) {
+            if (length(p$probs) > 0) p$probs[1] else 0
+        }, numeric(1))
+        order_by_conf <- order(max_probs, decreasing = TRUE)
+
+        used_ids    <- integer(0)
+        resolved_ids   <- integer(n_obs)
+        resolved_probs <- numeric(n_obs)
+
+        for (rank_pos in seq_along(order_by_conf)) {
+            oi <- order_by_conf[rank_pos]
+            post <- census_posts[[oi]]
+            assigned <- FALSE
+            for (j in seq_along(post$ids)) {
+                if (!(post$ids[j] %in% used_ids)) {
+                    resolved_ids[oi]   <- post$ids[j]
+                    resolved_probs[oi] <- post$probs[j]
+                    used_ids <- c(used_ids, post$ids[j])
+                    assigned <- TRUE
+                    break
+                }
+            }
+            if (!assigned) {
+                # All posterior alternatives are taken — assign a new unique ID
+                new_id <- max(c(tree_data$ReconstructedStemID, used_ids,
+                                resolved_ids), na.rm = TRUE) + 1L
+                if (!is.finite(new_id)) new_id <- 1L
+                resolved_ids[oi]   <- new_id
+                resolved_probs[oi] <- 0
+                used_ids <- c(used_ids, new_id)
+            }
+        }
+
+        # Write resolved assignments + posteriors into tree_data
+        for (oi in seq_len(n_obs)) {
             tree_data_row <- idx[oi]
-            data.table::set(tree_data, tree_data_row, "ReconstructedStemID", ids[1])
+            data.table::set(tree_data, tree_data_row, "ReconstructedStemID",
+                            resolved_ids[oi])
+            data.table::set(tree_data, tree_data_row, "DP_PosteriorReconstructedProb",
+                            resolved_probs[oi])
 
-            # Fill posterior columns
-            for (k in seq_len(min(posterior_top_k, length(ids)))) {
+            # Top-k posteriors (marginal, may differ from resolved assignment)
+            post <- census_posts[[oi]]
+            for (k in seq_len(min(posterior_top_k, length(post$ids)))) {
                 id_col <- paste0("DP_PosteriorTop", k, "ID")
                 prob_col <- paste0("DP_PosteriorTop", k, "Prob")
-                data.table::set(tree_data, tree_data_row, id_col, ids[k])
-                data.table::set(tree_data, tree_data_row, prob_col, probs[k])
+                data.table::set(tree_data, tree_data_row, id_col, post$ids[k])
+                data.table::set(tree_data, tree_data_row, prob_col, post$probs[k])
             }
 
-            # Entropy
-            ent <- -sum(probs * log(probs + 1e-30))
+            # Entropy (from marginal posterior)
+            if (length(post$probs) > 0) {
+                ent <- -sum(post$probs * log(post$probs + 1e-30))
+            } else {
+                ent <- NA_real_
+            }
             data.table::set(tree_data, tree_data_row, "DP_PosteriorEntropy", ent)
-
-            # Reconstructed prob = probability of the MAP assignment
-            data.table::set(tree_data, tree_data_row, "DP_PosteriorReconstructedProb", probs[1])
         }
     }
 
