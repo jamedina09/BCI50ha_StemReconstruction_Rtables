@@ -55,7 +55,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            chunk_id = NULL,
                                                            allow_segment_split = TRUE,
                                                            post_segment_all_recruits = FALSE,
-                                                           prob_n_samples = 200L) {
+                                                           prob_n_samples = 200L,
+                                                           prob_species = character(0)) {
     # Derive max_edges from max_states: the cross-product of two adjacent
     # census state counts can be at most max_states^2.  Using that as the
     # edge limit keeps a single user-facing knob (max_states) controlling
@@ -72,6 +73,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
     # ensure growth form list is character vector
     fallback_growth_forms <- if (is.null(fallback_growth_forms)) character(0) else as.character(fallback_growth_forms)
+    # ensure prob_species list is character vector
+    prob_species <- if (is.null(prob_species)) character(0) else as.character(prob_species)
+    if (length(prob_species) == 1L && grepl("[,;]", prob_species)) {
+        ps <- strsplit(prob_species, "[,;]")[[1L]]
+        ps <- trimws(ps)
+        ps <- ps[nzchar(ps)]
+        prob_species <- ps
+    }
     # interpret comma/semicolon-separated values in a single string element
     if (length(fallback_growth_forms) == 1L && grepl("[,;]", fallback_growth_forms)) {
         # split on commas or semicolons, trim whitespace, and drop empty
@@ -495,8 +504,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 )]
             }
         }
-        # Route enum_exceeded / edge_count_exceeded to probabilistic matcher
-        if (reason %in% c("enum_exceeded", "edge_count_exceeded")) {
+        # Route enum_exceeded / edge_count_exceeded / species_forced_probabilistic to probabilistic matcher
+        if (reason %in% c("enum_exceeded", "edge_count_exceeded", "species_forced_probabilistic")) {
             out <- match_stems_probabilistic(
                 tree_data, min_growth, max_growth, anchor_start,
                 n_samples     = prob_n_samples,
@@ -631,6 +640,16 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (length(bad_idx) > 0L) {
             vcat(prefix, "Growth form requires igraph fallback (detected: ", paste(unique(tree_data$growth_form[bad_idx]), collapse = ", "), "); skipping DP")
             return(do_fallback("growth_form_forced", K_used = as.integer(min(max_obs, max_tracks))))
+        }
+    }
+
+    # --- species-based probabilistic routing check ----------------------
+    if (length(prob_species) > 0L && "Species" %in% names(tree_data)) {
+        sp_vals <- unique(tree_data$Species)
+        sp_hit <- sp_vals[sp_vals %in% prob_species]
+        if (length(sp_hit) > 0L) {
+            vcat(prefix, "Species matches prob_species list (", paste(sp_hit, collapse = ", "), "); routing to probabilistic matcher")
+            return(do_fallback("species_forced_probabilistic", K_used = as.integer(min(max_obs, max_tracks))))
         }
     }
 

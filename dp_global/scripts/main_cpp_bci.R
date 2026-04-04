@@ -73,6 +73,10 @@ K_GROWTH_SOURCE         <- "fixed"
 K_GROWTH_FIXED          <- 0
 RECRUIT_MAX_SOURCE      <- "fixed"
 
+# Species that should bypass DP and go directly to the probabilistic greedy
+# matcher.  Empty vector means all species go through DP normally.
+PROB_SPECIES            <- character(0)
+
 # ----------------------------------------------------------------
 # 3. Re-apply CLI overrides on top of BCI defaults
 #    (overrides were parsed by main_cpp.R's parse_args();
