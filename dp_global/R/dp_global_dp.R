@@ -504,23 +504,70 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 )]
             }
         }
-        # Route enum_exceeded / edge_count_exceeded / species_forced_probabilistic to probabilistic matcher
-        if (reason %in% c("enum_exceeded", "edge_count_exceeded", "species_forced_probabilistic")) {
-            out <- match_stems_probabilistic(
-                tree_data, min_growth, max_growth, anchor_start,
-                n_samples     = prob_n_samples,
-                temperature   = temperature,
-                posterior_top_k = posterior_top_k,
-                posterior_samples_path   = posterior_samples_path,
-                posterior_samples_format = posterior_samples_format,
-                posterior_sample_seed    = posterior_sample_seed,
-                verbose       = verbose
-            )
-        } else {
-            out <- match_stems_optimal_backward(tree_data, min_growth, max_growth, anchor_start)
-        }
+        # Always route fallbacks to probabilistic matcher (igraph removed)
+        out <- match_stems_probabilistic(
+            tree_data, min_growth, max_growth, anchor_start,
+            n_samples     = prob_n_samples,
+            temperature   = temperature,
+            posterior_top_k = posterior_top_k,
+            posterior_samples_path   = posterior_samples_path,
+            posterior_samples_format = posterior_samples_format,
+            posterior_sample_seed    = posterior_sample_seed,
+            verbose       = verbose
+        )
         if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
         out[, DP_FallbackReason := reason]
+
+        # ---- NA-R barrier post-processing for fallback matchers ----
+        # The DP has built-in NA-R barrier logic (post-Viterbi), but the
+        # probabilistic matcher does not. Apply it here so both paths
+        # produce identical ReconstructedStemID patterns for NA-DBH R-coded
+        # rows. Must run BEFORE finalize_out() so MF reinsertion sees the
+        # correct flanking IDs.
+        .resprout_regex_fb <- "\\b(R|RP|RF|RT|QR|OR)\\b"
+        .has_tsm_fb <- "ListOfTSM" %in% names(out)
+        if (.has_tsm_fb) {
+            .pre_censuses_fb <- sort(unique(out$CensusID[out$CensusID <= anchor_start]))
+            for (.cc_fb in .pre_censuses_fb) {
+                .n_live_fb <- sum(out$CensusID == .cc_fb & !is.na(out$DBH))
+                if (.n_live_fb > 0L) next
+                .na_rows_fb <- which(out$CensusID == .cc_fb & is.na(out$DBH))
+                if (length(.na_rows_fb) == 0L) next
+                .na_tsm_fb <- out$ListOfTSM[.na_rows_fb]
+                .is_r_fb <- !is.na(.na_tsm_fb) & grepl(.resprout_regex_fb, .na_tsm_fb, perl = TRUE)
+                if (!any(.is_r_fb)) next
+                # This census is an NA-R barrier: 0 live + NA-DBH R-coded rows
+                .cens_before_fb <- .pre_censuses_fb[.pre_censuses_fb < .cc_fb]
+                if (length(.cens_before_fb) == 0L) next
+                # Split tracks that cross the barrier
+                .ids_before_fb <- unique(out$ReconstructedStemID[out$CensusID %in% .cens_before_fb & !is.na(out$ReconstructedStemID)])
+                .ids_after_fb  <- unique(out$ReconstructedStemID[out$CensusID >  .cc_fb & !is.na(out$ReconstructedStemID)])
+                .crossing_fb   <- intersect(.ids_before_fb, .ids_after_fb)
+                .cur_max_fb <- suppressWarnings(max(out$ReconstructedStemID, na.rm = TRUE))
+                if (!is.finite(.cur_max_fb)) .cur_max_fb <- 0L
+                if (length(.crossing_fb) > 0L) {
+                    for (.old_fb in .crossing_fb) {
+                        .new_fb <- as.integer(.cur_max_fb) + 1L
+                        .cur_max_fb <- .new_fb
+                        out[CensusID %in% .cens_before_fb & ReconstructedStemID == .old_fb,
+                            ReconstructedStemID := .new_fb]
+                    }
+                }
+                # Assign dying-stem NA-R rows to pre-barrier IDs
+                .barrier_rows_fb <- .na_rows_fb[.is_r_fb]
+                .prev_cc_fb  <- max(.cens_before_fb)
+                .prev_ids_fb <- out$ReconstructedStemID[out$CensusID == .prev_cc_fb & !is.na(out$ReconstructedStemID)]
+                if (length(.barrier_rows_fb) > 0L && length(.prev_ids_fb) > 0L) {
+                    for (.ri_fb in seq_along(.barrier_rows_fb)) {
+                        .pid_fb <- if (.ri_fb <= length(.prev_ids_fb)) .prev_ids_fb[.ri_fb] else .prev_ids_fb[length(.prev_ids_fb)]
+                        data.table::set(out, .barrier_rows_fb[.ri_fb], "ReconstructedStemID", as.integer(.pid_fb))
+                    }
+                    out[.barrier_rows_fb[is.na(out$TrueStemID[.barrier_rows_fb])],
+                        ReconstructionMethod := "probabilistic"]
+                }
+            }
+        }
+
         finalize_out(out)
     }
 
