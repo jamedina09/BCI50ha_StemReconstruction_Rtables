@@ -38,7 +38,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            prune_max_growth = NULL,
                                                            prune_use_bio_bounds = TRUE,
                                                            prune_recruit_max_dbh = NULL,
-                                                           # NOTE: Check the TODO in the code about possibly adding a margin when using biological recruit max DBH
                                                            prune_use_bio_recruit = TRUE,
                                                            # --- non-taper-corrected growth form prune bounds ---
                                                            # Growth forms whose DBH measurements are NOT taper-corrected
@@ -2076,7 +2075,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # per-path aggregated probabilities
         paths_summary <- samples_summary[, .(path_count = sum(path_count, na.rm = TRUE), path_prob = sum(sample_prob, na.rm = TRUE)), by = path_sig]
         # also create a compact per-path reconstruction mapping (one row per path)
-        # Enforce ObsRowID-based reconstructions only (legacy CensusID encoding removed).
+        # Enforce ObsRowID-based reconstructions only.
         if (!("ObsRowID" %in% names(samples_dt))) {
             stop("Posterior sampling must include ObsRowID values; regenerate with posterior_samples that preserve observation row identifiers")
         }

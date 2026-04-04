@@ -63,6 +63,8 @@ DP / reconstruction option
 - `DP_SLACK_TRACKS` — default: `1L` - slack (additional) tracks allowed for DP.
 - `DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE` — default: `TRUE` - require anchor to be recruitable (if DBH less than max recruitment size) before granting slack.
 - `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
+- `DP_MAX_EDGES` — default: `500000000L` (500M). Maximum number of cross-product edges between adjacent census states in the backward pass. If the product of state counts for two consecutive censuses exceeds this limit, the solver triggers a probabilistic fallback instead of attempting the full DP.
+- `PROB_N_SAMPLES` — default: `200L`. Number of Gumbel-noise stochastic samples drawn by the probabilistic greedy matching fallback. Higher values produce more accurate posterior estimates at the cost of computation time.
 - `DP_FALLBACK_GROWTH_FORMS` — default: `character(0)`; comma- or
   semicolon-separated list of values in the `growth_form` column that should
   trigger an immediate igraph fallback and prevent the DP solver from running

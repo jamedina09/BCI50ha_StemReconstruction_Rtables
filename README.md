@@ -2,19 +2,31 @@
 
 ## Overview
 
-Biologically informed dynamic-programming (DP) solver that reconstructs stem identities across forest censuses backward in time from a known anchor census.  Given multi-stem tree measurements and a late-census anchor with trusted `TrueStemID`, the algorithm assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, and recruitment biology.  Uncertainty is quantified via forward-backward marginals and optional posterior sampling.
+Biologically informed dynamic-programming (DP) solver that reconstructs stem identities across forest censuses backward in time from a known anchor census. Given multi-stem tree measurements and a late-census anchor with trusted `TrueStemID`, the algorithm assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, and recruitment biology. Uncertainty is quantified via forward-backward marginals and optional posterior sampling.
+
+When the exact DP state space is too large (combinatorial explosion from many stems per tree), the solver automatically falls back to a **probabilistic greedy matching** module that uses the same biological cost model with Gumbel-noise stochastic sampling to produce approximate reconstructions with per-observation posterior probabilities.
 
 ## Directory Layout
 
 ```
 ├── dp_global/                 # Core algorithm, drivers, and C++ acceleration
 │   ├── R/                     # R modules (sourced by dp_global_main.R)
-│   │   ├── complexity/        # DP complexity estimator (predict runtime)
-│   │   └── dpglobal_bundle/   # Portable deployment bundle builder
+│   │   ├── dp_global_main.R           # Module loader (sources all R modules in order)
+│   │   ├── dp_global_bio.R            # Biological parameter estimation
+│   │   ├── dp_global_states.R         # State enumeration & track-DBH helpers
+│   │   ├── dp_global_matchers.R       # Fallback igraph matcher
+│   │   ├── dp_probabilistic_matching.R # Probabilistic greedy matching fallback
+│   │   ├── dp_global_dp.R            # Core DP solver (backward/forward pass, marginals)
+│   │   ├── dp_global_utils.R         # Shared utilities
+│   │   ├── dp_global_diag.R          # Diagnostics & PDF plotting
+│   │   ├── naming_helpers.R          # Output directory naming
+│   │   ├── complexity/               # DP complexity estimator
+│   │   └── dpglobal_bundle/          # Portable deployment bundle builder
 │   ├── scripts/               # CLI driver scripts (main_cpp*.R)
 │   └── src/                   # C++ transition cost (Rcpp)
 ├── data_simulation/           # Simulated forest-census data generator
 │   └── data/                  # Generated test datasets (CSV)
+├── bci_data/                  # BCI census data (not tracked by git)
 └── Makefile                   # Convenience targets (smoke test)
 ```
 
@@ -41,16 +53,39 @@ Rscript dp_global/scripts/main_cpp_chunk.R --RUN_ALL_TAGS=TRUE --DP_CHUNK_SIZE=7
 Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 ```
 
+Key CLI parameters for controlling solver behavior:
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--DP_MAX_STATES` | `40000` | Max injective states per census before fallback |
+| `--DP_MAX_EDGES` | `500000000` | Max cross-product edges before probabilistic fallback |
+| `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching |
+| `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
+
 See `dp_global/scripts/README.md` for the full CLI flag reference.
 
 ## Key Documentation
 
 | Document | Contents |
 |----------|----------|
-| `dp_global/README.md` | Algorithm details, cost model, data requirements, parameter estimation |
+| `dp_global/README.md` | Algorithm details, cost model, data requirements, parameter estimation, fallback mechanisms |
 | `dp_global/scripts/README.md` | CLI flags, chunking, resume, example invocations |
 | `dp_global/src/README.md` | C++ acceleration API and validation |
 | `data_simulation/README.md` | Simulation parameters, biological models, output format |
+
+## Reconstruction Methods
+
+Each observation in the output receives a `ReconstructionMethod` label indicating how its `ReconstructedStemID` was determined:
+
+| Method | Description |
+|--------|-------------|
+| `given` | Identity known from input `TrueStemID` (anchor census) |
+| `dp` | Assigned by the exact DP solver |
+| `probabilistic` | Assigned by the probabilistic greedy matching fallback |
+| `igraph` | Assigned by the igraph bipartite matching fallback |
+| `provisional_dp` | Provisional anchor assigned by DP |
+| `provisional_igraph` | Provisional anchor assigned by igraph fallback |
+| `none_after_anchor` | Post-anchor row without assignment |
 
 ## Conventions
 

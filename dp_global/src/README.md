@@ -64,7 +64,13 @@ If you edit the C++ implementation or the R wrapper, rerun this check and inspec
 
 ## Implementation Details
 
-The C++ implementation uses:
+The C++ implementation provides three exported functions:
+
+- `transition_cost_tracks_bio_batch_rcpp_cpp()`: Computes transition costs for a batch of candidate next-states given a single current state
+- `transition_cost_paired_rcpp_cpp()`: Computes transition costs for pre-paired (current, next) state matrices — used for the batched backward pass (~3× speedup over the non-paired variant)
+- `derive_phase_prev_batch_rcpp()`: Batch phase-feasibility checking with integrated conservative pruning — determines valid phase transitions for all (i, j) assignment pairs and returns only feasible pairs
+
+The implementation uses:
 
 - Direct C++ loops for per-track and per-batch iteration
 - Manual implementation of statistical functions (dnorm, dlnorm, log_sum_exp)
