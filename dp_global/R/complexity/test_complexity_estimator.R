@@ -57,6 +57,8 @@ MAX_SHRINK_FIXED <- -0.5
 RECRUIT_MAX      <- (MAX_GROWTH_FIXED * 5) + 0.9999
 PRUNE_MARGIN     <- 1.25   # prune bounds = fixed bounds * this margin
 TOP_N            <- 30L    # number of slowest tags to display
+USE_DP_PRUNE     <- FALSE  # set TRUE to re-score top tags with DP-style constrained enumeration
+TOP_N_DP         <- 20L    # number of top tags to re-score when USE_DP_PRUNE=TRUE
 RUN_SWEEP        <- TRUE   # set FALSE via --NO_SWEEP to skip the slow parameter sweep
 SAMPLE_N         <- NULL   # if set, randomly sample this many tags (for quick checks)
 
@@ -70,6 +72,8 @@ if (!is.null(.overrides$MIN_GROWTH))      MAX_SHRINK_FIXED <- as.numeric(.overri
 if (!is.null(.overrides$RECRUIT_MAX))     RECRUIT_MAX      <- as.numeric(.overrides$RECRUIT_MAX)
 if (!is.null(.overrides$PRUNE_MARGIN))    PRUNE_MARGIN     <- as.numeric(.overrides$PRUNE_MARGIN)
 if (!is.null(.overrides$TOP_N))           TOP_N            <- as.integer(.overrides$TOP_N)
+if (!is.null(.overrides$USE_DP_PRUNE))     USE_DP_PRUNE     <- as.logical(.overrides$USE_DP_PRUNE)
+if (!is.null(.overrides$TOP_N_DP))         TOP_N_DP         <- as.integer(.overrides$TOP_N_DP)
 if (!is.null(.overrides$SAMPLE_N))        SAMPLE_N         <- as.integer(.overrides$SAMPLE_N)
 if (isTRUE(.overrides$NO_SWEEP))          RUN_SWEEP        <- FALSE
 
@@ -162,7 +166,9 @@ complexity <- estimate_dp_complexity(
     prune_use_bio_bounds  = FALSE,
     recruit_max_dbh       = PRUNE_REC,
     prune_use_bio_recruit = FALSE,
-    fast                  = TRUE
+    fast                  = TRUE,
+    use_dp_prune          = USE_DP_PRUNE,
+    top_n_dp              = TOP_N_DP
 )
 
 # ==================================================================

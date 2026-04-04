@@ -47,6 +47,12 @@
 #' @param fast Logical: when TRUE (default) skip the O(states^2) pruned-edge
 #'   enumeration and rank by unpruned edge count instead.  Use fast=FALSE only
 #'   when you need accurate pruned counts (e.g., for model validation).
+#' @param use_dp_prune Logical: when TRUE, compute exact DP-constrained state
+#'   counts for the top tags using the current dp_global state-enumeration logic.
+#'   This improves ranking of the slowest tags while keeping the full-tag
+#'   vectorized scan fast.
+#' @param top_n_dp Integer: number of top tags (by rough state size) to re-score
+#'   with DP-aware constrained enumeration when `use_dp_prune=TRUE`.
 #' @return data.table sorted descending by estimated_edges_unpruned (fast=TRUE)
 #'   or estimated_edges_pruned (fast=FALSE), with columns `predicted_seconds`
 #'   and `predicted_hours` from a log-log polynomial model calibrated on actual
@@ -68,9 +74,12 @@ estimate_dp_complexity <- function(data,
                                    recruit_max_dbh = Inf,
                                    prune_recruit_max_dbh = NULL,
                                    prune_use_bio_recruit = TRUE,
-                                   fast = TRUE) {
+                                   fast = TRUE,
+                                   use_dp_prune = FALSE,
+                                   top_n_dp = 20L) {
     if (!requireNamespace("data.table", quietly = TRUE)) stop("data.table required")
     library(data.table)
+    source(here("dp_global", "R", "dp_global_states.R"))
 
     # ------------------------------------------------------------------
     # 1. Load data
@@ -255,6 +264,315 @@ estimate_dp_complexity <- function(data,
             # Cases 3,4 (death, both-NA) are always feasible — no update needed
         }
         sum(feasible)
+    }
+
+    # ------------------------------------------------------------------
+    # 4c. DP-aware constrained state enumeration helpers
+    # ------------------------------------------------------------------
+    compute_dp_state_counts <- function(tag_data, census_range, anchor_start, K,
+                                        track_ids, anchor_ids, max_states,
+                                        min_growth, max_growth,
+                                        prune_min_growth, prune_max_growth) {
+        n_census <- length(census_range)
+        if (n_census == 0L) {
+            return(list(
+                fallback = FALSE,
+                fallback_reason = NA_character_,
+                n_states_by_census = integer(0),
+                total_states = 0L,
+                state_mats = vector("list", 0L)
+            ))
+        }
+
+        .anchor_track_set <- which(track_ids %in% anchor_ids)
+        .slack_track_set  <- which(!(track_ids %in% anchor_ids))
+
+        .has_exact_date <- "ExactDate" %in% names(tag_data)
+        .census_median_date <- setNames(rep(NA_real_, n_census), as.character(census_range))
+        if (.has_exact_date) {
+            for (.ci in seq_len(n_census)) {
+                .dates <- tag_data[CensusID == census_range[.ci] & !is.na(DBH), ExactDate]
+                if (length(.dates) > 0L) {
+                    .census_median_date[.ci] <- as.numeric(median(.dates, na.rm = TRUE))
+                }
+            }
+        }
+
+        .ce_min_grow <- if (!is.null(prune_min_growth)) prune_min_growth else min_growth
+        .ce_max_grow <- if (!is.null(prune_max_growth)) prune_max_growth else max_growth
+
+        obs_dbh <- vector("list", n_census)
+        for (p in seq_len(n_census)) {
+            obs_dbh[[p]] <- tag_data[CensusID == census_range[p] & !is.na(DBH), DBH]
+        }
+
+        all_mats <- vector("list", n_census)
+        .allowed_at_census <- vector("list", n_census)
+        n_states <- integer(n_census)
+
+        for (p in seq.int(n_census, 1L, by = -1L)) {
+            n_obs <- length(obs_dbh[[p]])
+            .use_constrained <- FALSE
+            if (p == n_census) {
+                if (n_obs > 0L) {
+                    anchor_obs_pre <- tag_data[CensusID == census_range[p] & !is.na(DBH)]
+                    .anchor_tidx <- match(anchor_obs_pre$TrueStemID, track_ids)
+                    .allowed_at_census[[p]] <- lapply(seq_len(n_obs), function(.j) {
+                        if (!is.na(.anchor_tidx[.j])) .anchor_tidx[.j] else seq_len(K)
+                    })
+                    if (!all(lengths(.allowed_at_census[[p]]) == K)) {
+                        .use_constrained <- TRUE
+                    }
+                }
+            } else if (n_obs > 0L && .has_exact_date &&
+                       is.finite(.census_median_date[p]) &&
+                       is.finite(.census_median_date[p + 1L]) &&
+                       length(obs_dbh[[p + 1L]]) > 0L &&
+                       length(.anchor_track_set) > 0L) {
+                .dt <- (.census_median_date[p + 1L] - .census_median_date[p]) / 365.25
+                if (is.finite(.dt) && .dt > 0) {
+                    .dbh_next <- obs_dbh[[p + 1L]]
+                    .n_obs_next <- length(.dbh_next)
+                    .allowed_next <- .allowed_at_census[[p + 1L]]
+                    .allowed <- vector("list", n_obs)
+                    for (.oi in seq_len(n_obs)) {
+                        .dbh_i <- obs_dbh[[p]][.oi]
+                        .ok_tracks <- integer(0)
+                        for (.tk in .anchor_track_set) {
+                            .feasible <- FALSE
+                            for (.oj in seq_len(.n_obs_next)) {
+                                if (!(.tk %in% .allowed_next[[.oj]])) next
+                                .rate <- (.dbh_next[.oj] - .dbh_i) / .dt
+                                if (.rate >= .ce_min_grow && .rate <= .ce_max_grow) {
+                                    .feasible <- TRUE
+                                    break
+                                }
+                            }
+                            if (.feasible) .ok_tracks <- c(.ok_tracks, .tk)
+                        }
+                        .ok_tracks <- c(.ok_tracks, .slack_track_set)
+                        .allowed[[.oi]] <- sort(.ok_tracks)
+                    }
+                    .allowed_at_census[[p]] <- .allowed
+                    if (!all(lengths(.allowed_at_census[[p]]) == K)) {
+                        .use_constrained <- TRUE
+                    }
+                } else {
+                    .allowed_at_census[[p]] <- replicate(n_obs, seq_len(K), simplify = FALSE)
+                }
+            } else {
+                if (n_obs > 0L) {
+                    .allowed_at_census[[p]] <- replicate(n_obs, seq_len(K), simplify = FALSE)
+                }
+            }
+
+            if (.use_constrained) {
+                mat <- enumerate_states_constrained(K, n_obs, .allowed_at_census[[p]], max_states)
+            } else {
+                mat <- enumerate_states_injective(K, n_obs, max_states)
+            }
+            if (is.null(mat)) {
+                return(list(
+                    fallback = TRUE,
+                    fallback_reason = "enum_exceeded",
+                    n_states_by_census = integer(0),
+                    total_states = 0L,
+                    state_mats = vector("list", 0L)
+                ))
+            }
+            all_mats[[p]] <- mat
+            n_states[p] <- nrow(mat)
+        }
+
+        list(
+            fallback = FALSE,
+            fallback_reason = NA_character_,
+            n_states_by_census = n_states,
+            total_states = sum(n_states),
+            state_mats = all_mats
+        )
+    }
+
+    count_dp_pruned_edges <- function(tag_data, census_range, K, all_mats,
+                                      prune_min_growth, prune_max_growth,
+                                      recruit_max_dbh) {
+        n_census <- length(census_range)
+        if (n_census < 2L) return(0L)
+
+        user_min_g <- if (!is.null(prune_min_growth)) prune_min_growth else min_growth
+        user_max_g <- if (!is.null(prune_max_growth)) prune_max_growth else max_growth
+        eff_min <- user_min_g
+        eff_max <- user_max_g
+        eff_rec <- recruit_max_dbh
+
+        total_edges <- 0L
+        for (p in seq_len(n_census - 1L)) {
+            dbh0 <- tag_data[CensusID == census_range[p] & !is.na(DBH), DBH]
+            dbh1 <- tag_data[CensusID == census_range[p + 1L] & !is.na(DBH), DBH]
+            iv <- NA_real_
+            if ("ExactDate" %in% names(tag_data)) {
+                d0 <- tag_data[CensusID == census_range[p] & !is.na(DBH), ExactDate]
+                d1 <- tag_data[CensusID == census_range[p + 1L] & !is.na(DBH), ExactDate]
+                if (length(d0) > 0L && length(d1) > 0L) {
+                    iv <- (as.numeric(median(d1, na.rm = TRUE)) - as.numeric(median(d0, na.rm = TRUE))) / 365.25
+                }
+            }
+            total_edges <- total_edges + count_pruned_edges_step_vec(
+                all_mats[[p]], all_mats[[p + 1L]], dbh0, dbh1, K,
+                iv, eff_min, eff_max, eff_rec
+            )
+        }
+        total_edges
+    }
+
+    estimate_one_tag_dp <- function(tag_data, tag_val, species_val) {
+        obs_census_all <- sort(unique(tag_data$CensusID[!is.na(tag_data$DBH)]))
+        last_obs <- if (length(obs_census_all) > 0L) max(obs_census_all) else NA_integer_
+        eff_anchor <- if (!is.na(last_obs) && last_obs < anchor_start) as.integer(last_obs) else as.integer(anchor_start)
+
+        tag_census_obs <- obs_summary_pre[.(tag_val)][CensusID <= eff_anchor]
+        if (nrow(tag_census_obs) == 0L) {
+            return(data.table(
+                Tag = tag_val, Species = species_val,
+                census_range = NA_character_, n_censuses = 0L, K = 0L,
+                max_obs = 0L, max_states_per_census = 0,
+                total_states = 0, estimated_edges_unpruned = 0,
+                estimated_edges_pruned = NA_real_,
+                estimated_fallback = FALSE,
+                fallback_reason = "no_obs_up_to_anchor"
+            ))
+        }
+        census_range <- sort(unique(c(tag_census_obs$CensusID,
+                                     if (eff_anchor > max(tag_census_obs$CensusID)) eff_anchor else integer(0L))))
+        census_range <- census_range[census_range <= eff_anchor]
+        n_census <- length(census_range)
+        obs_counts <- tag_census_obs$N[match(census_range, tag_census_obs$CensusID)]
+        obs_counts[is.na(obs_counts)] <- 0L
+        max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+
+        anchor_obs <- tag_data[CensusID == eff_anchor & !is.na(DBH)]
+        anchor_ids <- sort(unique(na.omit(anchor_obs$TrueStemID)))
+        if (length(anchor_ids) == 0L) {
+            return(data.table(
+                Tag = tag_val, Species = species_val,
+                census_range = paste(census_range, collapse = ","),
+                n_censuses = n_census, K = 0L, max_obs = max_obs,
+                max_states_per_census = 0, total_states = 0,
+                estimated_edges_unpruned = 0,
+                estimated_edges_pruned = NA_real_,
+                estimated_fallback = FALSE,
+                fallback_reason = "anchor_ids_missing"
+            ))
+        }
+
+        births_needed <- if (length(obs_counts) >= 2L) sum(pmax(0L, diff(obs_counts))) else 0L
+        K_from_counts <- as.integer(if (length(obs_counts) > 0L) obs_counts[1L] + births_needed else 0L)
+        K_base <- max(length(anchor_ids), max_obs, K_from_counts)
+
+        n_resprout <- 0L
+        if (!is.null(resprout_summary_pre)) {
+            tag_resp <- resprout_summary_pre[.(tag_val)][CensusID %in% census_range]
+            n_resprout <- if (nrow(tag_resp) > 0L) sum(tag_resp$N) else 0L
+        }
+        K_base <- K_base + n_resprout
+
+        tag_recruit_max <- recruit_max_dbh
+        for (col in c("Bio_Recruit_MaxDBH_unit", "Bio_recruit_maxdbh_unit")) {
+            if (col %in% names(anchor_obs)) {
+                v <- unique(na.omit(anchor_obs[[col]]))
+                if (length(v) == 1L && is.finite(v)) {
+                    tag_recruit_max <- v
+                    break
+                }
+            }
+        }
+        grant_slack <- slack_tracks > 0L
+        if (isTRUE(slack_require_anchor_recruitable) && is.finite(tag_recruit_max)) {
+            grant_slack <- grant_slack && any(!is.na(anchor_obs$DBH) & anchor_obs$DBH <= tag_recruit_max)
+        }
+        K_target <- K_base + ifelse(grant_slack, as.integer(slack_tracks), 0L)
+        K <- min(K_target, as.integer(max_tracks))
+
+        if (K < max_obs) {
+            return(data.table(
+                Tag = tag_val, Species = species_val,
+                census_range = paste(census_range, collapse = ","),
+                n_censuses = n_census, K = K, max_obs = max_obs,
+                max_states_per_census = 0, total_states = 0,
+                estimated_edges_unpruned = 0,
+                estimated_edges_pruned = NA_real_,
+                estimated_fallback = TRUE,
+                fallback_reason = "K_too_small"
+            ))
+        }
+
+        n_states_c <- vapply(obs_counts, function(n) count_injective_states(K, n), numeric(1L))
+        max_s_c <- max(n_states_c, na.rm = TRUE)
+        if (max_s_c > max_states) {
+            return(data.table(
+                Tag = tag_val, Species = species_val,
+                census_range = paste(census_range, collapse = ","),
+                n_censuses = n_census, K = K, max_obs = max_obs,
+                max_states_per_census = max_s_c, total_states = sum(n_states_c),
+                estimated_edges_unpruned = if (n_census >= 2L) sum(n_states_c[-n_census] * n_states_c[-1L]) else 0,
+                estimated_edges_pruned = NA_real_,
+                estimated_fallback = TRUE,
+                fallback_reason = "enum_exceeded"
+            ))
+        }
+
+        track_ids <- c(anchor_ids, if (K - length(anchor_ids) > 0L) seq.int(from = max(anchor_ids, 0L) + 1L, length.out = K - length(anchor_ids)) else integer(0))
+        dp_counts <- compute_dp_state_counts(
+            tag_data = tag_data,
+            census_range = census_range,
+            anchor_start = eff_anchor,
+            K = K,
+            track_ids = track_ids,
+            anchor_ids = anchor_ids,
+            max_states = max_states,
+            min_growth = min_growth,
+            max_growth = max_growth,
+            prune_min_growth = prune_min_growth,
+            prune_max_growth = prune_max_growth
+        )
+
+        if (isTRUE(dp_counts$fallback)) {
+            return(data.table(
+                Tag = tag_val, Species = species_val,
+                census_range = paste(census_range, collapse = ","),
+                n_censuses = n_census, K = K, max_obs = max_obs,
+                max_states_per_census = 0, total_states = 0,
+                estimated_edges_unpruned = if (n_census >= 2L) sum(n_states_c[-n_census] * n_states_c[-1L]) else 0,
+                estimated_edges_pruned = NA_real_,
+                estimated_fallback = TRUE,
+                fallback_reason = dp_counts$fallback_reason
+            ))
+        }
+
+        edges_pruned <- count_dp_pruned_edges(
+            tag_data = tag_data,
+            census_range = census_range,
+            K = K,
+            all_mats = dp_counts$state_mats,
+            prune_min_growth = prune_min_growth,
+            prune_max_growth = prune_max_growth,
+            recruit_max_dbh = tag_recruit_max
+        )
+
+        data.table(
+            Tag = tag_val,
+            Species = species_val,
+            census_range = paste(census_range, collapse = ","),
+            n_censuses = n_census,
+            K = K,
+            max_obs = max_obs,
+            max_states_per_census = as.numeric(max(dp_counts$n_states_by_census, na.rm = TRUE)),
+            total_states = as.numeric(dp_counts$total_states),
+            estimated_edges_unpruned = if (n_census >= 2L) sum(n_states_c[-n_census] * n_states_c[-1L]) else 0,
+            estimated_edges_pruned = as.numeric(edges_pruned),
+            estimated_fallback = FALSE,
+            fallback_reason = NA_character_
+        )
     }
 
     # ------------------------------------------------------------------
@@ -678,6 +996,32 @@ estimate_dp_complexity <- function(data,
                 out[Tag == tg, estimated_edges_pruned := as.numeric(edges_p)]
             }
             cat("[estimate_dp_complexity] Pruned edges done.\n"); flush.console()
+        }
+
+        if (isTRUE(use_dp_prune) && nrow(out) > 0L) {
+            obs_summary_pre <- obs_sum
+            if ("ListOfTSM" %in% names(data)) {
+                resprout_summary_pre <- resp_sum
+                setkey(resprout_summary_pre, Tag, CensusID)
+            } else {
+                resprout_summary_pre <- NULL
+            }
+            dp_tags <- head(out[estimated_fallback == FALSE][order(-max_states_per_census, -estimated_edges_unpruned)]$Tag,
+                            min(as.integer(top_n_dp), nrow(out)))
+            cat(sprintf("[estimate_dp_complexity] Re-scoring top %d tags with DP-aware constrained enumeration...\n", length(dp_tags))); flush.console()
+            for (tg in dp_tags) {
+                tg_data <- data[Tag == tg]
+                sp <- if (species_col %in% names(data)) unique(tg_data[[species_col]])[1L] else NA_character_
+                dp_est <- estimate_one_tag_dp(tg_data, tg, sp)
+                out[Tag == tg, `:=`(
+                    max_states_per_census = dp_est$max_states_per_census,
+                    total_states = dp_est$total_states,
+                    estimated_edges_pruned = dp_est$estimated_edges_pruned,
+                    estimated_edges_unpruned = dp_est$estimated_edges_unpruned,
+                    estimated_fallback = dp_est$estimated_fallback,
+                    fallback_reason = dp_est$fallback_reason
+                )]
+            }
         }
 
         # Tags in data but absent from obs_pre (all-NA DBH)
