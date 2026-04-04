@@ -57,10 +57,35 @@ Key CLI parameters for controlling solver behavior:
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--DP_MAX_STATES` | `40000` | Max injective states per census before fallback |
-| `--DP_MAX_EDGES` | `500000000` | Max cross-product edges before probabilistic fallback |
+| `--DP_MAX_STATES` | `40000` | Max injective states per census before probabilistic fallback |
 | `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching |
 | `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
+
+### Understanding `DP_MAX_STATES`
+
+`DP_MAX_STATES` controls the maximum number of assignment states the DP solver will enumerate at any single census. The number of states at a census is the number of ways to assign $n$ observed stems to $K$ identity tracks:
+
+$$P(K, n) = K \times (K-1) \times \cdots \times (K - n + 1)$$
+
+This grows factorially. If any census exceeds `DP_MAX_STATES`, or if the cross-product between two adjacent censuses exceeds `DP_MAX_STATES²`, the solver falls back to the probabilistic matcher.
+
+**What the default value of 40,000 means in practice:**
+
+| Stems observed | Tracks (K) | States $P(K,n)$ | Fits in 40,000? |
+|:-:|:-:|--:|:-:|
+| 2 | 4 | 12 | Yes |
+| 3 | 5 | 60 | Yes |
+| 4 | 6 | 360 | Yes |
+| 5 | 7 | 2,520 | Yes |
+| 6 | 8 | 20,160 | Yes |
+| 7 | 9 | 181,440 | No → probabilistic |
+| 8 | 10 | 1,814,400 | No → probabilistic |
+
+**How to choose a value for your data:**
+1. Check how many stems your most complex tags have (e.g., `max_obs = max(table(data$Tag, data$CensusID))`)
+2. With `K = max_obs + slack_tracks + births`, compute $P(K, max\_obs)$
+3. Set `DP_MAX_STATES` above that number to use exact DP, or below it to use the faster probabilistic matcher for those tags
+4. Higher values use more memory and time; lower values route more tags through the probabilistic fallback (which is faster but approximate)
 
 See `dp_global/scripts/README.md` for the full CLI flag reference.
 
