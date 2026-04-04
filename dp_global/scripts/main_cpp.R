@@ -187,6 +187,11 @@ ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 # when DP falls back due to intractable state spaces.
 PROB_N_SAMPLES <- 200L
 
+# Species that should bypass DP and go directly to the probabilistic greedy
+# matcher. Provide a character vector of Species column values (e.g.,
+# c("Oenocarpus mapora", "Socratea exorrhiza")). Empty vector disables.
+PROB_SPECIES <- character(0)
+
 ############################################################
 ### 3.3) Parallelism settings
 ############################################################
@@ -283,7 +288,8 @@ CLI_REFERENCE <- list(
     ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR",
     DP_MAX_TRACKS = "DP_MAX_TRACKS",
     OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE",
-    PROB_N_SAMPLES = "PROB_N_SAMPLES"
+    PROB_N_SAMPLES = "PROB_N_SAMPLES",
+    PROB_SPECIES = "PROB_SPECIES"
 )
 
 ############################################################
@@ -721,7 +727,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
         allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
         verbose = isTRUE(DP_VERBOSE),
-        prob_n_samples = PROB_N_SAMPLES
+        prob_n_samples = PROB_N_SAMPLES,
+        prob_species = PROB_SPECIES
     )
 }
 
