@@ -892,6 +892,21 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             prob_n_samples                     = prob_n_samples
         )
 
+        # When the whole-tag state space exceeds max_states, force probabilistic
+        # matching on both sub-segments for consistency.  Without this, one
+        # segment might use probabilistic while the other uses DP (because K
+        # is smaller in the sub-segment).
+        .whole_tag_max_states <- max(vapply(obs_counts, function(n_obs) {
+            count_injective_states(K_base, n_obs)
+        }, numeric(1)))
+        if (.whole_tag_max_states > max_states) {
+            vcat(prefix, "Whole-tag state space (",
+                 format(.whole_tag_max_states, big.mark = ","),
+                 ") exceeds max_states=", format(as.numeric(max_states), big.mark = ","),
+                 "; forcing probabilistic on both segments")
+            .sub_args$max_states <- 0L
+        }
+
         # Post-resprout sub-call: censuses >= r_boundary with original anchor
         # Use tree_data (already scoped to <= anchor_start) so post-anchor rows
         # are only re-added once by the outer finalize_out.
