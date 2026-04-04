@@ -9,6 +9,7 @@
 ##   Rscript dp_global/R/complexity/profile_complexity.R --TOP_N=30          # show top 30
 ##   Rscript dp_global/R/complexity/profile_complexity.R --DP_REFINE=TRUE    # refine top tags with DP-constrained enumeration
 ##   Rscript dp_global/R/complexity/profile_complexity.R --RUN_TAG=231472    # time a specific tag through actual DP
+##   Rscript dp_global/R/complexity/profile_complexity.R --DP_REFINE=TRUE --DP_MAX_STATES=100000    # time a specific tag through actual DP
 ## ────────────────────────────────────────────────────────────────────────
 
 library(data.table)
