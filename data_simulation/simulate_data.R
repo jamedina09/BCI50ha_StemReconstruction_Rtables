@@ -1532,6 +1532,458 @@ dt_complete_extra <- rbindlist(list(
     tag_M3
 ), use.names = TRUE, fill = TRUE)
 
+################################################################################
+### ROW-COUNT INVARIANT EDGE CASES
+################################################################################
+# These tags test that every input row is preserved in the output
+# (no row duplication, no row loss) for every edge-case scenario.
+
+# EC1: post-anchor only, single census C8
+tag_EC1 <- data.table(
+    Species = "sp1", Tag = 9901L, OriginalStemID = 1L,
+    TrueStemID = 1L, CensusID = 8L,
+    ExactDate = as.Date("2015-03-10"), DBH = 5.0
+)
+
+# EC2: post-anchor only, two censuses (C8-C9)
+tag_EC2 <- data.table(
+    Species = "sp1", Tag = 9902L, OriginalStemID = 1L,
+    TrueStemID = c(1L, 1L), CensusID = c(8L, 9L),
+    ExactDate = as.Date(c("2015-03-10", "2022-06-01")), DBH = c(5.0, 6.2)
+)
+
+# EC3: post-anchor only, multi-stem (2 stems at C8 and C9)
+tag_EC3 <- data.table(
+    Species = "sp2", Tag = 9903L,
+    OriginalStemID = c(1L, 2L, 1L, 2L),
+    TrueStemID = c(1L, 2L, 1L, 2L),
+    CensusID = c(8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c("2015-03-10", "2015-03-10", "2022-06-01", "2022-06-01")),
+    DBH = c(10.0, 3.0, 11.5, 4.0)
+)
+
+# EC4: single census at anchor (C7 only, 1 stem)
+tag_EC4 <- data.table(
+    Species = "sp1", Tag = 9904L, OriginalStemID = 1L,
+    TrueStemID = 1L, CensusID = 7L,
+    ExactDate = as.Date("2010-05-01"), DBH = 8.0
+)
+
+# EC5: all DBH NA but valid CensusIDs across full range
+tag_EC5 <- data.table(
+    Species = "sp2", Tag = 9905L,
+    OriginalStemID = rep(1L, 9), TrueStemID = rep(NA_integer_, 9),
+    CensusID = 1:9,
+    ExactDate = as.Date(c(
+        "1980-01-01", "1984-09-08", "1989-09-18", "1994-09-08",
+        "1999-07-09", "2004-07-29", "2009-08-15", "2014-08-02", "2019-07-20"
+    )),
+    DBH = rep(NA_real_, 9)
+)
+
+# EC6: single row, all NA except Species/Tag (like tag 43)
+tag_EC6 <- data.table(
+    Species = "sp3", Tag = 9906L,
+    OriginalStemID = NA_integer_, TrueStemID = NA_integer_,
+    CensusID = NA_integer_, ExactDate = as.Date("2020-01-01"),
+    DBH = NA_real_
+)
+
+# EC7: anchor + post-anchor only (C7-C9, 1 stem)
+tag_EC7 <- data.table(
+    Species = "sp1", Tag = 9907L, OriginalStemID = 1L,
+    TrueStemID = c(1L, 1L, 1L), CensusID = c(7L, 8L, 9L),
+    ExactDate = as.Date(c("2010-05-01", "2015-06-10", "2022-03-15")),
+    DBH = c(12.0, 13.5, 15.0)
+)
+
+# EC8: multi-stem at anchor only (2 stems, C7 only)
+tag_EC8 <- data.table(
+    Species = "sp2", Tag = 9908L,
+    OriginalStemID = c(1L, 2L), TrueStemID = c(1L, 2L),
+    CensusID = c(7L, 7L),
+    ExactDate = as.Date(c("2010-05-01", "2010-05-01")),
+    DBH = c(20.0, 5.0)
+)
+
+# EC9: pre-anchor single census (C3 only, 1 stem, no TrueStemID)
+tag_EC9 <- data.table(
+    Species = "sp1", Tag = 9909L, OriginalStemID = 1L,
+    TrueStemID = NA_integer_, CensusID = 3L,
+    ExactDate = as.Date("1990-06-15"), DBH = 2.5
+)
+
+# EC10: pre-anchor + anchor + post-anchor with DBH only at post-anchor
+#       (forces anchor extension like Tag 44 but with pre-anchor rows too)
+tag_EC10 <- data.table(
+    Species = "sp1", Tag = 9910L, OriginalStemID = 1L,
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, 1L, 1L),
+    CensusID = c(3L, 5L, 7L, 8L, 9L),
+    ExactDate = as.Date(c("1990-06-15", "2000-03-10", "2010-05-01", "2015-06-10", "2022-03-15")),
+    DBH = c(NA_real_, NA_real_, NA_real_, 7.0, 8.5)
+)
+
+# EC11: multi-stem, post-anchor only, with some DBH NA (mixed obs)
+tag_EC11 <- data.table(
+    Species = "sp2", Tag = 9911L,
+    OriginalStemID = c(1L, 2L, 1L, 2L),
+    TrueStemID = c(1L, 2L, 1L, 2L),
+    CensusID = c(8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c("2015-03-10", "2015-03-10", "2022-06-01", "2022-06-01")),
+    DBH = c(10.0, NA_real_, 11.5, 4.0)
+)
+
+# EC12: two rows at same census with same OriginalStemID but one has R flag
+tag_EC12 <- data.table(
+    Species = "sp1", Tag = 9912L,
+    OriginalStemID = c(1L, 1L, 1L),
+    TrueStemID = c(NA_integer_, 1L, NA_integer_),
+    CensusID = c(5L, 7L, 8L),
+    ExactDate = as.Date(c("2000-03-10", "2010-05-01", "2015-06-10")),
+    DBH = c(3.0, 5.0, NA_real_),
+    ListOfTSM = c(NA_character_, NA_character_, "R")
+)
+
+# EC13: Full span C1-C9, single stem, all DBH valid (happy-path baseline)
+tag_EC13 <- data.table(
+    Species = "sp1", Tag = 9913L, OriginalStemID = 1L,
+    TrueStemID = rep(1L, 9), CensusID = 1:9,
+    ExactDate = as.Date(c(
+        "1980-01-01", "1984-09-08", "1989-09-18", "1994-09-08",
+        "1999-07-09", "2004-07-29", "2009-08-15", "2014-08-02", "2019-07-20"
+    )),
+    DBH = c(3.0, 4.2, 5.5, 7.0, 8.8, 10.5, 12.1, 13.6, 15.0)
+)
+
+# EC14: Pre-anchor only (C1-C5), no anchor, no post-anchor
+tag_EC14 <- data.table(
+    Species = "sp1", Tag = 9914L, OriginalStemID = 1L,
+    TrueStemID = rep(NA_integer_, 5), CensusID = 1:5,
+    ExactDate = as.Date(c(
+        "1980-01-01", "1984-09-08", "1989-09-18", "1994-09-08", "1999-07-09"
+    )),
+    DBH = c(2.0, 3.1, 4.5, 5.8, 7.0)
+)
+
+# EC15: Pre-anchor + anchor, no post-anchor, multi-stem (2 stems)
+tag_EC15 <- data.table(
+    Species = "sp2", Tag = 9915L,
+    OriginalStemID = c(1L, 1L, 2L, 1L, 2L),
+    TrueStemID     = c(NA_integer_, NA_integer_, NA_integer_, 1L, 2L),
+    CensusID = c(3L, 5L, 5L, 7L, 7L),
+    ExactDate = as.Date(c("1990-06-15", "2000-03-10", "2000-03-10", "2010-05-01", "2010-05-01")),
+    DBH = c(4.0, 6.0, 2.0, 8.5, 3.5)
+)
+
+# EC16: Anchor has NA DBH, pre-anchor has DBH, post-anchor has DBH
+#       (anchor extension forward: DP scope goes to C8 because C7 anchor is dead)
+tag_EC16 <- data.table(
+    Species = "sp1", Tag = 9916L, OriginalStemID = 1L,
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, 1L, 1L),
+    CensusID = c(3L, 5L, 7L, 8L, 9L),
+    ExactDate = as.Date(c("1990-06-15", "2000-03-10", "2010-05-01", "2015-06-10", "2022-03-15")),
+    DBH = c(4.0, 6.5, NA_real_, 9.0, 10.5)
+)
+
+# EC17: Two stems, stem 1 dies at C5 (NA after), stem 2 recruited at C5
+#       Tests mortality + recruitment interplay
+tag_EC17 <- data.table(
+    Species = "sp1", Tag = 9917L,
+    OriginalStemID = c(1L, 1L, 1L, 2L, 1L, 2L, 2L),
+    TrueStemID     = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, 1L, 2L, 2L),
+    CensusID = c(1L, 3L, 5L, 5L, 7L, 7L, 8L),
+    ExactDate = as.Date(c("1980-01-01", "1990-06-15", "2000-03-10", "2000-03-10",
+                          "2010-05-01", "2010-05-01", "2015-06-10")),
+    DBH = c(10.0, 12.0, NA_real_, 1.5, NA_real_, 4.0, 5.2)
+)
+
+# EC18: Single census C1 only (earliest possible census)
+tag_EC18 <- data.table(
+    Species = "sp1", Tag = 9918L, OriginalStemID = 1L,
+    TrueStemID = NA_integer_, CensusID = 1L,
+    ExactDate = as.Date("1980-01-01"), DBH = 15.0
+)
+
+# EC19: Single census C9 only (latest possible, far post-anchor)
+tag_EC19 <- data.table(
+    Species = "sp2", Tag = 9919L, OriginalStemID = 1L,
+    TrueStemID = 1L, CensusID = 9L,
+    ExactDate = as.Date("2022-03-15"), DBH = 20.0
+)
+
+# EC20: Two censuses far apart: C1 and C9 (maximum gap, spans pre+post anchor)
+tag_EC20 <- data.table(
+    Species = "sp1", Tag = 9920L, OriginalStemID = 1L,
+    TrueStemID = c(NA_integer_, 1L), CensusID = c(1L, 9L),
+    ExactDate = as.Date(c("1980-01-01", "2022-03-15")),
+    DBH = c(5.0, 50.0)
+)
+
+# EC21: All 9 censuses present, all DBH NA except anchor C7
+tag_EC21 <- data.table(
+    Species = "sp1", Tag = 9921L, OriginalStemID = rep(1L, 9),
+    TrueStemID = c(rep(NA_integer_, 6), 1L, rep(NA_integer_, 2)),
+    CensusID = 1:9,
+    ExactDate = as.Date(c(
+        "1980-01-01", "1984-09-08", "1989-09-18", "1994-09-08",
+        "1999-07-09", "2004-07-29", "2009-08-15", "2014-08-02", "2019-07-20"
+    )),
+    DBH = c(NA, NA, NA, NA, NA, NA, 12.0, NA, NA)
+)
+
+# EC22: Post-anchor only, 3 stems at C8 (high K, tests state-space sizing)
+tag_EC22 <- data.table(
+    Species = "sp2", Tag = 9922L,
+    OriginalStemID = c(1L, 2L, 3L),
+    TrueStemID = c(1L, 2L, 3L),
+    CensusID = c(8L, 8L, 8L),
+    ExactDate = rep(as.Date("2015-03-10"), 3),
+    DBH = c(10.0, 5.0, 2.5)
+)
+
+# EC23: Palm species, full span C1-C9 (different growth_form pathway)
+tag_EC23 <- data.table(
+    Species = "sp3", Tag = 9923L, OriginalStemID = rep(1L, 9),
+    TrueStemID = c(rep(NA_integer_, 6), 1L, 1L, 1L),
+    CensusID = 1:9,
+    ExactDate = as.Date(c(
+        "1980-01-01", "1984-09-08", "1989-09-18", "1994-09-08",
+        "1999-07-09", "2004-07-29", "2009-08-15", "2014-08-02", "2019-07-20"
+    )),
+    DBH = c(5.0, 7.0, 9.0, 11.0, 13.0, 15.0, 17.0, 19.0, 21.0)
+)
+
+# EC24: Zero growth — identical DBH across 5 censuses (C3-C7)
+tag_EC24 <- data.table(
+    Species = "sp1", Tag = 9924L, OriginalStemID = rep(1L, 5),
+    TrueStemID = c(rep(NA_integer_, 4), 1L),
+    CensusID = 3:7,
+    ExactDate = as.Date(c("1990-06-15", "1994-09-08", "1999-07-09", "2004-07-29", "2009-08-15")),
+    DBH = rep(10.0, 5)
+)
+
+# EC25: Apparent shrinkage — DBH decreases between censuses (triggers negative growth checks)
+tag_EC25 <- data.table(
+    Species = "sp1", Tag = 9925L, OriginalStemID = rep(1L, 4),
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, 1L),
+    CensusID = c(3L, 5L, 6L, 7L),
+    ExactDate = as.Date(c("1990-06-15", "2000-03-10", "2004-07-29", "2009-08-15")),
+    DBH = c(15.0, 14.0, 12.5, 13.0)
+)
+
+# EC26: Post-anchor only, all DBH NA (anchor extension fails → skipped_no_data)
+tag_EC26 <- data.table(
+    Species = "sp1", Tag = 9926L, OriginalStemID = c(1L, 1L),
+    TrueStemID = c(NA_integer_, NA_integer_),
+    CensusID = c(8L, 9L),
+    ExactDate = as.Date(c("2015-06-10", "2022-03-15")),
+    DBH = c(NA_real_, NA_real_)
+)
+
+# EC27: 3 stems at anchor C7, 2 die post-anchor, 1 survives to C9
+tag_EC27 <- data.table(
+    Species = "sp2", Tag = 9927L,
+    OriginalStemID = c(1L, 2L, 3L, 1L, 2L, 3L, 1L),
+    TrueStemID     = c(1L, 2L, 3L, 1L, 2L, 3L, 1L),
+    CensusID = c(7L, 7L, 7L, 8L, 8L, 8L, 9L),
+    ExactDate = as.Date(c("2010-05-01", "2010-05-01", "2010-05-01",
+                          "2015-06-10", "2015-06-10", "2015-06-10",
+                          "2022-03-15")),
+    DBH = c(20.0, 8.0, 3.0, 21.0, NA_real_, NA_real_, 22.5)
+)
+
+# EC28: Pre-anchor only, multi-census, multi-stem (2 stems at C1, C3, C5)
+tag_EC28 <- data.table(
+    Species = "sp2", Tag = 9928L,
+    OriginalStemID = c(1L, 2L, 1L, 2L, 1L, 2L),
+    TrueStemID     = rep(NA_integer_, 6),
+    CensusID = c(1L, 1L, 3L, 3L, 5L, 5L),
+    ExactDate = as.Date(c("1980-01-01", "1980-01-01", "1990-06-15", "1990-06-15",
+                          "2000-03-10", "2000-03-10")),
+    DBH = c(8.0, 2.0, 10.0, 3.5, 12.0, 5.0)
+)
+
+# EC29: Anchor C7 has NA DBH + single post-anchor C8 with DBH
+#       (like tag 44 but with one more post-anchor row; anchor ext to C8, no further rows)
+tag_EC29 <- data.table(
+    Species = "sp1", Tag = 9929L, OriginalStemID = c(1L, 1L),
+    TrueStemID = c(NA_integer_, 1L),
+    CensusID = c(7L, 8L),
+    ExactDate = as.Date(c("2010-05-01", "2015-06-10")),
+    DBH = c(NA_real_, 6.0)
+)
+
+# EC30: Sparse full span — DBH only at C1, C5, C9 (large gaps, pre+post anchor)
+tag_EC30 <- data.table(
+    Species = "sp1", Tag = 9930L, OriginalStemID = rep(1L, 3),
+    TrueStemID = c(NA_integer_, NA_integer_, 1L),
+    CensusID = c(1L, 5L, 9L),
+    ExactDate = as.Date(c("1980-01-01", "2000-03-10", "2022-03-15")),
+    DBH = c(5.0, 10.0, 18.0)
+)
+
+# EC31: Very large DBH >150 cm (outlier, tests bounds/overflow)
+tag_EC31 <- data.table(
+    Species = "sp1", Tag = 9931L, OriginalStemID = rep(1L, 3),
+    TrueStemID = c(NA_integer_, NA_integer_, 1L),
+    CensusID = c(3L, 5L, 7L),
+    ExactDate = as.Date(c("1990-06-15", "2000-03-10", "2010-05-01")),
+    DBH = c(140.0, 155.0, 165.0)
+)
+
+# EC32: Multiple R-flag rows across censuses
+tag_EC32 <- data.table(
+    Species = "sp1", Tag = 9932L,
+    OriginalStemID = c(1L, 1L, 1L, 1L),
+    TrueStemID = c(NA_integer_, NA_integer_, 1L, NA_integer_),
+    CensusID = c(3L, 5L, 7L, 8L),
+    ExactDate = as.Date(c("1990-06-15", "2000-03-10", "2010-05-01", "2015-06-10")),
+    DBH = c(3.0, NA_real_, 5.0, NA_real_),
+    ListOfTSM = c(NA_character_, "R", NA_character_, "R")
+)
+
+# EC33: Tag with ListOfTSM = "B" (broken stem)
+tag_EC33 <- data.table(
+    Species = "sp2", Tag = 9933L,
+    OriginalStemID = rep(1L, 4),
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, 1L),
+    CensusID = c(3L, 5L, 6L, 7L),
+    ExactDate = as.Date(c("1990-06-15", "2000-03-10", "2004-07-29", "2009-08-15")),
+    DBH = c(12.0, 15.0, 8.0, 16.0),
+    ListOfTSM = c(NA_character_, NA_character_, "B", NA_character_)
+)
+
+# EC34: Two stems, identical DBH at every census (maximally confusable)
+tag_EC34 <- data.table(
+    Species = "sp1", Tag = 9934L,
+    OriginalStemID = c(1L, 2L, 1L, 2L, 1L, 2L),
+    TrueStemID     = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, 1L, 2L),
+    CensusID = c(3L, 3L, 5L, 5L, 7L, 7L),
+    ExactDate = as.Date(c("1990-06-15", "1990-06-15", "2000-03-10", "2000-03-10",
+                          "2010-05-01", "2010-05-01")),
+    DBH = c(10.0, 10.0, 12.0, 12.0, 14.0, 14.0)
+)
+
+# EC35: Pre-anchor with census gaps: C1, C3, C5, C7 (skipping even censuses)
+tag_EC35 <- data.table(
+    Species = "sp1", Tag = 9935L, OriginalStemID = rep(1L, 4),
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, 1L),
+    CensusID = c(1L, 3L, 5L, 7L),
+    ExactDate = as.Date(c("1980-01-01", "1990-06-15", "2000-03-10", "2010-05-01")),
+    DBH = c(3.0, 5.0, 7.5, 10.0)
+)
+
+# EC36: Anchor C7 NA DBH + TWO post-anchor censuses with DBH
+#       (anchor extension to C8, C9 remains truly post-anchor — the exact 9902 pattern but
+#        with a pre-anchor row added)
+tag_EC36 <- data.table(
+    Species = "sp1", Tag = 9936L, OriginalStemID = rep(1L, 4),
+    TrueStemID = c(NA_integer_, NA_integer_, 1L, 1L),
+    CensusID = c(5L, 7L, 8L, 9L),
+    ExactDate = as.Date(c("2000-03-10", "2010-05-01", "2015-06-10", "2022-03-15")),
+    DBH = c(3.0, NA_real_, 6.0, 7.5)
+)
+
+# EC37: Multi-stem anchor extension: 2 stems, anchor C7 all NA, two post-anchor censuses
+tag_EC37 <- data.table(
+    Species = "sp2", Tag = 9937L,
+    OriginalStemID = c(1L, 2L, 1L, 2L, 1L, 2L),
+    TrueStemID     = c(NA_integer_, NA_integer_, 1L, 2L, 1L, 2L),
+    CensusID = c(7L, 7L, 8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c("2010-05-01", "2010-05-01", "2015-06-10", "2015-06-10",
+                          "2022-03-15", "2022-03-15")),
+    DBH = c(NA_real_, NA_real_, 10.0, 3.0, 11.5, 4.5)
+)
+
+# EC38: 3 rows at same census (C7), different OriginalStemIDs — tests high K at anchor
+tag_EC38 <- data.table(
+    Species = "sp2", Tag = 9938L,
+    OriginalStemID = c(1L, 2L, 3L, 1L, 2L, 3L),
+    TrueStemID     = c(NA_integer_, NA_integer_, NA_integer_, 1L, 2L, 3L),
+    CensusID = c(5L, 5L, 5L, 7L, 7L, 7L),
+    ExactDate = as.Date(c("2000-03-10", "2000-03-10", "2000-03-10",
+                          "2010-05-01", "2010-05-01", "2010-05-01")),
+    DBH = c(5.0, 8.0, 12.0, 7.0, 10.0, 14.0)
+)
+
+# EC39: Pre-anchor only, all DBH NA (should be skipped_no_data)
+tag_EC39 <- data.table(
+    Species = "sp1", Tag = 9939L, OriginalStemID = c(1L, 1L, 1L),
+    TrueStemID = rep(NA_integer_, 3),
+    CensusID = c(1L, 3L, 5L),
+    ExactDate = as.Date(c("1980-01-01", "1990-06-15", "2000-03-10")),
+    DBH = c(NA_real_, NA_real_, NA_real_)
+)
+
+# EC40: Only anchor census, DBH NA (single row, dead anchor → skip)
+tag_EC40 <- data.table(
+    Species = "sp1", Tag = 9940L, OriginalStemID = 1L,
+    TrueStemID = NA_integer_, CensusID = 7L,
+    ExactDate = as.Date("2010-05-01"), DBH = NA_real_
+)
+
+# EC41: Tag with C6 and C7 only (two consecutive censuses ending at anchor)
+tag_EC41 <- data.table(
+    Species = "sp1", Tag = 9941L, OriginalStemID = c(1L, 1L),
+    TrueStemID = c(NA_integer_, 1L),
+    CensusID = c(6L, 7L),
+    ExactDate = as.Date(c("2004-07-29", "2009-08-15")),
+    DBH = c(8.0, 9.5)
+)
+
+# EC42: Tag with dense post-anchor: C7, C8, C9 with 2 stems
+#       (standard DP pre-anchor + multi-stem post-anchor reinsertion)
+tag_EC42 <- data.table(
+    Species = "sp2", Tag = 9942L,
+    OriginalStemID = c(1L, 1L, 2L, 1L, 2L, 1L, 2L),
+    TrueStemID     = c(NA_integer_, 1L, 2L, 1L, 2L, 1L, 2L),
+    CensusID = c(5L, 7L, 7L, 8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c("2000-03-10", "2010-05-01", "2010-05-01",
+                          "2015-06-10", "2015-06-10", "2022-03-15", "2022-03-15")),
+    DBH = c(3.0, 8.0, 2.0, 9.0, 3.5, 10.0, 4.0)
+)
+
+# EC43: Anchor extension where first post-anchor census has NO TrueStemID but
+#       second post-anchor census does (tests preference for TrueStemID in extension)
+tag_EC43 <- data.table(
+    Species = "sp1", Tag = 9943L, OriginalStemID = rep(1L, 3),
+    TrueStemID = c(NA_integer_, NA_integer_, 1L),
+    CensusID = c(7L, 8L, 9L),
+    ExactDate = as.Date(c("2010-05-01", "2015-06-10", "2022-03-15")),
+    DBH = c(NA_real_, 6.0, 7.5)
+)
+
+# EC44: Anchor extension to C9 (skip C8 which also has NA) — deepest possible extension
+tag_EC44 <- data.table(
+    Species = "sp1", Tag = 9944L, OriginalStemID = rep(1L, 4),
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, 1L),
+    CensusID = c(5L, 7L, 8L, 9L),
+    ExactDate = as.Date(c("2000-03-10", "2010-05-01", "2015-06-10", "2022-03-15")),
+    DBH = c(4.0, NA_real_, NA_real_, 8.0)
+)
+
+# EC45: Anchor + 2 post-anchor censuses, 1 stem grows then a 2nd stem recruits at C9
+tag_EC45 <- data.table(
+    Species = "sp1", Tag = 9945L,
+    OriginalStemID = c(1L, 1L, 1L, 2L),
+    TrueStemID     = c(1L, 1L, 1L, 2L),
+    CensusID = c(7L, 8L, 9L, 9L),
+    ExactDate = as.Date(c("2010-05-01", "2015-06-10", "2022-03-15", "2022-03-15")),
+    DBH = c(10.0, 11.0, 12.0, 3.0)
+)
+
+dt_complete_extra <- rbindlist(list(
+    dt_complete_extra,
+    tag_EC1, tag_EC2, tag_EC3, tag_EC4, tag_EC5, tag_EC6,
+    tag_EC7, tag_EC8, tag_EC9, tag_EC10, tag_EC11, tag_EC12,
+    tag_EC13, tag_EC14, tag_EC15, tag_EC16, tag_EC17, tag_EC18,
+    tag_EC19, tag_EC20, tag_EC21, tag_EC22, tag_EC23, tag_EC24,
+    tag_EC25, tag_EC26, tag_EC27, tag_EC28, tag_EC29, tag_EC30,
+    tag_EC31, tag_EC32, tag_EC33, tag_EC34, tag_EC35, tag_EC36,
+    tag_EC37, tag_EC38, tag_EC39, tag_EC40, tag_EC41, tag_EC42,
+    tag_EC43, tag_EC44, tag_EC45
+), use.names = TRUE, fill = TRUE)
+
 # Include additional information about growth forms, trees, vs figs
 growth_forms <- data.table(
     Species = c("sp1", "sp2", "sp3"),

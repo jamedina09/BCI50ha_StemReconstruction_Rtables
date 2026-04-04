@@ -677,12 +677,14 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
     species_label <- if ("species" %in% names(dtg) && length(dtg$species) > 0) as.character(dtg$species[[1]]) else "<unknown>"
 
     if (!("DBH" %in% names(dtg)) || !("CensusID" %in% names(dtg))) {
-        log_msg(sprintf("Skipping Tag=%s species=%s: missing DBH or CensusID column", tag_label, species_label), "WARN")
-        return(NULL)
+        log_msg(sprintf("Skipping Tag=%s species=%s: missing DBH or CensusID column; returning rows as-is", tag_label, species_label), "WARN")
+        dtg[, ReconstructionMethod := "skipped_no_data"]
+        return(dtg)
     }
     if (all(is.na(dtg$DBH)) || all(is.na(dtg$CensusID))) {
-        log_msg(sprintf("Skipping Tag=%s species=%s: all DBH or all CensusID are NA; skipping DP", tag_label, species_label), "WARN")
-        return(NULL)
+        log_msg(sprintf("Skipping Tag=%s species=%s: all DBH or all CensusID are NA; returning rows as-is", tag_label, species_label), "WARN")
+        dtg[, ReconstructionMethod := "skipped_no_data"]
+        return(dtg)
     }
 
     match_stems_dp_global_backward_marginals_batch(
@@ -905,8 +907,9 @@ run_main <- function() {
             }
             dt_tag <- xrun[Tag == WHICH_TAG]
             if (!("DBH" %in% names(dt_tag)) || !("CensusID" %in% names(dt_tag)) || all(is.na(dt_tag$DBH)) || all(is.na(dt_tag$CensusID))) {
-                log_msg(sprintf("Skipping WHICH_TAG=%s: all DBH or all CensusID missing for this Tag; no DP performed", WHICH_TAG), "WARN")
-                out <- NULL
+                log_msg(sprintf("Skipping WHICH_TAG=%s: all DBH or all CensusID missing for this Tag; returning rows as-is", WHICH_TAG), "WARN")
+                out <- data.table::copy(dt_tag)
+                out[, ReconstructionMethod := "skipped_no_data"]
             } else {
                 out <- xrun[Tag == WHICH_TAG, run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local), by = .(Tag, species)]
             }
@@ -921,10 +924,11 @@ run_main <- function() {
                 data.table::setDTthreads(1L)
                 g <- groups[i]
                 dtg <- xrun[Tag == g$Tag & species == g$species]
-                # Skip groups with missing DBH or CensusID (all NA)
+                # Return rows as-is for groups with missing DBH or CensusID (all NA)
                 if (!("DBH" %in% names(dtg)) || !("CensusID" %in% names(dtg)) || all(is.na(dtg$DBH)) || all(is.na(dtg$CensusID))) {
-                    log_msg(sprintf("Skipping Tag=%s species=%s: all DBH or all CensusID missing; skipping DP", g$Tag, g$species), "WARN")
-                    return(NULL)
+                    log_msg(sprintf("Skipping Tag=%s species=%s: all DBH or all CensusID missing; returning rows as-is", g$Tag, g$species), "WARN")
+                    dtg[, ReconstructionMethod := "skipped_no_data"]
+                    return(dtg)
                 }
                 run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
             }, mc.cores = MC_CORES)
