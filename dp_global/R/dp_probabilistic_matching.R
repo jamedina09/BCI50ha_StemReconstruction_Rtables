@@ -74,8 +74,8 @@ match_stems_probabilistic <- function(tree_data,
         # Try last census with observed DBH as provisional anchor
         obs_census <- sort(unique(tree_data$CensusID[!is.na(tree_data$DBH)]))
         if (length(obs_census) == 0L) {
-            # No DBH anywhere — cannot match
-            tree_data[, ReconstructedStemID := seq_len(.N)]
+            # No DBH anywhere — cannot match; leave ReconstructedStemID as NA
+            tree_data[, ReconstructedStemID := NA_integer_]
             tree_data[, ReconstructionMethod := "probabilistic"]
             return(tree_data)
         }
@@ -536,14 +536,7 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
         }
     }
 
-    # Handle non-observed rows (NA DBH)
-    na_rows <- which(is.na(tree_data$DBH) & is.na(tree_data$ReconstructedStemID))
-    if (length(na_rows) > 0L) {
-        current_max <- max(tree_data$ReconstructedStemID, na.rm = TRUE)
-        if (!is.finite(current_max)) current_max <- 0L
-        tree_data[na_rows, ReconstructedStemID := seq.int(current_max + 1L,
-                                                          current_max + length(na_rows))]
-    }
+    # NA-DBH rows keep ReconstructedStemID = NA (no observation to match)
 
     tree_data
 }
