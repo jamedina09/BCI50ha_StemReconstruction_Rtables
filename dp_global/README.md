@@ -35,6 +35,7 @@ Reconstruct stable stem identities across censuses using a biologically informed
 - **Biological realism** (growth, mortality, recruitment)
 - **Measurement error handling** following Chave et al. (2004)
 - **Exact uncertainty quantification** via posterior marginals
+- **Probabilistic greedy matching** fallback for intractable state spaces (Gumbel-noise sampling with per-observation posterior probabilities)
 - **C++ acceleration** for performance and fallbacks when DP is intractable
 
 ---
@@ -78,6 +79,7 @@ dp_global/
 │   ├── dp_global_dp.R                # Production DP solver (match_stems_dp_global_backward_marginals_batch)
 │   ├── dp_global_states.R            # State enumeration and track-DBH helpers
 │   ├── dp_global_matchers.R          # Fallback igraph matcher (match_stems_optimal_backward)
+│   ├── dp_probabilistic_matching.R   # Probabilistic greedy matching fallback (match_stems_probabilistic)
 │   ├── dp_global_utils.R             # Shared utilities (interval resolution, etc.)
 │   ├── dp_global_diag.R              # Diagnostics and PDF plotting
 │   ├── naming_helpers.R              # Output directory naming helpers
@@ -238,7 +240,7 @@ All parameters must be present in the dataset before running DP. These are typic
 | Column | Description |
 |--------|-------------|
 | `ReconstructedStemID` | Assigned stem identity |
-| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"igraph"`, `"provisional_dp"`, `"provisional_igraph"`, `"none_after_anchor"` — see notes below |
+| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"igraph"`, `"provisional_dp"`, `"provisional_igraph"`, `"none_after_anchor"` — see notes below |
 | `ConstraintViolation` | Post-hoc diagnostic flag |
 | `DP_KUsed` | Number of tracks used |
 | `DP_MaxStatesPerCensus` | Largest state space encountered |
@@ -560,7 +562,8 @@ where $\tau$ is the temperature parameter:
 2. **ReconstructionMethod:**
    - `"given"`: From input `TrueStemID`
    - `"dp"`: Assigned by DP solver
-   - `"igraph"`: Assigned by fallback method
+   - `"probabilistic"`: Assigned by probabilistic greedy matching fallback
+   - `"igraph"`: Assigned by igraph bipartite matching fallback
 
 ### Diagnostic Outputs
 
@@ -927,12 +930,25 @@ with reason `growth_form_forced`.  The CLI flag accepts comma‑ or
 semicolon‑separated lists, which are split automatically by the DP loader.
 
 
-The DP solver automatically falls back to `match_stems_optimal_backward()` when:
+The DP solver automatically falls back when:
 
-1. Anchor census missing or has no observed stems
-2. Any census has too many injective states (P(K, n_obs) > `max_states`)
-3. K insufficient ($K < \max$ observed stems)
-4. DP recursion yields no feasible keys
+1. Anchor census missing or has no observed stems → **igraph** fallback
+2. Any census has too many injective states (P(K, n_obs) > `max_states`) → **probabilistic** fallback
+3. Cross-product edges exceed `max_edges` during backward pass → **probabilistic** fallback
+4. K insufficient ($K < \max$ observed stems) → **igraph** fallback
+5. DP recursion yields no feasible keys → **igraph** fallback
+
+**Fallback routing:** The `do_fallback()` helper routes based on the reason:
+- `enum_exceeded` or `edge_count_exceeded` → `match_stems_probabilistic()` (probabilistic greedy matching)
+- All other reasons (structural/data issues) → `match_stems_optimal_backward()` (igraph bipartite matching)
+
+### Cross-Product Edge Guard
+
+Before evaluating backward transitions, the DP checks whether the cross-product of states between adjacent censuses exceeds `max_edges` (default 500M). If `n_states_cc * n_next > max_edges`, the solver triggers `do_fallback("edge_count_exceeded")` which routes to the probabilistic matcher.
+
+### Segment Split Consistency
+
+When a tag is split into sub-problems at an R-event boundary (resprout segment split), the solver checks the whole-tag state space before processing sub-calls. If any census in either segment has a state space exceeding `max_states`, the solver forces `max_states = 0` on both sub-calls, guaranteeing both segments use the probabilistic matcher. This prevents inconsistent reconstruction methods across segments of the same tag.
 
 #### Anchor fallback behavior
 If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back to the igraph matcher. If no such earlier census exists, the algorithm falls back to `match_stems_optimal_backward()`.
@@ -966,7 +982,8 @@ To aid diagnostics the DP sets a `DP_FallbackReason` string on returned rows whe
 | `provisional_igraph_anchor_assigned` | The igraph matcher assigned provisional anchor IDs at the last observed census. | Verify provisional assignments or provide true anchors. |
 | `anchor_ids_missing` | No anchor IDs were found after attempting to locate an anchor census. | Inspect data or supply anchor IDs. |
 | `K_too_small` | Chosen `K` is smaller than the maximum per-census observed stems. | Increase `max_tracks` or `slack_tracks`. |
-| `enum_exceeded` | State enumeration exceeded `max_states` for a census (too many injective assignments). | Increase `max_states` or reduce `K`. |
+| `enum_exceeded` | State enumeration exceeded `max_states` for a census (too many injective assignments). Routes to probabilistic matcher. | Increase `max_states` or reduce `K`. |
+| `edge_count_exceeded` | Cross-product of states between adjacent censuses exceeded `max_edges`. Routes to probabilistic matcher. | Increase `max_edges` (default 500M). |
 | `anchor_truestem_not_found` | Anchor `TrueStemID` values could not be mapped to track indices. | Check for unexpected `TrueStemID` values or duplicates. |
 | `next_assign_row_mismatch` | Internal mismatch mapping assignment keys to enumerated rows. | Likely internal error — reproduce and report with a minimal example. |
 | `no_reachable_next_states` | No reachable next full-states in the backward recursion (all pruned/filtered). | Relax pruning bounds (`prune_hard=FALSE`, widen `prune_*`) or check data. |
@@ -989,7 +1006,37 @@ res <- match_stems_dp_global_backward_marginals_batch(dt, anchor_start = 5, ...)
 unique(na.omit(res$DP_FallbackReason))
 ```
 
-**Important:** `min_growth` and `max_growth` constraints affect **only** the fallback method and post-hoc diagnostics, not the DP objective.
+**Important:** `min_growth` and `max_growth` constraints affect **only** the igraph fallback method and post-hoc diagnostics, not the DP objective or the probabilistic matcher.
+
+### Probabilistic Matching Fallback: `match_stems_probabilistic()`
+
+When the DP state space is too large (triggered by `enum_exceeded` or `edge_count_exceeded`), the solver routes to `match_stems_probabilistic()` (implemented in `dp_global/R/dp_probabilistic_matching.R`).
+
+**Algorithm:**
+
+1. **Pairwise log-likelihoods**: For each adjacent census pair, computes a log-likelihood matrix between all observed stems using the same biological model as the DP (Gaussian growth likelihood with size-dependent mean and variance, survival probability, soft shrinkage/growth penalties from `Bio_*` columns).
+
+2. **Cost matrix augmentation**: Expands the pairwise likelihood matrix to K×K by adding virtual mortality slots (for stems disappearing) and virtual recruitment slots (for new stems appearing), using the same mortality hazard and recruitment size/rate distributions as the DP.
+
+3. **Gumbel-noise greedy assignment**: Draws `n_samples` (default 200) stochastic assignments by adding Gumbel(0,1) noise to log-likelihoods (scaled by temperature) and greedily selecting the best available assignment per row. This approximates sampling from the Gibbs distribution over assignments.
+
+4. **Backward stitching**: Starting from the anchor census (where identities are known), stitches per-pair assignments backward to build full per-sample track assignments across all censuses.
+
+5. **Marginal posterior computation**: Two-pass approach:
+   - **Pass 1**: Computes the full marginal posterior distribution for every observation by counting track assignments across samples.
+   - **Pass 2**: Per-census greedy conflict resolution — within each census, observations are sorted by confidence (descending), each observation gets its MAP track ID unless it conflicts with an already-assigned ID, in which case it falls back to the next-best posterior alternative.
+
+6. **Posterior export**: Writes per-tag posterior summaries (path signatures and probabilities) in the same format as the DP posterior sampler.
+
+**Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `n_samples` | `200` | Number of Gumbel-noise stochastic samples |
+| `temperature` | `1.0` | Temperature for Gumbel sampling (shared with DP) |
+| `posterior_top_k` | `2` | Number of top posterior alternatives to report |
+
+**Output columns:** The probabilistic matcher produces the same output schema as the DP solver (including `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`, `DP_PosteriorEntropy`, etc.) with `ReconstructionMethod = "probabilistic"`.
 
 ---
 
@@ -1325,6 +1372,7 @@ out <- add_dp_posterior_bins(
 | Posterior marginals (production) | `match_stems_dp_global_backward_marginals_batch()` | `dp_global/R/dp_global_dp.R` |
 | Posterior binning | `add_dp_posterior_bins()` | `dp_global/R/dp_global_diag.R` |
 | Fallback matcher | `match_stems_optimal_backward()` | `dp_global/R/dp_global_matchers.R` |
+| Probabilistic fallback | `match_stems_probabilistic()` | `dp_global/R/dp_probabilistic_matching.R` |
 | Parameter estimation | `estimate_bio_pars()` | `dp_global/R/dp_global_bio.R` |
 | DP complexity estimate | `estimate_dp_complexity()` | `dp_global/R/complexity/estimate_dp_complexity_function.R` |
 | Plotting | `plot_tag_to_pdf()` | `dp_global/R/dp_global_diag.R` |
@@ -1342,8 +1390,8 @@ Key computations and helpers:
   - If requested `anchor_start` has no DBH/TrueStemID, the function searches backward for the most recent census with at least one row having non-NA DBH and non-NA TrueStemID and uses that as the anchor. If the anchor has 0 living stems, the function also searches forward for the first post-anchor census with living stems and a non-NA TrueStemID. If no valid anchor is found in either direction, it falls back to `match_stems_optimal_backward()`.
 
 - State enumeration
-  - `enumerate_states_injective(K, n_obs, max_states)` enumerates injective assignments (permutation-based states). If enumeration exceeds `max_states` it falls back to igraph.
-  - `count_injective_states(K, n_obs)` computes theoretical counts used for diagnostics.
+  - `enumerate_states_injective(K, n_obs, max_states)` enumerates injective assignments (permutation-based states). If enumeration exceeds `max_states` it falls back to the probabilistic matcher.
+  - `count_injective_states(K, n_obs)` computes theoretical counts used for diagnostics and for the segment split consistency check.
 
 - Track DBH vectors
   - `state_to_track_dbh(assign_vec, obs_dbh, K)` constructs length-K DBH vectors for each state used in cost evaluation.
@@ -1515,6 +1563,8 @@ Tag 11 requires ~89 million transition computations, while most other tags requi
 | **Fallback Only** | `max_growth` | Fallback matcher | Edge constraint for stepwise | 10 cm/year |
 | **Diagnostic Only** | `min_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as fallback |
 | **Diagnostic Only** | `max_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as fallback |
+| **Probabilistic Fallback** | `max_edges` | DP backward pass | Cross-product guard triggers probabilistic fallback | 500,000,000 |
+| **Probabilistic Fallback** | `prob_n_samples` | Probabilistic matcher | Number of Gumbel-noise samples | 200 |
 
 ### Quantile Configuration Reference
 
@@ -1573,6 +1623,8 @@ Complete table of all quantiles used in parameter estimation:
 
 - State space grows factorially: $O(K^{n_{obs}})$
 - Set `DP_MAX_STATES` based on memory availability (default 40,000)
+- Set `DP_MAX_EDGES` to limit cross-product size (default 500M); exceeding this triggers probabilistic fallback
+- Set `PROB_N_SAMPLES` to control probabilistic matching accuracy vs speed (default 200)
 - Parallel processing via `MANUAL_CORES_VALUE` (controlled by `MANUAL_CORES=TRUE`) for multiple tags
 - Consider fallback threshold adjustment for large datasets
 - Batch cost computation (`match_stems_dp_global_backward_marginals_batch`) is faster for posterior inference
