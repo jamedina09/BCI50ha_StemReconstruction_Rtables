@@ -1214,7 +1214,7 @@ if (sys.nframe() == 0L) {
 
 
 # Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=1100 \
+# --DP_MAX_STATES=20000 \
 # --MANUAL_CORES=TRUE \
 # --MANUAL_CORES_VALUE=16 \
 # --WRITE_DP_FEATHER=FALSE \

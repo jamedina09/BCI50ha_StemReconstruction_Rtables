@@ -211,4 +211,4 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=277120
 
 ## complex palm
-### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=190932
+### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=190932 --DP_MAX_STATES=2
