@@ -949,10 +949,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             meas_sd2                           = meas_sd2,
             meas_p_big                         = meas_p_big,
             fallback_growth_forms              = fallback_growth_forms,
-            posterior_samples                  = 0L,  # disable posteriors in sub-calls
-            posterior_samples_format           = "csv",
-            posterior_samples_path             = NULL,
-            posterior_sample_seed              = NULL,
+            posterior_samples                  = 0L,  # disable DP posteriors in sub-calls
+            posterior_samples_format           = posterior_samples_format,
+            posterior_samples_path             = posterior_samples_path,
+            posterior_sample_seed              = posterior_sample_seed,
             prune_hard                         = prune_hard,
             prune_min_growth                   = prune_min_growth,
             prune_max_growth                   = prune_max_growth,
@@ -966,7 +966,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             verbose                            = verbose,
             chunk_id                           = chunk_id,
             allow_segment_split                = FALSE,  # prevent cascading splits in sub-calls
-            prob_n_samples                     = prob_n_samples
+            prob_n_samples                     = prob_n_samples,
+            prob_species                       = prob_species
         )
 
         # When the whole-tag state space exceeds max_states, force probabilistic
