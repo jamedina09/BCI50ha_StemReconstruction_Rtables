@@ -44,7 +44,7 @@ Reconstruct stable stem identities across censuses using a biologically informed
 
 ### Prerequisites
 
-R (packages: `data.table`, `igraph`; optional: `ggplot2`, `cowplot`) 
+R (packages: `data.table`, `Rcpp`; optional: `ggplot2`, `cowplot`, `arrow`) 
 
 ### Running the Code
 
@@ -76,9 +76,8 @@ dp_global/
 ├── R/
 │   ├── dp_global_main.R              # Source loader: sources all R modules below
 │   ├── dp_global_bio.R               # Biological parameter estimation (estimate_bio_pars)
-│   ├── dp_global_dp.R                # Production DP solver (match_stems_dp_global_backward_marginals_batch)
+│   ├── dp_global_dp.R                # Core DP solver (match_stems_dp_global_backward_marginals_batch)
 │   ├── dp_global_states.R            # State enumeration and track-DBH helpers
-│   ├── dp_global_matchers.R          # Fallback igraph matcher (match_stems_optimal_backward)
 │   ├── dp_probabilistic_matching.R   # Probabilistic greedy matching fallback (match_stems_probabilistic)
 │   ├── dp_global_utils.R             # Shared utilities (interval resolution, etc.)
 │   ├── dp_global_diag.R              # Diagnostics and PDF plotting
@@ -159,23 +158,56 @@ $$P(K, n_{obs}) = K \times (K-1) \times \cdots \times (K-n_{obs}+1)$$
 
 ### Understanding `max_states` (DP_MAX_STATES)
 
-`max_states` is the single parameter that controls when the DP solver falls back to the probabilistic matcher. It limits both:
-1. **Per-census enumeration:** If $P(K, n_{obs}) > \text{max\_states}$ at any census, the solver falls back
-2. **Inter-census transitions:** If the cross-product of states between two adjacent censuses exceeds $\text{max\_states}^2$, the solver falls back
+`DP_MAX_STATES` (passed as `max_states` to the solver) is the single parameter that controls when the DP solver falls back to the probabilistic greedy matcher. It imposes two limits:
 
-**What the default value of 40,000 means in practice:**
+1. **Per-census enumeration (`enum_exceeded`):** If $P(K, n_{obs}) > \text{max\_states}$ at any single census, the solver cannot enumerate the assignment states and falls back.
+2. **Inter-census transitions (`edge_count_exceeded`):** If the cross-product of state counts between two adjacent censuses exceeds $\text{max\_states}^2$ (called `max_edges`), the transition matrix is too large and the solver falls back.
 
-| Stems observed ($n$) | Tracks ($K$) | States $P(K,n)$ | Fits in 40,000? |
-|:-:|:-:|--:|:-:|
-| 2 | 4 | 12 | Yes |
-| 3 | 5 | 60 | Yes |
-| 4 | 6 | 360 | Yes |
-| 5 | 7 | 2,520 | Yes |
-| 6 | 8 | 20,160 | Yes |
-| 7 | 9 | 181,440 | No → probabilistic |
-| 8 | 10 | 1,814,400 | No → probabilistic |
+In practice, the per-census enumeration limit is reached first because state counts grow factorially.
 
-**How to choose a value for your data:**
+#### Fallback thresholds by `DP_MAX_STATES` value
+
+The tables below show when the per-census enumeration forces fallback. "Stems observed" ($n$) is the number of stems with non-NA DBH in a single census. $K$ is the number of identity tracks.
+
+**With $K = n + 1$ (minimum realistic: `slack_tracks = 1`, no births needed):**
+
+| Stems ($n$) | Tracks ($K$) | States $P(K,n)$ | 1,000 | 20,000 | 40,000 |
+|:-:|:-:|--:|:-:|:-:|:-:|
+| 2 | 3 | 6 | DP | DP | DP |
+| 3 | 4 | 24 | DP | DP | DP |
+| 4 | 5 | 120 | DP | DP | DP |
+| 5 | 6 | 720 | DP | DP | DP |
+| 6 | 7 | 5,040 | fallback | DP | DP |
+| 7 | 8 | 40,320 | fallback | fallback | fallback |
+| 8 | 9 | 362,880 | fallback | fallback | fallback |
+
+**With $K = n + 2$ (typical: `slack_tracks = 1` plus 1 birth track needed):**
+
+| Stems ($n$) | Tracks ($K$) | States $P(K,n)$ | 1,000 | 20,000 | 40,000 |
+|:-:|:-:|--:|:-:|:-:|:-:|
+| 2 | 4 | 12 | DP | DP | DP |
+| 3 | 5 | 60 | DP | DP | DP |
+| 4 | 6 | 360 | DP | DP | DP |
+| 5 | 7 | 2,520 | DP | DP | DP |
+| 6 | 8 | 20,160 | fallback | DP | DP |
+| 7 | 9 | 181,440 | fallback | fallback | fallback |
+| 8 | 10 | 1,814,400 | fallback | fallback | fallback |
+
+**Summary — maximum stems per census handled by exact DP:**
+
+| `DP_MAX_STATES` | `max_edges` ($= \text{DP\_MAX\_STATES}^2$) | Max stems ($K = n+1$) | Max stems ($K = n+2$) |
+|--:|--:|:-:|:-:|
+| 1,000 | 1,000,000 | 5 | 5 |
+| 20,000 | 400,000,000 | 6 | 6 |
+| 40,000 | 1,600,000,000 | 6 | 6 |
+
+**Key insight:** With the default `DP_MAX_STATES = 40,000`, the DP handles tags with up to **6 observed stems per census** exactly. Tags with **7 or more stems** in any census are routed to the probabilistic greedy matcher.
+
+#### Inter-census transition budget
+
+The `max_edges` limit ($= \text{DP\_MAX\_STATES}^2$) guards the cross-product of states between adjacent censuses. For the values above, when both censuses are within the per-census state limit, the cross-product does not exceed `max_edges` — so in practice the per-census enumeration limit is the binding constraint. The edge guard becomes relevant when `DP_MAX_STATES` is set high enough to pass per-census enumeration but the product of two large censuses overflows the transition budget.
+
+#### How to choose a value
 
 ```r
 # 1. Find the most complex tags in your dataset
@@ -185,17 +217,17 @@ obs_per_census <- dt[!is.na(DBH), .N, by = .(Tag, CensusID)]
 max_obs <- obs_per_census[, .(max_n = max(N)), by = Tag][order(-max_n)]
 head(max_obs, 10)  # top 10 most complex tags
 
-# 2. Compute states for a specific tag
-n <- 7   # max observed stems in any census
-K <- 9   # n + slack + births (typically n + 2)
-states <- prod(K:(K - n + 1))  # P(K, n) = 181,440
+# 2. Compute states for a specific stem count
+n <- 6   # max observed stems in any census
+K <- 8   # n + 2 (slack + 1 birth)
+states <- prod(K:(K - n + 1))  # P(8, 6) = 20,160
+cat("States:", states, "\n")
 
-# 3. Set DP_MAX_STATES above that to use exact DP, or below to use probabilistic
-# Example: exact DP for tags with ≤ 6 stems, probabilistic for 7+
-# Rscript dp_global/scripts/main_cpp_chunk.R --DP_MAX_STATES=40000
+# 3. Set DP_MAX_STATES above that to guarantee exact DP
+# Rscript dp_global/scripts/main_cpp_chunk.R --DP_MAX_STATES=25000
 ```
 
-**Trade-off:** Higher `max_states` → exact DP for more tags (slower, more memory). Lower `max_states` → more tags use probabilistic fallback (faster, approximate).
+**Trade-off:** Higher values → exact DP for more tags (slower, more memory). Lower values → more tags use the probabilistic fallback (faster, approximate but uses the same biological model and hard pruning bounds).
 
 ### Life-Cycle Phase System
 
@@ -280,7 +312,7 @@ All parameters must be present in the dataset before running DP. These are typic
 | Column | Description |
 |--------|-------------|
 | `ReconstructedStemID` | Assigned stem identity |
-| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"igraph"`, `"provisional_dp"`, `"provisional_igraph"`, `"none_after_anchor"` — see notes below |
+| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"provisional_dp"`, `"dp_mf_inferred"`, `"none_after_anchor"`, `"skipped_no_data"` — see notes below |
 | `ConstraintViolation` | Post-hoc diagnostic flag |
 | `DP_KUsed` | Number of tracks used |
 | `DP_MaxStatesPerCensus` | Largest state space encountered |
@@ -289,7 +321,7 @@ All parameters must be present in the dataset before running DP. These are typic
 Notes on post-anchor output semantics:
 - When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was actually used by the DP will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
 - Remaining post-anchor rows without a DP assignment are labeled `ReconstructionMethod = "none_after_anchor"` and keep `ReconstructedStemID = NA`.
-- If no anchored census with `TrueStemID` exists, and `allow_provisional_anchor = TRUE` (default), the DP can assign provisional anchor IDs at the last observed DBH census; those anchor rows are labeled `"provisional_dp"` and treated as anchors for the reconstruction. If DP falls back to the igraph matcher and assigns provisional IDs, those are labeled `"provisional_igraph"`.
+- If no anchored census with `TrueStemID` exists, and `allow_provisional_anchor = TRUE` (default), the DP can assign provisional anchor IDs at the last observed DBH census; those anchor rows are labeled `"provisional_dp"` and treated as anchors for the reconstruction.
 
 ### Posterior Uncertainty Columns (Optional)
 
@@ -603,7 +635,6 @@ where $\tau$ is the temperature parameter:
    - `"given"`: From input `TrueStemID`
    - `"dp"`: Assigned by DP solver
    - `"probabilistic"`: Assigned by probabilistic greedy matching fallback
-   - `"igraph"`: Assigned by igraph bipartite matching fallback
 
 ### Diagnostic Outputs
 
@@ -970,17 +1001,16 @@ with reason `growth_form_forced`.  The CLI flag accepts comma‑ or
 semicolon‑separated lists, which are split automatically by the DP loader.
 
 
-The DP solver automatically falls back when:
+The DP solver automatically falls back to the probabilistic greedy matcher when:
 
-1. Anchor census missing or has no observed stems → **igraph** fallback
-2. Any census has too many injective states (P(K, n_obs) > `max_states`) → **probabilistic** fallback
-3. Cross-product of adjacent census states exceeds `max_states²` → **probabilistic** fallback
-4. K insufficient ($K < \max$ observed stems) → **igraph** fallback
-5. DP recursion yields no feasible keys → **igraph** fallback
+1. Anchor census missing or has no observed stems
+2. Any census has too many injective states (P(K, n_obs) > `max_states`) → reason: `enum_exceeded`
+3. Cross-product of adjacent census states exceeds `max_states²` → reason: `edge_count_exceeded`
+4. K insufficient ($K < \max$ observed stems)
+5. DP recursion yields no feasible keys
+6. Growth form or species forced to probabilistic
 
-**Fallback routing:** The `do_fallback()` helper routes based on the reason:
-- `enum_exceeded` or `edge_count_exceeded` → `match_stems_probabilistic()` (probabilistic greedy matching)
-- All other reasons (structural/data issues) → `match_stems_optimal_backward()` (igraph bipartite matching)
+**Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints.
 
 ### Cross-Product Edge Guard
 
@@ -991,27 +1021,18 @@ Before evaluating backward transitions, the DP checks whether the cross-product 
 When a tag is split into sub-problems at an R-event boundary (resprout segment split), the solver checks the whole-tag state space before processing sub-calls. If any census in either segment has a state space exceeding `max_states`, the solver forces `max_states = 0` on both sub-calls, guaranteeing both segments use the probabilistic matcher. This prevents inconsistent reconstruction methods across segments of the same tag.
 
 #### Anchor fallback behavior
-If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back to the igraph matcher. If no such earlier census exists, the algorithm falls back to `match_stems_optimal_backward()`.
+If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back. If no such earlier census exists, the algorithm falls back to the probabilistic matcher.
 
 #### Anchor extension (forward search)
-When the nominal anchor census has 0 living stems (all DBH values are `NA`), the algorithm extends the anchor search **forward** to post-anchor censuses. It selects the first census after the anchor that has at least one living stem with a non-NA `TrueStemID`. This prevents tags where the anchor census happens to have only dead stems from unnecessarily falling back to the igraph matcher when a later census has reliable identity information.
+When the nominal anchor census has 0 living stems (all DBH values are `NA`), the algorithm extends the anchor search **forward** to post-anchor censuses. It selects the first census after the anchor that has at least one living stem with a non-NA `TrueStemID`. This prevents tags where the anchor census happens to have only dead stems from unnecessarily falling back when a later census has reliable identity information.
 
-Note: In addition, when the requested anchor census contains DBH observations but lacks `TrueStemID` values, setting the `ALLOW_PROVISIONAL_DP_ANCHOR` flag (default: `TRUE` in the chunk runner and the DP function) allows the DP to assign provisional `TrueStemID`/`ReconstructedStemID` values at the last-observed DBH census (marked with `ReconstructionMethod = "provisional_dp"`) and proceed with the DP instead of falling back to the igraph matcher.
+Note: In addition, when the requested anchor census contains DBH observations but lacks `TrueStemID` values, setting the `ALLOW_PROVISIONAL_DP_ANCHOR` flag (default: `TRUE` in the chunk runner and the DP function) allows the DP to assign provisional `TrueStemID`/`ReconstructedStemID` values at the last-observed DBH census (marked with `ReconstructionMethod = "provisional_dp"`) and proceed with the DP instead of falling back.
 
-### Fallback Method: `match_stems_optimal_backward()`
-
-**Algorithm:**
-1. Works backward one census at a time
-2. Uses `igraph::max_bipartite_match()` with deterministic edge weights
-3. Edges allowed only when growth ∈ [min_growth, max_growth]
-4. If more stems at t+1 than t, smallest future stems treated as recruits
-5. Unmatched stems receive new IDs
-
-**Marking:** Rows assigned by fallback have `ReconstructionMethod="igraph"`
+### Fallback Method: `match_stems_probabilistic()`
 
 ### DP fallback reason codes (`DP_FallbackReason`)
 
-To aid diagnostics the DP sets a `DP_FallbackReason` string on returned rows when the solver falls back to the igraph matcher. Common codes and suggested remedies:
+To aid diagnostics the DP sets a `DP_FallbackReason` string on returned rows when the solver falls back to the probabilistic matcher. Common codes and suggested remedies:
 
 | Code | Meaning | Suggested action |
 |------|---------|------------------|
@@ -1019,7 +1040,7 @@ To aid diagnostics the DP sets a `DP_FallbackReason` string on returned rows whe
 | `anchor_missing_truestem` | Anchor census missing `TrueStemID` values and no earlier anchor found. | Supply `TrueStemID` or enable `allow_provisional_anchor=TRUE`. |
 | `anchor_missing_obs` | Anchor census has no DBH observations. | Ensure DBH at anchor or select a different `anchor_start`. |
 | `anchor_missing_truestem_prov_disabled` | Anchor has DBH but `TrueStemID` missing and provisional anchors are disabled. | Set `allow_provisional_anchor=TRUE` or provide `TrueStemID`. |
-| `provisional_igraph_anchor_assigned` | The igraph matcher assigned provisional anchor IDs at the last observed census. | Verify provisional assignments or provide true anchors. |
+| `provisional_anchor_assigned` | The probabilistic matcher assigned provisional anchor IDs at the last observed census. | Verify provisional assignments or provide true anchors. |
 | `anchor_ids_missing` | No anchor IDs were found after attempting to locate an anchor census. | Inspect data or supply anchor IDs. |
 | `K_too_small` | Chosen `K` is smaller than the maximum per-census observed stems. | Increase `max_tracks` or `slack_tracks`. |
 | `enum_exceeded` | State enumeration exceeded `max_states` for a census (too many injective assignments). Routes to probabilistic matcher. | Increase `max_states` or reduce `K`. |
@@ -1035,7 +1056,7 @@ To aid diagnostics the DP sets a `DP_FallbackReason` string on returned rows whe
 | `forward_edges_missing` | Missing edges during forward pass (unexpected). | Check edge construction and pruning. |
 | `forward_no_alpha` | No finite forward alpha (numerical underflow or fully pruned transitions). | Relax pruning, adjust temperature, or report. |
 | `no_dbh` | (matcher) No DBH observations present; nothing to assign. | Ensure DBH data are present for the Tag. |
-| `igraph_assigned` | (matcher) Rows explicitly assigned by the igraph fallback. | None — indicates fallback assignment occurred. |
+| `fallback_assigned` | (matcher) Rows explicitly assigned by the probabilistic fallback. | None — indicates fallback assignment occurred. |
 
 > Note: When DP is scoped to pre-anchor censuses and post-anchor rows are appended, any `DP_FallbackReason` present on the DP output will be propagated to matching post-anchor rows. If multiple reasons apply, they will be concatenated with `;` in the propagated column.
 
@@ -1046,7 +1067,7 @@ res <- match_stems_dp_global_backward_marginals_batch(dt, anchor_start = 5, ...)
 unique(na.omit(res$DP_FallbackReason))
 ```
 
-**Important:** `min_growth` and `max_growth` constraints affect **only** the igraph fallback method and post-hoc diagnostics, not the DP objective or the probabilistic matcher.
+**Important:** `min_growth` and `max_growth` base constraints are passed to the probabilistic matcher. The wider `prune_min_growth`, `prune_max_growth`, and `prune_recruit_max_dbh` bounds are also forwarded to the probabilistic matcher so both the DP and the fallback apply the same hard pruning gates.
 
 ### Probabilistic Matching Fallback: `match_stems_probabilistic()`
 
@@ -1227,7 +1248,7 @@ prune_use_bio_recruit = FALSE# use fixed prune bounds instead of biological ones
 - Default behaviour (safe): leave `prune_min_growth = NULL` and `prune_max_growth = NULL`. The code will use `user_min = min_growth`, `user_max = max_growth` and intersect them with `Bio_*` values. This preserves biological hard limits while letting you set study-level `min_growth`/`max_growth` to narrow behaviour across the run.
 - To apply *wider* pruning (less aggressive rejection) than the biological bounds allow (for example, when the DP cost model is trusted to handle extreme cases), set `prune_use_bio_bounds = FALSE` and set `prune_min_growth`/`prune_max_growth` to the desired wide range (e.g., `-10`..`25`).
 - To apply *stricter* recruit-size pruning, provide a small `prune_recruit_max_dbh` (and set `prune_use_bio_recruit = FALSE` to use it without intersecting the biological bound).
-- Beware of overly tight pruning: if pruning removes all feasible transitions at a census the DP will fallback to the `igraph` matcher (or produce no DP states). If you see frequent fallbacks for reasonable data, relax the prune bounds or set `prune_hard = FALSE` for a diagnostic run.
+- Beware of overly tight pruning: if pruning removes all feasible transitions at a census the DP will fall back to the probabilistic matcher (or produce no DP states). If you see frequent fallbacks for reasonable data, relax the prune bounds or set `prune_hard = FALSE` for a diagnostic run.
 
 ### Why this approach?
 - The combinatorial nature of injective assignments makes per-census state counts grow factorially with `n_obs`. Pruning cheaply removes impossibilities and reduces the number of pairwise assignment evaluations from `O(n_states_cc × n_states_{cc+1})` to a manageable number while retaining feasible candidates for the full probabilistic scoring.
@@ -1381,9 +1402,10 @@ out <- add_dp_posterior_bins(
 
 **Important workflow notes:**
 
-1. **min_growth/max_growth in DP calls:** These parameters are **NOT used** by the DP objective function. They only affect:
-   - The fallback `match_stems_optimal_backward()` (stepwise igraph matcher)
+1. **min_growth/max_growth in DP calls:** These parameters are **NOT used** by the DP objective function. They affect:
+   - The probabilistic fallback matcher (as base growth bounds for log-likelihood computation)
    - Post-hoc `ConstraintViolation` diagnostics
+   - The wider `prune_min_growth` / `prune_max_growth` bounds are forwarded to the probabilistic matcher for hard pruning
 
 2. **Actual constraints used by DP:** Come from Bio_* columns:
    - Hard shrinkage: `Bio_Max_Shrink`
@@ -1411,7 +1433,6 @@ out <- add_dp_posterior_bins(
 | Cost breakdown (debug) | `transition_cost_tracks_bio_components()` | `dp_global/R/dp_global_bio.R` |
 | Posterior marginals (production) | `match_stems_dp_global_backward_marginals_batch()` | `dp_global/R/dp_global_dp.R` |
 | Posterior binning | `add_dp_posterior_bins()` | `dp_global/R/dp_global_diag.R` |
-| Fallback matcher | `match_stems_optimal_backward()` | `dp_global/R/dp_global_matchers.R` |
 | Probabilistic fallback | `match_stems_probabilistic()` | `dp_global/R/dp_probabilistic_matching.R` |
 | Parameter estimation | `estimate_bio_pars()` | `dp_global/R/dp_global_bio.R` |
 | DP complexity estimate | `estimate_dp_complexity()` | `dp_global/R/complexity/estimate_dp_complexity_function.R` |
@@ -1427,7 +1448,7 @@ This implementation is the production-grade, batch-capable marginal DP solver. B
 Key computations and helpers:
 
 - Anchor selection
-  - If requested `anchor_start` has no DBH/TrueStemID, the function searches backward for the most recent census with at least one row having non-NA DBH and non-NA TrueStemID and uses that as the anchor. If the anchor has 0 living stems, the function also searches forward for the first post-anchor census with living stems and a non-NA TrueStemID. If no valid anchor is found in either direction, it falls back to `match_stems_optimal_backward()`.
+  - If requested `anchor_start` has no DBH/TrueStemID, the function searches backward for the most recent census with at least one row having non-NA DBH and non-NA TrueStemID and uses that as the anchor. If the anchor has 0 living stems, the function also searches forward for the first post-anchor census with living stems and a non-NA TrueStemID. If no valid anchor is found in either direction, it falls back to the probabilistic matcher.
 
 - State enumeration
   - `enumerate_states_injective(K, n_obs, max_states)` enumerates injective assignments (permutation-based states). If enumeration exceeds `max_states` it falls back to the probabilistic matcher.
@@ -1498,10 +1519,10 @@ Key computations and helpers:
   - Optional sample drawing from the DP graph (`posterior_samples`), with backward sampling and per-sample `logp` weights converted to `sample_prob`.
 
 - Diagnostics & fallbacks
-  - `attr(out, "DP_PruneInfo")` contains pruning diagnostics (counts and effective thresholds). The function falls back to `match_stems_optimal_backward()` on anchor failures, enumeration exhaustion, K insufficiency or if DP produces no feasible states after pruning. These fallback return values always include `DP_PruneInfo`.
+  - `attr(out, "DP_PruneInfo")` contains pruning diagnostics (counts and effective thresholds). The function falls back to `match_stems_probabilistic()` on anchor failures, enumeration exhaustion, K insufficiency or if DP produces no feasible states after pruning. These fallback return values always include `DP_PruneInfo`.
 
 Notes:
-- `min_growth`/`max_growth` still primarily control the **fallback matcher** and post-hoc `ConstraintViolation` checks. They can be defined as `Bio_Max_Shrink`/`Bio_Max_Growth`. 
+- `min_growth`/`max_growth` are passed to the probabilistic matcher as base growth bounds. The wider `prune_min_growth`/`prune_max_growth`/`prune_recruit_max_dbh` are also forwarded for hard pruning. These parameters also control post-hoc `ConstraintViolation` checks.
 
 ---
 
@@ -1599,10 +1620,13 @@ Tag 11 requires ~89 million transition computations, while most other tags requi
 | **Soft Penalty (DP)** | `Bio_K_Shrink` | DP cost function | Quadratic shrinkage weight | 0 to 50 (1/cm²) |
 | **Soft Penalty (DP)** | `Bio_K_Growth` | DP cost function | Quadratic growth excess weight | 0 to 50 (1/cm²) |
 | **Soft Threshold (DP)** | `Bio_Max_Growth_Soft` | DP cost function | Growth excess threshold | 95% of `Bio_Max_Growth` |
-| **Fallback Only** | `min_growth` | Fallback matcher | Edge constraint for stepwise | -2 cm/year |
-| **Fallback Only** | `max_growth` | Fallback matcher | Edge constraint for stepwise | 10 cm/year |
-| **Diagnostic Only** | `min_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as fallback |
-| **Diagnostic Only** | `max_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as fallback |
+| **Fallback (base bounds)** | `min_growth` | Probabilistic matcher | Base lower growth bound | -0.5 cm/year |
+| **Fallback (base bounds)** | `max_growth` | Probabilistic matcher | Base upper growth bound | 7.5 cm/year |
+| **Fallback (prune bounds)** | `prune_min_growth` | Probabilistic matcher | Hard lower pruning bound (1.25× base) | -0.625 cm/year |
+| **Fallback (prune bounds)** | `prune_max_growth` | Probabilistic matcher | Hard upper pruning bound (1.25× base) | 9.375 cm/year |
+| **Fallback (prune bounds)** | `prune_recruit_max_dbh` | Probabilistic matcher | Hard recruit size cap (1.25× base) | 48.12 cm |
+| **Diagnostic Only** | `min_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as base bounds |
+| **Diagnostic Only** | `max_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as base bounds |
 | **Probabilistic Fallback** | `prob_n_samples` | Probabilistic matcher | Number of Gumbel-noise samples | 200 |
 
 ### Quantile Configuration Reference
