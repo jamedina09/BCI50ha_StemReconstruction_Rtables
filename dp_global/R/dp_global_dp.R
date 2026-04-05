@@ -513,6 +513,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             posterior_samples_path   = posterior_samples_path,
             posterior_samples_format = posterior_samples_format,
             posterior_sample_seed    = posterior_sample_seed,
+            prune_min_growth    = prune_min_growth,
+            prune_max_growth    = prune_max_growth,
+            prune_recruit_max_dbh = prune_recruit_max_dbh,
             verbose       = verbose
         )
         if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]

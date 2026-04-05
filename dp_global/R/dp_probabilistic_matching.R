@@ -25,6 +25,9 @@ match_stems_probabilistic <- function(tree_data,
                                       posterior_samples_path = NULL,
                                       posterior_samples_format = "csv",
                                       posterior_sample_seed = NULL,
+                                      prune_min_growth    = NULL,
+                                      prune_max_growth    = NULL,
+                                      prune_recruit_max_dbh = NULL,
                                       verbose       = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
@@ -41,6 +44,10 @@ match_stems_probabilistic <- function(tree_data,
     }, error = function(e) NA)
     prefix <- paste0("[prob_match Tag=", if (!is.na(tag_val)) tag_val else "?", "] ")
 
+    # --- Resolve effective prune bounds (mirrors DP logic) ----------------
+    eff_min_growth <- if (!is.null(prune_min_growth)) prune_min_growth else min_growth
+    eff_max_growth <- if (!is.null(prune_max_growth)) prune_max_growth else max_growth
+
     # --- Extract bio parameters from tree_data (same as dp_global_dp.R) ---
     bio <- list(
         mu_const   = unique(tree_data$Bio_Mu_Growth)[1],
@@ -55,7 +62,7 @@ match_stems_probabilistic <- function(tree_data,
         beta_mort  = unique(tree_data$Bio_Beta_Mortality)[1],
         recruit_meanlog = unique(tree_data$Bio_Recruit_Meanlog)[1],
         recruit_sdlog   = unique(tree_data$Bio_Recruit_Sdlog)[1],
-        recruit_max_dbh = unique(tree_data$Bio_Recruit_MaxDBH_unit)[1],
+        recruit_max_dbh = if (!is.null(prune_recruit_max_dbh)) prune_recruit_max_dbh else unique(tree_data$Bio_Recruit_MaxDBH_unit)[1],
         recruit_lambda  = unique(tree_data$Bio_Recruitment_lambda)[1]
     )
 
@@ -149,7 +156,7 @@ match_stems_probabilistic <- function(tree_data,
         iv <- intervals[i]
 
         L <- compute_pairwise_log_likelihood(dbh_curr, dbh_next, iv, bio,
-                                             min_growth, max_growth)
+                                             eff_min_growth, eff_max_growth)
         aug <- augment_cost_matrix(L, dbh_curr, dbh_next, iv, bio)
 
         pair_data[[i]] <- list(
