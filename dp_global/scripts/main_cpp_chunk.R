@@ -946,7 +946,7 @@ run_main_chunked <- function() {
         if (ci < start_ci || ci > end_ci) {
             next
         }
-        chunk_rds  <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.rds"), ci))
+        chunk_rds <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.rds"), ci))
         chunk_done <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d_done.txt"), ci))
 
         if (isTRUE(DP_CHUNK_RESUME) && file.exists(chunk_done) && !isTRUE(DP_CHUNK_OVERWRITE)) {
@@ -1220,7 +1220,8 @@ if (sys.nframe() == 0L) {
 # --WRITE_DP_FEATHER=FALSE \
 # --WRITE_DP_PDF=TRUE \
 # --POSTERIOR_SAMPLES=250 \
-# --USE_MEASUREMENT_ERROR=TRUE
+# --USE_MEASUREMENT_ERROR=TRUE \
+# --PROB_SPECIES=sp2
 
 # Rscript dp_global/scripts/main_cpp_chunk.R \
 #     --OUT_DIR_OVERRIDE=/Users/medinaja/GDrive_Science/STRI/STEM_IDENTIFICATION_TEST/dp_global/output/20260330_131433_unknown_T0_DP_MB_ME_g5_sm0p5_kg0_ks0_rcpp \
@@ -1230,4 +1231,5 @@ if (sys.nframe() == 0L) {
 #     --WRITE_DP_FEATHER=FALSE \
 #     --WRITE_DP_PDF=TRUE \
 #     --POSTERIOR_SAMPLES=250 \
-#     --USE_MEASUREMENT_ERROR=TRUE
+#     --USE_MEASUREMENT_ERROR=TRUE \
+#     --PROB_SPECIES=sp2
