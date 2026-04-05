@@ -102,7 +102,7 @@ Below is a comprehensive walkthrough — follow these steps when preparing a bun
 1. Prerequisites (source machine):
    - R (>= your project's R version). Recommended: same or similar R minor version on target systems for reproducibility.
    - Development toolchain (macOS): `xcode-select --install` (required to compile Rcpp locally on this machine).
-   - R packages: `Rcpp`, `here`, and any packages used by the project (the manifest will list per-file requirements, e.g., `data.table`, `igraph`, `MASS`).
+   - R packages: `Rcpp`, `here`, and any packages used by the project (the manifest will list per-file requirements, e.g., `data.table`, `MASS`).
 
 2. Generate the bundle artifacts (from project root):
 

@@ -55,18 +55,18 @@ DP / reconstruction option
 - `DP_MODE` — default: `"marginals+bins"`. Allowed: 'none' 'marginals' 'marginals+bins' 'map'
 - `WHICH_TAG` — used for single-tag runs (relevant to `main_cpp.R`); the chunked runner processes groups (`Tag`, `species`) and does not rely on `WHICH_TAG`.
 - `ANCHOR_START_CENSUS` — default: `7L`.
-- `ALLOW_PROVISIONAL_DP_ANCHOR` — default: `TRUE` — when `TRUE` the DP can assign provisional anchor IDs at the last observed DBH census if the requested anchor census lacks `TrueStemID` but has DBH; set to `FALSE` to require an explicit anchored census or to fall back to the igraph matcher.
+- `ALLOW_PROVISIONAL_DP_ANCHOR` — default: `TRUE` — when `TRUE` the DP can assign provisional anchor IDs at the last observed DBH census if the requested anchor census lacks `TrueStemID` but has DBH; set to `FALSE` to require an explicit anchored census or to fall back to the probabilistic matcher.
 - `DP_VERBOSE` — default: `TRUE`.
 - `DP_POSTERIOR_TOP_K` — default: `2L` - top=k posterior reconstructions to track. 
 - `DP_MAX_TRACKS` — default: `NULL` (auto-computed per data when `NULL`) — optionally force max tracks; if `NULL` auto-computed.
-- `DP_MAX_STATES` — default: `40000L`. Maximum number of injective assignment states allowed per census. Also controls the inter-census cross-product limit (`max_states²`). When any census exceeds this limit, or when the cross-product of states between two adjacent censuses exceeds `max_states²`, the solver falls back to the probabilistic matcher. See the "Understanding `max_states`" section in `dp_global/README.md` for a table showing what values mean in practice and how to choose one for your data.
+- `DP_MAX_STATES` — default: `40000L`. Maximum number of injective assignment states allowed per census. Also controls the inter-census transition limit (`max_edges = max_states²`). The number of states at a census with $n$ observed stems and $K$ tracks is $P(K,n) = K!/(K-n)!$. When any census exceeds `max_states`, or when the cross-product of states between two adjacent censuses exceeds `max_states²`, the solver falls back to the probabilistic matcher. **Practical limits with default 40,000:** DP handles up to 6 observed stems per census exactly (P(7,6) = 5,040 < 40,000); 7+ stems trigger fallback (P(8,7) = 40,320 > 40,000). With `DP_MAX_STATES = 1,000`: max 5 stems. With `DP_MAX_STATES = 20,000`: max 6 stems. See `dp_global/README.md` for detailed tables and how to choose a value.
 - `DP_SLACK_TRACKS` — default: `1L` - slack (additional) tracks allowed for DP.
 - `DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE` — default: `TRUE` - require anchor to be recruitable (if DBH less than max recruitment size) before granting slack.
 - `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
 - `PROB_N_SAMPLES` — default: `200L`. Number of Gumbel-noise stochastic samples drawn by the probabilistic greedy matching fallback. Higher values produce more accurate posterior estimates at the cost of computation time.
 - `DP_FALLBACK_GROWTH_FORMS` — default: `character(0)`; comma- or
   semicolon-separated list of values in the `growth_form` column that should
-  trigger an immediate igraph fallback and prevent the DP solver from running
+  trigger an immediate probabilistic fallback and prevent the DP solver from running
   on that tag. The driver automatically splits the string into a vector.
 - `NON_TAPER_CORRECTED_GROWTH_FORMS` — default: `c("palm", "strangler_fig", "tree_fern")`;
   growth forms whose DBH is NOT taper-corrected. These forms exhibit both real
@@ -97,7 +97,7 @@ DP / reconstruction option
 
 **Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was used by the DP are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows without DP assignments receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and observed `TrueStemID` values are treated as `given` while other rows are labeled `none_after_anchor`.
 
-**Provisional anchor behavior:** When a requested anchor census lacks `TrueStemID` but contains DBH observations and `ALLOW_PROVISIONAL_DP_ANCHOR=TRUE`, the DP will assign provisional anchor IDs at the last-observed DBH census and mark those anchor rows with `ReconstructionMethod = "provisional_dp"`. If the DP cannot anchor or a fallback is used, an igraph fallback can assign provisional IDs and mark them with `ReconstructionMethod = "provisional_igraph"`.
+**Provisional anchor behavior:** When a requested anchor census lacks `TrueStemID` but contains DBH observations and `ALLOW_PROVISIONAL_DP_ANCHOR=TRUE`, the DP will assign provisional anchor IDs at the last-observed DBH census and mark those anchor rows with `ReconstructionMethod = "provisional_dp"`.
 
 Posterior sampling:
 - `POSTERIOR_SAMPLES` — default: `200L` (set to `0` to disable sampling). When `>0`, the DP engine will draw full-path posterior samples and write them into a per-run `posteriors/` subdirectory.

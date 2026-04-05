@@ -4,7 +4,12 @@ This directory contains the `simulate_data.R` script that generates realistic fo
 
 ## Overview
 
-Simulates biologically plausible multi-species tropical forest census data (growth, mortality, recruitment, measurement error, and stem ID masking) compatible with the DP workflow.
+Simulates biologically plausible multi-species tropical forest census data (growth, mortality, recruitment, measurement error, and stem ID masking) compatible with the DP workflow. The final dataset contains 136 tags:
+
+- **42 simulated trees** (Tags 1–42): 38 randomly generated trees across 3 species + 4 problematic-stem variants for testing confusable growth trajectories
+- **46 hardcoded diagnostic tags** (Tags 43–88 and BCI-derived tag numbers): Real-world-inspired multi-stem patterns extracted from BCI data for regression testing
+- **3 M-code test tags** (Tags 901–903): Validate M-coded main-stem constraints in the DP solver
+- **45 row-count invariant edge case tags** (Tags 9901–9945): Systematic coverage of every combination of census span, stem count, DBH availability, and special flags
 
 Key features include:
 - **Variable census intervals**: ~5 years between censuses with random noise
@@ -104,8 +109,9 @@ The `simulate_data.R` script is organized into the following sections:
    - **Tree-Level Simulation**: Generate multi-stem trees with variable numbers of stems
    - **Species-Level Simulation**: Create populations of trees for each species
    - **Full Dataset Assembly**: Combine all simulated data into final dataset
-5. **Data Processing and Export**: Clean data, convert dates, and write output files
-6. **Diagnostic Plots**: Generate trajectory visualizations for validation
+5. **Hardcoded Diagnostic Tags**: Append BCI-derived multi-stem patterns, M-code test tags, and row-count invariant edge cases
+6. **Data Processing and Export**: Clean data, convert dates, and write output files
+7. **Diagnostic Plots**: Generate trajectory visualizations for validation
 
 ## Parameters
 
@@ -181,7 +187,74 @@ Three additional tags (901, 902, 903) are appended to the simulated dataset to v
 
 All three tags include a `ListOfTSM` column carrying the `M` code. The `OriginalStemID` column provides ground truth for validation but is not used by the DP algorithm.
 
-Note: The DP workflow includes an option to use a provisional anchor when the requested anchor census lacks `TrueStemID` but has DBH observations. This behavior is controlled by `allow_provisional_anchor` in the DP API (and `ALLOW_PROVISIONAL_DP_ANCHOR` at the CLI level) and defaults to `TRUE`. When enabled, the DP can assign provisional anchor IDs at the last observed DBH census and proceed with reconstruction; those provisional anchors are annotated with `ReconstructionMethod = "provisional_dp"` in outputs.
+### Row-Count Invariant Edge Cases (Tags 9901–9945)
+
+45 additional tags (EC1–EC45, Tags 9901–9945) are appended to exercise every combination of census span, stem count, DBH availability, and special flags. These tags verify that the DP workflow preserves a strict row-count invariant: every input row must appear exactly once in the output (no duplication, no loss).
+
+The edge cases are grouped by scenario type:
+
+**Single-census / minimal tags:**
+- **EC1** (9901): Post-anchor only, single census C8
+- **EC4** (9904): Single census at anchor C7
+- **EC6** (9906): Single row, all fields NA except Species/Tag
+- **EC18** (9918): Single census C1 only (earliest)
+- **EC19** (9919): Single census C9 only (latest)
+- **EC40** (9940): Anchor census only, DBH NA (dead anchor → skip)
+
+**Post-anchor only tags:**
+- **EC2** (9902): Two censuses C8–C9, single stem
+- **EC3** (9903): Multi-stem (2 stems) at C8–C9
+- **EC7** (9907): Anchor + post-anchor C7–C9
+- **EC11** (9911): Multi-stem, post-anchor only, mixed DBH/NA
+- **EC22** (9922): 3 stems at C8 (high K, tests state-space sizing)
+- **EC26** (9926): Post-anchor only, all DBH NA → `skipped_no_data`
+
+**Pre-anchor only tags:**
+- **EC9** (9909): Pre-anchor single census C3
+- **EC14** (9914): Pre-anchor C1–C5 only, no anchor
+- **EC28** (9928): Pre-anchor multi-census multi-stem (2 stems at C1, C3, C5)
+- **EC39** (9939): Pre-anchor only, all DBH NA → `skipped_no_data`
+
+**Full-span and cross-boundary tags:**
+- **EC13** (9913): Full span C1–C9, single stem, all DBH valid (happy-path baseline)
+- **EC15** (9915): Pre-anchor + anchor, no post-anchor, multi-stem
+- **EC20** (9920): C1 and C9 only (maximum gap spanning pre+post anchor)
+- **EC21** (9921): All 9 censuses, all DBH NA except anchor C7
+- **EC23** (9923): Palm species, full span (different `growth_form` pathway)
+- **EC30** (9930): Sparse full span — DBH only at C1, C5, C9
+
+**Anchor extension tags:**
+- **EC10** (9910): Pre-anchor + anchor + post-anchor, DBH only at post-anchor (forces anchor extension)
+- **EC16** (9916): Anchor has NA DBH, pre- and post-anchor have DBH
+- **EC29** (9929): Anchor C7 NA DBH + single post-anchor C8 with DBH
+- **EC36** (9936): Anchor C7 NA + two post-anchor censuses
+- **EC37** (9937): Multi-stem anchor extension (2 stems, anchor all NA)
+- **EC43** (9943): Anchor extension where first post-anchor has no TrueStemID but second does
+- **EC44** (9944): Deepest anchor extension — skip C8 (also NA), extend to C9
+
+**Mortality and recruitment tags:**
+- **EC17** (9917): Stem 1 dies at C5, stem 2 recruited at C5
+- **EC27** (9927): 3 stems at anchor, 2 die post-anchor
+- **EC45** (9945): 1 stem grows, 2nd stem recruits at C9
+
+**Growth edge cases:**
+- **EC24** (9924): Zero growth — identical DBH across 5 censuses
+- **EC25** (9925): Apparent shrinkage — DBH decreases between censuses
+- **EC31** (9931): Very large DBH >150 cm (outlier/bounds test)
+- **EC34** (9934): Two stems, identical DBH at every census (maximally confusable)
+
+**Special flags:**
+- **EC5** (9905): All DBH NA but valid CensusIDs across full range
+- **EC8** (9908): Multi-stem at anchor only (2 stems, C7 only)
+- **EC12** (9912): R-flag (resprout) at post-anchor
+- **EC32** (9932): Multiple R-flag rows across censuses
+- **EC33** (9933): ListOfTSM = "B" (broken stem)
+
+**Census pattern tags:**
+- **EC35** (9935): Pre-anchor with gaps (C1, C3, C5, C7 — skipping even censuses)
+- **EC38** (9938): 3 stems at same census C5, then 3 at anchor C7
+- **EC41** (9941): C6 + C7 only (two consecutive censuses ending at anchor)
+- **EC42** (9942): Dense post-anchor with 2 stems at C7, C8, C9
 
 ### Visualization
 - `make_plot`: Generate trajectory plots (TRUE)
@@ -265,13 +338,14 @@ This simulated data is designed for:
 
 ## Biological Realism
 
-- The simulation incorporates key tropical forest dynamics and ensures edge cases for algorithm testing:
+- The simulation incorporates key tropical forest dynamics and ensures comprehensive edge case coverage for algorithm testing:
   - **Size-dependent processes**: Growth and mortality scale with tree size
   - **Stochastic variability**: Process noise in growth and recruitment
   - **Species differences**: Trait variation creates diverse responses
   - **Measurement challenges**: Realistic observation errors and ID uncertainties
   - **Successional dynamics**: Recruitment balances mortality over time
   - **Single-stem edge cases**: Every species includes both a persistent and an early-dead single-stem tree for robust testing
+  - **Row-count invariant edge cases**: 45 additional tags (EC1–EC45) systematically cover every combination of census span, anchor position, DBH availability, stem count, and special flags (R-code, B-code, M-code)
 
 ## File Organization
 
@@ -280,9 +354,11 @@ data_simulation/
 ├── simulate_data.R          # Main simulation script (organized in sections)
 ├── README.md                # This documentation
 └── data/                    # Output directory
-    ├── simulated_data_1.csv                    # Main dataset
-    ├── simulated_data_1.pdf                    # Species-level trajectory plots (not tracked by git)
-    └── simulated_data_tag_level_trajectories_1.pdf  # Tag-level trajectory plots (not tracked by git)
+    ├── simulated_data_1.csv                            # Main dataset (136 tags)
+    ├── report_run_simulated_data_1.csv                 # DP run report
+    ├── stem_reconstruction_dp_global_rcpp.csv          # DP reconstruction output
+    ├── simulated_data_1.pdf                            # Species-level trajectory plots (not tracked by git)
+    └── simulated_data_tag_level_trajectories_1.pdf     # Tag-level trajectory plots (not tracked by git)
 ```
 
 ## Notes
