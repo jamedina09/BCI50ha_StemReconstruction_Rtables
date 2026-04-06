@@ -159,12 +159,13 @@ DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
 DP_FALLBACK_GROWTH_FORMS <- character(0)
 # Non-taper-corrected growth forms (palms, strangler figs, tree ferns):
 # These show real DBH growth plus large apparent variation when HOM changes.
-# Wide base prune bounds (1.25× standard limits) prevent spurious pruning.
+# Wide base prune bounds prevent spurious pruning.
 # HOM tolerance adds per-census-pair widening when a HOM column is present.
 # Units: cm/year.  Set to NULL to disable the override.
+PRUNE_BOUND_FACTOR <- 1.25
 NON_TAPER_CORRECTED_GROWTH_FORMS <- c("palm", "strangler_fig", "tree_fern")
-NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH <- 1.25 * MAX_SHRINK_FIXED
-NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH <- 1.25 * MAX_GROWTH_FIXED
+NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH <- PRUNE_BOUND_FACTOR * MAX_SHRINK_FIXED
+NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH <- PRUNE_BOUND_FACTOR * MAX_GROWTH_FIXED
 # HOM tolerance scale: cm of annual DBH tolerance per meter of HOM deviation
 # from 1.3 m.  Set 0 to disable HOM widening.
 HOM_TOLERANCE_SCALE <- 2.0
@@ -270,6 +271,7 @@ CLI_REFERENCE <- list(
     NON_TAPER_CORRECTED_GROWTH_FORMS = "NON_TAPER_CORRECTED_GROWTH_FORMS",
     NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH = "NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH",
     NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH = "NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH",
+    PRUNE_BOUND_FACTOR = "PRUNE_BOUND_FACTOR",
     HOM_TOLERANCE_SCALE = "HOM_TOLERANCE_SCALE",
     DP_SLACK_TRACKS = "DP_SLACK_TRACKS",
     DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE",
@@ -720,10 +722,10 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         # prune controls
         # NOTE: You can always define very wide based on the parameter data you have.
         prune_hard = TRUE,
-        prune_min_growth = MAX_SHRINK_FIXED * 1.25, # very wide fixed bounds
-        prune_max_growth = MAX_GROWTH_FIXED * 1.25, # very wide fixed bounds
+        prune_min_growth = MAX_SHRINK_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
+        prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
         prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
-        prune_recruit_max_dbh = RECRUIT_MAX_FIXED * 1.25, # very high recruit max dbh
+        prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR, # very high recruit max dbh
         prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
         allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
         verbose = isTRUE(DP_VERBOSE),
