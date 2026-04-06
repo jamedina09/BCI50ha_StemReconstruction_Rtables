@@ -1240,3 +1240,9 @@ if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
 #
 # HELP
 #   Rscript dp_global/scripts/main_cpp.R --help
+
+# Rscript dp_global/scripts/main_cpp.R \
+#     --INPUT_FILE=/Users/medinaja/GDrive_Science/STRI/STEM_IDENTIFICATION_TEST/data_simulation/data/simulated_data_1.csv \
+#     --RUN_ALL_TAGS=FALSE \
+#     --DP_MAX_STATES=2 \
+#     --WHICH_TAG=20
