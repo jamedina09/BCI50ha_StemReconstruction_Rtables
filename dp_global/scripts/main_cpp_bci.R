@@ -150,7 +150,7 @@ dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) {
 message("[main_cpp_bci.R] dp_max_tracks: ", dp_max_tracks_local)
 
 # ----------------------------------------------------------------
-# 10. Run DP for WHICH_TAG
+# 9. Run DP for WHICH_TAG
 # ----------------------------------------------------------------
 ensure_dir(out_dir)
 writeLines(as.character(Sys.time()), file.path(out_dir, "run_started.txt"))
@@ -170,7 +170,7 @@ if (!is.null(out)) {
 }
 
 # ----------------------------------------------------------------
-# 11. Write outputs
+# 10. Write outputs
 # ----------------------------------------------------------------
 DP_BASE     <- "stem_reconstruction_dp_global_rcpp"
 make_path   <- function(ext) file.path(out_dir, paste0(DP_BASE, ".", ext))
@@ -197,7 +197,7 @@ if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
 }
 
 # ----------------------------------------------------------------
-# 12. Finished
+# 11. Finished
 # ----------------------------------------------------------------
 writeLines(as.character(Sys.time()), file.path(out_dir, "run_finished.txt"))
 message("[main_cpp_bci.R] Done. Output dir: ", out_dir)

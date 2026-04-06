@@ -152,7 +152,7 @@ DP_SLACK_TRACKS <- 1L
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
 DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
-# Growth forms which should bypass DP and force igraph matcher
+# Growth forms which should bypass DP and force probabilistic matcher
 # - character vector; values correspond to entries in the `growth_form`
 #   column of the input dataset.  Pass to the DP function via
 #   `fallback_growth_forms` argument.

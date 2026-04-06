@@ -29,7 +29,7 @@ When the exact DP state space is too large (combinatorial explosion from many st
 └── Makefile                   # Convenience targets (smoke test)
 ```
 
-**Not tracked by git** (see `.gitignore`): `dp_global/output/`, `dp_global/ForestGEO_codes/`, `dp_global/examples/`, `bci_data/`, `posteriors/`, `tests/`, `*.rds`, `*.pdf`, `*.log`.
+**Not tracked by git** (see `.gitignore`): `dp_global/output/`, `dp_global/ForestGEO_codes/`, `dp_global/examples/`, `bci_data/`, `*.rds`, `*.pdf`, `*.log`.
 
 ## Prerequisites
 
@@ -57,7 +57,9 @@ Key CLI parameters for controlling solver behavior:
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--DP_MAX_STATES` | `40000` | Max injective states per census before probabilistic fallback |
-| `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching || `--PROB_LOOKAHEAD_WEIGHT` | `0.5` | Sequential backward conditioning weight (0 = disabled) || `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
+| `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching |
+| `--PROB_LOOKAHEAD_WEIGHT` | `0.5` | Sequential backward conditioning weight (0 = disabled) |
+| `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
 
 ### Understanding `DP_MAX_STATES`
 

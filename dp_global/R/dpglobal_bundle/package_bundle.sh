@@ -128,9 +128,13 @@ fi
 # Sanity checks for critical files
 declare -a expected=(
   "${STAGE_DIR}/dp_global/scripts/main_cpp.R"
-  "${STAGE_DIR}/dp_global/R/dpglobal_bundle/dpglobal_bundle.RData"
-  "${STAGE_DIR}/dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds"
-  "${STAGE_DIR}/dp_global/R/dpglobal_bundle/transition_cost_rcpp.R"
+  "${STAGE_DIR}/dp_global/scripts/main_cpp_chunk.R"
+  "${STAGE_DIR}/dp_global/scripts/basal_area_uncertainty.R"
+  "${STAGE_DIR}/dp_global/R/dp_global_main.R"
+  "${STAGE_DIR}/dp_global/R/dp_global_dp.R"
+  "${STAGE_DIR}/dp_global/R/dp_probabilistic_matching.R"
+  "${STAGE_DIR}/dp_global/src/transition_cost_rcpp.cpp"
+  "${STAGE_DIR}/dp_global/R/dpglobal_bundle/verify_bundle.R"
 )
 missing=()
 for f in "${expected[@]}"; do

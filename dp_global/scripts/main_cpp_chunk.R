@@ -163,7 +163,7 @@ DP_SLACK_TRACKS <- 1L
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
 DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
-# Growth forms forcing igraph fallback. See main_cpp.R for details.
+# Growth forms forcing probabilistic fallback. See main_cpp.R for details.
 DP_FALLBACK_GROWTH_FORMS <- character(0)
 # Non-taper-corrected growth forms (palms, strangler figs, tree ferns):
 # These show real DBH growth plus large apparent variation when HOM changes.
@@ -1178,7 +1178,7 @@ if (sys.nframe() == 0L) {
 #   --USE_MEASUREMENT_ERROR=TRUE  Enable measurement-error model for bio params
 #   --DP_FALLBACK_GROWTH_FORMS="fig,tree"
 #                                 Comma-separated list of growth forms that bypass
-#                                 species-specific bio params-falls back to igraph
+#                                 species-specific bio params-falls back to probabilistic
 #   --DP_CHUNK_START=3            Start from chunk N (skip earlier chunks)
 #   --DP_CHUNK_END=9              Stop after chunk N
 #
@@ -1220,7 +1220,7 @@ if (sys.nframe() == 0L) {
 #   Rscript dp_global/scripts/main_cpp_chunk.R --help
 
 ## Example command lines for testing or running with different settings:
-## GREEDY PROBABOLISTIC
+## GREEDY PROBABILISTIC
 # Rscript dp_global/scripts/main_cpp_chunk.R \
 # --DP_MAX_STATES=2 \
 # --MANUAL_CORES=TRUE \

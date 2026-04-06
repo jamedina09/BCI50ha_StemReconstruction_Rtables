@@ -27,8 +27,8 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
     #   - `ConstraintViolation`: TRUE for links that required force/creation.
     #
     # NOTES
-    # - This is conceptually similar to STEM_IDENTIFICATION_TEST/2_igraph_stepwise.R,
-    #   but defined locally so DP code can fall back without sourcing other scripts.
+    # - Self-contained igraph-based stepwise matcher; the main DP pipeline routes
+    #   most fallbacks through the probabilistic matcher instead.
     tree_data <- tree_data[order(CensusID)]
     if (!("ReconstructionMethod" %in% names(tree_data))) {
         tree_data[, ReconstructionMethod := NA_character_]
@@ -220,7 +220,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
 
         valid <- (growth_mat >= min_growth) & (growth_mat <= max_growth)
 
-        # Recruitment handling (same rule as 2_igraph_stepwise.R):
+        # Recruitment handling:
         # if there are more stems at c+1 than at c, treat the smallest DBH future stems
         # as recruits by forbidding any matches into them.
         if (n_fut > n_curr) {

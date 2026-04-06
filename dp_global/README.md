@@ -88,11 +88,7 @@ dp_global/
 │   ├── check_functions.r             # Mortality parameter inspection and plotting utilities
 │   ├── complexity/
 │   │   ├── estimate_dp_complexity_function.R  # DP complexity estimator
-│   │   ├── test_complexity_estimator.R        # Complexity estimator test/demo
-│   │   ├── validate_run.R                     # Run validation (compare two outputs)
-│   │   ├── validate_tiebreaker.R              # Tie-breaker determinism validation
-│   │   ├── validate_m_implementation.R        # M-code pinning validation
-│   │   └── check_symmetry.R                   # Cost symmetry checks
+│   │   └── profile_complexity.R               # Complexity profiling
 │   └── dpglobal_bundle/
 │       ├── dpglobal_bundle_loader.R      # Bundle builder (creates RData + manifest)
 │       ├── package_bundle.sh             # Packaging helper (creates tarball in dist/)
@@ -326,7 +322,7 @@ Notes on post-anchor output semantics:
 
 ### Posterior Uncertainty Columns (Optional)
 
-When running `match_stems_dp_global_backward_marginals()`:
+When running `match_stems_dp_global_backward_marginals_batch()`:
 
 - `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`
 - `DP_PosteriorTop2ID`, `DP_PosteriorTop2Prob`
@@ -619,7 +615,7 @@ where $\tau$ is the temperature parameter:
 
 ### Marginal Computation
 
-`match_stems_dp_global_backward_marginals()` computes exact marginals via:
+`match_stems_dp_global_backward_marginals_batch()` computes exact marginals via:
 1. **Backward pass:** Log-sum-exp recursion computing log partition function
 2. **Forward pass:** Normalization to obtain marginal probabilities
 3. **Per-observation summaries:** Probability of assignment to each anchor ID
