@@ -77,6 +77,7 @@ RECRUIT_MAX_SOURCE      <- "fixed"
 # Species that should bypass DP and go directly to the probabilistic greedy
 # matcher.  Empty vector means all species go through DP normally.
 PROB_SPECIES            <- character(0)
+PROB_LOOKAHEAD_WEIGHT   <- 0.5
 
 # ----------------------------------------------------------------
 # 3. Re-apply CLI overrides on top of BCI defaults
