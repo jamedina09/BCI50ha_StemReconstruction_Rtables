@@ -1219,19 +1219,8 @@ if (sys.nframe() == 0L) {
 # HELP
 #   Rscript dp_global/scripts/main_cpp_chunk.R --help
 
-
-# Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=2 \
-# --MANUAL_CORES=TRUE \
-# --MANUAL_CORES_VALUE=16 \
-# --WRITE_DP_FEATHER=FALSE \
-# --WRITE_DP_PDF=TRUE \
-# --POSTERIOR_SAMPLES=250 \
-# --USE_MEASUREMENT_ERROR=FALSE
-#  \
-# --PROB_SPECIES=sp2
-
-
+## Example command lines for testing or running with different settings:
+## GREEDY PROBABOLISTIC
 # Rscript dp_global/scripts/main_cpp_chunk.R \
 # --DP_MAX_STATES=2 \
 # --MANUAL_CORES=TRUE \
@@ -1242,8 +1231,17 @@ if (sys.nframe() == 0L) {
 # --USE_MEASUREMENT_ERROR=FALSE \
 # --PRUNE_BOUND_FACTOR=1
 
+## DP
+# Rscript dp_global/scripts/main_cpp_chunk.R \
+# --DP_MAX_STATES=40000 \
+# --MANUAL_CORES=TRUE \
+# --MANUAL_CORES_VALUE=16 \
+# --WRITE_DP_FEATHER=FALSE \
+# --WRITE_DP_PDF=TRUE \
+# --POSTERIOR_SAMPLES=250 \
+# --USE_MEASUREMENT_ERROR=FALSE
 
-
+## DP CONTINUATION
 # Rscript dp_global/scripts/main_cpp_chunk.R \
 #     --OUT_DIR_OVERRIDE=/Users/medinaja/GDrive_Science/STRI/STEM_IDENTIFICATION_TEST/dp_global/output/20260330_131433_unknown_T0_DP_MB_ME_g5_sm0p5_kg0_ks0_rcpp \
 #     --DP_CHUNK_RESUME=TRUE \
@@ -1252,5 +1250,7 @@ if (sys.nframe() == 0L) {
 #     --WRITE_DP_FEATHER=FALSE \
 #     --WRITE_DP_PDF=TRUE \
 #     --POSTERIOR_SAMPLES=250 \
-#     --USE_MEASUREMENT_ERROR=TRUE \
+# --USE_MEASUREMENT_ERROR=FALSE
+
+## for probabilistic to certain species
 #     --PROB_SPECIES=sp2
