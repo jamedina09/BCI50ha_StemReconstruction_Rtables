@@ -121,9 +121,9 @@ INPUT_FILE <- here("data_simulation", "data", "simulated_data_1.csv")
 FORCE_ONE_SPECIES_PARAMETERS <- TRUE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
     FORCED_SPECIES_LABEL <- "all"
-    message("[dp_global main.R] FORCE_ONE_SPECIES_PARAMETERS=TRUE: using single species label '", FORCED_SPECIES_LABEL, "' for all trees.")
+    message("[dp_global main_cpp_chunk.R] FORCE_ONE_SPECIES_PARAMETERS=TRUE: using single species label '", FORCED_SPECIES_LABEL, "' for all trees.")
 } else {
-    message("[dp_global main.R] FORCE_ONE_SPECIES_PARAMETERS=FALSE: using species column from data for parameter estimation.")
+    message("[dp_global main_cpp_chunk.R] FORCE_ONE_SPECIES_PARAMETERS=FALSE: using species column from data for parameter estimation.")
 }
 SPECIES_COL <- NULL
 
@@ -611,7 +611,7 @@ ensure_species_column <- function(x) {
         found <- candidates[candidates %in% names(x)]
         if (length(found) > 0L) {
             species_col <- found[[1L]]
-            message("[DP_GLOBAL main.R] Using '", species_col, "' as species column. Set SPECIES_COL to override.")
+            message("[dp_global main_cpp_chunk.R] Using '", species_col, "' as species column. Set SPECIES_COL to override.")
         }
     }
 
@@ -1233,7 +1233,7 @@ if (sys.nframe() == 0L) {
 
 ## DP
 # Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=40000 \
+# --DP_MAX_STATES=1000 \
 # --MANUAL_CORES=TRUE \
 # --MANUAL_CORES_VALUE=16 \
 # --WRITE_DP_FEATHER=FALSE \

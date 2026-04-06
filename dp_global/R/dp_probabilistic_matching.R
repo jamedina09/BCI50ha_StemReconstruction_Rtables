@@ -28,7 +28,7 @@ match_stems_probabilistic <- function(tree_data,
                                       prune_min_growth    = NULL,
                                       prune_max_growth    = NULL,
                                       prune_recruit_max_dbh = NULL,
-                                      prob_lookahead_weight = 0.5,
+                                      prob_lookahead_weight = 0.5,  # backward conditioning weight [0,1]; 0 = independent
                                       verbose       = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
@@ -479,6 +479,18 @@ condition_cost_matrix <- function(aug_cost, n_curr, n_next,
 }
 
 # ---- Gumbel-noise greedy assignment --------------------------------------
+# Draw one stochastic assignment from an augmented log-cost matrix using the
+# Gumbel-max trick.  Each row is assigned to the highest-scoring available
+# column after adding Gumbel(0, temperature) noise, processed in descending
+# order of row maxima.
+#
+# INPUTS
+#   log_cost_matrix  K×K matrix of log-likelihoods (augmented with
+#                    mortality/recruitment slots so it is square).
+#   temperature      Gumbel noise scale; higher = more random.
+#
+# RETURNS
+#   Integer vector of length K: assignment[row] = assigned column index.
 
 greedy_assignment_gumbel <- function(log_cost_matrix, temperature = 1.0) {
     K <- nrow(log_cost_matrix)

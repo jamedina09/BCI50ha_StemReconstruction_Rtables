@@ -4,6 +4,7 @@ This document describes the current behavior of the `dp_global` driver scripts:
 - `dp_global/scripts/main_cpp.R` — the interactive/CLI driver for single-tag or targeted runs.
 - `dp_global/scripts/main_cpp_chunk.R` — the chunked driver optimized for large runs.
 - `dp_global/scripts/main_cpp_bci.R` — the BCI debug driver for single-tag runs on BCI census data.
+- `dp_global/scripts/basal_area_uncertainty.R` — posterior-based basal area uncertainty quantification.
 
 Both `main_cpp.R` and `main_cpp_chunk.R` accept command-line overrides of defaults using `--KEY=VALUE` flags. Keys are case-insensitive and may use `-` or `_` as separators. `main_cpp_bci.R` inherits the same CLI interface from `main_cpp.R`.
 
@@ -64,6 +65,7 @@ DP / reconstruction option
 - `DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE` — default: `TRUE` - require anchor to be recruitable (if DBH less than max recruitment size) before granting slack.
 - `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
 - `PROB_N_SAMPLES` — default: `200L`. Number of Gumbel-noise stochastic samples drawn by the probabilistic greedy matching fallback. Higher values produce more accurate posterior estimates at the cost of computation time.
+- `PROB_LOOKAHEAD_WEIGHT` — default: `0.5`. Weight for sequential backward conditioning in the probabilistic matcher. When > 0 and $K \geq 4$, the cost matrix for each census pair is conditioned on the already-resolved forward assignment, improving path continuity. Set to `0` to disable conditioning.
 - `DP_FALLBACK_GROWTH_FORMS` — default: `character(0)`; comma- or
   semicolon-separated list of values in the `growth_form` column that should
   trigger an immediate probabilistic fallback and prevent the DP solver from running
@@ -289,5 +291,36 @@ all <- rbindlist(lapply(chunk_files, readRDS), use.names = TRUE, fill = TRUE)
 ```
 
 - If `stem_reconstruction_dp_global_rcpp.csv` already exists when you resume with `DP_CHUNK_RESUME=TRUE`, the script will append new chunk rows and skip chunks whose `_done.txt` completion marker exists. Use `--OUT_DIR_OVERRIDE=<path>` to point at the existing output directory.
+
+---
+
+## Basal Area Uncertainty (`basal_area_uncertainty.R`)
+
+Post-processing script that uses posterior path samples from a completed run to quantify how identity uncertainty propagates into basal area (BA) estimates.
+
+### Usage
+
+```bash
+Rscript dp_global/scripts/basal_area_uncertainty.R \
+  --RUN_DIR=dp_global/output/<run_dir>
+```
+
+The script reads:
+- `<RUN_DIR>/stem_reconstruction_dp_global_rcpp.csv` (main reconstruction)
+- `<RUN_DIR>/posteriors/tag_*_posterior_samples__paths.csv` (posterior paths)
+
+### Outputs
+
+Three CSV files written to `<RUN_DIR>/`:
+
+| File | Rows | Description |
+|------|------|-------------|
+| `basal_area_uncertainty_tag.csv` | Tag × Census | Total BA with posterior mean, SD, 95% CI |
+| `basal_area_uncertainty_stem.csv` | Stem × Census | Per-stem BA posterior: mean, SD, median, 95% CI, MAP |
+| `basal_area_uncertainty_growth.csv` | Stem × Census pair | BA growth rate ($\Delta$BA/$\Delta t$) posterior |
+
+### Key insight
+
+Tag-level total BA per census is **invariant** to identity assignment — the same DBH values are summed regardless of which stem identity each observation receives. All uncertainty is at the **per-stem level**: different identity assignments allocate different DBH values to each stem, producing different BA trajectories and growth rates.
 
 ---

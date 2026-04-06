@@ -4,7 +4,7 @@
 
 Biologically informed dynamic-programming (DP) solver that reconstructs stem identities across forest censuses backward in time from a known anchor census. Given multi-stem tree measurements and a late-census anchor with trusted `TrueStemID`, the algorithm assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, and recruitment biology. Uncertainty is quantified via forward-backward marginals and optional posterior sampling.
 
-When the exact DP state space is too large (combinatorial explosion from many stems per tree), the solver automatically falls back to a **probabilistic greedy matching** module that uses the same biological cost model and hard pruning bounds with Gumbel-noise stochastic sampling to produce approximate reconstructions with per-observation posterior probabilities.
+When the exact DP state space is too large (combinatorial explosion from many stems per tree), the solver automatically falls back to a **probabilistic greedy matching** module that uses the same biological cost model and hard pruning bounds with Gumbel-noise stochastic sampling and **sequential backward conditioning** to produce approximate reconstructions with per-observation posterior probabilities. The posterior path samples from both methods are used downstream for **basal area uncertainty quantification**.
 
 ## Directory Layout
 
@@ -21,7 +21,7 @@ When the exact DP state space is too large (combinatorial explosion from many st
 │   │   ├── naming_helpers.R          # Output directory naming
 │   │   ├── complexity/               # DP complexity estimator
 │   │   └── dpglobal_bundle/          # Portable deployment bundle builder
-│   ├── scripts/               # CLI driver scripts (main_cpp*.R)
+│   ├── scripts/               # CLI driver scripts (main_cpp*.R) + basal area uncertainty
 │   └── src/                   # C++ transition cost (Rcpp)
 ├── data_simulation/           # Simulated forest-census data generator
 │   └── data/                  # Generated test datasets (CSV)
@@ -57,8 +57,7 @@ Key CLI parameters for controlling solver behavior:
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--DP_MAX_STATES` | `40000` | Max injective states per census before probabilistic fallback |
-| `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching |
-| `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
+| `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching || `--PROB_LOOKAHEAD_WEIGHT` | `0.5` | Sequential backward conditioning weight (0 = disabled) || `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
 
 ### Understanding `DP_MAX_STATES`
 
@@ -148,7 +147,7 @@ See `dp_global/README.md` for the full algorithm description and `dp_global/scri
 | Document | Contents |
 |----------|----------|
 | `dp_global/README.md` | Algorithm details, cost model, data requirements, parameter estimation, fallback mechanisms |
-| `dp_global/scripts/README.md` | CLI flags, chunking, resume, example invocations |
+| `dp_global/scripts/README.md` | CLI flags, chunking, resume, example invocations, basal area uncertainty |
 | `dp_global/src/README.md` | C++ acceleration API and validation |
 | `data_simulation/README.md` | Simulation parameters, biological models, output format |
 
@@ -168,6 +167,21 @@ Each observation in the output receives a `ReconstructionMethod` label indicatin
 
 ## Conventions
 
-- Driver scripts: `dp_global/scripts/` — `main_cpp.R` (single-tag/small), `main_cpp_chunk.R` (large chunked), `main_cpp_bci.R` (BCI-specific with `withr` bundle sourcing).
+- Driver scripts: `dp_global/scripts/` — `main_cpp.R` (single-tag/small), `main_cpp_chunk.R` (large chunked), `main_cpp_bci.R` (BCI-specific with `withr` bundle sourcing), `basal_area_uncertainty.R` (posterior BA uncertainty).
 - Module internals: `dp_global/R/` — sourced in order by `dp_global_main.R`.
 - Output directories: auto-created under `dp_global/output/` (not tracked by git).
+
+## Uncertainty Estimation Workflow
+
+After running the reconstruction pipeline, posterior path samples can be used to quantify uncertainty in derived quantities such as basal area:
+
+```bash
+# 1. Run reconstruction pipeline
+Rscript dp_global/scripts/main_cpp_chunk.R --POSTERIOR_SAMPLES=250
+
+# 2. Quantify basal area uncertainty from posterior paths
+Rscript dp_global/scripts/basal_area_uncertainty.R \
+  --RUN_DIR=dp_global/output/<run_dir>
+```
+
+The BA uncertainty script reads the main reconstruction and the `posteriors/` directory, then produces three summary CSVs (tag-level BA, stem-level BA, and BA growth rates) with posterior means, standard deviations, and 95% credible intervals. See `dp_global/scripts/README.md` for details.
