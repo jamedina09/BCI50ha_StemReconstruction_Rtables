@@ -56,7 +56,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            allow_segment_split = TRUE,
                                                            post_segment_all_recruits = FALSE,
                                                            prob_n_samples = 200L,
-                                                           prob_species = character(0)) {
+                                                           prob_species = character(0),
+                                                           prob_lookahead_weight = 0.5) {
     # Derive max_edges from max_states: the cross-product of two adjacent
     # census state counts can be at most max_states^2.  Using that as the
     # edge limit keeps a single user-facing knob (max_states) controlling
@@ -516,6 +517,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             prune_min_growth    = prune_min_growth,
             prune_max_growth    = prune_max_growth,
             prune_recruit_max_dbh = prune_recruit_max_dbh,
+            prob_lookahead_weight = prob_lookahead_weight,
             verbose       = verbose
         )
         if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]

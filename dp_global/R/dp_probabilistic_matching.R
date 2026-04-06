@@ -28,6 +28,7 @@ match_stems_probabilistic <- function(tree_data,
                                       prune_min_growth    = NULL,
                                       prune_max_growth    = NULL,
                                       prune_recruit_max_dbh = NULL,
+                                      prob_lookahead_weight = 0.5,
                                       verbose       = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
@@ -170,16 +171,49 @@ match_stems_probabilistic <- function(tree_data,
     if (!is.null(posterior_sample_seed)) set.seed(as.integer(posterior_sample_seed))
 
     all_samples <- vector("list", n_samples)
+    use_lookahead <- is.finite(prob_lookahead_weight) && prob_lookahead_weight > 0 &&
+                     n_census >= 3L && K >= 4L
+
     for (s in seq_len(n_samples)) {
         # For each census pair (working backward from anchor-1 to 1),
-        # sample an assignment
+        # sample an assignment.  When lookahead is enabled, after sampling
+        # pair (i+1), condition pair (i)'s cost matrix on the result.
         per_pair_assignments <- vector("list", n_census - 1L)
-        for (i in rev(seq_len(n_census - 1L))) {
-            per_pair_assignments[[i]] <- greedy_assignment_gumbel(
-                pair_data[[i]]$log_cost,
-                temperature = temperature
-            )
+
+        # Last pair (closest to anchor): no conditioning available
+        last_pair <- n_census - 1L
+        per_pair_assignments[[last_pair]] <- greedy_assignment_gumbel(
+            pair_data[[last_pair]]$log_cost,
+            temperature = temperature
+        )
+
+        # Remaining pairs moving backward: condition on next pair's assignment
+        if (last_pair >= 2L) {
+            for (i in seq.int(last_pair - 1L, 1L, by = -1L)) {
+                cost_i <- pair_data[[i]]$log_cost
+
+                if (use_lookahead) {
+                    cost_i <- condition_cost_matrix(
+                        aug_cost        = cost_i,
+                        n_curr          = pair_data[[i]]$n_curr,
+                        n_next          = pair_data[[i]]$n_next,
+                        dbh_next        = obs_data[[i + 1L]]$dbh,
+                        next_assignment = per_pair_assignments[[i + 1L]],
+                        n_next_next     = pair_data[[i + 1L]]$n_next,
+                        dbh_further     = obs_data[[i + 2L]]$dbh,
+                        interval_next   = intervals[i + 1L],
+                        bio             = bio,
+                        weight          = prob_lookahead_weight
+                    )
+                }
+
+                per_pair_assignments[[i]] <- greedy_assignment_gumbel(
+                    cost_i,
+                    temperature = temperature
+                )
+            }
         }
+
         all_samples[[s]] <- per_pair_assignments
     }
 
@@ -190,6 +224,12 @@ match_stems_probabilistic <- function(tree_data,
     tree_data <- compute_marginals_from_samples(stitched, tree_data, obs_data,
                                                 obs_census, anchor_pos,
                                                 posterior_top_k)
+
+    # --- Repair growth violations arising from per-census marginal resolution
+    tree_data <- repair_marginal_growth_violations(
+        tree_data, obs_data, obs_census, intervals,
+        eff_min_growth, eff_max_growth, posterior_top_k, vcat, prefix
+    )
 
     tree_data[, ReconstructionMethod := ifelse(
         !is.na(TrueStemID) & ReconstructionMethod == "given",
@@ -358,6 +398,84 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
     }
 
     A
+}
+
+# ---- Condition cost matrix with lookahead --------------------------------
+# After sampling pair (i+1), adjust the cost matrix for pair (i) so that
+# each survival edge (r -> j) gets a bonus for two-step biological
+# plausibility: does the trajectory r -> j -> k (where k is j's
+# forward assignment) have plausible growth?
+#
+# Arguments:
+#   aug_cost   : K×K augmented log-cost matrix for pair i
+#   n_curr     : number of real observations at census i
+#   n_next     : number of real observations at census i+1
+#   dbh_next   : DBH vector at census i+1 (length n_next)
+#   next_assignment : K-length integer vector (assignment[row]=col at pair i+1)
+#   n_next_next : number of real observations at census i+2
+#   dbh_further : DBH vector at census i+2 (length n_next_next)
+#   interval_next : interval in years between census i+1 and i+2
+#   bio        : bio parameter list
+#   weight     : lookahead weight (0 disables, 0.5 default)
+#
+# Returns: modified aug_cost matrix (same dimensions)
+
+condition_cost_matrix <- function(aug_cost, n_curr, n_next,
+                                  dbh_next, next_assignment,
+                                  n_next_next, dbh_further,
+                                  interval_next, bio, weight) {
+    if (weight <= 0 || n_next == 0L || n_next_next == 0L) return(aug_cost)
+
+    # Growth mean function (same as in compute_pairwise_log_likelihood)
+    mu_growth_fn <- function(d) {
+        if (!is.finite(bio$mu_gamma) || bio$mu_gamma == 0 ||
+            !is.finite(d) || d <= 0)
+            return(bio$mu_const)
+        bio$mu_const + bio$mu_gamma * log(d)
+    }
+
+    # Pass 1: compute raw continuity log-LL for each real column j
+    raw_bonus <- rep(0, n_next)  # 0 = neutral (no info)
+    has_info  <- logical(n_next)
+    for (j in seq_len(n_next)) {
+        k <- next_assignment[j]
+        if (k > n_next_next) next  # j died — no forward info
+
+        d_j <- dbh_next[j]
+        d_k <- dbh_further[k]
+        if (!is.finite(d_j) || !is.finite(d_k) || d_j <= 0) next
+
+        g2 <- (d_k - d_j) / interval_next
+        sigma_j <- max(bio$sigma0 + bio$sigma1 * d_j, 1e-6)
+        mu_j <- mu_growth_fn(d_j)
+        raw_bonus[j] <- dnorm(g2, mean = mu_j, sd = sigma_j, log = TRUE)
+        has_info[j] <- TRUE
+    }
+
+    # Normalize: shift so best column = 0, others get negative bonuses.
+    # Columns without forward info (death / missing) get 0 (neutral).
+    # Cap the maximum penalty at -2 log units to prevent small-DBH stems
+    # (which have tight growth variance) from dominating the cost matrix.
+    info_vals <- raw_bonus[has_info]
+    if (length(info_vals) == 0L) return(aug_cost)  # nothing to condition on
+
+    max_bonus <- max(info_vals)
+    bonus <- rep(0, n_next)
+    bonus[has_info] <- pmax(raw_bonus[has_info] - max_bonus, -2)
+
+    # Pass 2: apply weighted normalized bonus to all feasible cells
+    K <- nrow(aug_cost)
+    for (j in seq_len(n_next)) {
+        if (bonus[j] == 0) next  # no adjustment needed
+        adj <- weight * bonus[j]
+        for (r in seq_len(min(n_curr, K))) {
+            if (is.finite(aug_cost[r, j])) {
+                aug_cost[r, j] <- aug_cost[r, j] + adj
+            }
+        }
+    }
+
+    aug_cost
 }
 
 # ---- Gumbel-noise greedy assignment --------------------------------------
@@ -570,6 +688,82 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
 
     # NA-DBH rows keep ReconstructedStemID = NA (no observation to match)
 
+    tree_data
+}
+
+# ---- Repair growth violations from marginal resolution -------------------
+# The per-census greedy marginal resolution can assign the same StemID to
+# observations at consecutive censuses that violate growth bounds.  This
+# happens because the marginals are computed independently per census.
+#
+# Repair strategy: walk each StemID's trajectory.  When a violation is
+# found between census c and c+1, try to reassign the observation at
+# census c to one of its top-k posterior alternatives.  If no alternative
+# resolves the violation, break the track by assigning a new unique ID.
+
+repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
+                                              intervals, min_rate, max_rate,
+                                              posterior_top_k, vcat, prefix) {
+    n_census <- length(obs_census)
+    if (n_census < 2L) return(tree_data)
+
+    # Build date-based interval lookup for arbitrary census pairs
+    dt_dates <- tree_data[, .(MeanDate = mean(as.numeric(as.Date(ExactDate)),
+                              na.rm = TRUE)), by = CensusID]
+
+    max_id <- suppressWarnings(max(tree_data$ReconstructedStemID, na.rm = TRUE))
+    if (!is.finite(max_id)) max_id <- 0L
+    total_breaks <- 0L
+    max_passes <- 10L  # safety limit
+
+    for (pass in seq_len(max_passes)) {
+        # Rebuild observation table each pass to reflect prior breaks
+        obs_rows <- which(!is.na(tree_data$ReconstructedStemID) & !is.na(tree_data$DBH))
+        obs_dt <- data.table::data.table(
+            row_idx = obs_rows,
+            CensusID = tree_data$CensusID[obs_rows],
+            DBH = tree_data$DBH[obs_rows],
+            ReconstructedStemID = tree_data$ReconstructedStemID[obs_rows]
+        )
+        setorder(obs_dt, ReconstructedStemID, CensusID)
+
+        breaks_this_pass <- 0L
+        for (sid in unique(obs_dt$ReconstructedStemID)) {
+            dsub <- obs_dt[ReconstructedStemID == sid]
+            if (nrow(dsub) < 2L) next
+
+            for (r in 2:nrow(dsub)) {
+                c_prev <- dsub$CensusID[r - 1L]
+                c_curr <- dsub$CensusID[r]
+                md0 <- dt_dates$MeanDate[dt_dates$CensusID == c_prev]
+                md1 <- dt_dates$MeanDate[dt_dates$CensusID == c_curr]
+                iv <- if (length(md0) > 0L && length(md1) > 0L)
+                          (md1[1] - md0[1]) / 365.25
+                      else 5.0
+                if (!is.finite(iv) || iv <= 0) iv <- 5.0
+
+                rate <- (dsub$DBH[r] - dsub$DBH[r - 1L]) / iv
+                if (rate >= min_rate && rate <= max_rate) next
+
+                # Violation: break the earlier census obs to a new unique ID
+                row_prev <- dsub$row_idx[r - 1L]
+                max_id <- max_id + 1L
+                data.table::set(tree_data, as.integer(row_prev),
+                                "ReconstructedStemID", as.integer(max_id))
+                breaks_this_pass <- breaks_this_pass + 1L
+                # After breaking, don't check further pairs for this stem
+                # in this pass — re-evaluate in next pass
+                break
+            }
+        }
+
+        total_breaks <- total_breaks + breaks_this_pass
+        if (breaks_this_pass == 0L) break  # converged
+    }
+
+    if (total_breaks > 0L) {
+        vcat(prefix, "Repaired ", total_breaks, " growth violation(s) by breaking tracks")
+    }
     tree_data
 }
 

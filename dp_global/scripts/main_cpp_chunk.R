@@ -198,6 +198,9 @@ PROB_N_SAMPLES <- 200L
 # matcher. Provide a character vector of Species column values.
 PROB_SPECIES <- character(0)
 
+# Lookahead weight for probabilistic matcher (0 = disabled, 0.5 = default)
+PROB_LOOKAHEAD_WEIGHT <- 0.5
+
 ############################################################
 ### 3.3) Chunking & posterior sampling settings
 ############################################################
@@ -314,7 +317,8 @@ CLI_REFERENCE <- list(
     DP_MAX_TRACKS = "DP_MAX_TRACKS",
     OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE",
     PROB_N_SAMPLES = "PROB_N_SAMPLES",
-    PROB_SPECIES = "PROB_SPECIES"
+    PROB_SPECIES = "PROB_SPECIES",
+    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT"
 )
 
 # Sensitivity and realism flags are not applicable to the chunked runner
@@ -730,7 +734,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
         allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
         verbose = isTRUE(DP_VERBOSE),
         prob_n_samples = PROB_N_SAMPLES,
-        prob_species = PROB_SPECIES
+        prob_species = PROB_SPECIES,
+        prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT
     )
 }
 
@@ -1225,6 +1230,19 @@ if (sys.nframe() == 0L) {
 # --USE_MEASUREMENT_ERROR=FALSE
 #  \
 # --PROB_SPECIES=sp2
+
+
+# Rscript dp_global/scripts/main_cpp_chunk.R \
+# --DP_MAX_STATES=2 \
+# --MANUAL_CORES=TRUE \
+# --MANUAL_CORES_VALUE=16 \
+# --WRITE_DP_FEATHER=FALSE \
+# --WRITE_DP_PDF=TRUE \
+# --POSTERIOR_SAMPLES=250 \
+# --USE_MEASUREMENT_ERROR=FALSE \
+# --PRUNE_BOUND_FACTOR=1
+
+
 
 # Rscript dp_global/scripts/main_cpp_chunk.R \
 #     --OUT_DIR_OVERRIDE=/Users/medinaja/GDrive_Science/STRI/STEM_IDENTIFICATION_TEST/dp_global/output/20260330_131433_unknown_T0_DP_MB_ME_g5_sm0p5_kg0_ks0_rcpp \

@@ -193,6 +193,11 @@ PROB_N_SAMPLES <- 200L
 # c("Oenocarpus mapora", "Socratea exorrhiza")). Empty vector disables.
 PROB_SPECIES <- character(0)
 
+# Lookahead weight for probabilistic matcher: controls how much the
+# cost matrix at pair (i) is influenced by the assignment at pair (i+1).
+# 0 = disabled (original independent sampling), 0.5 = default.
+PROB_LOOKAHEAD_WEIGHT <- 0.5
+
 ############################################################
 ### 3.3) Parallelism settings
 ############################################################
@@ -291,7 +296,8 @@ CLI_REFERENCE <- list(
     DP_MAX_TRACKS = "DP_MAX_TRACKS",
     OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE",
     PROB_N_SAMPLES = "PROB_N_SAMPLES",
-    PROB_SPECIES = "PROB_SPECIES"
+    PROB_SPECIES = "PROB_SPECIES",
+    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT"
 )
 
 ############################################################
@@ -730,7 +736,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
         verbose = isTRUE(DP_VERBOSE),
         prob_n_samples = PROB_N_SAMPLES,
-        prob_species = PROB_SPECIES
+        prob_species = PROB_SPECIES,
+        prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT
     )
 }
 
