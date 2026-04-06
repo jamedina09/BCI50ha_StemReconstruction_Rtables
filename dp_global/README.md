@@ -1,6 +1,6 @@
 # Global Dynamic Programming Stem-ID Reconstruction with Biological Costs
 
-**Date:** 2026-04-02  
+**Date:** 2026-04-06  
 **Author:** José A. Medina-Vega
 
 ---
@@ -101,7 +101,8 @@ dp_global/
 ├── scripts/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
 │   ├── main_cpp_chunk.R              # Chunked driver for large runs
-│   └── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, withr bundle sourcing)
+│   ├── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, withr bundle sourcing)
+│   └── basal_area_uncertainty.R      # Posterior-based basal area uncertainty quantification
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
 │   └── transition_cost_rcpp.R        # R wrapper for Rcpp-compiled functions
@@ -335,6 +336,19 @@ When running `match_stems_dp_global_backward_marginals()`:
 - `DP_PosteriorBin` (if using `add_dp_posterior_bins()`)
 
 Posterior path summaries (`*_paths.csv`) encode the `recon` column as `ObsRowID:ReconstructedStemID` pairs. The attachment helpers expect ObsRowID-based encodings.
+
+### Posterior Paths File Format
+
+Posterior path summaries are written to `<out_dir>/posteriors/tag_<id>_posterior_samples__paths.csv` with the following columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `path_sig` | character | Dash-separated `ReconstructedStemID` values across all observations, ordered by census |
+| `path_count` | integer | Number of posterior samples that produced this exact path |
+| `path_prob` | numeric | Normalised probability of this path (sums to 1 across all rows) |
+| `recon` | character | Compact mapping of `obs_row_id:ReconstructedStemID` pairs, semicolon-separated |
+
+Each row represents a **unique reconstruction** (unique identity assignment across all censuses). Posterior samples with identical paths are aggregated into `path_count` / `path_prob`. The `obs_row_id` values in the `recon` column correspond to the `obs_row_id` column in the main reconstruction CSV, providing the join key between posterior paths and per-observation data (Tag, CensusID, OriginalStemID, DBH).
 
 ### MAP vs posterior-sampled paths 🔀
 
@@ -1081,13 +1095,17 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 
 3. **Gumbel-noise greedy assignment**: Draws `n_samples` (default 200) stochastic assignments by adding Gumbel(0,1) noise to log-likelihoods (scaled by temperature) and greedily selecting the best available assignment per row. This approximates sampling from the Gibbs distribution over assignments.
 
-4. **Backward stitching**: Starting from the anchor census (where identities are known), stitches per-pair assignments backward to build full per-sample track assignments across all censuses.
+4. **Sequential backward conditioning** (when `prob_lookahead_weight > 0` and $K \geq 4$): When stitching per-pair assignments backward from the anchor, the cost matrix for census pair $(t, t+1)$ is conditioned on the already-resolved assignment at pair $(t+1, t+2)$. Specifically, `condition_cost_matrix()` computes a continuity bonus for each candidate column $j$ based on the log-likelihood that $j$'s forward assignment (the stem it maps to at $t+1$) continues plausibly to its assignment at $t+2$. This bonus is normalised (best column gets 0, others receive negative penalties capped at $-2$ log units) and weighted by `prob_lookahead_weight` (default 0.5). Conditioning is gated on $K \geq 4$ to avoid distorting results for simple tags with few stems.
 
-5. **Marginal posterior computation**: Two-pass approach:
+5. **Backward stitching**: Starting from the anchor census (where identities are known), stitches per-pair assignments backward to build full per-sample track assignments across all censuses.
+
+6. **Marginal posterior computation**: Two-pass approach:
    - **Pass 1**: Computes the full marginal posterior distribution for every observation by counting track assignments across samples.
    - **Pass 2**: Per-census greedy conflict resolution — within each census, observations are sorted by confidence (descending), each observation gets its MAP track ID unless it conflicts with an already-assigned ID, in which case it falls back to the next-best posterior alternative.
 
-6. **Posterior export**: Writes per-tag posterior summaries (path signatures and probabilities) in the same format as the DP posterior sampler.
+7. **Growth violation repair**: After marginal resolution, `repair_marginal_growth_violations()` walks each reconstructed stem's trajectory and breaks tracks (assigns new unique IDs) at any point where the annualised growth rate violates hard bounds. The repair is iterative (up to 10 passes) because breaking a track at census $t$ can create a new non-consecutive adjacency (e.g., census $t-1$ to $t+1$) that requires re-evaluation.
+
+8. **Posterior export**: Writes per-tag posterior summaries (path signatures and probabilities) in the same format as the DP posterior sampler.
 
 **Parameters:**
 
@@ -1096,6 +1114,7 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 | `n_samples` | `200` | Number of Gumbel-noise stochastic samples |
 | `temperature` | `1.0` | Temperature for Gumbel sampling (shared with DP) |
 | `posterior_top_k` | `2` | Number of top posterior alternatives to report |
+| `prob_lookahead_weight` | `0.5` | Weight for sequential backward conditioning (0 = disabled) |
 
 **Output columns:** The probabilistic matcher produces the same output schema as the DP solver (including `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`, `DP_PosteriorEntropy`, etc.) with `ReconstructionMethod = "probabilistic"`.
 
@@ -1628,6 +1647,7 @@ Tag 11 requires ~89 million transition computations, while most other tags requi
 | **Diagnostic Only** | `min_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as base bounds |
 | **Diagnostic Only** | `max_growth` | `ConstraintViolation` | Post-hoc violation flag | Same as base bounds |
 | **Probabilistic Fallback** | `prob_n_samples` | Probabilistic matcher | Number of Gumbel-noise samples | 200 |
+| `prob_lookahead_weight` | Probabilistic matcher | Sequential backward conditioning weight | 0.5 |
 
 ### Quantile Configuration Reference
 
@@ -1713,7 +1733,66 @@ Chave, J., Condit, R., Aguilar, S., Hernandez, A., Lao, S., & Perez, R. (2004). 
 **Additional documentation:**
 - Sensitivity analysis: `dp_global/R/sensitivity_transition_cost_bio.R`
 - Realism calibration: `dp_global/R/realism_calibration.R`
+- Basal area uncertainty: `dp_global/scripts/basal_area_uncertainty.R`
 - API documentation: See function headers in the relevant R files (`dp_global/R/dp_global_dp.R`, `dp_global/R/dp_global_bio.R`, etc.)
+
+---
+
+## Basal Area Uncertainty Quantification
+
+The `basal_area_uncertainty.R` script uses posterior path samples to quantify how identity uncertainty propagates into basal area (BA) estimates.
+
+### Key Insight
+
+**Tag-level BA per census is invariant to identity assignment** — the total BA (sum of $\pi/4 \cdot \text{DBH}^2$ across all living stems) does not change because the same DBH observations are always present regardless of which stem identity they are assigned to. Identity uncertainty affects:
+
+1. **Per-stem BA trajectories**: Different identity assignments allocate different DBH values to each stem across censuses
+2. **BA growth rates**: Different trajectories produce different consecutive BA differences and thus different growth rates
+3. **Demographic accounting**: Mortality and recruitment events change with identity assignment
+
+### Usage
+
+```bash
+Rscript dp_global/scripts/basal_area_uncertainty.R \
+  --RUN_DIR=dp_global/output/<run_dir>
+```
+
+### Outputs
+
+Three CSV files are written to the run directory:
+
+| File | Contents |
+|------|----------|
+| `basal_area_uncertainty_tag.csv` | Per-tag × census total BA: mean, SD, 95% CI (verifies invariance) |
+| `basal_area_uncertainty_stem.csv` | Per-stem × census BA posterior: weighted mean, SD, median, 95% CI, MAP value |
+| `basal_area_uncertainty_growth.csv` | Per-stem BA growth rate ($\Delta\text{BA}/\Delta t$) posterior: mean, SD, 95% CI |
+
+### Column Reference
+
+**Tag-level** (`basal_area_uncertainty_tag.csv`):
+
+| Column | Description |
+|--------|-------------|
+| `BA_total_mean` | Probability-weighted mean total BA (cm²) |
+| `BA_total_sd` | SD across posterior paths (should be ~0 when all paths include same observations) |
+| `BA_total_q025`, `BA_total_q975` | 95% credible interval |
+| `BA_total_map` | Total BA from the MAP reconstruction |
+
+**Stem-level** (`basal_area_uncertainty_stem.csv`):
+
+| Column | Description |
+|--------|-------------|
+| `BA_mean`, `BA_sd` | Posterior mean and SD of BA for this stem × census |
+| `BA_median`, `BA_q025`, `BA_q975` | Posterior median and 95% CI |
+| `n_unique_dbh` | Number of distinct DBH values assigned to this stem across paths (1 = certain) |
+| `BA_map` | BA from the MAP reconstruction |
+
+**Growth rates** (`basal_area_uncertainty_growth.csv`):
+
+| Column | Description |
+|--------|-------------|
+| `dBA_rate_mean`, `dBA_rate_sd` | Posterior mean and SD of annualised BA change (cm²/yr) |
+| `dBA_rate_q025`, `dBA_rate_q975` | 95% CI of BA growth rate |
 
 ---
 

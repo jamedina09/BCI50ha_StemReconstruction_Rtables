@@ -539,25 +539,6 @@ source(here("dp_global", "R", "k_tuning_viz.R"))
 # - Soft penalty is quadratic: soft_cost = k * (delta_cm^2)
 # - If you want delta_cm = D to contribute cost C, set k = C / (D^2).
 
-# Helper: compute the *actual* soft-penalty cost for a given k and delta.
-# - delta_cm is in cm over the interval (NOT cm/year).
-# - temperature is the marginal-DP temperature; weight multiplier is exp(-soft_cost / temperature).
-# soft_cost_from_k <- function(delta_cm, k, temperature = 1) {
-#     delta_cm <- as.numeric(delta_cm)
-#     k <- as.numeric(k)
-#     temperature <- as.numeric(temperature)
-#     cost <- k * (delta_cm^2)
-#     data.frame(
-#         delta_cm = delta_cm,
-#         k = k,
-#         soft_cost = cost,
-#         temperature = temperature,
-#         weight_multiplier = exp(-cost / temperature)
-#     )
-# }
-
-# soft_cost_from_k(delta_cm = seq(-10, 10, by = 1), k = 20, temperature = 1)
-
 ensure_dir <- function(path) {
     if (!dir.exists(path)) {
         dir.create(path, recursive = TRUE)
