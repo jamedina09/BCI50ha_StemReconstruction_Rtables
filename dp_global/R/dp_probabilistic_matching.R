@@ -276,11 +276,32 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
     n_curr <- length(dbh_curr)
     n_next <- length(dbh_next)
 
-    # Total size: (n_curr + n_recruit_slots) rows × (n_next + n_death_slots) cols
-    # n_recruit_slots = max(0, n_next - n_curr) extra rows for new recruits
-    # n_death_slots = max(0, n_curr - n_next) extra cols for dying tracks
-    # But we always allow some flexibility: use K = max(n_curr, n_next)
+    # Adaptive K: start from max(n_curr, n_next), then ensure enough
+    # death columns for rows where ALL survival entries are -Inf, and
+    # enough recruit rows for cols where ALL survival entries are -Inf.
+    must_die <- 0L
+    if (n_curr > 0L && n_next > 0L) {
+        for (i in seq_len(n_curr))
+            if (all(L[i, ] == -Inf)) must_die <- must_die + 1L
+    } else if (n_curr > 0L) {
+        must_die <- n_curr
+    }
+
+    must_recruit <- 0L
+    if (n_curr > 0L && n_next > 0L) {
+        for (j in seq_len(n_next))
+            if (all(L[, j] == -Inf)) must_recruit <- must_recruit + 1L
+    } else if (n_next > 0L) {
+        must_recruit <- n_next
+    }
+
     K <- max(n_curr, n_next)
+    # Add extra death columns if needed
+    death_avail <- max(0L, K - n_next)
+    if (death_avail < must_die) K <- K + (must_die - death_avail)
+    # Add extra recruit rows if needed
+    recruit_avail <- max(0L, K - n_curr)
+    if (recruit_avail < must_recruit) K <- K + (must_recruit - recruit_avail)
 
     # Augmented matrix: K rows × K cols
     # Rows 1..n_curr are real current stems; rows (n_curr+1)..K are virtual recruit sources
@@ -377,6 +398,19 @@ stitch_assignments_backward <- function(all_samples, obs_data, anchor_ids, K) {
     n_census <- length(obs_data)
     anchor_pos <- n_census
 
+    # Pre-compute deterministic death-track IDs for each (pair, obs).
+    # When obs r at pair i is assigned to ANY death column, it always gets
+    # death_ids[[i]][r] — the same ID across all samples.  This prevents
+    # fragmentation caused by the Gumbel sampler picking different death
+    # columns in different samples.
+    death_base <- max(anchor_ids, na.rm = TRUE) + 1L
+    death_ids <- vector("list", n_census - 1L)
+    for (i in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
+        n_curr_i <- obs_data[[i]]$n
+        death_ids[[i]] <- seq.int(death_base, length.out = n_curr_i)
+        death_base <- death_base + n_curr_i
+    }
+
     results <- vector("list", n_samples)
 
     for (s in seq_len(n_samples)) {
@@ -388,32 +422,23 @@ stitch_assignments_backward <- function(all_samples, obs_data, anchor_ids, K) {
         next_obs_to_track <- anchor_ids  # length n_anchor
         recon_by_census[[anchor_pos]] <- next_obs_to_track
 
-        # Global ID counter for new tracks (recruits at earlier censuses)
-        next_new_id <- max(anchor_ids, na.rm = TRUE) + 1L
-
         # Walk backward
         for (i in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
             assignment <- sample_assignments[[i]]  # K_pair-length: assignment[row] = col
             n_curr <- obs_data[[i]]$n
             n_next <- obs_data[[i + 1L]]$n
-            K_pair <- length(assignment)
-
-            # Build col_to_track for this pair:
-            # cols 1..n_next -> known track IDs from next census
-            # cols (n_next+1)..K_pair -> death sinks (stem at curr dies before next)
-            col_to_track <- integer(K_pair)
-            col_to_track[seq_len(min(n_next, K_pair))] <- next_obs_to_track[seq_len(min(n_next, K_pair))]
-            if (K_pair > n_next) {
-                for (jj in (n_next + 1L):K_pair) {
-                    col_to_track[jj] <- next_new_id
-                    next_new_id <- next_new_id + 1L
-                }
-            }
 
             # Map current real observations to tracks
             curr_obs_to_track <- integer(n_curr)
             for (r in seq_len(n_curr)) {
-                curr_obs_to_track[r] <- col_to_track[assignment[r]]
+                assigned_col <- assignment[r]
+                if (assigned_col <= n_next) {
+                    # Survival: inherit track from next census
+                    curr_obs_to_track[r] <- next_obs_to_track[assigned_col]
+                } else {
+                    # Death: use deterministic ID for this (pair, obs)
+                    curr_obs_to_track[r] <- death_ids[[i]][r]
+                }
             }
 
             recon_by_census[[i]] <- curr_obs_to_track
