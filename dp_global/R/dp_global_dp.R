@@ -9,7 +9,7 @@
 #   Run backward marginal DP stem identification for one or more tags.  For
 #   each tag (Tag × species group) the function tries the full DP solver; if
 #   the state space exceeds `max_states` it falls back to a cheaper method
-#   (probabilistic greedy or igraph stepwise matching).
+#   (probabilistic greedy matching).
 #
 # KEY PARAMETERS
 #   tree_data            data.table — one row per (Tag, OriginalStemID, CensusID).
@@ -22,7 +22,7 @@
 #   prob_n_samples       Number of stochastic samples for the probabilistic
 #                        greedy matcher (used on fallback).
 #   prob_species         Character vector of species to route to the probabilistic
-#                        matcher instead of igraph fallback.
+#                        matcher instead of the default DP fallback.
 #   prob_lookahead_weight  Weight [0,1] for sequential backward conditioning in the
 #                        probabilistic matcher.  0 = independent per-pair sampling
 #                        (original behaviour).  0.5 = default (blend future
@@ -54,7 +54,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            meas_p_big = 0.05,
                                                            # --- growth-form based fallback ---
                                                            # vector of values in `growth_form` column that should trigger
-                                                           # immediate igraph fallback and avoid DP entirely
+                                                           # immediate probabilistic fallback and avoid DP entirely
                                                            fallback_growth_forms = character(0),
                                                            # --- posterior sampling options ---
                                                            posterior_samples = 0L,
@@ -521,7 +521,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out
     }
 
-    # Fallback helper: run igraph matcher and return a finalized output with the
+    # Fallback helper: run probabilistic matcher and return a finalized output with the
     # given fallback reason.  When K_used is provided, also sets DP metadata
     # columns on tree_data (by reference) before running the matcher.
     do_fallback <- function(reason, K_used = NULL) {
@@ -542,7 +542,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 )]
             }
         }
-        # Always route fallbacks to probabilistic matcher (igraph removed)
+        # Route all fallbacks to probabilistic matcher
         out <- match_stems_probabilistic(
             tree_data, min_growth, max_growth, anchor_start,
             n_samples = prob_n_samples,
@@ -642,7 +642,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # resprout/die event), look forward for the first post-anchor census that has living stems.
         # Prefer the first such census that also carries known TrueStemIDs (giving the DP a real
         # anchor to work from).  Without this, tree_data is scoped to a dead census and the
-        # downstream anchor-id check always fails → igraph fallback.
+        # downstream anchor-id check always fails → probabilistic fallback.
         .nominal_anchor_live <- original_tree_data[CensusID == anchor_start & !is.na(DBH)]
         if (nrow(.nominal_anchor_live) == 0L) {
             .post_live <- original_tree_data[CensusID > anchor_start & !is.na(DBH)]
@@ -709,7 +709,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     )
 
     if (is.na(first_obs_census)) {
-        vcat(prefix, "No DBH observations found up to anchor census ", anchor_start, "; falling back to igraph matcher")
+        vcat(prefix, "No DBH observations found up to anchor census ", anchor_start, "; falling back to probabilistic matcher")
         return(do_fallback("no_obs_up_to_anchor", K_used = 0L))
     }
     census_range <- seq.int(from = first_obs_census, to = anchor_start)
@@ -733,7 +733,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     if (length(fallback_growth_forms) > 0L && "growth_form" %in% names(tree_data)) {
         bad_idx <- which(tree_data$growth_form %in% fallback_growth_forms)
         if (length(bad_idx) > 0L) {
-            vcat(prefix, "Growth form requires igraph fallback (detected: ", paste(unique(tree_data$growth_form[bad_idx]), collapse = ", "), "); skipping DP")
+            vcat(prefix, "Growth form requires probabilistic fallback (detected: ", paste(unique(tree_data$growth_form[bad_idx]), collapse = ", "), "); skipping DP")
             return(do_fallback("growth_form_forced", K_used = as.integer(min(max_obs, max_tracks))))
         }
     }
@@ -813,7 +813,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # If the requested anchor census is missing entirely or all rows at that census
     # have both NA DBH and NA TrueStemID, prefer the most recent earlier census
     # that has at least one row with non-NA DBH and non-NA TrueStemID and use that
-    # as the anchor instead of immediately falling back to the igraph matcher.
+    # as the anchor instead of immediately falling back to the probabilistic matcher.
     anchor_rows_all <- tree_data[CensusID == anchor_start]
     if (nrow(anchor_rows_all) == 0L || (all(is.na(anchor_rows_all$DBH)) && all(is.na(anchor_rows_all$TrueStemID)))) {
         cand_census <- sort(unique(tree_data$CensusID[tree_data$CensusID < anchor_start & !is.na(tree_data$DBH) & !is.na(tree_data$TrueStemID)]))
@@ -871,7 +871,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 )
                 max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
             } else {
-                vcat(prefix, "No usable anchor found (no DBH or TrueStemID available); falling back to igraph matcher")
+                vcat(prefix, "No usable anchor found (no DBH or TrueStemID available); falling back to probabilistic matcher")
                 return(do_fallback("anchor_missing_truestem", K_used = as.integer(min(max_obs, max_tracks))))
             }
         }
@@ -879,7 +879,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
     if (nrow(anchor_obs) == 0L) {
-        vcat(prefix, "Anchor census ", anchor_start, " has no DBH observations; falling back to igraph matcher")
+        vcat(prefix, "Anchor census ", anchor_start, " has no DBH observations; falling back to probabilistic matcher")
         return(do_fallback("anchor_missing_obs", K_used = as.integer(min(max_obs, max_tracks))))
     }
 
@@ -900,7 +900,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             anchor_ids <- sort(unique(anchor_obs$TrueStemID))
             anchor_ids <- anchor_ids[!is.na(anchor_ids)]
         } else {
-            vcat(prefix, "No usable anchor (TrueStemID missing and provisional anchoring disabled); falling back to igraph matcher")
+            vcat(prefix, "No usable anchor (TrueStemID missing and provisional anchoring disabled); falling back to probabilistic matcher")
             return(do_fallback("anchor_missing_truestem_prov_disabled", K_used = as.integer(min(max_obs, max_tracks))))
         }
     }
@@ -908,7 +908,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     anchor_ids <- anchor_ids[!is.na(anchor_ids)]
 
     if (length(anchor_ids) == 0L) {
-        vcat(prefix, "No valid anchor IDs at anchor census; falling back to igraph matcher")
+        vcat(prefix, "No valid anchor IDs at anchor census; falling back to probabilistic matcher")
         return(do_fallback("anchor_ids_missing", K_used = as.integer(min(max_obs, max_tracks))))
     }
 
@@ -1163,7 +1163,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     )]
 
     if (K < max(obs_counts)) {
-        vcat(prefix, "K=", K, " tracks is fewer than max observed stems (", max(obs_counts), "); falling back to igraph matcher")
+        vcat(prefix, "K=", K, " tracks is fewer than max observed stems (", max(obs_counts), "); falling back to probabilistic matcher")
         return(do_fallback("K_too_small"))
     }
 
@@ -1334,7 +1334,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     anchor_track_idx <- match(anchor_obs_ordered$TrueStemID, track_ids)
 
     if (any(is.na(anchor_track_idx))) {
-        vcat(prefix, "Anchor IDs not found in track list; falling back to igraph matcher")
+        vcat(prefix, "Anchor IDs not found in track list; falling back to probabilistic matcher")
         return(do_fallback("anchor_truestem_not_found"))
     }
 
@@ -1542,7 +1542,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             next_keys <- keys_full[[p + 1L]]
             n_next <- length(next_keys)
             if (n_next == 0L) {
-                vcat(prefix, "  No reachable states at census ", next_cc, "; falling back to igraph matcher")
+                vcat(prefix, "  No reachable states at census ", next_cc, "; falling back to probabilistic matcher")
                 return(do_fallback("no_reachable_next_states"))
             }
             next_index <- seq_len(n_next)
@@ -1860,7 +1860,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             }
 
             if (length(curr_keys_list) == 0L) {
-                vcat(prefix, "  No valid states produced at census ", cc, "; falling back to igraph matcher")
+                vcat(prefix, "  No valid states produced at census ", cc, "; falling back to probabilistic matcher")
                 return(do_fallback("no_states_produced"))
             }
 
@@ -1871,7 +1871,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vit_ptr[[p]] <- curr_ptr
 
             if (used_edges == 0L) {
-                vcat(prefix, "  No feasible transitions at census ", cc, "; falling back to igraph matcher")
+                vcat(prefix, "  No feasible transitions at census ", cc, "; falling back to probabilistic matcher")
                 return(do_fallback("no_feasible_edges"))
             }
             edges[[p]] <- data.table::data.table(

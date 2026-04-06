@@ -56,7 +56,7 @@
 #' @return data.table sorted descending by estimated_edges_unpruned (fast=TRUE)
 #'   or estimated_edges_pruned (fast=FALSE), with columns `predicted_seconds`
 #'   and `predicted_hours` from a log-log polynomial model calibrated on actual
-#'   benchmark runs (see dp_global/dev/run_dp_benchmark.R)
+#'   benchmark runs.
 #' @export
 estimate_dp_complexity <- function(data,
                                    anchor_start = 7L,
@@ -797,7 +797,7 @@ estimate_dp_complexity <- function(data,
 
     # ------------------------------------------------------------------
     # 6. Runtime predictor
-    #    Calibrated polynomial in log-log space from dp_global/dev/run_dp_benchmark.R.
+    #    Calibrated polynomial in log-log space from benchmark runs.
     #    Uses estimated_edges_pruned when available (= actual C++ calls after pruning),
     #    otherwise estimated_edges_unpruned (upper bound, same as old TransitionComputations).
     #    Note: the model was fitted on unpruned counts; pruned predictions are optimistic.
