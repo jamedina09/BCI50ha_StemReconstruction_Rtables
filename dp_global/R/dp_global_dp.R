@@ -721,13 +721,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # upstream MF-removal pass that the sub-call's own MF detection does not see).
     census_range <- census_range[census_range %in% unique(tree_data$CensusID)]
     n_census <- length(census_range)
-    vcat(prefix, "Census range: C", paste(census_range, collapse = ", C"), " (", n_census, " censuses, stems per census: ", paste(obs_counts, collapse = "/"), ", anchor=C", anchor_start, ")")
     obs_counts <- vapply(
         census_range,
         function(cc) nrow(tree_data[CensusID == cc & !is.na(DBH)]),
         integer(1L)
     )
     max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
+    vcat(prefix, "Census range: C", paste(census_range, collapse = ", C"), " (", n_census, " censuses, stems per census: ", paste(obs_counts, collapse = "/"), ", anchor=C", anchor_start, ")")
 
     # --- growth-form fallback check ------------------------------------
     if (length(fallback_growth_forms) > 0L && "growth_form" %in% names(tree_data)) {
