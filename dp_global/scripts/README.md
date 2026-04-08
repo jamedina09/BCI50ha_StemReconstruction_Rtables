@@ -54,7 +54,7 @@ Common flags used by both drivers (case-insensitive, but use capital letters to 
 
 DP / reconstruction option
 - `DP_MODE` — default: `"marginals+bins"`. Allowed: 'none' 'marginals' 'marginals+bins' 'map'
-- `WHICH_TAG` — used for single-tag runs (relevant to `main_cpp.R`); the chunked runner processes groups (`Tag`, `species`) and does not rely on `WHICH_TAG`.
+- `WHICH_TAG` — character; used for single-tag runs (relevant to `main_cpp.R`). Must match the `Tag` column exactly (e.g., `"084555"` preserves leading zeros). The chunked runner processes groups (`Tag`, `species`) and does not rely on `WHICH_TAG`.
 - `ANCHOR_START_CENSUS` — default: `7L`.
 - `ALLOW_PROVISIONAL_DP_ANCHOR` — default: `TRUE` — when `TRUE` the DP can assign provisional anchor IDs at the last observed DBH census if the requested anchor census lacks `TrueStemID` but has DBH; set to `FALSE` to require an explicit anchored census or to fall back to the probabilistic matcher.
 - `DP_VERBOSE` — default: `TRUE`.
