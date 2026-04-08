@@ -1020,7 +1020,9 @@ The DP solver automatically falls back to the probabilistic greedy matcher when:
 5. DP recursion yields no feasible keys
 6. Growth form or species forced to probabilistic
 
-**Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints.
+**Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints. After the probabilistic matcher returns, `do_fallback()` applies **R-boundary splitting**: for each census with live R-coded stems, identity tracks crossing the boundary are severed by assigning new IDs to the pre-boundary rows. This mirrors the DP solver's resprout segment split and prevents the probabilistic matcher from chaining identities across resprout events.
+
+**Error fallback:** `run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) wraps the DP call in a `tryCatch` block. If the solver throws a runtime error (e.g., memory exhaustion), the error handler falls back to the probabilistic matcher with R-boundary splitting rather than returning `NA` or crashing the run. The error message is logged via `vcat()` for diagnostics.
 
 ### Cross-Product Edge Guard
 
@@ -1142,6 +1144,8 @@ Pre-segment IDs are offset by the maximum post-segment ID to prevent clashes. Su
 In the post-segment, all stems at the first census (the R boundary) are known recruits. When the number of stems at the first census ≤ the number at the next census, the constraint requires that every first-census stem be on a track that is also occupied at the next census. The rationale: a freshly resprouted stem dying immediately while a new independent recruit simultaneously appears on a different track is far less parsimonious than all recruits continuing.
 
 This constraint prunes candidate assignments where any recruit's track is empty at the next census.
+
+**Dead-end safety guard:** If applying the recruit continuity constraint would remove *all* candidate transitions at a census (creating a dead end in the backward recursion), the constraint is skipped for that census with a diagnostic warning. This prevents the DP from becoming infeasible due to overly restrictive pruning in edge cases where no transition can simultaneously satisfy recruit continuity and the biological cost model.
 
 #### 3. R-recruit constraint (forward direction)
 
@@ -1278,7 +1282,7 @@ prune_use_bio_recruit = FALSE# use fixed prune bounds instead of biological ones
 ```r
 # In dp_global/scripts/main_cpp.R (or via CLI):
 RUN_ALL_TAGS <- FALSE
-WHICH_TAG <- 123456L
+WHICH_TAG <- "123456"
 
 WRITE_DP_PDF <- TRUE
 ```
