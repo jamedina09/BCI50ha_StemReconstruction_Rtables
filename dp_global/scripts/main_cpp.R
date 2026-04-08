@@ -522,6 +522,14 @@ if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
     POSTERIOR_SAMPLES_PATH <- NULL
 }
 
+# Coerce POSTERIOR_SAMPLE_SEED whenever explicitly provided via CLI, even when
+# posterior sampling is disabled (POSTERIOR_SAMPLES=0).  The seed is also used
+# by the probabilistic matcher's Gumbel-noise draws, so honouring it here
+# makes fallback runs reproducible.
+if (!is.null(POSTERIOR_SAMPLE_SEED)) {
+    POSTERIOR_SAMPLE_SEED <- as.integer(POSTERIOR_SAMPLE_SEED)
+}
+
 ############################################################
 ### 6) Source project code
 ############################################################
