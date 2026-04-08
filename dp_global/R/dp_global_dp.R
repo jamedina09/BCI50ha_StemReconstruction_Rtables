@@ -612,6 +612,40 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     ]
                 }
             }
+
+            # ---- R-boundary splitting for LIVE R-coded censuses ----
+            # The NA-R barrier above handles censuses with 0 live stems.
+            # This block handles censuses where R-coded stems HAVE non-NA DBH:
+            # the tree resprouted but the field team recorded DBH > 0 on the
+            # R row.  As in the DP's R-recruit constraint, the R census marks
+            # a biological identity break — tracks that span the boundary must
+            # be severed.  All stems at an R-coded census are treated as new
+            # organisms (census-level resprout rule).
+            for (.cc_fb in .pre_censuses_fb) {
+                .live_rows_fb <- which(out$CensusID == .cc_fb & !is.na(out$DBH))
+                if (length(.live_rows_fb) == 0L) next
+                .live_tsm_fb <- out$ListOfTSM[.live_rows_fb]
+                .any_r_live <- any(!is.na(.live_tsm_fb) & grepl(.resprout_regex_fb, .live_tsm_fb, perl = TRUE))
+                if (!.any_r_live) next
+                # This census has live R-coded stems → identity break
+                .cens_before_rfb <- .pre_censuses_fb[.pre_censuses_fb < .cc_fb]
+                if (length(.cens_before_rfb) == 0L) next
+                .ids_before_rfb <- unique(out$ReconstructedStemID[out$CensusID %in% .cens_before_rfb & !is.na(out$ReconstructedStemID)])
+                .ids_at_and_after_rfb <- unique(out$ReconstructedStemID[out$CensusID >= .cc_fb & !is.na(out$ReconstructedStemID)])
+                .crossing_rfb <- intersect(.ids_before_rfb, .ids_at_and_after_rfb)
+                .cur_max_fb <- suppressWarnings(max(out$ReconstructedStemID, na.rm = TRUE))
+                if (!is.finite(.cur_max_fb)) .cur_max_fb <- 0L
+                if (length(.crossing_rfb) > 0L) {
+                    for (.old_rfb in .crossing_rfb) {
+                        .new_rfb <- as.integer(.cur_max_fb) + 1L
+                        .cur_max_fb <- .new_rfb
+                        out[
+                            CensusID %in% .cens_before_rfb & ReconstructedStemID == .old_rfb,
+                            ReconstructedStemID := .new_rfb
+                        ]
+                    }
+                }
+            }
         }
 
         finalize_out(out)
@@ -1692,16 +1726,28 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     }
                     if (any(!.keep_rc)) {
                         .n_rc_pruned <- sum(!.keep_rc)
-                        vcat(
-                            prefix, "    Recruit continuity: removed ", .n_rc_pruned,
-                            "/", n_feasible, " transitions (all ", .n_obs_p,
-                            " post-resprout recruit(s) at C", cc,
-                            " must persist to C", next_cc, ")"
-                        )
-                        fe_from <- fe_from[.keep_rc]
-                        fe_to <- fe_to[.keep_rc]
-                        fe_phase <- fe_phase[.keep_rc, , drop = FALSE]
-                        n_feasible <- length(fe_from)
+                        if (all(!.keep_rc)) {
+                            # Safety: constraint would remove ALL transitions → dead end.
+                            # Skip the constraint to keep the DP viable; the probabilistic
+                            # fallback would lose more accuracy than a slightly relaxed
+                            # recruit-continuity assumption.
+                            vcat(
+                                prefix, "    Recruit continuity: would remove ALL ", n_feasible,
+                                " transitions at C", cc, " -> C", next_cc,
+                                "; skipping constraint to avoid dead end"
+                            )
+                        } else {
+                            vcat(
+                                prefix, "    Recruit continuity: removed ", .n_rc_pruned,
+                                "/", n_feasible, " transitions (all ", .n_obs_p,
+                                " post-resprout recruit(s) at C", cc,
+                                " must persist to C", next_cc, ")"
+                            )
+                            fe_from <- fe_from[.keep_rc]
+                            fe_to <- fe_to[.keep_rc]
+                            fe_phase <- fe_phase[.keep_rc, , drop = FALSE]
+                            n_feasible <- length(fe_from)
+                        }
                     }
                 }
             }

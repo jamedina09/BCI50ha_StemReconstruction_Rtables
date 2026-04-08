@@ -33,7 +33,7 @@ source(here("dp_global", "scripts", "main_cpp.R"))
 #    below so they can still override these BCI defaults.
 # ----------------------------------------------------------------
 INPUT_FILE                          <- here("bci_data", "bci_multistem_xrun_debug.rds")
-WHICH_TAG                           <- 115203L
+WHICH_TAG                           <- "115203"
 FORCE_ONE_SPECIES_PARAMETERS        <- FALSE     # use real species from BCI data
 MAX_GROWTH_FIXED                    <- 5.0
 MAX_SHRINK_FIXED                    <- -0.5
@@ -95,7 +95,7 @@ for (.nm in names(overrides)) {
 }
 
 # Recompute derived values after overrides
-WHICH_TAG         <- as.integer(WHICH_TAG)
+# WHICH_TAG         <- as.integer(WHICH_TAG)
 RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 if (!is.null(overrides$RECRUIT_MAX_FIXED)) RECRUIT_MAX_FIXED <- as.numeric(overrides$RECRUIT_MAX_FIXED)
 
@@ -127,10 +127,10 @@ xrun <- copy(xraw)
 # ----------------------------------------------------------------
 # 7. Validate tag
 # ----------------------------------------------------------------
-if (!(WHICH_TAG %in% xrun$Tag)) {
-    stop("Tag ", WHICH_TAG, " not found in data. ",
-         "First few tags: ", paste(head(sort(unique(xrun$Tag))), collapse = ", "), " ...")
-}
+# if (!(WHICH_TAG %in% xrun$Tag)) {
+#     stop("Tag ", WHICH_TAG, " not found in data. ",
+#          "First few tags: ", paste(head(sort(unique(xrun$Tag))), collapse = ", "), " ...")
+# }
 tag_sp <- unique(xrun[Tag == WHICH_TAG, species])
 message("[main_cpp_bci.R] Tag ", WHICH_TAG, " — species: ", paste(tag_sp, collapse = ", "))
 message("[main_cpp_bci.R] Tag ", WHICH_TAG, " — rows: ", nrow(xrun[Tag == WHICH_TAG]))
@@ -185,7 +185,7 @@ if (isTRUE(WRITE_DP_RDS) && !is.null(out)) {
     saveRDS(out, p)
     message("[main_cpp_bci.R] RDS: ", p)
 }
-if (isTRUE(WRITE_DP_PDF) && !is.null(out)) {
+if (isTRUE(WRITE_DP_PDF) && !is.null(out) && nrow(out) > 0L) {
     p <- make_path("pdf")
     plot_tag_to_pdf(
         out,
@@ -217,3 +217,5 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 
 
 ### Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=171486 --DP_MAX_STATES=2
+
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=220311 --DP_MAX_STATES=10000

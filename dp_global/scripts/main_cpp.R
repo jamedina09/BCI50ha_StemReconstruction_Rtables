@@ -66,11 +66,15 @@ parse_args <- function() {
                 key <- kv[1]
                 val <- kv[2]
                 # Try to convert to appropriate type (handle booleans, integers, floats, including negatives)
+                # Keys whose values must stay character (e.g. Tag IDs with leading zeros)
+                .char_keys <- c("WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
+                                "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
+                                "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL")
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
-                } else if (grepl("^[+-]?[0-9]+$", val)) {
+                } else if (!(toupper(key) %in% .char_keys) && grepl("^[+-]?[0-9]+$", val)) {
                     val <- as.integer(val)
-                } else if (grepl("^[+-]?[0-9]*\\.[0-9]+$", val)) {
+                } else if (!(toupper(key) %in% .char_keys) && grepl("^[+-]?[0-9]*\\.[0-9]+$", val)) {
                     val <- as.numeric(val)
                 }
             } else {
@@ -140,7 +144,7 @@ RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 ############################################################
 # DP algorithm parameters: mode, anchoring, state budget, slack, posterior sampling.
 DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
-WHICH_TAG <- 20L
+WHICH_TAG <- "20"
 ANCHOR_START_CENSUS <- 7L
 DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
@@ -671,54 +675,108 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
     tag_label <- if ("Tag" %in% names(dtg) && length(dtg$Tag) > 0) as.character(dtg$Tag[[1]]) else "<unknown>"
     species_label <- if ("species" %in% names(dtg) && length(dtg$species) > 0) as.character(dtg$species[[1]]) else "<unknown>"
 
+    if (nrow(dtg) == 0L) {
+        log_msg(sprintf("Skipping Tag=%s species=%s: 0 rows; nothing to process", tag_label, species_label), "WARN")
+        return(data.table::copy(dtg))
+    }
+
     if (!("DBH" %in% names(dtg)) || !("CensusID" %in% names(dtg))) {
         log_msg(sprintf("Skipping Tag=%s species=%s: missing DBH or CensusID column; returning rows as-is", tag_label, species_label), "WARN")
-        dtg[, ReconstructionMethod := "skipped_no_data"]
-        return(dtg)
+        out <- data.table::copy(dtg)
+        out[, ReconstructionMethod := "skipped_no_data"]
+        return(out)
     }
     if (all(is.na(dtg$DBH)) || all(is.na(dtg$CensusID))) {
         log_msg(sprintf("Skipping Tag=%s species=%s: all DBH or all CensusID are NA; returning rows as-is", tag_label, species_label), "WARN")
-        dtg[, ReconstructionMethod := "skipped_no_data"]
-        return(dtg)
+        out <- data.table::copy(dtg)
+        out[, ReconstructionMethod := "skipped_no_data"]
+        return(out)
     }
 
-    match_stems_dp_global_backward_marginals_batch(
-        tree_data = data.table::copy(dtg),
-        min_growth = MAX_SHRINK_FIXED,
-        max_growth = MAX_GROWTH_FIXED,
-        anchor_start = ANCHOR_START_CENSUS,
-        max_tracks = dp_max_tracks,
-        max_states = DP_MAX_STATES,
-        slack_tracks = DP_SLACK_TRACKS,
-        slack_require_anchor_recruitable = DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE,
-        slack_require_anchor_eps = DP_SLACK_REQUIRE_ANCHOR_EPS,
-        temperature = 1,
-        posterior_top_k = DP_POSTERIOR_TOP_K,
-        # growth-form bypass list
-        fallback_growth_forms = DP_FALLBACK_GROWTH_FORMS,
-        non_taper_corrected_growth_forms = NON_TAPER_CORRECTED_GROWTH_FORMS,
-        non_taper_corrected_prune_min_growth = NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH,
-        non_taper_corrected_prune_max_growth = NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH,
-        hom_tolerance_scale = HOM_TOLERANCE_SCALE,
-        # posterior sampling controls (disabled by default)
-        posterior_samples = POSTERIOR_SAMPLES,
-        posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
-        posterior_samples_path = POSTERIOR_SAMPLES_PATH,
-        posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
-        use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
-        # prune controls
-        # NOTE: You can always define very wide based on the parameter data you have.
-        prune_hard = TRUE,
-        prune_min_growth = MAX_SHRINK_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
-        prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
-        prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
-        prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR, # very high recruit max dbh
-        prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
-        allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
-        verbose = isTRUE(DP_VERBOSE),
-        prob_n_samples = PROB_N_SAMPLES,
-        prob_species = PROB_SPECIES,
-        prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT
+    tryCatch(
+        match_stems_dp_global_backward_marginals_batch(
+            tree_data = data.table::copy(dtg),
+            min_growth = MAX_SHRINK_FIXED,
+            max_growth = MAX_GROWTH_FIXED,
+            anchor_start = ANCHOR_START_CENSUS,
+            max_tracks = dp_max_tracks,
+            max_states = DP_MAX_STATES,
+            slack_tracks = DP_SLACK_TRACKS,
+            slack_require_anchor_recruitable = DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE,
+            slack_require_anchor_eps = DP_SLACK_REQUIRE_ANCHOR_EPS,
+            temperature = 1,
+            posterior_top_k = DP_POSTERIOR_TOP_K,
+            # growth-form bypass list
+            fallback_growth_forms = DP_FALLBACK_GROWTH_FORMS,
+            non_taper_corrected_growth_forms = NON_TAPER_CORRECTED_GROWTH_FORMS,
+            non_taper_corrected_prune_min_growth = NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH,
+            non_taper_corrected_prune_max_growth = NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH,
+            hom_tolerance_scale = HOM_TOLERANCE_SCALE,
+            # posterior sampling controls (disabled by default)
+            posterior_samples = POSTERIOR_SAMPLES,
+            posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
+            posterior_samples_path = POSTERIOR_SAMPLES_PATH,
+            posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
+            use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+            # prune controls
+            # NOTE: You can always define very wide based on the parameter data you have.
+            prune_hard = TRUE,
+            prune_min_growth = MAX_SHRINK_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
+            prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
+            prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
+            prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR, # very high recruit max dbh
+            prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
+            allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
+            verbose = isTRUE(DP_VERBOSE),
+            prob_n_samples = PROB_N_SAMPLES,
+            prob_species = PROB_SPECIES,
+            prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT
+        ),
+        error = function(e) {
+            msg <- conditionMessage(e)
+            log_msg(sprintf("DP error for Tag=%s species=%s: %s — falling back to probabilistic", tag_label, species_label, msg), "WARN")
+            out <- match_stems_probabilistic(
+                tree_data = data.table::copy(dtg),
+                min_growth = MAX_SHRINK_FIXED,
+                max_growth = MAX_GROWTH_FIXED,
+                anchor_start = ANCHOR_START_CENSUS,
+                n_samples = PROB_N_SAMPLES,
+                temperature = 1,
+                posterior_top_k = DP_POSTERIOR_TOP_K,
+                posterior_samples_path = POSTERIOR_SAMPLES_PATH,
+                posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
+                prune_min_growth = MAX_SHRINK_FIXED * PRUNE_BOUND_FACTOR,
+                prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR,
+                prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR,
+                prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+                verbose = isTRUE(DP_VERBOSE)
+            )
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := paste0("error:", substr(msg, 1, 200))]
+            # R-boundary splitting: sever tracks that cross live R-coded censuses
+            .r_regex_eh <- "\\b(R|RP|RF|RT|QR|OR)\\b"
+            if ("ListOfTSM" %in% names(out)) {
+                .pre_cc_eh <- sort(unique(out$CensusID[out$CensusID <= ANCHOR_START_CENSUS]))
+                for (.cc_eh in .pre_cc_eh) {
+                    .lr_eh <- which(out$CensusID == .cc_eh & !is.na(out$DBH))
+                    if (length(.lr_eh) == 0L) next
+                    .tsm_eh <- out$ListOfTSM[.lr_eh]
+                    if (!any(!is.na(.tsm_eh) & grepl(.r_regex_eh, .tsm_eh, perl = TRUE))) next
+                    .before_eh <- .pre_cc_eh[.pre_cc_eh < .cc_eh]
+                    if (length(.before_eh) == 0L) next
+                    .ids_bef <- unique(out$ReconstructedStemID[out$CensusID %in% .before_eh & !is.na(out$ReconstructedStemID)])
+                    .ids_aft <- unique(out$ReconstructedStemID[out$CensusID >= .cc_eh & !is.na(out$ReconstructedStemID)])
+                    .cross <- intersect(.ids_bef, .ids_aft)
+                    .mx_eh <- suppressWarnings(max(out$ReconstructedStemID, na.rm = TRUE))
+                    if (!is.finite(.mx_eh)) .mx_eh <- 0L
+                    for (.old_eh in .cross) {
+                        .mx_eh <- .mx_eh + 1L
+                        out[CensusID %in% .before_eh & ReconstructedStemID == .old_eh, ReconstructedStemID := as.integer(.mx_eh)]
+                    }
+                }
+            }
+            out
+        }
     )
 }
 
