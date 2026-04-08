@@ -215,6 +215,12 @@ Runner integration
 
 - `main_cpp.R` and `main_cpp_chunk.R` are the primary entrypoints and are designed to be invoked directly with `Rscript`. External orchestrators can build CLI flags using the canonical names in `CLI_REFERENCE` (defined in each script); keys are case-insensitive and can use `-` or `_`.
 
+## Post-reconstruction assertions
+
+`run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) includes a **TrueStemID preservation assertion** that runs after every group, regardless of whether the DP or probabilistic pathway was used. The check verifies that every row carrying a non-NA `TrueStemID` has `ReconstructedStemID == TrueStemID`. Violations are logged as `WARN`-level messages via `log_msg()`, which writes to both stderr and `run_log.txt`.
+
+**Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, safety-net repair warnings) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
+
 
 ---
 

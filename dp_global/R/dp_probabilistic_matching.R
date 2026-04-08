@@ -8,7 +8,15 @@
 #   2. Augments the cost matrix with mortality/recruitment slots
 #   3. Draws n_samples stochastic assignments via Gumbel-noise greedy
 #   4. Stitches per-pair assignments backward from the anchor
-#   5. Computes marginal posterior probabilities from samples
+#   5. Repairs growth violations at the SAMPLE level before marginals:
+#      (a) Hard-rate check: severs links outside [min_rate, max_rate]
+#      (b) ME cumulative-shrinkage: severs runs of small decreases that
+#          exceed the measurement-error threshold (n_sigma * sqrt(SD(d0)^2 + SD(d1)^2))
+#      This mirrors the DP's global cost accumulation that naturally penalises
+#      consecutive shrinkage, adapted for the per-pair greedy context.
+#   6. Computes marginal posterior probabilities from repaired samples
+#   7. Safety-net post-marginal repair (ideally fires 0 breaks)
+#   8. Re-stamps TrueStemID rows to preserve ground-truth identities
 #
 # All Bio_* parameters are read directly from tree_data columns (no new
 # estimation needed — they are already computed by dp_global_bio.R).
@@ -129,11 +137,21 @@ match_stems_probabilistic <- function(tree_data,
     }
 
     # --- Anchor IDs --------------------------------------------------------
+    # Build IDs for ALL anchor observations (one per row).  Where TrueStemID
+    # is available, use it; where NA, assign new sequential IDs starting
+    # above the max known TrueStemID so they don't collide.
     anchor_pos <- n_census  # anchor is the last observed census
-    anchor_ids <- if (any(!is.na(anchor_obs$TrueStemID))) {
-        as.integer(anchor_obs$TrueStemID[!is.na(anchor_obs$TrueStemID)])
+    anchor_ids <- integer(nrow(anchor_obs))
+    has_true <- !is.na(anchor_obs$TrueStemID)
+    if (any(has_true)) {
+        anchor_ids[has_true] <- as.integer(anchor_obs$TrueStemID[has_true])
+        next_id <- max(anchor_ids[has_true]) + 1L
     } else {
-        seq_len(nrow(anchor_obs))
+        next_id <- 1L
+    }
+    if (any(!has_true)) {
+        n_missing <- sum(!has_true)
+        anchor_ids[!has_true] <- seq.int(next_id, length.out = n_missing)
     }
     # Ensure all anchor obs have IDs
     tree_data[CensusID == anchor_start & !is.na(DBH), `:=`(
@@ -220,16 +238,48 @@ match_stems_probabilistic <- function(tree_data,
     # --- Stitch assignments backward from anchor ---------------------------
     stitched <- stitch_assignments_backward(all_samples, obs_data, anchor_ids, K)
 
+    # --- Repair growth violations at the SAMPLE level (before marginals) ---
+    # This ensures probabilities only count biologically valid paths.
+    # Two layers: hard-rate bounds + ME-informed cumulative shrinkage.
+    stitched <- repair_stitched_growth_violations(
+        stitched, obs_data, intervals, eff_min_growth, eff_max_growth,
+        me_sd1_a = 0.0062, me_sd1_b = 0.0904, n_sigma_me = 3
+    )
+    .sample_breaks    <- attr(stitched, "sample_level_breaks")
+    .sample_me_breaks <- attr(stitched, "sample_level_me_breaks")
+    if (!is.null(.sample_breaks) && .sample_breaks > 0L) {
+        .msg <- paste0(prefix, "Sample-level repair: ", .sample_breaks,
+             " growth violation(s) broken across ", n_samples, " samples",
+             if (!is.null(.sample_me_breaks) && .sample_me_breaks > 0L)
+                 paste0(" (", .sample_me_breaks, " from ME cumulative-shrinkage check)")
+             else "")
+        vcat(.msg)
+        message(.msg)  # ensure it appears on stderr / captured by log redirection
+    }
+
     # --- Compute marginals and fill tree_data ------------------------------
     tree_data <- compute_marginals_from_samples(stitched, tree_data, obs_data,
                                                 obs_census, anchor_pos,
                                                 posterior_top_k)
 
-    # --- Repair growth violations arising from per-census marginal resolution
+    # --- Safety-net repair: catch residual violations from greedy conflict
+    #     resolution in compute_marginals_from_samples().  Ideally this
+    #     should fire 0 breaks now that samples are pre-cleaned.
     tree_data <- repair_marginal_growth_violations(
         tree_data, obs_data, obs_census, intervals,
         eff_min_growth, eff_max_growth, posterior_top_k, vcat, prefix
     )
+
+    # --- Re-stamp TrueStemID rows -----------------------------------------
+    # compute_marginals_from_samples() unconditionally overwrites
+    # ReconstructedStemID with the sample-voted majority.  Restore the
+    # authoritative identity for rows that carry a TrueStemID.
+    .given_rows <- which(!is.na(tree_data$TrueStemID))
+    if (length(.given_rows) > 0L) {
+        tree_data[.given_rows, ReconstructedStemID := as.integer(TrueStemID)]
+        tree_data[.given_rows, DP_PosteriorReconstructedProb := 1.0]
+        tree_data[.given_rows, ReconstructionMethod := "given"]
+    }
 
     tree_data[, ReconstructionMethod := ifelse(
         !is.na(TrueStemID) & ReconstructionMethod == "given",
@@ -521,6 +571,146 @@ greedy_assignment_gumbel <- function(log_cost_matrix, temperature = 1.0) {
     assignment
 }
 
+# ---- Repair stitched samples BEFORE marginal aggregation -----------------
+# Walk each sample's trajectories and break links that violate growth
+# constraints.  Two layers of defense (mirroring the DP pathway):
+#
+#   1. Hard-rate check: annualized growth outside [min_rate, max_rate]
+#      is severed immediately (same as before).
+#
+#   2. ME-informed cumulative-shrinkage check: even when each consecutive
+#      pair passes the hard rate, a long run of small decreases can
+#      accumulate more shrinkage than measurement error can explain.
+#      We track cumulative shrinkage along each trajectory and compare
+#      it against an n_sigma_me threshold derived from the small-error
+#      component of the BCI measurement-error model:
+#          SD(D) = me_sd1_a * D + me_sd1_b
+#      Threshold = n_sigma_me * sqrt( SD(d_start)^2 + SD(d_curr)^2 )
+#      where d_start is the DBH at the beginning of the shrinkage run
+#      and d_curr is the current DBH.
+#      This mirrors DP's global cost accumulation which naturally penalises
+#      consecutive shrinkage through likelihood, but adapted for the
+#      per-pair greedy matcher.
+#
+# When a violation is found, the EARLIER observation is severed by assigning
+# it a new unique break-ID.  Up to max_passes iterations per sample (a
+# break can shorten trajectories and expose new violations).
+#
+# Returns the modified stitched list (same structure).
+
+repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
+                                              min_rate, max_rate,
+                                              me_sd1_a    = 0.0062,
+                                              me_sd1_b    = 0.0904,
+                                              n_sigma_me  = 3,
+                                              max_passes  = 10L) {
+    n_samples <- length(stitched)
+    n_census  <- length(obs_data)
+    if (n_census < 2L) return(stitched)
+
+    # Global break-ID counter: start above the max ID in any sample to
+    # avoid collisions when marginals aggregate across samples.
+    break_base <- 0L
+    for (s in seq_len(n_samples)) {
+        for (ci in seq_len(n_census)) {
+            ids <- stitched[[s]][[ci]]
+            if (length(ids) > 0L) {
+                mx <- max(ids, na.rm = TRUE)
+                if (is.finite(mx) && mx > break_base) break_base <- mx
+            }
+        }
+    }
+
+    # ME helper: SD for the small-error component
+    me_sd <- function(d) me_sd1_a * d + me_sd1_b
+
+    total_breaks      <- 0L
+    total_me_breaks   <- 0L
+
+    for (s in seq_len(n_samples)) {
+        for (pass in seq_len(max_passes)) {
+            breaks_this_pass <- 0L
+
+            # Build reverse map: stem_id -> list of (ci, oi, dbh)
+            traj_map <- list()
+            for (ci in seq_len(n_census)) {
+                ids  <- stitched[[s]][[ci]]
+                dbhs <- obs_data[[ci]]$dbh
+                n_obs <- obs_data[[ci]]$n
+                for (oi in seq_len(n_obs)) {
+                    sid <- ids[oi]
+                    key <- as.character(sid)
+                    traj_map[[key]] <- c(traj_map[[key]], list(list(ci = ci, oi = oi, dbh = dbhs[oi])))
+                }
+            }
+
+            # Walk each trajectory
+            for (key in names(traj_map)) {
+                entries <- traj_map[[key]]
+                if (length(entries) < 2L) next
+
+                # entries are already in census order (built ci=1..n_census)
+                cumul_shrink   <- 0
+                shrink_run_start <- 1L  # index into entries where current shrinkage run began
+                d_run_start    <- entries[[1L]]$dbh  # DBH at start of shrinkage run
+
+                for (r in 2:length(entries)) {
+                    ci_prev <- entries[[r - 1L]]$ci
+                    ci_curr <- entries[[r]]$ci
+
+                    # Compute interval: sum of intervals between the two censuses
+                    # (they may not be consecutive if obs are missing in between)
+                    iv <- 0
+                    if (ci_curr > ci_prev && ci_prev < n_census) {
+                        for (ii in ci_prev:(ci_curr - 1L)) {
+                            if (ii <= length(intervals)) iv <- iv + intervals[ii]
+                        }
+                    }
+                    if (!is.finite(iv) || iv <= 0) iv <- 5.0
+
+                    d_prev <- entries[[r - 1L]]$dbh
+                    d_curr <- entries[[r]]$dbh
+                    rate   <- (d_curr - d_prev) / iv
+
+                    # --- Layer 1: hard-rate check --------------------------
+                    if (rate < min_rate || rate > max_rate) {
+                        break_base <- break_base + 1L
+                        stitched[[s]][[entries[[r - 1L]]$ci]][entries[[r - 1L]]$oi] <- break_base
+                        breaks_this_pass <- breaks_this_pass + 1L
+                        break  # re-evaluate shortened trajectory in next pass
+                    }
+
+                    # --- Layer 2: ME cumulative-shrinkage check ------------
+                    if (d_curr < d_prev) {
+                        cumul_shrink <- cumul_shrink + (d_prev - d_curr)
+                        thresh <- n_sigma_me * sqrt(me_sd(d_run_start)^2 + me_sd(d_curr)^2)
+                        if (cumul_shrink > thresh) {
+                            # Sever at the start of the shrinkage run
+                            break_base <- break_base + 1L
+                            stitched[[s]][[entries[[shrink_run_start]]$ci]][entries[[shrink_run_start]]$oi] <- break_base
+                            breaks_this_pass <- breaks_this_pass + 1L
+                            total_me_breaks  <- total_me_breaks + 1L
+                            break  # re-evaluate shortened trajectory
+                        }
+                    } else {
+                        # Growth step: reset cumulative shrinkage tracker
+                        cumul_shrink     <- 0
+                        shrink_run_start <- r
+                        d_run_start      <- d_curr
+                    }
+                }
+            }
+
+            total_breaks <- total_breaks + breaks_this_pass
+            if (breaks_this_pass == 0L) break  # this sample converged
+        }
+    }
+
+    attr(stitched, "sample_level_breaks")    <- total_breaks
+    attr(stitched, "sample_level_me_breaks") <- total_me_breaks
+    stitched
+}
+
 # ---- Stitch assignments backward from anchor ----------------------------
 
 stitch_assignments_backward <- function(all_samples, obs_data, anchor_ids, K) {
@@ -774,7 +964,11 @@ repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
     }
 
     if (total_breaks > 0L) {
-        vcat(prefix, "Repaired ", total_breaks, " growth violation(s) by breaking tracks")
+        .warn_msg <- paste0(prefix, "WARNING: Post-marginal safety-net repair fired ",
+             total_breaks, " break(s) — probabilities for these rows are stale ",
+             "(greedy conflict resolution created new violations)")
+        vcat(.warn_msg)
+        message(.warn_msg)  # ensure it appears on stderr / captured by log redirection
     }
     tree_data
 }

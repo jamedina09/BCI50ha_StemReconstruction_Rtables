@@ -1022,7 +1022,7 @@ The DP solver automatically falls back to the probabilistic greedy matcher when:
 
 **Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints. After the probabilistic matcher returns, `do_fallback()` applies **R-boundary splitting**: for each census with live R-coded stems, identity tracks crossing the boundary are severed by assigning new IDs to the pre-boundary rows. This mirrors the DP solver's resprout segment split and prevents the probabilistic matcher from chaining identities across resprout events.
 
-**Error fallback:** `run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) wraps the DP call in a `tryCatch` block. If the solver throws a runtime error (e.g., memory exhaustion), the error handler falls back to the probabilistic matcher with R-boundary splitting rather than returning `NA` or crashing the run. The error message is logged via `vcat()` for diagnostics.
+**Error fallback:** `run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) wraps the DP call in a `tryCatch` block. If the solver throws a runtime error (e.g., memory exhaustion), the error handler falls back to the probabilistic matcher with R-boundary splitting rather than returning `NA` or crashing the run. The error message is logged via `log_msg()` for diagnostics. After both the DP and probabilistic pathways return, a **TrueStemID preservation assertion** checks that every row with a known `TrueStemID` has `ReconstructedStemID == TrueStemID`. Violations are logged as `WARN`-level messages to `run_log.txt`.
 
 ### Cross-Product Edge Guard
 
@@ -1097,13 +1097,22 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 
 5. **Backward stitching**: Starting from the anchor census (where identities are known), stitches per-pair assignments backward to build full per-sample track assignments across all censuses.
 
-6. **Marginal posterior computation**: Two-pass approach:
+6. **Sample-level growth violation repair** (`repair_stitched_growth_violations()`): Before computing marginals, each sample's trajectories are walked and links violating growth constraints are severed. This ensures that `compute_marginals_from_samples()` only counts biologically valid paths, so posterior probabilities reflect post-constraint uncertainty. Two layers of defense:
+
+   - **Hard-rate check:** Annualised growth outside `[min_rate, max_rate]` is severed immediately.
+   - **ME-informed cumulative-shrinkage check:** Tracks cumulative shrinkage along each trajectory. Even when each consecutive pair passes the hard rate, a long run of small decreases can accumulate more shrinkage than measurement error can explain. The threshold is derived from the small-error component of the BCI measurement-error model: $\text{SD}(D) = 0.0062 \times D + 0.0904$ cm. When cumulative shrinkage exceeds $n_\sigma \times \sqrt{\text{SD}(d_\text{start})^2 + \text{SD}(d_\text{curr})^2}$ (default $n_\sigma = 3$), the link at the start of the shrinkage run is severed.
+
+   **Relationship to DP:** The exact DP solver does not need explicit trajectory repair because its global cost minimisation naturally penalises consecutive shrinkage — each per-step growth likelihood accumulates across the entire trajectory, so a run-of-decreases pays a compounding cost even when each individual step is within hard bounds. The probabilistic matcher, being a per-pair greedy approach, lacks this global cost accumulation. The ME cumulative-shrinkage check provides an analogous trajectory-level constraint adapted for the greedy matching context.
+
+7. **Marginal posterior computation**: Two-pass approach:
    - **Pass 1**: Computes the full marginal posterior distribution for every observation by counting track assignments across samples.
    - **Pass 2**: Per-census greedy conflict resolution — within each census, observations are sorted by confidence (descending), each observation gets its MAP track ID unless it conflicts with an already-assigned ID, in which case it falls back to the next-best posterior alternative.
 
-7. **Growth violation repair**: After marginal resolution, `repair_marginal_growth_violations()` walks each reconstructed stem's trajectory and breaks tracks (assigns new unique IDs) at any point where the annualised growth rate violates hard bounds. The repair is iterative (up to 10 passes) because breaking a track at census $t$ can create a new non-consecutive adjacency (e.g., census $t-1$ to $t+1$) that requires re-evaluation.
+8. **Safety-net post-marginal repair**: `repair_marginal_growth_violations()` walks each reconstructed stem's trajectory and breaks tracks (assigns new unique IDs) at any point where the annualised growth rate violates hard bounds. This is a safety net — ideally it fires 0 breaks because step 6 already cleaned the samples. If it does fire, a warning is logged because the affected rows' posterior probabilities are stale (they were computed from pre-repair assignments).
 
-8. **Posterior export**: Writes per-tag posterior summaries (path signatures and probabilities) in the same format as the DP posterior sampler.
+9. **TrueStemID re-stamping**: After all repairs, rows carrying a known `TrueStemID` have their `ReconstructedStemID` restored to match `TrueStemID`, `DP_PosteriorReconstructedProb` set to 1.0, and `ReconstructionMethod` set to `"given"`. This ensures that ground-truth identities are never overwritten by the stochastic matcher.
+
+10. **Posterior export**: Writes per-tag posterior summaries (path signatures and probabilities) in the same format as the DP posterior sampler.
 
 **Parameters:**
 
@@ -1113,8 +1122,23 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 | `temperature` | `1.0` | Temperature for Gumbel sampling (shared with DP) |
 | `posterior_top_k` | `2` | Number of top posterior alternatives to report |
 | `prob_lookahead_weight` | `0.5` | Weight for sequential backward conditioning (0 = disabled) |
+| `me_sd1_a` | `0.0062` | ME model small-error slope: SD(D) = me_sd1_a × D + me_sd1_b |
+| `me_sd1_b` | `0.0904` | ME model small-error intercept (cm) |
+| `n_sigma_me` | `3` | Number of ME standard deviations for cumulative shrinkage threshold |
 
-**Output columns:** The probabilistic matcher produces the same output schema as the DP solver (including `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`, `DP_PosteriorEntropy`, etc.) with `ReconstructionMethod = "probabilistic"`.
+**Output columns:** The probabilistic matcher produces the same output schema as the DP solver (including `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`, `DP_PosteriorEntropy`, etc.) with `ReconstructionMethod = "probabilistic"`. Rows with known `TrueStemID` are marked `ReconstructionMethod = "given"` with `DP_PosteriorReconstructedProb = 1.0`.
+
+### DP vs Probabilistic: How Shrinkage is Handled
+
+Both pathways enforce the same hard growth bounds (`MAX_SHRINK_FIXED`, `MAX_GROWTH_FIXED`), but they differ in how they handle consecutive shrinkage within those bounds:
+
+| Aspect | DP (global) | Probabilistic (greedy) |
+|--------|-------------|----------------------|
+| **Scope** | Minimises total cost over the entire trajectory | Greedy per census-pair assignment |
+| **Shrinkage defence** | Global cost accumulation: each step's growth likelihood compounds across the trajectory, naturally penalising runs of decreases | Explicit trajectory repair: ME cumulative-shrinkage check severs runs exceeding the measurement-error threshold |
+| **Hard bounds** | Enforced in state enumeration (infeasible transitions pruned) | Enforced in hard-rate check during sample-level repair |
+| **Soft penalty** | Optional `k_shrink` quadratic penalty (currently 0) | Not applicable — uses ME threshold instead |
+| **Measurement error** | 4-component mixture model when `USE_MEASUREMENT_ERROR=TRUE` | ME coefficients (sd1_a, sd1_b) used as a ruler for the cumulative threshold regardless of `USE_MEASUREMENT_ERROR` |
 
 ---
 
