@@ -711,7 +711,9 @@ auto_dp_max_tracks <- function(xrun) {
 # maybe_add_posterior_bins() — applies posterior binning when DP_MODE includes bins
 
 run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
-    tryCatch(
+    tag_label <- tryCatch(as.character(unique(dtg$Tag)[1]), error = function(e) "<unknown>")
+
+    out <- tryCatch(
         match_stems_dp_global_backward_marginals_batch(
             tree_data = data.table::copy(dtg),
             chunk_id = chunk_id,
@@ -798,6 +800,24 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             out
         }
     )
+
+    # --- TrueStemID preservation assertion --------------------------------
+    # After both DP and probabilistic pathways, verify that every row with
+    # a known TrueStemID has ReconstructedStemID == TrueStemID.
+    if ("TrueStemID" %in% names(out) && "ReconstructedStemID" %in% names(out)) {
+        .given <- out[!is.na(TrueStemID)]
+        if (nrow(.given) > 0L) {
+            .bad <- .given[as.integer(TrueStemID) != as.integer(ReconstructedStemID)]
+            if (nrow(.bad) > 0L) {
+                log_msg(sprintf(
+                    "WARNING Tag=%s: %d row(s) with TrueStemID != ReconstructedStemID after reconstruction (censuses: %s)",
+                    tag_label, nrow(.bad),
+                    paste(unique(.bad$CensusID), collapse = ",")), "WARN")
+            }
+        }
+    }
+
+    out
 }
 
 maybe_add_posterior_bins <- function(out) {
