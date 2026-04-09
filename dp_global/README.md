@@ -316,8 +316,9 @@ All parameters must be present in the dataset before running DP. These are typic
 | `DP_MaxStatesCensusID` | Census with largest state space |
 
 Notes on post-anchor output semantics:
-- When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was actually used by the DP will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
+- When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that matches an anchor-census stem ID (used as a DP constraint) will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
 - Remaining post-anchor rows without a DP assignment are labeled `ReconstructionMethod = "none_after_anchor"` and keep `ReconstructedStemID = NA`.
+- Pre-anchor rows (censuses before the anchor) with non-NA `TrueStemID` are processed by the solver and can receive different identity assignments — they are not automatically treated as `"given"`.
 - If no anchored census with `TrueStemID` exists, and `allow_provisional_anchor = TRUE` (default), the DP can assign provisional anchor IDs at the last observed DBH census; those anchor rows are labeled `"provisional_dp"` and treated as anchors for the reconstruction.
 
 ### Posterior Uncertainty Columns (Optional)
@@ -1022,7 +1023,7 @@ The DP solver automatically falls back to the probabilistic greedy matcher when:
 
 **Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints. After the probabilistic matcher returns, `do_fallback()` applies **R-boundary splitting**: for each census with live R-coded stems, identity tracks crossing the boundary are severed by assigning new IDs to the pre-boundary rows. This mirrors the DP solver's resprout segment split and prevents the probabilistic matcher from chaining identities across resprout events.
 
-**Error fallback:** `run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) wraps the DP call in a `tryCatch` block. If the solver throws a runtime error (e.g., memory exhaustion), the error handler falls back to the probabilistic matcher with R-boundary splitting rather than returning `NA` or crashing the run. The error message is logged via `log_msg()` for diagnostics. After both the DP and probabilistic pathways return, a **TrueStemID preservation assertion** checks that every row with a known `TrueStemID` has `ReconstructedStemID == TrueStemID`. Violations are logged as `WARN`-level messages to `run_log.txt`.
+**Error fallback:** `run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) wraps the DP call in a `tryCatch` block. If the solver throws a runtime error (e.g., memory exhaustion), the error handler falls back to the probabilistic matcher with R-boundary splitting rather than returning `NA` or crashing the run. The error message is logged via `log_msg()` for diagnostics.
 
 ### Cross-Product Edge Guard
 
@@ -1110,7 +1111,7 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 
 8. **Safety-net post-marginal repair**: `repair_marginal_growth_violations()` walks each reconstructed stem's trajectory and breaks tracks (assigns new unique IDs) at any point where the annualised growth rate violates hard bounds. This is a safety net — ideally it fires 0 breaks because step 6 already cleaned the samples. If it does fire, a warning is logged because the affected rows' posterior probabilities are stale (they were computed from pre-repair assignments).
 
-9. **TrueStemID re-stamping**: After all repairs, rows carrying a known `TrueStemID` have their `ReconstructedStemID` restored to match `TrueStemID`, `DP_PosteriorReconstructedProb` set to 1.0, and `ReconstructionMethod` set to `"given"`. This ensures that ground-truth identities are never overwritten by the stochastic matcher.
+9. **TrueStemID re-stamping (anchor census only)**: After all repairs, rows at the anchor census carrying a known `TrueStemID` have their `ReconstructedStemID` restored to match `TrueStemID`, `DP_PosteriorReconstructedProb` set to 1.0, and `ReconstructionMethod` set to `"given"`. Pre-anchor rows with `TrueStemID` retain the identity assigned by the stochastic matcher.
 
 10. **Posterior export**: Writes per-tag posterior summaries (path signatures and probabilities) in the same format as the DP posterior sampler.
 
@@ -1126,7 +1127,7 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 | `me_sd1_b` | `0.0904` | ME model small-error intercept (cm) |
 | `n_sigma_me` | `3` | Number of ME standard deviations for cumulative shrinkage threshold |
 
-**Output columns:** The probabilistic matcher produces the same output schema as the DP solver (including `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`, `DP_PosteriorEntropy`, etc.) with `ReconstructionMethod = "probabilistic"`. Rows with known `TrueStemID` are marked `ReconstructionMethod = "given"` with `DP_PosteriorReconstructedProb = 1.0`.
+**Output columns:** The probabilistic matcher produces the same output schema as the DP solver (including `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`, `DP_PosteriorEntropy`, etc.) with `ReconstructionMethod = "probabilistic"`. Anchor-census rows with known `TrueStemID` are marked `ReconstructionMethod = "given"` with `DP_PosteriorReconstructedProb = 1.0`.
 
 ### DP vs Probabilistic: How Shrinkage is Handled
 

@@ -16,7 +16,7 @@
 #      consecutive shrinkage, adapted for the per-pair greedy context.
 #   6. Computes marginal posterior probabilities from repaired samples
 #   7. Safety-net post-marginal repair (ideally fires 0 breaks)
-#   8. Re-stamps TrueStemID rows to preserve ground-truth identities
+#   8. Re-stamps anchor-census TrueStemID rows to preserve ground-truth identities
 #
 # All Bio_* parameters are read directly from tree_data columns (no new
 # estimation needed — they are already computed by dp_global_bio.R).
