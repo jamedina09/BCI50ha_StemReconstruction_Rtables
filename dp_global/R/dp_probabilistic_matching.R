@@ -270,11 +270,15 @@ match_stems_probabilistic <- function(tree_data,
         eff_min_growth, eff_max_growth, posterior_top_k, vcat, prefix
     )
 
-    # --- Re-stamp TrueStemID rows -----------------------------------------
+    # --- Re-stamp TrueStemID rows at the ANCHOR census only ---------------
     # compute_marginals_from_samples() unconditionally overwrites
     # ReconstructedStemID with the sample-voted majority.  Restore the
-    # authoritative identity for rows that carry a TrueStemID.
-    .given_rows <- which(!is.na(tree_data$TrueStemID))
+    # authoritative identity for anchor-census rows that carry TrueStemID,
+    # because TrueStemID IS used as a constraint at the anchor.
+    # Pre-anchor TrueStemID is NOT used to constrain identification;
+    # labelling it "given" would be misleading — those rows keep the
+    # solver's actual output and the "probabilistic" method label.
+    .given_rows <- which(!is.na(tree_data$TrueStemID) & tree_data$CensusID == anchor_start)
     if (length(.given_rows) > 0L) {
         tree_data[.given_rows, ReconstructedStemID := as.integer(TrueStemID)]
         tree_data[.given_rows, DP_PosteriorReconstructedProb := 1.0]
@@ -282,7 +286,7 @@ match_stems_probabilistic <- function(tree_data,
     }
 
     tree_data[, ReconstructionMethod := ifelse(
-        !is.na(TrueStemID) & ReconstructionMethod == "given",
+        !is.na(TrueStemID) & CensusID == anchor_start & ReconstructionMethod == "given",
         "given", "probabilistic"
     )]
 

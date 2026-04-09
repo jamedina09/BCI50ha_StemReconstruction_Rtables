@@ -718,8 +718,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
     }
 
-    # Preserve any provided TrueStemID as hard values in output.
-    tree_data[!is.na(TrueStemID), `:=`(
+    # Preserve any provided TrueStemID as hard values in output —
+    # but ONLY at the anchor census, where TrueStemID is actually used
+    # as a constraint by the DP solver.  Pre-anchor TrueStemID is NOT
+    # used to constrain identification; labelling it "given" would be
+    # misleading.  Pre-anchor rows get their method from Viterbi ("dp").
+    tree_data[!is.na(TrueStemID) & CensusID == anchor_start, `:=`(
         ReconstructedStemID = as.integer(TrueStemID),
         ReconstructionMethod = "given"
     )]
@@ -1971,7 +1975,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             return(do_fallback("assign_mismatch"))
         }
         tree_data[obs_idx, ReconstructedStemID := track_ids[sv]]
-        obs_to_mark <- obs_idx[is.na(tree_data$TrueStemID[obs_idx])]
+        # Mark ReconstructionMethod:
+        #   - Anchor census rows with TrueStemID keep "given" (set by pre-stamp)
+        #   - All other rows get "dp" (the solver determined their identity)
+        obs_to_mark <- obs_idx[is.na(tree_data$TrueStemID[obs_idx]) |
+                               tree_data$CensusID[obs_idx] != anchor_start]
         if (length(obs_to_mark) > 0L) {
             tree_data[obs_to_mark, ReconstructionMethod := "dp"]
         }
