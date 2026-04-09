@@ -407,7 +407,7 @@ for (name in names(overrides)) {
     message("[dp_global main_cpp_chunk.R] Overriding ", match_var, " = ", as.character(new_val))
 }
 
-# Backwards-compatibility aliases removed. Use canonical ALL-CAPS variables (e.g., WHICH_TAG, INPUT_FILE) everywhere; update scripts that relied on lowercase globals.
+# Use canonical ALL-CAPS variables (e.g., WHICH_TAG, INPUT_FILE) everywhere.
 
 # Post-override validation: Check a few key options for allowed values and types
 if (!DP_MODE %in% c("none", "marginals", "marginals+bins", "map")) {
@@ -878,7 +878,7 @@ run_main_chunked <- function() {
             shrink_hard_prob = 1e-4,
             # the lowest value of the empirical quantile to get lowest shrink from data
             shrink_data_quantile = 0.001,
-            # if masurement error, then, lowest shrink is the min between the two for hard shrink guardrail
+            # if measurement error, then lowest shrink is the min between the two for hard shrink guardrail
             #################
             # Extreme-growth guardrails (upper tail)
             # - growth_hard_prob is the *upper-tail* probability (e.g., 1e-4 means 99.99th percentile)
@@ -888,9 +888,9 @@ run_main_chunked <- function() {
             growth_hard_prob = 1e-4,
             # Upper quantile for hard growth guardrail from empirical data
             growth_data_quantile = 0.999,
-            # if masurement error, then, highest growth is the max between the two for hard growth guardrail
+            # if measurement error, then highest growth is the max between the two for hard growth guardrail
             #################
-            # to etimate the growth soft penalty k_growth - its used if it becomes the minimum between max grwoth from measurement error or fixed or data
+            # to estimate the growth soft penalty k_growth - used if it becomes the minimum between max growth from measurement error or fixed or data
             growth_soft_quantile = 0.99,
             # Recruitment max DBH (upper bound for recruits dbh at first census)
             recruit_max_quantile = 0.999,

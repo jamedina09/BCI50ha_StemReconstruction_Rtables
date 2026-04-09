@@ -97,7 +97,7 @@ DP / reconstruction option
   are treated as 1.3 (zero contribution). Set to `0` to disable
   HOM widening while keeping the wide base bounds.
 
-**Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that was used by the DP are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows without DP assignments receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and observed `TrueStemID` values are treated as `given` while other rows are labeled `none_after_anchor`.
+**Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that matches an anchor-census stem ID (used as a DP constraint) are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows without DP assignments receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and anchor-census `TrueStemID` values are treated as `"given"` while other rows are labeled `"none_after_anchor"`. **Note:** Pre-anchor rows (censuses before the anchor) with non-NA `TrueStemID` are processed by the solver and can receive different identity assignments based on biological likelihood — they are not automatically treated as `"given"`.
 
 **Provisional anchor behavior:** When a requested anchor census lacks `TrueStemID` but contains DBH observations and `ALLOW_PROVISIONAL_DP_ANCHOR=TRUE`, the DP will assign provisional anchor IDs at the last-observed DBH census and mark those anchor rows with `ReconstructionMethod = "provisional_dp"`.
 
@@ -215,9 +215,9 @@ Runner integration
 
 - `main_cpp.R` and `main_cpp_chunk.R` are the primary entrypoints and are designed to be invoked directly with `Rscript`. External orchestrators can build CLI flags using the canonical names in `CLI_REFERENCE` (defined in each script); keys are case-insensitive and can use `-` or `_`.
 
-## Post-reconstruction assertions
+## Post-reconstruction notes
 
-`run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) includes a **TrueStemID preservation assertion** that runs after every group, regardless of whether the DP or probabilistic pathway was used. The check verifies that every row carrying a non-NA `TrueStemID` has `ReconstructedStemID == TrueStemID`. Violations are logged as `WARN`-level messages via `log_msg()`, which writes to both stderr and `run_log.txt`.
+At the anchor census (`CensusID == ANCHOR_START_CENSUS`), `TrueStemID` values serve as hard constraints and `ReconstructedStemID` will equal `TrueStemID` for those rows (`ReconstructionMethod = "given"`). Pre-anchor rows with `TrueStemID` are processed by the solver (DP or probabilistic) and can receive different identity assignments based on biological likelihood.
 
 **Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, safety-net repair warnings) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
 

@@ -45,7 +45,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            posterior_top_k = 2L,
                                                            eps_tiebreak = 1e-6,
                                                            # --- measurement error (optional) ---
-                                                           # --- NEW: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists ---
+                                                           # Allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
                                                            allow_provisional_anchor = TRUE,
                                                            use_measurement_error = FALSE,
                                                            meas_sd1_a = 0.0062,

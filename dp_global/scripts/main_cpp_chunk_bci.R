@@ -426,7 +426,7 @@ for (name in names(overrides)) {
     message("[dp_global main_cpp_chunk_bci.R] Overriding ", match_var, " = ", as.character(new_val))
 }
 
-# Backwards-compatibility aliases removed. Use canonical ALL-CAPS variables (e.g., WHICH_TAG, INPUT_FILE) everywhere; update scripts that relied on lowercase globals.
+# Use canonical ALL-CAPS variables (e.g., WHICH_TAG, INPUT_FILE) everywhere.
 
 # Post-override validation: Check a few key options for allowed values and types
 if (!DP_MODE %in% c("none", "marginals", "marginals+bins", "map")) {
@@ -828,22 +828,6 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             out
         }
     )
-
-    # --- TrueStemID preservation assertion --------------------------------
-    # After both DP and probabilistic pathways, verify that every row with
-    # a known TrueStemID has ReconstructedStemID == TrueStemID.
-    if ("TrueStemID" %in% names(out) && "ReconstructedStemID" %in% names(out)) {
-        .given <- out[!is.na(TrueStemID)]
-        if (nrow(.given) > 0L) {
-            .bad <- .given[as.integer(TrueStemID) != as.integer(ReconstructedStemID)]
-            if (nrow(.bad) > 0L) {
-                log_msg(sprintf(
-                    "WARNING Tag=%s: %d row(s) with TrueStemID != ReconstructedStemID after reconstruction (censuses: %s)",
-                    tag_label, nrow(.bad),
-                    paste(unique(.bad$CensusID), collapse = ",")), "WARN")
-            }
-        }
-    }
 
     out
 }
@@ -1285,7 +1269,7 @@ run_main_chunked <- function() {
                 shrink_hard_prob = 1e-4,
                 # the lowest value of the empirical quantile to get lowest shrink from data
                 shrink_data_quantile = 0.001,
-                # if masurement error, then, lowest shrink is the min between the two for hard shrink guardrail
+                # if measurement error, then lowest shrink is the min between the two for hard shrink guardrail
                 #################
                 # Extreme-growth guardrails (upper tail)
                 # - growth_hard_prob is the *upper-tail* probability (e.g., 1e-4 means 99.99th percentile)
@@ -1295,9 +1279,9 @@ run_main_chunked <- function() {
                 growth_hard_prob = 1e-4,
                 # Upper quantile for hard growth guardrail from empirical data
                 growth_data_quantile = 0.999,
-                # if masurement error, then, highest growth is the max between the two for hard growth guardrail
+                # if measurement error, then highest growth is the max between the two for hard growth guardrail
                 #################
-                # to etimate the growth soft penalty k_growth - its used if it becomes the minimum between max grwoth from measurement error or fixed or data
+                # to estimate the growth soft penalty k_growth - used if it becomes the minimum between max growth from measurement error or fixed or data
                 growth_soft_quantile = 0.99,
                 # Recruitment max DBH (upper bound for recruits dbh at first census)
                 recruit_max_quantile = 0.999,
@@ -1555,38 +1539,6 @@ run_main_chunked <- function() {
 
     # NOTE: Return the same mnemonic names to species
     xrun[, species := Mnemonic]
-
-    # bci_multistem_xrun_debug <- xrun
-
-    # # rename needed columns
-    # bci_multistem_xrun_debug <- bci_multistem_xrun_debug[, .(
-    #     Species = Mnemonic, Tag, OriginalStemID = StemID, TrueStemID, CensusID, ExactDate,
-    #     DBH, ListOfTSM, HOM,
-    #     Bio_Mu_Growth, Bio_Gamma_Growth, Bio_Sigma0_Growth, Bio_Sigma1_Growth,
-    #     Bio_H0_Mortality, Bio_Beta_Mortality,
-    #     Bio_Recruit_Meanlog, Bio_Recruit_Sdlog, Bio_Recruit_MaxDBH_unit, Bio_Recruitment_lambda,
-    #     Bio_Max_Shrink, Bio_K_Shrink,
-    #     Bio_Max_Growth, Bio_Max_Growth_Soft, Bio_K_Growth
-    # )]
-
-    # vars_to_export <- c(
-    #     "Species", "Tag", "OriginalStemID", "TrueStemID", "CensusID", "ExactDate",
-    #     "DBH", "ListOfTSM", "HOM",
-    #     grep("^Bio_", names(xrun), value = TRUE)
-    # )
-
-    # bci_multistem_xrun_debug <- bci_multistem_xrun_debug[, ..vars_to_export]
-    # saveRDS(bci_multistem_xrun_debug, "./2_STEM_IDENTIFICATION/bci_multistem_xrun_debug.rds")
-
-    #     # # select Mnemonic and all bio parameter columns
-    #     # cat("Exporting bio parameters by species to CSV for DP use...\n")
-    #     # cols_to_select <- c("growth_form", "Mnemonic", grep("^Bio_", names(xrun), value = TRUE))
-    #     # write.csv(unique(xrun[, ..cols_to_select]), file.path(out_dir, "bio_parameters_by_species.csv"), row.names = FALSE)
-
-    # # !
-    # check_tags <- as.data.table(read.csv("./2_STEM_IDENTIFICATION/all_tags_to_re_process.csv", stringsAsFactors = FALSE))
-    # xrun <- xrun[Tag %in% unique(check_tags$Tag)]
-    # # !
 
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)
