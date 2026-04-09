@@ -1293,8 +1293,7 @@ if (sys.nframe() == 0L) {
 # --WRITE_DP_FEATHER=FALSE \
 # --WRITE_DP_PDF=TRUE \
 # --POSTERIOR_SAMPLES=250 \
-# --USE_MEASUREMENT_ERROR=FALSE \
-# --PRUNE_BOUND_FACTOR=1
+# --USE_MEASUREMENT_ERROR=FALSE
 
 ## DP
 # Rscript dp_global/scripts/main_cpp_chunk.R \
