@@ -66,7 +66,7 @@ k_sweep_join_vs_split <- function(
     }
 
     if (!exists("transition_cost_tracks_bio_components", mode = "function")) {
-        stop("transition_cost_tracks_bio_components() not found. Did you source dp_global_biol.R?", call. = FALSE)
+        stop("transition_cost_tracks_bio_components() not found. Did you source dp_global_bio.R?", call. = FALSE)
     }
     if (!exists("bio_pars_to_transition_args", mode = "function")) {
         stop("bio_pars_to_transition_args() not found. Did you source R/sensitivity_transition_cost_bio.R?", call. = FALSE)

@@ -173,7 +173,7 @@ plot_tag_to_pdf <- function(out, pdf_file, include_reference = FALSE, tag = NULL
 
     ## ---- Optional filter: one tag (or subset of tags) ----
     if (!is.null(tag)) {
-        tag <- sort(unique(as.integer(tag)))
+        tag <- sort(unique(as.character(tag)))
         out <- out[Tag %in% tag]
         if (nrow(out) == 0L) {
             stop("No rows found for requested tag(s): ", paste(tag, collapse = ", "), call. = FALSE)

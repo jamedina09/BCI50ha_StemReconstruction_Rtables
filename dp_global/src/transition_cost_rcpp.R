@@ -103,3 +103,68 @@ transition_cost_tracks_bio_batch_rcpp <- function(
     )
     return(result)
 }
+
+#' @title Paired Transition Cost Computation (Rcpp Accelerated)
+#' @description Compute transition costs for n_pairs paired source/destination
+#' track-state vectors in a single C++ call. Both source and destination vary
+#' per pair (unlike the batch version which fixes one source).
+#' @param tdbh0_mat Numeric matrix [n_pairs x K] — source DBH per pair/track.
+#' @param tdbh1_mat Numeric matrix [n_pairs x K] — destination DBH per pair/track.
+#' @inheritParams transition_cost_tracks_bio_batch_rcpp
+#' @return Numeric vector of length n_pairs — total NLL cost per pair.
+#' @export
+transition_cost_paired_rcpp <- function(
+  tdbh0_mat,
+  tdbh1_mat,
+  interval_years,
+  mu_const,
+  mu_gamma,
+  sigma0,
+  sigma1,
+  max_shrink,
+  k_shrink,
+  max_growth,
+  max_growth_soft,
+  k_growth,
+  use_measurement_error,
+  meas_sd1_a,
+  meas_sd1_b,
+  meas_sd2,
+  meas_p_big,
+  h0,
+  beta,
+  recruit_meanlog,
+  recruit_sdlog,
+  recruit_max_dbh,
+  recruit_lambda,
+  eps_tiebreak,
+  hard_penalty = 1e6
+) {
+    transition_cost_paired_rcpp_cpp(
+        tdbh0_mat = tdbh0_mat,
+        tdbh1_mat = tdbh1_mat,
+        interval_years = interval_years,
+        mu_const = mu_const,
+        mu_gamma = mu_gamma,
+        sigma0 = sigma0,
+        sigma1 = sigma1,
+        max_shrink = max_shrink,
+        k_shrink = k_shrink,
+        max_growth = max_growth,
+        max_growth_soft = max_growth_soft,
+        k_growth = k_growth,
+        use_measurement_error = use_measurement_error,
+        meas_sd1_a = meas_sd1_a,
+        meas_sd1_b = meas_sd1_b,
+        meas_sd2 = meas_sd2,
+        meas_p_big = meas_p_big,
+        h0 = h0,
+        beta = beta,
+        recruit_meanlog = recruit_meanlog,
+        recruit_sdlog = recruit_sdlog,
+        recruit_max_dbh = recruit_max_dbh,
+        recruit_lambda = recruit_lambda,
+        eps_tiebreak = eps_tiebreak,
+        hard_penalty = hard_penalty
+    )
+}

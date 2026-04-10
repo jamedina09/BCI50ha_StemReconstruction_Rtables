@@ -32,7 +32,7 @@ build_out_dir_name <- function() {
     tag_part <- if (isTRUE(RUN_ALL_TAGS)) {
         "allT"
     } else {
-        paste0("T", as.integer(WHICH_TAG))
+        paste0("T", as.character(WHICH_TAG))
     }
 
     # DP mode label

@@ -61,7 +61,6 @@ if [ -f "${SCRIPT_DIR}/verify_bundle.R" ]; then cp -v "${SCRIPT_DIR}/verify_bund
 
 # Copy R wrapper and C++ source from the primary dp_global/src location (keep bundle lean)
 if [ -f "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" ]; then
-  # copy wrapper only to the bundle subfolder used by README (avoid duplicating at archive root)
   mkdir -p "${STAGE_DIR}/dp_global/R/dpglobal_bundle"
   cp -v "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" "${STAGE_DIR}/dp_global/R/dpglobal_bundle/transition_cost_rcpp.R"
 else
@@ -78,7 +77,7 @@ fi
 # Exclude large runtime outputs and generated bundle dist files to keep tarball reasonable.
 if command -v rsync >/dev/null 2>&1; then
   echo "[package_bundle] Using rsync to copy dp_global (excluding output and bundle dist)"
-  rsync -av --exclude 'output' --exclude 'R/dpglobal_bundle/dist' --exclude '.git' "${PROJECT_ROOT}/dp_global" "${STAGE_DIR}/"
+  rsync -av --exclude 'output' --exclude 'dpglobal_bundle/dist' --exclude '.git' "${PROJECT_ROOT}/dp_global" "${STAGE_DIR}/"
 else
   echo "[package_bundle] rsync not found; falling back to cp -r (then removing known large dirs)"
   cp -r "${PROJECT_ROOT}/dp_global" "${STAGE_DIR}/"
@@ -92,12 +91,7 @@ if [ -d "${PROJECT_ROOT}/data_simulation/data" ]; then
   cp -v -r "${PROJECT_ROOT}/data_simulation/data" "${STAGE_DIR}/data_simulation/" || true
 fi
 
-# Copy helper scripts and top-level runner utilities
-mkdir -p "${STAGE_DIR}/bin"
-cp -v "${PROJECT_ROOT}/bin/run_dp_future_single.R" "${STAGE_DIR}/bin/" || true
-cp -v "${PROJECT_ROOT}/bin/run_dp_future.R" "${STAGE_DIR}/bin/" || true
-# Skipping copying Makefile by default (not needed now)
-# cp -v "${PROJECT_ROOT}/Makefile" "${STAGE_DIR}/" || true
+# Note: bin/ runner scripts are not copied as they are not part of this project layout.
 
 # Sanity checks: ensure main driver exists in staged copy
 if [ ! -f "${STAGE_DIR}/dp_global/scripts/main_cpp.R" ]; then
@@ -118,7 +112,8 @@ Quick start (recommended):
    withr::with_dir('/path/to/extracted_bundle', source(file.path('dp_global', 'R', 'dp_global_main.R')))
 
 Notes:
-- The bundle may include a small manifest at `dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds` listing suggested packages to install.
+- The bundle includes a manifest at `dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds` listing suggested packages.
+- Compile C++ acceleration: Rcpp::sourceCpp('dp_global/R/dpglobal_bundle/src/transition_cost_rcpp.cpp')
 
 EOF
 
@@ -133,10 +128,13 @@ fi
 # Sanity checks for critical files
 declare -a expected=(
   "${STAGE_DIR}/dp_global/scripts/main_cpp.R"
-  "${STAGE_DIR}/dp_global/R/dpglobal_bundle/dpglobal_bundle.RData"
-  "${STAGE_DIR}/dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds"
-  "${STAGE_DIR}/dp_global/R/dpglobal_bundle/transition_cost_rcpp.R"
-  "${STAGE_DIR}/bin/run_dp_future_single.R"
+  "${STAGE_DIR}/dp_global/scripts/main_cpp_chunk.R"
+  "${STAGE_DIR}/dp_global/scripts/basal_area_uncertainty.R"
+  "${STAGE_DIR}/dp_global/R/dp_global_main.R"
+  "${STAGE_DIR}/dp_global/R/dp_global_dp.R"
+  "${STAGE_DIR}/dp_global/R/dp_probabilistic_matching.R"
+  "${STAGE_DIR}/dp_global/src/transition_cost_rcpp.cpp"
+  "${STAGE_DIR}/dp_global/R/dpglobal_bundle/verify_bundle.R"
 )
 missing=()
 for f in "${expected[@]}"; do
