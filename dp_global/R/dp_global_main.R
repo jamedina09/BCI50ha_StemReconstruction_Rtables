@@ -43,6 +43,7 @@ r_files <- c(
   "dp_global_bio.R",
   "dp_global_states.R",
   "dp_global_matchers.R",
+  "dp_probabilistic_matching.R",
   "dp_global_dp.R",
   "dp_global_diag.R"
 )
@@ -53,6 +54,7 @@ required_pkgs_by_file <- list(
   "dp_global_bio.R" = c("data.table", "MASS"),
   "dp_global_states.R" = character(0),
   "dp_global_matchers.R" = c("data.table", "igraph"),
+  "dp_probabilistic_matching.R" = c("data.table"),
   "dp_global_dp.R" = c("data.table"),
   "dp_global_diag.R" = c("data.table")
 )
@@ -93,6 +95,7 @@ required_symbols <- c(
   "transition_cost_tracks_bio_components",
   "match_stems_dp_global_backward_marginals_batch",
   "match_stems_optimal_backward",
+  "match_stems_probabilistic",
   "enumerate_states_injective",
   "add_dp_posterior_bins"
 )

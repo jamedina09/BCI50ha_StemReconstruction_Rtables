@@ -1,13 +1,11 @@
 # Rcpp Acceleration for DP Global Stem Tracking
 
-C++ implementation and R wrapper for Rcpp-accelerated transition-cost computations used by the DP workflow.
+C++ implementation and R wrapper for Rcpp-accelerated transition-cost and phase-feasibility computations used by the DP workflow.
 
 ## Files
 
-- `src/transition_cost_rcpp.cpp`: C++ implementation of transition cost computation
-- `R/transition_cost_rcpp.R`: R wrapper function for the C++ code
-
-> Note: Validation of the C++ implementation is performed via the test suite in `dp_global/dev/` (see below).
+- `transition_cost_rcpp.cpp`: C++ implementation of transition cost computation and phase-feasibility batch checks
+- `transition_cost_rcpp.R`: R wrapper function for the C++ code
 
 ## Usage
 
@@ -41,53 +39,43 @@ print(costs)
 ```
 
 See `R/transition_cost_rcpp.R` for detailed parameter descriptions and expected types.
-### Integration with Existing Code
-
-To use the C++ version in place of the R version, modify `dp_global_biol.R`:
-
-1. Add at the top of the file:
-   ```r
-   library(Rcpp)
-   source("./dp_global/src/transition_cost_rcpp.R")
-   Rcpp::sourceCpp("./dp_global/src/transition_cost_rcpp.cpp")
-   ```
-
-2. Replace calls to `transition_cost_tracks_bio_batch` with `transition_cost_tracks_bio_batch_rcpp`
 
 ## Performance
 
-The C++ implementation provides significant speedup over the R version, especially for large batch sizes. Typical speedup factors range from 10-50x depending on the problem size and complexity.
+The C++ implementation is the sole backend for transition-cost computation in the DP workflow. It is substantially faster than an equivalent pure-R loop implementation would be, due to direct C++ iteration, manual statistical functions, and reduced function-call overhead.
 
 ## Validation
 
-Run the dev test that exercises the transition-cost implementation to verify correctness and performance. For example:
+To validate the C++ implementation after changes, run an end-to-end check through `main_cpp_chunk.R`:
 
 ```bash
-# Validate batch transition-cost implementation and compare R vs C++ behavior
-Rscript dp_global/dev/test_transition_cost_tracks_bio_batch.R
+Rscript dp_global/scripts/main_cpp_chunk.R --INPUT_FILE=data_simulation/data/simulated_data_1.csv --WRITE_DP_RDS=TRUE
 ```
 
-The dev tests compare outputs and report discrepancies; use these to validate the C++ implementation after changes.
+Compare chunk RDS output against a saved reference to detect regressions. The `--WRITE_DP_RDS=TRUE` flag ensures `.rds` outputs are produced for programmatic comparison.
 
-**Notes:**
-- Use the `dp_global/dev/` test suite to validate the C++ implementation and to exercise end-to-end behavior through `main_cpp.R` when needed.
-- When running end-to-end checks, pass `--WRITE_DP_RDS=TRUE` to the run command to ensure `.rds` outputs are produced and inspected by R-based tests (preferred over parsing CSVs for validation).
-
-If you edit the C++ implementation or the R wrapper, re-run the dev validation tests and the profiler to ensure correctness and to check performance.
+If you edit the C++ implementation or the R wrapper, rerun this check and inspect outputs before merging.
 
 ## Troubleshooting
 
 - If `Rcpp::sourceCpp()` fails on macOS, ensure Xcode command-line tools are installed (`xcode-select --install`) and that your `R` can find clang/clang++.
-- If you encounter small numeric differences versus the R implementation, verify `eps_tiebreak` and floating-point tolerances.
+- If you encounter unexpected numeric differences between run configurations, verify `eps_tiebreak` and floating-point tolerances.
 - For reproducible CI, consider packaging the C++ code into an R package to avoid on-the-fly compilation variability.
 
 ## Implementation Details
 
-The C++ version implements the same logic as the R version but with:
+The C++ implementation provides three exported functions:
 
-- Direct C++ loops instead of R vectorized operations
+- `transition_cost_tracks_bio_batch_rcpp_cpp()`: Computes transition costs for a batch of candidate next-states given a single current state
+- `transition_cost_paired_rcpp_cpp()`: Computes transition costs for pre-paired (current, next) state matrices — used for the batched backward pass (~3× speedup over the non-paired variant)
+- `derive_phase_prev_batch_rcpp()`: Batch phase-feasibility checking with integrated conservative pruning — determines valid phase transitions for all (i, j) assignment pairs and returns only feasible pairs
+
+The implementation uses:
+
+- Direct C++ loops for per-track and per-batch iteration
 - Manual implementation of statistical functions (dnorm, dlnorm, log_sum_exp)
+- Batch phase-feasibility checking (`derive_phase_prev_batch_rcpp`) for all (i, j) assignment pairs
 - Optimized memory access patterns
-- Reduced function call overhead
+- Reduced function call overhead relative to equivalent R code
 
-All edge cases, measurement error models, biological constraints, and tie-breaking logic are preserved.
+All edge cases, measurement error models, biological constraints, and tie-breaking logic are implemented directly in C++.

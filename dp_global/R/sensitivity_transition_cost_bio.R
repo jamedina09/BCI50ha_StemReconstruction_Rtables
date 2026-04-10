@@ -10,8 +10,8 @@
 #   terms dominate.
 #
 # Usage (typical)
-#   source("STEM_IDENTIFICATION_TEST/DP_GLOBAL/R/dp_global_biol.R")
-#   source("STEM_IDENTIFICATION_TEST/DP_GLOBAL/R/sensitivity_transition_cost_bio.R")
+#   source("dp_global/R/dp_global_bio.R")
+#   source("dp_global/R/sensitivity_transition_cost_bio.R")
 #
 #   bio <- estimate_bio_pars(xraw, interval_years = 5)
 #   base <- bio_pars_to_transition_args(bio)
@@ -428,7 +428,7 @@ sweep_transition_cost <- function(
     # Returns a long-ish data.table with total and component costs vs param value.
 
     if (!exists("transition_cost_tracks_bio_components", mode = "function")) {
-        stop("transition_cost_tracks_bio_components() not found. Source 3_dp_global_biol.R first.", call. = FALSE)
+        stop("transition_cost_tracks_bio_components() not found. Source dp_global_bio.R first.", call. = FALSE)
     }
 
     if (!(param %in% names(base_args))) {
@@ -926,7 +926,7 @@ transition_thresholds <- function(track_dbh_t, track_dbh_tp1, interval_years, ba
 if (isTRUE(getOption("dp_global_biol.run_sensitivity_example", FALSE))) {
     # Ensure we have the model functions
     if (!exists("estimate_bio_pars", mode = "function")) {
-        stop("estimate_bio_pars() not found. Source dp_global_biol.R first.")
+        stop("estimate_bio_pars() not found. Source dp_global_bio.R first.")
     }
 
     input_file <- "../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv"

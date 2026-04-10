@@ -11,9 +11,9 @@
 # - Provide concrete "which parameter to tweak" suggestions.
 #
 # Usage
-#   source("STEM_IDENTIFICATION_TEST/DP_GLOBAL/R/dp_global_biol.R")
-#   source("STEM_IDENTIFICATION_TEST/DP_GLOBAL/R/sensitivity_transition_cost_bio.R")
-#   source("STEM_IDENTIFICATION_TEST/DP_GLOBAL/R/realism_calibration.R")
+#   source("dp_global/R/dp_global_bio.R")
+#   source("dp_global/R/sensitivity_transition_cost_bio.R")
+#   source("dp_global/R/realism_calibration.R")
 #
 #   bio <- estimate_bio_pars(xraw, interval_years = 5)
 #   base <- bio_pars_to_transition_args(bio)
