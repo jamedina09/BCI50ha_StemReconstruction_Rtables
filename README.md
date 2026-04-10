@@ -6,6 +6,41 @@ Biologically informed dynamic-programming (DP) solver that reconstructs stem ide
 
 When the exact DP state space is too large (combinatorial explosion from many stems per tree), the solver automatically falls back to a **probabilistic greedy matching** module that uses the same biological cost model and hard pruning bounds with Gumbel-noise stochastic sampling and **sequential backward conditioning** to produce approximate reconstructions with per-observation posterior probabilities. The probabilistic matcher applies a two-layer **sample-level growth repair** before computing marginals: (1) hard-rate bound enforcement and (2) **measurement-error-informed cumulative-shrinkage detection** that severs runs of small decreases exceeding the ME threshold — mirroring the DP's global cost accumulation that naturally penalises consecutive shrinkage, but adapted for the per-pair greedy context. At the anchor census, known `TrueStemID` identities are always preserved as hard constraints; pre-anchor observations with `TrueStemID` are solved by the DP and can receive different identity assignments based on biological likelihood. The posterior path samples from both methods are used downstream for **basal area uncertainty quantification**.
 
+## How the Two Algorithms Work (Plain-Language Summary)
+
+### The Problem
+
+In long-term forest census plots, individual trees can have multiple stems. Each stem is measured every few years, but **stem identity labels are only reliable at one late census** (the "anchor"). For all earlier censuses, we need to figure out which measurement belongs to which stem — a problem that gets harder when stems die, new ones appear, or measurement errors create confusing size sequences.
+
+### Exact DP (Dynamic Programming) Solver
+
+Think of the DP solver like solving a jigsaw puzzle backward from a finished picture. At the anchor census we know exactly which measurement belongs to which stem. Working backward one census at a time, the DP **evaluates every possible way** to connect earlier measurements to the known stem identities. Each candidate connection is scored using biology: how fast trees actually grow, how likely a stem is to die or a new one to appear, and how noisy the measurement tools are. The algorithm picks the single assignment with the **best overall score** across the entire history — not just one census at a time, but jointly optimised over all censuses at once.
+
+Because it examines every possibility, the DP always finds the mathematically optimal answer. The downside is that the number of possibilities explodes factorially with the number of stems: a tree with 3 stems per census has a manageable puzzle, but a tree with 7+ stems per census has billions of combinations — too many to enumerate.
+
+### Probabilistic Greedy Matcher (Fallback)
+
+When there are too many stems for the DP to try every combination, the probabilistic matcher takes over. Instead of exhaustive enumeration, it uses a **sampling strategy**: it generates hundreds of plausible random assignments (using Gumbel-noise perturbations of the same biological scores), stitches each sample backward from the anchor to build full identity histories, removes any links that violate growth constraints, and then **takes a vote** across all surviving samples. The identity that wins the most votes for each observation becomes the final assignment, and the vote share becomes the posterior probability.
+
+To compensate for its greedy per-pair nature (which lacks the DP's global cost accumulation), the probabilistic matcher applies two extra safeguards: a hard-rate bound check and a measurement-error-informed cumulative-shrinkage detector that severs runs of small decreases that collectively exceed what measurement noise could plausibly explain.
+
+### When Each Algorithm Runs
+
+The choice is made **per tag** (i.e., per tree) and is controlled by the `DP_MAX_STATES` parameter:
+
+| Scenario | Algorithm | Why |
+|----------|-----------|-----|
+| Tree has ≤ 6 stems per census (default settings) | **Exact DP** | State space fits within `DP_MAX_STATES` (40,000) — all combinations are enumerable |
+| Tree has 7+ stems in any census | **Probabilistic matcher** | Factorial explosion exceeds the state budget — DP would run out of memory or time |
+| Certain species or growth forms (configured via `PROB_SPECIES` / `FALLBACK_GROWTH_FORMS`) | **Probabilistic matcher** | User routes specific groups to the fallback regardless of stem count |
+| DP solver hits a runtime error (e.g., memory) | **Probabilistic matcher** | Automatic error-recovery fallback |
+
+### Can Both Run on the Same Tag?
+
+For a simple tag with no resprout events, **only one** algorithm produces the reconstruction. However, when a tag contains an **R event** (a resprout or breakage code such as R, RP, RF, RT, QR, or OR), the tag is split into a pre-resprout segment and a post-resprout segment, each solved independently. Because the two segments have different stem counts and therefore different state-space sizes, **each segment chooses its algorithm independently** — so it is possible for the post-resprout segment to be solved by the exact DP while the pre-resprout segment falls back to the probabilistic matcher (or vice versa). Both algorithms' outputs are then combined into a single reconstruction for the tag.
+
+Across a full dataset, most tags will use one algorithm throughout; only tags with R events can have mixed-method output rows. The two algorithms use **identical biological models** and hard pruning bounds, so their outputs are directly comparable and mergeable regardless of which segments used which method. Both produce the same output schema including posterior probabilities and optional posterior path samples for downstream uncertainty quantification.
+
 ## Directory Layout
 
 ```
@@ -77,8 +112,8 @@ This grows **factorially**, so even modest increases in stem count cause explosi
 
 #### Two fallback triggers
 
-1. **Per-census enumeration (`enum_exceeded`):** If $P(K, n) > \text{DP\_MAX\_STATES}$ at any single census, the solver cannot enumerate states and falls back.
-2. **Inter-census transitions (`edge_count_exceeded`):** If $P(K, n_1) \times P(K, n_2) > \text{DP\_MAX\_STATES}^2$ for any pair of adjacent censuses, the transition matrix is too large and the solver falls back.
+1. **Per-census enumeration (`enum_exceeded`):** If $P(K, n)$ exceeds `DP_MAX_STATES` at any single census, the solver cannot enumerate states and falls back.
+2. **Inter-census transitions (`edge_count_exceeded`):** If $P(K, n_1) \times P(K, n_2)$ exceeds `DP_MAX_STATES`² for any pair of adjacent censuses, the transition matrix is too large and the solver falls back.
 
 In practice, the per-census limit is reached first because the state counts grow so rapidly.
 
@@ -112,7 +147,7 @@ The tables below show when fallback occurs for different `DP_MAX_STATES` values.
 
 **Summary — maximum stems per census handled by exact DP:**
 
-| `DP_MAX_STATES` | `max_edges` ($= \text{DP\_MAX\_STATES}^2$) | Max stems ($K = n+1$) | Max stems ($K = n+2$) |
+| `DP_MAX_STATES` | `max_edges` (= `DP_MAX_STATES`²) | Max stems ($K = n+1$) | Max stems ($K = n+2$) |
 |--:|--:|:-:|:-:|
 | 1,000 | 1,000,000 | 5 | 5 |
 | 20,000 | 400,000,000 | 6 | 6 |

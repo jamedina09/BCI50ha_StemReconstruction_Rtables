@@ -157,8 +157,8 @@ $$P(K, n_{obs}) = K \times (K-1) \times \cdots \times (K-n_{obs}+1)$$
 
 `DP_MAX_STATES` (passed as `max_states` to the solver) is the single parameter that controls when the DP solver falls back to the probabilistic greedy matcher. It imposes two limits:
 
-1. **Per-census enumeration (`enum_exceeded`):** If $P(K, n_{obs}) > \text{max\_states}$ at any single census, the solver cannot enumerate the assignment states and falls back.
-2. **Inter-census transitions (`edge_count_exceeded`):** If the cross-product of state counts between two adjacent censuses exceeds $\text{max\_states}^2$ (called `max_edges`), the transition matrix is too large and the solver falls back.
+1. **Per-census enumeration (`enum_exceeded`):** If $P(K, n_{obs})$ exceeds `max_states` at any single census, the solver cannot enumerate the assignment states and falls back.
+2. **Inter-census transitions (`edge_count_exceeded`):** If the cross-product of state counts between two adjacent censuses exceeds `max_states`² (called `max_edges`), the transition matrix is too large and the solver falls back.
 
 In practice, the per-census enumeration limit is reached first because state counts grow factorially.
 
@@ -192,7 +192,7 @@ The tables below show when the per-census enumeration forces fallback. "Stems ob
 
 **Summary — maximum stems per census handled by exact DP:**
 
-| `DP_MAX_STATES` | `max_edges` ($= \text{DP\_MAX\_STATES}^2$) | Max stems ($K = n+1$) | Max stems ($K = n+2$) |
+| `DP_MAX_STATES` | `max_edges` (= `DP_MAX_STATES`²) | Max stems ($K = n+1$) | Max stems ($K = n+2$) |
 |--:|--:|:-:|:-:|
 | 1,000 | 1,000,000 | 5 | 5 |
 | 20,000 | 400,000,000 | 6 | 6 |
@@ -202,7 +202,7 @@ The tables below show when the per-census enumeration forces fallback. "Stems ob
 
 #### Inter-census transition budget
 
-The `max_edges` limit ($= \text{DP\_MAX\_STATES}^2$) guards the cross-product of states between adjacent censuses. For the values above, when both censuses are within the per-census state limit, the cross-product does not exceed `max_edges` — so in practice the per-census enumeration limit is the binding constraint. The edge guard becomes relevant when `DP_MAX_STATES` is set high enough to pass per-census enumeration but the product of two large censuses overflows the transition budget.
+The `max_edges` limit (= `DP_MAX_STATES`²) guards the cross-product of states between adjacent censuses. For the values above, when both censuses are within the per-census state limit, the cross-product does not exceed `max_edges` — so in practice the per-census enumeration limit is the binding constraint. The edge guard becomes relevant when `DP_MAX_STATES` is set high enough to pass per-census enumeration but the product of two large censuses overflows the transition budget.
 
 #### How to choose a value
 
@@ -608,6 +608,7 @@ Default: $\varepsilon_{\text{tiebreak}} = 10^{-6}$
 The probabilistic solver defines a Gibbs-like posterior:
 
 **Posterior samples (optional):** If `POSTERIOR_SAMPLES` > 0, the DP can draw full-path posterior samples and write them to disk. Use `POSTERIOR_SAMPLES_FORMAT` to select `rds`, `feather` (arrow), or `csv`. By default, samples are written into a `posteriors/` subdirectory under the DP output directory (or to `POSTERIOR_SAMPLES_PATH` if that option is supplied).
+
 $$P(\text{path}) \propto \exp\left(-\frac{\text{TotalCost}(\text{path})}{\tau}\right)$$
 
 where $\tau$ is the temperature parameter:
@@ -1031,7 +1032,9 @@ Before evaluating backward transitions, the DP checks whether the cross-product 
 
 ### Segment Split Consistency
 
-When a tag is split into sub-problems at an R-event boundary (resprout segment split), the solver checks the whole-tag state space before processing sub-calls. If any census in either segment has a state space exceeding `max_states`, the solver forces `max_states = 0` on both sub-calls, guaranteeing both segments use the probabilistic matcher. This prevents inconsistent reconstruction methods across segments of the same tag.
+When a tag is split into sub-problems at an R-event boundary (resprout segment split), the solver first evaluates the **whole-tag** state space (using the pre-split K and all census observation counts). If the whole-tag space already exceeds `max_states`, both sub-calls are forced to `max_states = 0`, guaranteeing both segments use the probabilistic matcher and avoiding a situation where the smaller sub-segment K would otherwise pass the threshold and use the DP inconsistently.
+
+However, when the whole-tag check passes, each sub-segment is solved **independently** with the original `max_states` and computes its own K from its sub-segment anchor and stem counts. It is therefore possible for the pre-resprout and post-resprout segments to use **different algorithms** — for example, the post-resprout segment (anchored at the known census with fewer stems) solving cleanly with the exact DP while the pre-resprout segment (anchored at an earlier census with more stems and a larger K) falls back to the probabilistic matcher. Both segments' outputs are combined into a single reconstruction for the tag with their respective `ReconstructionMethod` labels.
 
 #### Anchor fallback behavior
 If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back. If no such earlier census exists, the algorithm falls back to the probabilistic matcher.
