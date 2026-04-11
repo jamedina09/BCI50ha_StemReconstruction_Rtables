@@ -321,9 +321,9 @@ Two CSV files and one PDF written to `<RUN_DIR>/`:
 
 | File | Rows | Description |
 |------|------|-------------|
-| `basal_area_tag_census.csv` | Tag × Census | Total BA (cm²), stem count, year |
-| `basal_area_tag_change.csv` | Tag × Census interval | BA change decomposed into survivor growth, mortality loss, and recruitment gain — MAP values plus posterior mean, SD, and 95% CI for each component |
-| `basal_area_figures.pdf` | — | Multi-page PDF: summary page (all tags), per-tag detail pages (2×2 panels: BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), and posterior uncertainty histograms |
+| `basal_area_tag_census.csv` | Tag × Census | Total BA (m²), stem count, year |
+| `basal_area_tag_change.csv` | Tag × Census interval | BA change decomposed into survivor growth, mortality loss, and recruitment gain — MAP values plus posterior mean, SD, and 95% CI for each component (all in m²) |
+| `basal_area_figures.pdf` | — | Multi-page PDF: summary page (all tags), per-tag detail pages (2×2 panels: BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), posterior uncertainty histograms, and **posterior density plots** (kernel densities of Growth/Loss/Gain/DeltaBA with weighted-mean vertical lines — one page pooled across all census intervals, then one page per interval) |
 
 ### Key insight
 

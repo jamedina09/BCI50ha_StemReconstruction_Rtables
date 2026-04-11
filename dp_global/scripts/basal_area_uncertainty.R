@@ -7,7 +7,7 @@
 ### the DP / probabilistic reconstruction.
 ###
 ### For each tag (individual tree):
-###   1. Per-stem BA = pi/4 * DBH^2 (cm^2), using reconstructed IDs
+###   1. Per-stem BA = pi/4 * (DBH/100)^2 (m^2), using reconstructed IDs
 ###   2. Tag-level total BA = sum of all stem BAs per census
 ###   3. BA change between consecutive censuses, decomposed into:
 ###      - Growth: BA change in surviving stems
@@ -73,7 +73,7 @@ census_dates <- rec[!is.na(ExactDate),
 ]
 setkey(census_dates, CensusID)
 
-ba_cm2 <- function(dbh) pi / 4 * dbh^2
+ba_m2 <- function(dbh) pi / 4 * (dbh / 100)^2
 
 # ---- 2. Map posterior files to tags -------------------------------------
 
@@ -117,13 +117,13 @@ cat("[BA] Posterior files mapped:", length(post_tag_map), "tags\n")
 # ---- 3. MAP tag-level BA per census -------------------------------------
 
 map_stem_ba <- rec[!is.na(DBH) & !is.na(ReconstructedStemID),
-    .(BA = ba_cm2(DBH)),
+    .(BA = ba_m2(DBH)),
     by = .(Tag, CensusID, ReconstructedStemID)
 ]
 
 tag_census <- map_stem_ba[, .(
-    TotalBA_cm2 = sum(BA),
-    NumStems    = .N
+    TotalBA_m2 = sum(BA),
+    NumStems   = .N
 ), by = .(Tag, CensusID)]
 
 setorder(tag_census, Tag, CensusID)
@@ -183,7 +183,7 @@ for (tg in all_tags) {
 
     stem_dt <- tag_rec[, .(
         StemID = ReconstructedStemID, CensusID,
-        BA = ba_cm2(DBH)
+        BA = ba_m2(DBH)
     )]
     decomp <- decompose_ba_change(stem_dt, census_pairs)
     decomp[, Tag := tg]
@@ -223,6 +223,7 @@ weighted_quantile <- function(vals, w, prob) {
 }
 
 post_change_list <- list()
+all_path_decomp_list <- list()
 
 for (tg_str in names(post_tag_map)) {
     tg <- tryCatch(as.integer(tg_str), warning = function(w) tg_str)
@@ -256,7 +257,7 @@ for (tg_str in names(post_tag_map)) {
         dt
     }))
     all_paths <- merge(all_paths, obs_lookup, by = "obs_row_id", all.x = TRUE)
-    all_paths[, BA := ba_cm2(DBH)]
+    all_paths[, BA := ba_m2(DBH)]
     all_paths <- all_paths[!is.na(BA)]
 
     # Decompose per path (vectorised over census pairs)
@@ -271,6 +272,7 @@ for (tg_str in names(post_tag_map)) {
 
     path_decomp <- rbindlist(path_decomp_list, use.names = TRUE)
     path_decomp[, Tag := tg]
+    all_path_decomp_list[[length(all_path_decomp_list) + 1L]] <- path_decomp
 
     # Weighted summary across paths
     post_summary <- path_decomp[,
@@ -320,7 +322,7 @@ setorder(tag_change, Tag, CensusID_from)
 
 tag_census_out <- file.path(RUN_DIR, "basal_area_tag_census.csv")
 fwrite(
-    tag_census[, .(Tag, CensusID, Year, TotalBA_cm2, NumStems)],
+    tag_census[, .(Tag, CensusID, Year, TotalBA_m2, NumStems)],
     tag_census_out
 )
 cat("[BA] Wrote:", tag_census_out, "\n")
@@ -354,10 +356,10 @@ if (length(all_tags) <= 30L) {
     for (tg in all_tags) {
         tc <- tag_census[Tag == tg]
         if (nrow(tc) == 0L) next
-        plot(tc$CensusID, tc$TotalBA_cm2,
+        plot(tc$CensusID, tc$TotalBA_m2,
             type = "b", pch = 19,
             col = COL_T, lwd = 1.5,
-            xlab = "Census", ylab = expression("BA (cm"^2 * ")"),
+            xlab = "Census", ylab = expression("BA (m"^2 * ")"),
             main = paste0("Tag ", tg), xaxt = "n"
         )
         axis(1, at = tc$CensusID, labels = tc$CensusID)
@@ -369,11 +371,11 @@ if (length(all_tags) <= 30L) {
 
     # Distribution of total BA (latest census per tag)
     latest <- tag_census[, .SD[which.max(CensusID)], by = Tag]
-    hist(latest$TotalBA_cm2,
+    hist(latest$TotalBA_m2,
         breaks = 30,
         col = adjustcolor("steelblue", 0.6), border = "white",
         main = "Total BA per Individual (Latest Census)",
-        xlab = expression("BA (cm"^2 * ")"), ylab = "Number of Tags"
+        xlab = expression("BA (m"^2 * ")"), ylab = "Number of Tags"
     )
 
     # Distribution of number of stems
@@ -387,17 +389,17 @@ if (length(all_tags) <= 30L) {
     # Total BA over censuses (all tags superimposed)
     cids <- sort(unique(tag_census$CensusID))
     agg <- tag_census[, .(
-        BA_mean = mean(TotalBA_cm2),
-        BA_med = median(TotalBA_cm2),
-        BA_q25 = quantile(TotalBA_cm2, 0.25),
-        BA_q75 = quantile(TotalBA_cm2, 0.75)
+        BA_mean = mean(TotalBA_m2),
+        BA_med = median(TotalBA_m2),
+        BA_q25 = quantile(TotalBA_m2, 0.25),
+        BA_q75 = quantile(TotalBA_m2, 0.75)
     ),
     by = CensusID
     ]
     plot(agg$CensusID, agg$BA_med,
         type = "b", pch = 19,
         ylim = range(c(agg$BA_q25, agg$BA_q75)),
-        xlab = "Census", ylab = expression("BA (cm"^2 * ")"),
+        xlab = "Census", ylab = expression("BA (m"^2 * ")"),
         main = "Median BA per Individual Over Censuses", xaxt = "n"
     )
     axis(1, at = agg$CensusID)
@@ -434,10 +436,10 @@ for (tg in sort(tags_with_post)) {
     )
 
     # Panel A: Total BA trajectory
-    plot(tc$CensusID, tc$TotalBA_cm2,
+    plot(tc$CensusID, tc$TotalBA_m2,
         type = "b", pch = 19,
         col = COL_T, lwd = 2,
-        xlab = "Census", ylab = expression("Total BA (cm"^2 * ")"),
+        xlab = "Census", ylab = expression("Total BA (m"^2 * ")"),
         main = paste0("Tag ", tg, " -- Individual BA"),
         xaxt = "n"
     )
@@ -483,7 +485,7 @@ for (tg in sort(tags_with_post)) {
 
         plot(NULL,
             xlim = c(0.3, n_int + 0.7), ylim = yr,
-            xlab = "", ylab = expression(Delta * "BA (cm"^2 * ")"),
+            xlab = "", ylab = expression(Delta * "BA (m"^2 * ")"),
             main = paste0("Tag ", tg, " -- BA Change Decomposition"),
             xaxt = "n"
         )
@@ -571,7 +573,7 @@ if (length(post_change_list) > 0L) {
             breaks = 25,
             col = adjustcolor(COL_G, 0.5), border = "white",
             main = "Growth Component -- Posterior SD",
-            xlab = expression("SD (cm"^2 * ")"), ylab = "Intervals"
+            xlab = expression("SD (m"^2 * ")"), ylab = "Intervals"
         )
     } else {
         plot.new()
@@ -583,7 +585,7 @@ if (length(post_change_list) > 0L) {
             breaks = 25,
             col = adjustcolor(COL_L, 0.5), border = "white",
             main = "Loss Component -- Posterior SD",
-            xlab = expression("SD (cm"^2 * ")"), ylab = "Intervals"
+            xlab = expression("SD (m"^2 * ")"), ylab = "Intervals"
         )
     } else {
         plot.new()
@@ -595,7 +597,7 @@ if (length(post_change_list) > 0L) {
             breaks = 25,
             col = adjustcolor(COL_R, 0.5), border = "white",
             main = "Recruitment Component -- Posterior SD",
-            xlab = expression("SD (cm"^2 * ")"), ylab = "Intervals"
+            xlab = expression("SD (m"^2 * ")"), ylab = "Intervals"
         )
     } else {
         plot.new()
@@ -610,11 +612,125 @@ if (length(post_change_list) > 0L) {
             breaks = 25,
             col = adjustcolor("grey50", 0.5), border = "white",
             main = "Growth Component -- 95% CI Width",
-            xlab = expression("CI Width (cm"^2 * ")"), ylab = "Intervals"
+            xlab = expression("CI Width (m"^2 * ")"), ylab = "Intervals"
         )
     } else {
         plot.new()
         text(0.5, 0.5, "No CI width variation", cex = 1.1)
+    }
+}
+
+# --- 7d. Posterior density plots: BA growth decomposition ----------------
+# Kernel density of posterior Growth/Loss/Gain values with mean as vertical
+# line. One page pooled across all census intervals, then one page per
+# census interval.
+
+if (length(all_path_decomp_list) > 0L) {
+    all_pd <- rbindlist(all_path_decomp_list, use.names = TRUE, fill = TRUE)
+
+    # Merge interval dates for labelling
+    if (nrow(census_dates) > 0L) {
+        all_pd <- merge(all_pd,
+            census_dates[, .(CensusID_from = CensusID, Year_from = 1970 + MeanDate / 365.25)],
+            by = "CensusID_from", all.x = TRUE)
+        all_pd <- merge(all_pd,
+            census_dates[, .(CensusID_to = CensusID, Year_to = 1970 + MeanDate / 365.25)],
+            by = "CensusID_to", all.x = TRUE)
+    }
+
+    # Helper: draw density panel for a component
+    draw_density_panel <- function(vals, weights, col_fill, col_line, main_title, xlab_expr) {
+        if (length(vals) < 2L || all(is.na(vals))) {
+            plot.new(); text(0.5, 0.5, "Insufficient data", cex = 1.1)
+            return(invisible(NULL))
+        }
+        w <- weights / sum(weights)
+        wmean <- sum(w * vals)
+        d <- tryCatch(density(vals, weights = w, na.rm = TRUE),
+                      error = function(e) NULL)
+        if (is.null(d)) {
+            plot.new(); text(0.5, 0.5, "Density failed", cex = 1.1)
+            return(invisible(NULL))
+        }
+        plot(d, main = main_title, xlab = xlab_expr,
+             col = col_line, lwd = 2, zero.line = FALSE)
+        polygon(d$x, d$y, col = adjustcolor(col_fill, 0.3), border = NA)
+        abline(v = wmean, col = col_line, lwd = 2.5, lty = 1)
+        mtext(sprintf("mean = %.4e", wmean), side = 3, line = 0.2, cex = 0.7, adj = 1)
+    }
+
+    # ------- 7d-1. Overall density (pooled across all intervals) ----------
+    par(mfrow = c(2, 2), mar = c(4.5, 4.5, 3.5, 1), mgp = c(2.5, 0.7, 0))
+
+    draw_density_panel(
+        all_pd$Growth_BA, all_pd$path_prob,
+        COL_G, COL_G,
+        "Growth -- All Intervals Pooled",
+        expression("BA Growth (m"^2 * ")")
+    )
+    draw_density_panel(
+        all_pd$Loss_BA, all_pd$path_prob,
+        COL_L, COL_L,
+        "Loss -- All Intervals Pooled",
+        expression("BA Loss (m"^2 * ")")
+    )
+    draw_density_panel(
+        all_pd$Gain_BA, all_pd$path_prob,
+        COL_R, COL_R,
+        "Gain -- All Intervals Pooled",
+        expression("BA Gain (m"^2 * ")")
+    )
+    draw_density_panel(
+        all_pd$DeltaBA_total, all_pd$path_prob,
+        COL_T, COL_T,
+        "Total Delta BA -- All Intervals Pooled",
+        expression(Delta * "BA (m"^2 * ")")
+    )
+
+    # ------- 7d-2. Per census interval density ----------------------------
+    interval_keys <- unique(all_pd[, .(CensusID_from, CensusID_to)])
+    setorder(interval_keys, CensusID_from)
+
+    for (ri in seq_len(nrow(interval_keys))) {
+        cf <- interval_keys$CensusID_from[ri]
+        ct <- interval_keys$CensusID_to[ri]
+        sub <- all_pd[CensusID_from == cf & CensusID_to == ct]
+        if (nrow(sub) < 2L) next
+
+        yr_from <- sub$Year_from[1]
+        yr_to   <- sub$Year_to[1]
+        int_label <- if (!is.na(yr_from) && !is.na(yr_to)) {
+            sprintf("C%d->C%d (%.0f-%.0f)", cf, ct, yr_from, yr_to)
+        } else {
+            sprintf("C%d->C%d", cf, ct)
+        }
+
+        par(mfrow = c(2, 2), mar = c(4.5, 4.5, 3.5, 1), mgp = c(2.5, 0.7, 0))
+
+        draw_density_panel(
+            sub$Growth_BA, sub$path_prob,
+            COL_G, COL_G,
+            paste0("Growth -- ", int_label),
+            expression("BA Growth (m"^2 * ")")
+        )
+        draw_density_panel(
+            sub$Loss_BA, sub$path_prob,
+            COL_L, COL_L,
+            paste0("Loss -- ", int_label),
+            expression("BA Loss (m"^2 * ")")
+        )
+        draw_density_panel(
+            sub$Gain_BA, sub$path_prob,
+            COL_R, COL_R,
+            paste0("Gain -- ", int_label),
+            expression("BA Gain (m"^2 * ")")
+        )
+        draw_density_panel(
+            sub$DeltaBA_total, sub$path_prob,
+            COL_T, COL_T,
+            paste0("Delta BA -- ", int_label),
+            expression(Delta * "BA (m"^2 * ")")
+        )
     }
 }
 
@@ -639,10 +755,10 @@ if (nrow(tag_change) > 0L && "Growth_sd" %in% names(tag_change)) {
 
     if (nrow(uncertain) > 0L) {
         cat("\n  Growth component:\n")
-        cat(sprintf("    Mean SD  : %.3f cm^2\n", mean(uncertain$Growth_sd)))
-        cat(sprintf("    Max  SD  : %.3f cm^2\n", max(uncertain$Growth_sd)))
+        cat(sprintf("    Mean SD  : %.6f m^2\n", mean(uncertain$Growth_sd)))
+        cat(sprintf("    Max  SD  : %.6f m^2\n", max(uncertain$Growth_sd)))
         cat(sprintf(
-            "    Mean 95%% CI width: %.3f cm^2\n",
+            "    Mean 95%% CI width: %.6f m^2\n",
             mean(abs(uncertain$Growth_q975 - uncertain$Growth_q025),
                 na.rm = TRUE
             )
@@ -650,21 +766,21 @@ if (nrow(tag_change) > 0L && "Growth_sd" %in% names(tag_change)) {
 
         cat("\n  Loss component:\n")
         cat(sprintf(
-            "    Mean SD  : %.3f cm^2\n",
+            "    Mean SD  : %.6f m^2\n",
             mean(uncertain$Loss_sd, na.rm = TRUE)
         ))
         cat(sprintf(
-            "    Max  SD  : %.3f cm^2\n",
+            "    Max  SD  : %.6f m^2\n",
             max(uncertain$Loss_sd, na.rm = TRUE)
         ))
 
         cat("\n  Recruitment component:\n")
         cat(sprintf(
-            "    Mean SD  : %.3f cm^2\n",
+            "    Mean SD  : %.6f m^2\n",
             mean(uncertain$Gain_sd, na.rm = TRUE)
         ))
         cat(sprintf(
-            "    Max  SD  : %.3f cm^2\n",
+            "    Max  SD  : %.6f m^2\n",
             max(uncertain$Gain_sd, na.rm = TRUE)
         ))
 
@@ -672,15 +788,15 @@ if (nrow(tag_change) > 0L && "Growth_sd" %in% names(tag_change)) {
         for (tg in sort(unique(uncertain$Tag))) {
             td <- uncertain[Tag == tg]
             cat(sprintf(
-                "    Tag %s: %d intervals, Growth SD [%.3f, %.3f],",
+                "    Tag %s: %d intervals, Growth SD [%.6f, %.6f],",
                 tg, nrow(td), min(td$Growth_sd), max(td$Growth_sd)
             ))
             cat(sprintf(
-                " Loss SD [%.3f, %.3f],",
+                " Loss SD [%.6f, %.6f],",
                 min(td$Loss_sd, na.rm = TRUE), max(td$Loss_sd, na.rm = TRUE)
             ))
             cat(sprintf(
-                " Gain SD [%.3f, %.3f]\n",
+                " Gain SD [%.6f, %.6f]\n",
                 min(td$Gain_sd, na.rm = TRUE), max(td$Gain_sd, na.rm = TRUE)
             ))
         }
