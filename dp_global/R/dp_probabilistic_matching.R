@@ -2,21 +2,17 @@
 # dp_probabilistic_matching.R
 # Probabilistic greedy matching fallback for large state spaces
 ############################################################
-# When the DP state space is too large (enum_exceeded or edge_count_exceeded),
-# this module provides a stochastic per-census-pair matching approach that:
-#   1. Computes pairwise log-likelihoods using the same biological model as DP
-#   2. Augments the cost matrix with mortality/recruitment slots
-#   3. Draws n_samples stochastic assignments via Gumbel-noise greedy
-#   4. Stitches per-pair assignments backward from the anchor
-#   5. Repairs growth violations at the SAMPLE level before marginals:
-#      (a) Hard-rate check: severs links outside [min_rate, max_rate]
-#      (b) ME cumulative-shrinkage: severs runs of small decreases that
-#          exceed the measurement-error threshold (n_sigma * sqrt(SD(d0)^2 + SD(d1)^2))
-#      This mirrors the DP's global cost accumulation that naturally penalises
-#      consecutive shrinkage, adapted for the per-pair greedy context.
-#   6. Computes marginal posterior probabilities from repaired samples
-#   7. Safety-net post-marginal repair (ideally fires 0 breaks)
-#   8. Re-stamps anchor-census TrueStemID rows to preserve ground-truth identities
+# When the DP state space is too large:
+#   1. Pairwise log-likelihoods (same bio model as DP)
+#   2. Augment cost matrix with mortality/recruitment slots
+#   3. Draw n_samples stochastic assignments via Gumbel-noise greedy
+#   4. Stitch per-pair assignments backward from anchor
+#   5. Repair growth violations at SAMPLE level (hard-rate + ME cumulative-shrinkage)
+#   6. Compute marginal posterior probabilities
+#   7. Growth-aware greedy conflict resolution (anchor-outward census ordering,
+#      rejects candidate IDs that would violate growth bounds against already-
+#      resolved adjacent censuses)
+#   8. Re-stamp anchor TrueStemID rows
 #
 # All Bio_* parameters are read directly from tree_data columns (no new
 # estimation needed — they are already computed by dp_global_bio.R).

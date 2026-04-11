@@ -157,10 +157,8 @@ ensure_dir(out_dir)
 writeLines(as.character(Sys.time()), file.path(out_dir, "run_started.txt"))
 message("[main_cpp_bci.R] Running DP for Tag ", WHICH_TAG, "...")
 
-out <- xrun_tag[Tag == WHICH_TAG,
-    run_dp_one_group(.SD, dp_max_tracks = dp_max_tracks_local),
-    by = .(Tag, species)
-]
+dtg <- xrun_tag[Tag == WHICH_TAG]
+out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 
 out <- maybe_add_posterior_bins(out)
 if (!is.null(out)) {
