@@ -337,14 +337,20 @@ match_stems_probabilistic <- function(tree_data,
     }
 
     # --- Compute marginals and fill tree_data ------------------------------
+    # Growth-aware greedy resolver: resolves censuses from anchor outward and
+    # rejects candidate IDs whose growth rate against the nearest already-resolved
+    # census violates hard bounds.  Posteriors (Top-K, entropy) are unaffected.
     tree_data <- compute_marginals_from_samples(stitched, tree_data, obs_data,
                                                 obs_census, anchor_pos,
-                                                posterior_top_k)
+                                                posterior_top_k,
+                                                intervals = intervals,
+                                                min_rate = eff_min_growth,
+                                                max_rate = eff_max_growth)
 
     # --- Diagnostic check: count residual growth violations from greedy
-    #     conflict resolution.  With pin-consistent sample filtering +
-    #     sample-level repair, ideally 0 violations remain.  We do NOT
-    #     modify tree_data here — posteriors must stay pristine.
+    #     conflict resolution.  With growth-aware resolver + pin-consistent
+    #     sample filtering + sample-level repair, ideally 0 violations remain.
+    #     We do NOT modify tree_data here — posteriors must stay pristine.
     {
         .n_violations <- 0L
         .stem_ids <- unique(tree_data$ReconstructedStemID[!is.na(tree_data$ReconstructedStemID)])
@@ -1020,7 +1026,10 @@ stitch_assignments_backward <- function(all_samples, obs_data, anchor_ids, K) {
 
 compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
                                            obs_census, anchor_pos,
-                                           posterior_top_k) {
+                                           posterior_top_k,
+                                           intervals = NULL,
+                                           min_rate = NULL,
+                                           max_rate = NULL) {
     n_samples <- length(stitched)
     n_census <- length(obs_data)
 
@@ -1062,11 +1071,66 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
         all_posteriors[[ci]] <- census_posts
     }
 
-    # ---- Pass 2: resolve per-census conflicts (unique StemID per census) ----
-    # Per-obs MAP is marginal; two observations may share the same best ID.
-    # Greedy assignment sorted by confidence resolves conflicts while
-    # respecting the posterior ordering.
-    for (ci in seq_len(n_census)) {
+    # ---- Pass 2: growth-aware greedy resolver ---------------------------------
+    # Resolves censuses from anchor outward so that each candidate ID can be
+    # checked for growth-bound compatibility against the nearest already-resolved
+    # assignment for that stem.  Marginal posteriors (Top-K, entropy) are pure
+    # sample statistics and stay unchanged; only the ReconstructedStemID and its
+    # associated DP_PosteriorReconstructedProb may differ from the naive MAP when
+    # a growth-violating candidate is skipped.
+    growth_aware <- !is.null(intervals) && !is.null(min_rate) && !is.null(max_rate)
+
+    if (growth_aware) {
+        # Census order: anchor first, then alternating ±1, ±2, ...
+        anchor_out_order <- anchor_pos
+        for (.d in seq_len(n_census - 1L)) {
+            .before <- anchor_pos - .d
+            .after  <- anchor_pos + .d
+            if (.before >= 1L) anchor_out_order <- c(anchor_out_order, .before)
+            if (.after <= n_census) anchor_out_order <- c(anchor_out_order, .after)
+        }
+        # Per-stem resolved track: stem_id_string -> list of (ci, dbh) entries
+        .stem_tracks <- new.env(hash = TRUE, parent = emptyenv())
+
+        # Interval between two census positions (handles gaps)
+        .census_iv <- function(ci_a, ci_b) {
+            lo <- min(ci_a, ci_b); hi <- max(ci_a, ci_b)
+            if (lo == hi) return(0)
+            idx_rng <- lo:(hi - 1L)
+            idx_rng <- idx_rng[idx_rng <= length(intervals)]
+            if (length(idx_rng) == 0L) return(5.0)
+            iv <- sum(intervals[idx_rng])
+            if (!is.finite(iv) || iv <= 0) 5.0 else iv
+        }
+
+        # Check growth rate against nearest resolved assignment on each side
+        .growth_ok <- function(sid_key, ci_new, dbh_new) {
+            trk <- .stem_tracks[[sid_key]]
+            if (is.null(trk)) return(TRUE)
+            trk_cis <- vapply(trk, function(x) x$ci, numeric(1))
+            # Closest already-resolved census BEFORE ci_new
+            below_idx <- which(trk_cis < ci_new)
+            if (length(below_idx) > 0L) {
+                j <- below_idx[which.max(trk_cis[below_idx])]
+                iv <- .census_iv(trk_cis[j], ci_new)
+                rate <- (dbh_new - trk[[j]]$dbh) / iv
+                if (rate < min_rate || rate > max_rate) return(FALSE)
+            }
+            # Closest already-resolved census AFTER ci_new
+            above_idx <- which(trk_cis > ci_new)
+            if (length(above_idx) > 0L) {
+                j <- above_idx[which.min(trk_cis[above_idx])]
+                iv <- .census_iv(ci_new, trk_cis[j])
+                rate <- (trk[[j]]$dbh - dbh_new) / iv
+                if (rate < min_rate || rate > max_rate) return(FALSE)
+            }
+            TRUE
+        }
+    } else {
+        anchor_out_order <- seq_len(n_census)
+    }
+
+    for (ci in anchor_out_order) {
         n_obs <- obs_data[[ci]]$n
         if (n_obs == 0L) next
         idx <- obs_data[[ci]]$idx
@@ -1087,22 +1151,44 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
             post <- census_posts[[oi]]
             assigned <- FALSE
             for (j in seq_along(post$ids)) {
-                if (!(post$ids[j] %in% used_ids)) {
-                    resolved_ids[oi]   <- post$ids[j]
-                    resolved_probs[oi] <- post$probs[j]
-                    used_ids <- c(used_ids, post$ids[j])
-                    assigned <- TRUE
-                    break
+                cand_id <- post$ids[j]
+                if (cand_id %in% used_ids) next
+                # Growth-aware check: reject candidate if it violates growth
+                # bounds against the nearest already-resolved census for this stem
+                if (growth_aware) {
+                    dbh_oi <- obs_data[[ci]]$dbh[oi]
+                    if (!is.na(dbh_oi) &&
+                        !.growth_ok(as.character(cand_id), ci, dbh_oi)) next
                 }
+                resolved_ids[oi]   <- cand_id
+                resolved_probs[oi] <- post$probs[j]
+                used_ids <- c(used_ids, cand_id)
+                assigned <- TRUE
+                break
             }
             if (!assigned) {
-                # All posterior alternatives are taken — assign a new unique ID
+                # All posterior alternatives are taken or growth-violated —
+                # assign a new unique (break) ID
                 new_id <- max(c(tree_data$ReconstructedStemID, used_ids,
                                 resolved_ids), na.rm = TRUE) + 1L
                 if (!is.finite(new_id)) new_id <- 1L
                 resolved_ids[oi]   <- new_id
                 resolved_probs[oi] <- 0
                 used_ids <- c(used_ids, new_id)
+            }
+        }
+
+        # Register resolved assignments for growth tracking
+        if (growth_aware) {
+            for (oi in seq_len(n_obs)) {
+                dbh_oi <- obs_data[[ci]]$dbh[oi]
+                if (!is.na(dbh_oi)) {
+                    sid_key <- as.character(resolved_ids[oi])
+                    trk <- .stem_tracks[[sid_key]]
+                    if (is.null(trk)) trk <- list()
+                    trk[[length(trk) + 1L]] <- list(ci = ci, dbh = dbh_oi)
+                    .stem_tracks[[sid_key]] <- trk
+                }
             }
         }
 
