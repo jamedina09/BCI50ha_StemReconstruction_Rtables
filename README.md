@@ -223,8 +223,8 @@ Rscript dp_global/scripts/basal_area_uncertainty.R \
 
 The BA uncertainty script reads the main reconstruction and the `posteriors/` directory, then produces two summary CSVs and a multi-page PDF of diagnostic figures:
 
-- `basal_area_tag_census.csv` — per-tag per-census total BA (cm²) and stem count.
-- `basal_area_tag_change.csv` — per-tag BA change between consecutive censuses, decomposed into **growth** (survivors), **loss** (mortality), and **gain** (recruitment), with posterior means, SDs, and 95% credible intervals.
-- `basal_area_figures.pdf` — per-tag panels showing BA trajectory, stem count, decomposition bars with uncertainty whiskers, and stem demographics.
+- `basal_area_tag_census.csv` — per-tag per-census total BA (m²) and stem count.
+- `basal_area_tag_change.csv` — per-tag BA change between consecutive censuses, decomposed into **growth** (survivors), **loss** (mortality), and **gain** (recruitment), with posterior means, SDs, and 95% credible intervals. All BA values in m².
+- `basal_area_figures.pdf` — per-tag panels (BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), uncertainty histograms, and posterior density plots (kernel densities of Growth/Loss/Gain/DeltaBA pooled across all intervals and per census interval, with weighted-mean vertical lines).
 
 Tag-level total BA per census is **invariant** to identity assignment — the same DBH values sum identically regardless of which stem they are assigned to. The decomposition into growth, loss, and gain components **is** identity-dependent and is where posterior uncertainty manifests. See `dp_global/scripts/README.md` for details.

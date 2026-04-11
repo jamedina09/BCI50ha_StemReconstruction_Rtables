@@ -1772,7 +1772,7 @@ The `basal_area_uncertainty.R` script uses posterior path samples to quantify ho
 
 ### Key Insight
 
-**Tag-level BA per census is invariant to identity assignment** — the total BA (sum of $\pi/4 \cdot \text{DBH}^2$ across all living stems) does not change because the same DBH observations are always present regardless of which stem identity they are assigned to. Identity uncertainty affects:
+**Tag-level BA per census is invariant to identity assignment** — the total BA (sum of $\pi/4 \cdot (\text{DBH}/100)^2$ across all living stems, in m²) does not change because the same DBH observations are always present regardless of which stem identity they are assigned to. Identity uncertainty affects:
 
 1. **Per-stem BA trajectories**: Different identity assignments allocate different DBH values to each stem across censuses
 2. **BA growth rates**: Different trajectories produce different consecutive BA differences and thus different growth rates
@@ -1791,9 +1791,9 @@ Two CSV files and one PDF are written to the run directory:
 
 | File | Contents |
 |------|----------|
-| `basal_area_tag_census.csv` | Per-tag × census: total BA (cm²), stem count, year |
+| `basal_area_tag_census.csv` | Per-tag × census: total BA (m²), stem count, year |
 | `basal_area_tag_change.csv` | Per-tag BA change between consecutive censuses: MAP decomposition into growth (surviving stems), loss (mortality), and gain (recruitment), plus posterior mean, SD, and 95% CI for each component |
-| `basal_area_figures.pdf` | Multi-page PDF with summary pages and per-tag detail panels (BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics) |
+| `basal_area_figures.pdf` | Multi-page PDF with summary pages, per-tag detail panels (BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), uncertainty histograms, and **posterior density plots** (kernel densities of Growth/Loss/Gain/DeltaBA with weighted-mean vertical lines — one page pooled across all census intervals, then one page per interval) |
 
 ### Column Reference
 
@@ -1804,7 +1804,7 @@ Two CSV files and one PDF are written to the run directory:
 | `Tag` | Individual tree identifier |
 | `CensusID` | Census identifier |
 | `Year` | Calendar year (from mean ExactDate) |
-| `TotalBA_cm2` | Total basal area = Σ(π/4 × DBH²) across all stems |
+| `TotalBA_m2` | Total basal area = Σ(π/4 × (DBH/100)²) across all stems (m²) |
 | `NumStems` | Number of stems with non-NA DBH |
 
 **Tag change** (`basal_area_tag_change.csv`):
@@ -1814,9 +1814,9 @@ Two CSV files and one PDF are written to the run directory:
 | `Tag` | Individual tree identifier |
 | `CensusID_from`, `CensusID_to` | Census pair defining the interval |
 | `Interval_yr` | Interval length in years (from mean ExactDate) |
-| `Growth_BA` | MAP: BA change attributable to surviving stems (cm²) |
-| `Loss_BA` | MAP: BA removed by stem mortality (negative, cm²) |
-| `Gain_BA` | MAP: BA added by stem recruitment (cm²) |
+| `Growth_BA` | MAP: BA change attributable to surviving stems (m²) |
+| `Loss_BA` | MAP: BA removed by stem mortality (negative, m²) |
+| `Gain_BA` | MAP: BA added by stem recruitment (m²) |
 | `DeltaBA_total` | Total BA change = Growth + Loss + Gain (invariant to identity) |
 | `NumSurvivors`, `NumDeaths`, `NumRecruits` | MAP stem counts per demographic category |
 | `Growth_mean`, `Growth_sd`, `Growth_q025`, `Growth_q975` | Posterior summary of growth component |
