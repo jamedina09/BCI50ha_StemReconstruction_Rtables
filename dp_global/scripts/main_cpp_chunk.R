@@ -205,6 +205,10 @@ PROB_SPECIES <- character(0)
 # Lookahead weight for probabilistic matcher (0 = disabled, 0.5 = default)
 PROB_LOOKAHEAD_WEIGHT <- 0.5
 
+# Pin observations with known TrueStemID at non-anchor censuses to their
+# correct track.  Reduces state space and prevents misidentification.
+PIN_TRUESTEMID <- TRUE
+
 ############################################################
 ### 3.3) Chunking & posterior sampling settings
 ############################################################
@@ -322,7 +326,8 @@ CLI_REFERENCE <- list(
     OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE",
     PROB_N_SAMPLES = "PROB_N_SAMPLES",
     PROB_SPECIES = "PROB_SPECIES",
-    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT"
+    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT",
+    PIN_TRUESTEMID = "PIN_TRUESTEMID"
 )
 
 # Sensitivity and realism flags are not applicable to the chunked runner
@@ -750,7 +755,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             verbose = isTRUE(DP_VERBOSE),
             prob_n_samples = PROB_N_SAMPLES,
             prob_species = PROB_SPECIES,
-            prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT
+            prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+            pin_truestemid = isTRUE(PIN_TRUESTEMID)
         ),
         error = function(e) {
             tag_val <- tryCatch(unique(dtg$Tag)[1], error = function(e2) NA)
@@ -771,6 +777,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR,
                 prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR,
                 prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+                pin_truestemid = isTRUE(PIN_TRUESTEMID),
                 verbose = isTRUE(DP_VERBOSE)
             )
             if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
@@ -1297,7 +1304,7 @@ if (sys.nframe() == 0L) {
 
 ## DP
 # Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=1000 \
+# --DP_MAX_STATES=40000 \
 # --MANUAL_CORES=TRUE \
 # --MANUAL_CORES_VALUE=16 \
 # --WRITE_DP_FEATHER=FALSE \

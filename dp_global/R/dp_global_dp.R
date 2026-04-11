@@ -87,7 +87,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            # --- probabilistic matcher options ---
                                                            prob_n_samples = 200L, # stochastic samples for probabilistic fallback
                                                            prob_species = character(0), # species routed to probabilistic matcher
-                                                           prob_lookahead_weight = 0.5) # backward conditioning weight [0,1]
+                                                           prob_lookahead_weight = 0.5, # backward conditioning weight [0,1]
+                                                           # --- TrueStemID pinning at non-anchor censuses ---
+                                                           pin_truestemid = TRUE) # pin obs with known TrueStemID to their track
 {
     # Derive max_edges from max_states: the cross-product of two adjacent
     # census state counts can be at most max_states^2.  Using that as the
@@ -453,26 +455,16 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
 
     # Helper: mark post-anchor rows as 'given' when appropriate and normalize post rows
-    propagate_post_anchor_given <- function(post, used_ids = NULL) {
-        # used_ids: NULL => treat any TrueStemID+DBH as given (no DP performed)
+    propagate_post_anchor_given <- function(post) {
         if (!("ReconstructedStemID" %in% names(post))) post[, ReconstructedStemID := as.integer(NA_integer_)]
         if (!("ReconstructionMethod" %in% names(post))) post[, ReconstructionMethod := NA_character_]
         if (!("ConstraintViolation" %in% names(post))) post[, ConstraintViolation := as.logical(NA)]
 
-        if (is.null(used_ids)) {
-            # No DP output available; treat observed TrueStemID as given
-            post[!is.na(TrueStemID) & !is.na(DBH), `:=`(
-                ReconstructedStemID = as.integer(TrueStemID),
-                ReconstructionMethod = "given"
-            )]
-        } else {
-            if (length(used_ids) > 0L) {
-                post[!is.na(TrueStemID) & !is.na(DBH) & (TrueStemID %in% used_ids), `:=`(
-                    ReconstructedStemID = as.integer(TrueStemID),
-                    ReconstructionMethod = "given"
-                )]
-            }
-        }
+        # Trust all observed TrueStemID at post-anchor censuses
+        post[!is.na(TrueStemID) & !is.na(DBH), `:=`(
+            ReconstructedStemID = as.integer(TrueStemID),
+            ReconstructionMethod = "given"
+        )]
         # Default remaining post-anchor rows to none_after_anchor
         post[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]
         post <- ensure_posterior_columns(post)
@@ -490,8 +482,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (isTRUE(dp_scoped_to_pre_anchor)) {
             post <- original_tree_data[CensusID > anchor_start]
             if (nrow(post) > 0L) {
-                used_ids <- unique(out$ReconstructedStemID[!is.na(out$ReconstructedStemID)])
-                post <- propagate_post_anchor_given(post, used_ids)
+                post <- propagate_post_anchor_given(post)
                 # Propagate DP_FallbackReason to post rows when present on out
                 if (("DP_FallbackReason" %in% names(out))) {
                     fb <- unique(na.omit(out$DP_FallbackReason))
@@ -555,6 +546,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             prune_max_growth = prune_max_growth,
             prune_recruit_max_dbh = prune_recruit_max_dbh,
             prob_lookahead_weight = prob_lookahead_weight,
+            pin_truestemid = pin_truestemid,
             verbose = verbose
         )
         if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
@@ -709,7 +701,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vcat(prefix, "No observations before anchor C", anchor_start, "; skipping DP and returning rows as-is")
             out <- data.table::copy(original_tree_data)
             # Use helper to normalize post-anchor rows: no DP performed, so treat observed TrueStemID as given
-            out <- propagate_post_anchor_given(out, used_ids = NULL)
+            out <- propagate_post_anchor_given(out)
             if (isTRUE(has_mf_stash) && !is.null(mf_stash) && nrow(mf_stash) > 0L) {
                 out <- reinsert_mf_rows(out, mf_stash)
             }
@@ -1056,7 +1048,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             chunk_id = chunk_id,
             allow_segment_split = FALSE, # prevent cascading splits in sub-calls
             prob_n_samples = prob_n_samples,
-            prob_species = prob_species
+            prob_species = prob_species,
+            prob_lookahead_weight = prob_lookahead_weight,
+            pin_truestemid = pin_truestemid
         )
 
         # When the whole-tag state space exceeds max_states, force probabilistic
@@ -1267,6 +1261,35 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         is_resprout_obs[[p]] <- .is_resprout_pre[[p]]
     }
 
+    # --- Pre-compute TrueStemID pin map for non-anchor censuses -------------
+    # pin_tidx_at_census[[p]][j] = track index for obs j if pinned, else NA
+    pin_tidx_at_census <- vector("list", n_census)
+    if (isTRUE(pin_truestemid)) {
+        for (p in seq_len(n_census)) {
+            if (p == n_census) next  # anchor census handled separately
+            idx <- obs_row_idx[[p]]
+            if (length(idx) == 0L) next
+            tsid <- tree_data$TrueStemID[idx]
+            tidx <- match(tsid, track_ids)
+            # Only pin where TrueStemID is non-NA and found in track_ids
+            tidx[is.na(tsid)] <- NA_integer_
+            # Duplicate-pin guard: if two obs claim the same track, keep first only
+            .seen_tracks <- integer(0)
+            for (.j in seq_along(tidx)) {
+                if (is.na(tidx[.j])) next
+                if (tidx[.j] %in% .seen_tracks) {
+                    vcat(prefix, "WARNING: duplicate TrueStemID pin at C",
+                         census_range[p], " for track ", track_ids[tidx[.j]],
+                         "; keeping first, releasing obs ", .j)
+                    tidx[.j] <- NA_integer_
+                } else {
+                    .seen_tracks <- c(.seen_tracks, tidx[.j])
+                }
+            }
+            pin_tidx_at_census[[p]] <- tidx
+        }
+    }
+
     # --- Pass 2 (backward): enumerate states with per-interval constraints --
     state_mats <- vector("list", n_census)
     state_keys <- vector("list", n_census)
@@ -1341,6 +1364,19 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # No ExactDate or no obs at next census: all tracks allowed
             if (n_obs > 0L) {
                 .allowed_at_census[[p]] <- replicate(n_obs, seq_len(K), simplify = FALSE)
+            }
+        }
+
+        # --- TrueStemID pinning override (non-anchor censuses) --------------
+        if (p < n_census && isTRUE(pin_truestemid) && !is.null(pin_tidx_at_census[[p]])) {
+            .pins <- pin_tidx_at_census[[p]]
+            .n_pinned <- sum(!is.na(.pins))
+            if (.n_pinned > 0L) {
+                for (.oi in which(!is.na(.pins))) {
+                    .allowed_at_census[[p]][[.oi]] <- .pins[.oi]
+                }
+                .use_constrained <- TRUE
+                vcat(prefix, "  Pinned ", .n_pinned, " obs at C", cc, " via TrueStemID")
             }
         }
 
@@ -2368,14 +2404,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (length(missing_in_post) > 0L) {
             for (c in missing_in_post) post_rows[, (c) := NA]
         }
-        # Propagate "given" ReconstructedStemID for post-anchor rows when DP actually used those IDs
-        used_ids <- unique(processed$ReconstructedStemID[!is.na(processed$ReconstructedStemID)])
-        if (length(used_ids) > 0L) {
-            post_rows[!is.na(TrueStemID) & !is.na(DBH) & (TrueStemID %in% used_ids), `:=`(
-                ReconstructedStemID = as.integer(TrueStemID),
-                ReconstructionMethod = "given"
-            )]
-        }
+        # Trust all observed TrueStemID at post-anchor censuses
+        post_rows[!is.na(TrueStemID) & !is.na(DBH), `:=`(
+            ReconstructedStemID = as.integer(TrueStemID),
+            ReconstructionMethod = "given"
+        )]
         # Default remaining post-anchor rows to 'none_after_anchor' if not already set
         if (!("ReconstructionMethod" %in% names(post_rows))) post_rows[, ReconstructionMethod := NA_character_]
         post_rows[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]

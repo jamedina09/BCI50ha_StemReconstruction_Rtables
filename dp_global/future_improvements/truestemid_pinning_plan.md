@@ -1,12 +1,14 @@
 # TrueStemID Pinning at Non-Anchor Censuses
 
+## Status: **IMPLEMENTED** (2026-04-10)
+
 ## Summary
 
-Currently, TrueStemID constrains the solver **only at the anchor census**.
-Non-anchor TrueStemID is ignored during solving — neither the DP state
-enumeration nor the probabilistic cost matrices use it as a constraint.
+Previously, TrueStemID constrained the solver **only at the anchor census**.
+Non-anchor TrueStemID was ignored during solving — neither the DP state
+enumeration nor the probabilistic cost matrices used it as a constraint.
 
-This plan adds "pinning": wherever TrueStemID is known at a non-anchor
+This feature adds "pinning": wherever TrueStemID is known at a non-anchor
 census, constrain the solver to assign that observation to its correct
 track.  Benefits:
 
@@ -283,3 +285,42 @@ git checkout pre-pinning-baseline
 
 3. **Partial pinning**: Pin only at censuses where TrueStemID confidence
    is high (e.g., field-verified vs. database-inferred).
+
+---
+
+## Implementation Notes (2026-04-10)
+
+### Changes from original plan
+
+1. **Probabilistic pathway restructured**: The original plan assumed track
+   identity was maintained during the backward sampling loop. In reality,
+   sampling was per-pair independent; identity mapping only happened
+   post-hoc in `stitch_assignments_backward()`. The implementation adds
+   inline per-sample track propagation (`propagate_track_backward()`) during
+   the sampling loop and applies pin masks (`apply_pin_mask()`) before each
+   `greedy_assignment_gumbel()` call.
+
+2. **Duplicate-pin guard added**: Not in the original plan. If two
+   observations at the same census claim the same track via TrueStemID,
+   the second is released with a warning.
+
+3. **Bug fix included**: `prob_lookahead_weight` was missing from the
+   segment-split `.sub_args` list in `dp_global_dp.R`. Fixed alongside
+   the pinning implementation.
+
+### Files modified
+
+| File | Changes |
+|------|---------|
+| `dp_global/R/dp_global_dp.R` | `pin_truestemid` parameter, pin map computation, state-enum injection, `.sub_args` fix (added `prob_lookahead_weight` + `pin_truestemid`), fallback call passthrough |
+| `dp_global/R/dp_probabilistic_matching.R` | `pin_truestemid` parameter, pin lookup tables, sampling loop restructure with inline track propagation, `apply_pin_mask()` and `propagate_track_backward()` helpers |
+| `dp_global/scripts/main_cpp.R` | `PIN_TRUESTEMID` default + CLI_REFERENCE + `run_dp_one_group()` passthrough + error handler passthrough |
+| `dp_global/scripts/main_cpp_chunk.R` | Same as main_cpp.R |
+| `dp_global/scripts/main_cpp_chunk_bci.R` | `PIN_TRUESTEMID` default |
+
+### Regression tests passed
+
+- All 5 R files parse clean
+- `make smoke` — all modules load
+- Single-tag simulated (Tag=20): runs clean, no "Pinned" messages (expected — no pre-anchor TrueStemID)
+- Full chunked run (all simulated tags, 20 chunks): completes with no errors
