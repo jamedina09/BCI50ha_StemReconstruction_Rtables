@@ -316,9 +316,9 @@ All parameters must be present in the dataset before running DP. These are typic
 | `DP_MaxStatesCensusID` | Census with largest state space |
 
 Notes on post-anchor output semantics:
-- When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that matches an anchor-census stem ID (used as a DP constraint) will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
-- Remaining post-anchor rows without a DP assignment are labeled `ReconstructionMethod = "none_after_anchor"` and keep `ReconstructedStemID = NA`.
-- Pre-anchor rows (censuses before the anchor) with non-NA `TrueStemID` are processed by the solver and can receive different identity assignments — they are not automatically treated as `"given"`.
+- When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a non-NA `TrueStemID` will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
+- Remaining post-anchor rows without a non-NA `TrueStemID` (or with `DBH = NA`) are labeled `ReconstructionMethod = "none_after_anchor"` and keep `ReconstructedStemID = NA`.
+- Pre-anchor rows (censuses before the anchor) with non-NA `TrueStemID` are processed by the solver and can receive different identity assignments — they are not automatically treated as `"given"`. However, when `pin_truestemid = TRUE` (default), the solver constrains those observations to their field-observed identity.
 - If no anchored census with `TrueStemID` exists, and `allow_provisional_anchor = TRUE` (default), the DP can assign provisional anchor IDs at the last observed DBH census; those anchor rows are labeled `"provisional_dp"` and treated as anchors for the reconstruction.
 
 ### Posterior Uncertainty Columns (Optional)

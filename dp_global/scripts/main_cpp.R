@@ -202,6 +202,11 @@ PROB_SPECIES <- character(0)
 # 0 = disabled (original independent sampling), 0.5 = default.
 PROB_LOOKAHEAD_WEIGHT <- 0.5
 
+# Pin observations with known TrueStemID at non-anchor censuses to their
+# correct track.  Reduces state space and prevents misidentification.
+# Set FALSE to revert to pre-pinning behavior.
+PIN_TRUESTEMID <- TRUE
+
 ############################################################
 ### 3.3) Parallelism settings
 ############################################################
@@ -301,7 +306,8 @@ CLI_REFERENCE <- list(
     OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE",
     PROB_N_SAMPLES = "PROB_N_SAMPLES",
     PROB_SPECIES = "PROB_SPECIES",
-    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT"
+    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT",
+    PIN_TRUESTEMID = "PIN_TRUESTEMID"
 )
 
 ############################################################
@@ -738,7 +744,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             verbose = isTRUE(DP_VERBOSE),
             prob_n_samples = PROB_N_SAMPLES,
             prob_species = PROB_SPECIES,
-            prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT
+            prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+            pin_truestemid = isTRUE(PIN_TRUESTEMID)
         ),
         error = function(e) {
             msg <- conditionMessage(e)
@@ -757,6 +764,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                 prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR,
                 prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR,
                 prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+                pin_truestemid = isTRUE(PIN_TRUESTEMID),
                 verbose = isTRUE(DP_VERBOSE)
             )
             if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]

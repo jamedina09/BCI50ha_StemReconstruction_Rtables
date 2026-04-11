@@ -37,6 +37,7 @@ match_stems_probabilistic <- function(tree_data,
                                       prune_max_growth    = NULL,
                                       prune_recruit_max_dbh = NULL,
                                       prob_lookahead_weight = 0.5,  # backward conditioning weight [0,1]; 0 = independent
+                                      pin_truestemid = TRUE,        # pin obs with known TrueStemID to their track
                                       verbose       = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
@@ -166,6 +167,37 @@ match_stems_probabilistic <- function(tree_data,
     vcat(prefix, "Probabilistic matching: ", n_census, " censuses, K=", K,
          ", max_obs=", max_obs, ", n_samples=", n_samples)
 
+    # --- Pre-compute TrueStemID pin map for non-anchor censuses -------------
+    # pin_info[[i]][j] = anchor-position index (1..n_anchor) for obs j, or NA
+    pin_info <- vector("list", n_census)
+    .any_pins <- FALSE
+    if (isTRUE(pin_truestemid)) {
+        n_anchor <- length(anchor_ids)
+        for (i in seq_len(n_census)) {
+            if (i == n_census) next  # anchor pinned via anchor_ids directly
+            n_obs_i <- obs_data[[i]]$n
+            if (n_obs_i == 0L) next
+            tsid <- tree_data$TrueStemID[obs_data[[i]]$idx]
+            tidx <- match(as.integer(tsid), anchor_ids)
+            tidx[is.na(tsid)] <- NA_integer_
+            # Duplicate-pin guard: if two obs claim the same anchor position, keep first
+            .seen <- integer(0)
+            for (.j in seq_along(tidx)) {
+                if (is.na(tidx[.j])) next
+                if (tidx[.j] %in% .seen) {
+                    vcat(prefix, "WARNING: duplicate TrueStemID pin at C",
+                         obs_data[[i]]$census_id, " for anchor ID ", anchor_ids[tidx[.j]],
+                         "; keeping first, releasing obs ", .j)
+                    tidx[.j] <- NA_integer_
+                } else {
+                    .seen <- c(.seen, tidx[.j])
+                }
+            }
+            if (any(!is.na(tidx))) .any_pins <- TRUE
+            pin_info[[i]] <- tidx
+        }
+    }
+
     # --- Per-pair log-likelihood matrices (backward) -----------------------
     # For each pair (c, c+1) compute the pairwise + augmented cost matrix
     pair_data <- vector("list", n_census - 1L)
@@ -196,14 +228,33 @@ match_stems_probabilistic <- function(tree_data,
         # For each census pair (working backward from anchor-1 to 1),
         # sample an assignment.  When lookahead is enabled, after sampling
         # pair (i+1), condition pair (i)'s cost matrix on the result.
+        # When pinning is active, maintain per-sample track-to-anchor mapping
+        # so pinned obs can be forced to the correct column.
         per_pair_assignments <- vector("list", n_census - 1L)
+
+        # Initialize anchor-position mapping: at anchor, obs j IS position j
+        .n_anchor_obs <- obs_data[[n_census]]$n
+        .next_obs_to_anchor_pos <- seq_len(.n_anchor_obs)
 
         # Last pair (closest to anchor): no conditioning available
         last_pair <- n_census - 1L
+        .cost_last <- pair_data[[last_pair]]$log_cost
+        if (.any_pins && !is.null(pin_info[[last_pair]])) {
+            .cost_last <- apply_pin_mask(
+                .cost_last, pin_info[[last_pair]], .next_obs_to_anchor_pos,
+                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
+            )
+        }
         per_pair_assignments[[last_pair]] <- greedy_assignment_gumbel(
-            pair_data[[last_pair]]$log_cost,
+            .cost_last,
             temperature = temperature
         )
+        if (.any_pins) {
+            .next_obs_to_anchor_pos <- propagate_track_backward(
+                per_pair_assignments[[last_pair]], .next_obs_to_anchor_pos,
+                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
+            )
+        }
 
         # Remaining pairs moving backward: condition on next pair's assignment
         if (last_pair >= 2L) {
@@ -225,10 +276,23 @@ match_stems_probabilistic <- function(tree_data,
                     )
                 }
 
+                if (.any_pins && !is.null(pin_info[[i]])) {
+                    cost_i <- apply_pin_mask(
+                        cost_i, pin_info[[i]], .next_obs_to_anchor_pos,
+                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
+                    )
+                }
+
                 per_pair_assignments[[i]] <- greedy_assignment_gumbel(
                     cost_i,
                     temperature = temperature
                 )
+                if (.any_pins) {
+                    .next_obs_to_anchor_pos <- propagate_track_backward(
+                        per_pair_assignments[[i]], .next_obs_to_anchor_pos,
+                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
+                    )
+                }
             }
         }
 
@@ -530,6 +594,57 @@ condition_cost_matrix <- function(aug_cost, n_curr, n_next,
     }
 
     aug_cost
+}
+
+# ---- TrueStemID pin helpers for probabilistic matcher --------------------
+
+# apply_pin_mask: For each pinned obs r at current census, find the column j
+# at the next census that carries the pinned track, and set all other columns
+# to -Inf so greedy_assignment_gumbel() is forced to pick column j.
+#
+# INPUTS
+#   cost_matrix            K×K augmented cost matrix (modified in place)
+#   pin_for_curr           integer vector length n_curr; pin_for_curr[r] =
+#                          anchor position the obs is pinned to, or NA
+#   next_obs_to_anchor_pos integer vector length n_next; which anchor position
+#                          obs j at next census is currently carrying
+#   n_curr, n_next         number of real observations at current / next census
+#
+# RETURNS  modified cost_matrix
+apply_pin_mask <- function(cost_matrix, pin_for_curr, next_obs_to_anchor_pos,
+                           n_curr, n_next) {
+    for (r in seq_len(n_curr)) {
+        target <- pin_for_curr[r]
+        if (is.na(target)) next
+        # Find column j at next census carrying this anchor position
+        j_candidates <- which(next_obs_to_anchor_pos[seq_len(n_next)] == target)
+        if (length(j_candidates) != 1L) next  # target died or ambiguous — skip
+        j <- j_candidates[1L]
+        # Mask all columns except j to -Inf for row r
+        cost_matrix[r, -j] <- -Inf
+    }
+    cost_matrix
+}
+
+# propagate_track_backward: After an assignment is drawn, compute which
+# anchor position each current-census obs now carries.
+#
+# INPUTS
+#   assignment             K-length integer vector: assignment[r] = col
+#   next_obs_to_anchor_pos integer vector: anchor position for each next-census obs
+#   n_curr, n_next         number of real observations at current / next census
+#
+# RETURNS  integer vector length n_curr: anchor position per obs (NA = died)
+propagate_track_backward <- function(assignment, next_obs_to_anchor_pos,
+                                     n_curr, n_next) {
+    curr <- rep(NA_integer_, n_curr)
+    for (r in seq_len(n_curr)) {
+        col <- assignment[r]
+        if (col <= n_next) {
+            curr[r] <- next_obs_to_anchor_pos[col]
+        }
+    }
+    curr
 }
 
 # ---- Gumbel-noise greedy assignment --------------------------------------

@@ -194,7 +194,7 @@ Each observation in the output receives a `ReconstructionMethod` label indicatin
 
 | Method | Description |
 |--------|-------------|
-| `given` | Identity known from input `TrueStemID` (anchor census) |
+| `given` | Identity known from input `TrueStemID` (anchor or post-anchor census) |
 | `dp` | Assigned by the exact DP solver |
 | `probabilistic` | Assigned by the probabilistic greedy matching fallback |
 | `provisional_dp` | Provisional anchor assigned by DP |

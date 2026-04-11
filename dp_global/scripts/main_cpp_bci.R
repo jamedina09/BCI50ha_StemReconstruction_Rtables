@@ -78,6 +78,7 @@ RECRUIT_MAX_SOURCE      <- "fixed"
 # matcher.  Empty vector means all species go through DP normally.
 PROB_SPECIES            <- character(0)
 PROB_LOOKAHEAD_WEIGHT   <- 0.5
+PIN_TRUESTEMID          <- TRUE
 
 # ----------------------------------------------------------------
 # 3. Re-apply CLI overrides on top of BCI defaults
