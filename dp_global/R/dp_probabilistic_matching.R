@@ -155,10 +155,15 @@ match_stems_probabilistic <- function(tree_data,
         anchor_ids[!has_true] <- seq.int(next_id, length.out = n_missing)
     }
     # Ensure all anchor obs have IDs
-    tree_data[CensusID == anchor_start & !is.na(DBH), `:=`(
-        ReconstructedStemID = anchor_ids,
-        ReconstructionMethod = ifelse(!is.na(TrueStemID), "given", "probabilistic")
-    )]
+    # Preserve "provisional_dp" for rows where TrueStemID was fabricated;
+    # mark real TrueStemID as "given"; the rest are "probabilistic".
+    .anchor_rows <- which(tree_data$CensusID == anchor_start & !is.na(tree_data$DBH))
+    tree_data[.anchor_rows, ReconstructedStemID := anchor_ids]
+    .is_provisional <- tree_data$ReconstructionMethod[.anchor_rows] %in% "provisional_dp"
+    .has_tsid       <- !is.na(tree_data$TrueStemID[.anchor_rows])
+    .method_vec     <- ifelse(.is_provisional, "provisional_dp",
+                       ifelse(.has_tsid, "given", "probabilistic"))
+    tree_data[.anchor_rows, ReconstructionMethod := .method_vec]
 
     # K = number of tracks (at least max obs across any census)
     max_obs <- max(vapply(obs_data, function(x) x$n, integer(1)))
@@ -321,38 +326,69 @@ match_stems_probabilistic <- function(tree_data,
         message(.msg)  # ensure it appears on stderr / captured by log redirection
     }
 
+    # --- Filter to pin-consistent samples (before marginals) ---------------
+    # Discard samples where any pinned obs got the wrong track ID, so
+    # marginals are conditioned on all pins being correct.
+    if (.any_pins) {
+        stitched <- filter_pin_consistent_samples(
+            stitched, pin_info, anchor_ids, n_census,
+            min_keep = 10L, vcat = vcat, prefix = prefix
+        )
+    }
+
     # --- Compute marginals and fill tree_data ------------------------------
     tree_data <- compute_marginals_from_samples(stitched, tree_data, obs_data,
                                                 obs_census, anchor_pos,
                                                 posterior_top_k)
 
-    # --- Safety-net repair: catch residual violations from greedy conflict
-    #     resolution in compute_marginals_from_samples().  Ideally this
-    #     should fire 0 breaks now that samples are pre-cleaned.
-    tree_data <- repair_marginal_growth_violations(
-        tree_data, obs_data, obs_census, intervals,
-        eff_min_growth, eff_max_growth, posterior_top_k, vcat, prefix
-    )
-
-    # --- Re-stamp TrueStemID rows at the ANCHOR census only ---------------
-    # compute_marginals_from_samples() unconditionally overwrites
-    # ReconstructedStemID with the sample-voted majority.  Restore the
-    # authoritative identity for anchor-census rows that carry TrueStemID,
-    # because TrueStemID IS used as a constraint at the anchor.
-    # Pre-anchor TrueStemID is NOT used to constrain identification;
-    # labelling it "given" would be misleading — those rows keep the
-    # solver's actual output and the "probabilistic" method label.
-    .given_rows <- which(!is.na(tree_data$TrueStemID) & tree_data$CensusID == anchor_start)
-    if (length(.given_rows) > 0L) {
-        tree_data[.given_rows, ReconstructedStemID := as.integer(TrueStemID)]
-        tree_data[.given_rows, DP_PosteriorReconstructedProb := 1.0]
-        tree_data[.given_rows, ReconstructionMethod := "given"]
+    # --- Diagnostic check: count residual growth violations from greedy
+    #     conflict resolution.  With pin-consistent sample filtering +
+    #     sample-level repair, ideally 0 violations remain.  We do NOT
+    #     modify tree_data here — posteriors must stay pristine.
+    {
+        .n_violations <- 0L
+        .stem_ids <- unique(tree_data$ReconstructedStemID[!is.na(tree_data$ReconstructedStemID)])
+        for (.sid in .stem_ids) {
+            .rows <- which(tree_data$ReconstructedStemID == .sid)
+            if (length(.rows) < 2L) next
+            .rows <- .rows[order(tree_data$CensusID[.rows])]
+            for (.ri in seq_len(length(.rows) - 1L)) {
+                .d1 <- tree_data$DBH[.rows[.ri]]
+                .d2 <- tree_data$DBH[.rows[.ri + 1L]]
+                if (is.na(.d1) || is.na(.d2)) next
+                .iv <- intervals[match(tree_data$CensusID[.rows[.ri]], obs_census)]
+                if (is.na(.iv) || .iv <= 0) next
+                .rate <- (.d2 - .d1) / .iv
+                if (.rate < eff_min_growth || .rate > eff_max_growth) {
+                    .n_violations <- .n_violations + 1L
+                }
+            }
+        }
+        if (.n_violations > 0L) {
+            .msg <- paste0(prefix, "WARNING: ", .n_violations,
+                           " residual growth violation(s) in marginal trajectory ",
+                           "(post-marginal repair DISABLED — posteriors preserved)")
+            vcat(.msg)
+            message(.msg)
+        }
     }
 
-    tree_data[, ReconstructionMethod := ifelse(
-        !is.na(TrueStemID) & CensusID == anchor_start & ReconstructionMethod == "given",
-        "given", "probabilistic"
-    )]
+    # --- Label assignment (does NOT modify ReconstructedStemID or posteriors)
+    # With pin-consistent sample filtering, marginals already reflect the
+    # correct IDs at anchor and pinned rows.  Only set method labels here.
+    #
+    # Label logic:
+    #   anchor + real TrueStemID (not provisional)  -> "given"
+    #   anchor + provisional TrueStemID             -> "provisional_dp"
+    #   pre-anchor + real TrueStemID + pin active   -> "given"
+    #   everything else                             -> "probabilistic"
+    .is_anchor <- tree_data$CensusID == anchor_start
+    .has_tsid  <- !is.na(tree_data$TrueStemID)
+    .is_prov   <- tree_data$ReconstructionMethod %in% "provisional_dp"
+    .is_pinned <- .has_tsid & !.is_prov  # real TrueStemID = pinned
+    tree_data[, ReconstructionMethod := "probabilistic"]
+    tree_data[.is_pinned & (.is_anchor | isTRUE(pin_truestemid)), ReconstructionMethod := "given"]
+    tree_data[.is_prov, ReconstructionMethod := "provisional_dp"]
 
     # --- Export posterior samples (same format as DP) -----------------------
     if (n_samples > 0L) {
@@ -828,6 +864,96 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
     attr(stitched, "sample_level_breaks")    <- total_breaks
     attr(stitched, "sample_level_me_breaks") <- total_me_breaks
     stitched
+}
+
+# ---- Filter samples to pin-consistent ones -------------------------------
+# After stitching + sample-level repair, discard any sample where a pinned
+# observation ended up on the wrong track.  This guarantees that marginals
+# computed from the surviving samples are conditioned on all pins being
+# satisfied, so posteriors are naturally correct without post-hoc patches.
+#
+# INPUTS
+#   stitched    list of n_samples; each element is a list of n_census
+#               integer vectors (obs → track_id mapping)
+#   pin_info    list of n_census; pin_info[[i]][j] = anchor-position
+#               index (1..n_anchor) for obs j, or NA if not pinned
+#   anchor_ids  integer vector of anchor IDs
+#   n_census    number of censuses
+#   min_keep    minimum number of surviving samples (safety net)
+#   vcat        verbose logger
+#   prefix      log prefix
+#
+# RETURNS  filtered stitched list (possibly unchanged if no pins or
+#          too few survive).  attr("n_pin_filtered") records how many
+#          were dropped.
+
+filter_pin_consistent_samples <- function(stitched, pin_info, anchor_ids,
+                                          n_census, min_keep = 10L,
+                                          vcat = function(...) invisible(NULL),
+                                          prefix = "") {
+    n_samples <- length(stitched)
+    if (n_samples == 0L) return(stitched)
+
+    # Gather all (census, obs, expected_track_id) triples
+    pin_checks <- list()
+    for (i in seq_len(n_census)) {
+        pi <- pin_info[[i]]
+        if (is.null(pi)) next
+        pinned_obs <- which(!is.na(pi))
+        if (length(pinned_obs) == 0L) next
+        for (j in pinned_obs) {
+            pin_checks[[length(pin_checks) + 1L]] <- list(
+                census = i, obs = j, expected = anchor_ids[pi[j]]
+            )
+        }
+    }
+    if (length(pin_checks) == 0L) {
+        attr(stitched, "n_pin_filtered") <- 0L
+        return(stitched)
+    }
+
+    # Check each sample
+    keep <- logical(n_samples)
+    for (s in seq_len(n_samples)) {
+        ok <- TRUE
+        for (pc in pin_checks) {
+            actual <- stitched[[s]][[pc$census]][pc$obs]
+            if (is.na(actual) || actual != pc$expected) {
+                ok <- FALSE
+                break
+            }
+        }
+        keep[s] <- ok
+    }
+
+    n_kept <- sum(keep)
+    n_dropped <- n_samples - n_kept
+
+    if (n_dropped == 0L) {
+        attr(stitched, "n_pin_filtered") <- 0L
+        return(stitched)
+    }
+
+    # Safety net: if too few survive, warn and keep all
+    .min_safe <- min(min_keep, max(1L, as.integer(n_samples / 4L)))
+    if (n_kept < .min_safe) {
+        .msg <- paste0(prefix, "WARNING: pin-consistent filter would keep only ",
+                       n_kept, "/", n_samples, " samples (min_safe=", .min_safe,
+                       "); keeping ALL samples (degrading to soft-pin behavior)")
+        vcat(.msg)
+        message(.msg)
+        attr(stitched, "n_pin_filtered") <- 0L
+        return(stitched)
+    }
+
+    .msg <- paste0(prefix, "Pin-consistent filter: kept ", n_kept, "/",
+                   n_samples, " samples (", n_dropped, " dropped)")
+    vcat(.msg)
+    message(.msg)
+
+    out <- stitched[keep]
+    attr(out, "n_pin_filtered") <- n_dropped
+    out
 }
 
 # ---- Stitch assignments backward from anchor ----------------------------

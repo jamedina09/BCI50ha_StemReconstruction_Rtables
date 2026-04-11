@@ -715,7 +715,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # as a constraint by the DP solver.  Pre-anchor TrueStemID is NOT
     # used to constrain identification; labelling it "given" would be
     # misleading.  Pre-anchor rows get their method from Viterbi ("dp").
-    tree_data[!is.na(TrueStemID) & CensusID == anchor_start, `:=`(
+    # EXCEPTION: provisional_dp rows keep their label — TrueStemID was
+    # fabricated, not from field data.
+    # NOTE: use %in% not != for NA-safe comparison (NA != "x" is NA in R,
+    # which data.table treats as FALSE, silently dropping rows).
+    tree_data[!is.na(TrueStemID) & CensusID == anchor_start &
+              !ReconstructionMethod %in% "provisional_dp", `:=`(
         ReconstructedStemID = as.integer(TrueStemID),
         ReconstructionMethod = "given"
     )]
@@ -2021,6 +2026,19 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
     }
 
+    # Restore "given" on pinned non-anchor rows whose identity was
+    # constrained by TrueStemID (real, not provisional).  The MAP decode
+    # loop above blanket-stamps "dp" on all non-anchor rows but these
+    # were forced by the pin constraint.
+    if (isTRUE(pin_truestemid)) {
+        .pinned_pre <- which(!is.na(tree_data$TrueStemID) &
+                             tree_data$CensusID != anchor_start &
+                             !tree_data$ReconstructionMethod %in% "provisional_dp")
+        if (length(.pinned_pre) > 0L) {
+            tree_data[.pinned_pre, ReconstructionMethod := "given"]
+        }
+    }
+
     # -----------------------------------------------------------------
     # NA-R barrier post-processing
     # When a census has 0 live stems AND NA-DBH R-coded rows, it is a
@@ -2048,8 +2066,24 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 for (.old_id in .crossing) {
                     .new_id <- as.integer(.cur_max_id) + 1L
                     .cur_max_id <- .new_id
+                    # Protect pinned rows: only reassign obs without real
+                    # TrueStemID (provisional counts as non-pinned).
+                    .pinned_crossing <- tree_data[
+                        CensusID %in% .cens_before &
+                        ReconstructedStemID == .old_id &
+                        !is.na(TrueStemID) &
+                        !ReconstructionMethod %in% "provisional_dp"
+                    ]
+                    if (nrow(.pinned_crossing) > 0L) {
+                        vcat(prefix, "WARNING: pinned TrueStemID ",
+                             paste(unique(.pinned_crossing$TrueStemID), collapse = ","),
+                             " crosses NA-R barrier at C", .cc_bar,
+                             " — respecting pin (not reassigning)")
+                    }
                     tree_data[
-                        CensusID %in% .cens_before & ReconstructedStemID == .old_id,
+                        CensusID %in% .cens_before &
+                        ReconstructedStemID == .old_id &
+                        (is.na(TrueStemID) | ReconstructionMethod %in% "provisional_dp"),
                         ReconstructedStemID := .new_id
                     ]
                     tree_data[CensusID %in% .cens_before & ReconstructedStemID == .new_id &
