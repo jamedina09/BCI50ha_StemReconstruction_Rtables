@@ -18,3 +18,5 @@ tests/
 .vscode/
 
 bci_data/
+
+baseline_pre_change/
