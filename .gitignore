@@ -20,3 +20,4 @@ tests/
 bci_data/
 
 baseline_pre_change/
+baseline_pre_greedy_fix/
