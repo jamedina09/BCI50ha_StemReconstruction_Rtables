@@ -219,7 +219,7 @@ Runner integration
 
 At the anchor census (`CensusID == ANCHOR_START_CENSUS`), `TrueStemID` values serve as hard constraints and `ReconstructedStemID` will equal `TrueStemID` for those rows (`ReconstructionMethod = "given"`). Pre-anchor rows with `TrueStemID` are processed by the solver (DP or probabilistic) and can receive different identity assignments based on biological likelihood.
 
-**Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, safety-net repair warnings) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
+**Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, growth-aware resolver diagnostics) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
 
 
 ---
@@ -302,7 +302,7 @@ all <- rbindlist(lapply(chunk_files, readRDS), use.names = TRUE, fill = TRUE)
 
 ## Basal Area Uncertainty (`basal_area_uncertainty.R`)
 
-Post-processing script that uses posterior path samples from a completed run to quantify how identity uncertainty propagates into basal area (BA) estimates.
+Post-processing script that uses posterior path samples from a completed run to quantify how identity uncertainty propagates into individual-level basal area (BA) estimates.
 
 ### Usage
 
@@ -317,16 +317,16 @@ The script reads:
 
 ### Outputs
 
-Three CSV files written to `<RUN_DIR>/`:
+Two CSV files and one PDF written to `<RUN_DIR>/`:
 
 | File | Rows | Description |
 |------|------|-------------|
-| `basal_area_uncertainty_tag.csv` | Tag × Census | Total BA with posterior mean, SD, 95% CI |
-| `basal_area_uncertainty_stem.csv` | Stem × Census | Per-stem BA posterior: mean, SD, median, 95% CI, MAP |
-| `basal_area_uncertainty_growth.csv` | Stem × Census pair | BA growth rate ($\Delta$BA/$\Delta t$) posterior |
+| `basal_area_tag_census.csv` | Tag × Census | Total BA (cm²), stem count, year |
+| `basal_area_tag_change.csv` | Tag × Census interval | BA change decomposed into survivor growth, mortality loss, and recruitment gain — MAP values plus posterior mean, SD, and 95% CI for each component |
+| `basal_area_figures.pdf` | — | Multi-page PDF: summary page (all tags), per-tag detail pages (2×2 panels: BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), and posterior uncertainty histograms |
 
 ### Key insight
 
-Tag-level total BA per census is **invariant** to identity assignment — the same DBH values are summed regardless of which stem identity each observation receives. All uncertainty is at the **per-stem level**: different identity assignments allocate different DBH values to each stem, producing different BA trajectories and growth rates.
+Tag-level total BA per census is **invariant** to identity assignment — the same DBH values are summed regardless of which stem identity each observation receives. The **decomposition** of BA change into growth (surviving stems), loss (mortality), and gain (recruitment) **is** identity-dependent. Different posterior path samples assign different stems as survivors vs. deaths vs. recruits, producing uncertainty in the attribution of BA change to these demographic components.
 
 ---

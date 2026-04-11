@@ -1110,9 +1110,9 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 
 7. **Marginal posterior computation**: Two-pass approach:
    - **Pass 1**: Computes the full marginal posterior distribution for every observation by counting track assignments across samples.
-   - **Pass 2**: Per-census greedy conflict resolution — within each census, observations are sorted by confidence (descending), each observation gets its MAP track ID unless it conflicts with an already-assigned ID, in which case it falls back to the next-best posterior alternative.
+   - **Pass 2**: Growth-aware greedy conflict resolution — censuses are processed from the anchor outward (anchor first, then ±1, ±2, …). Within each census, observations are sorted by confidence (descending); each observation gets its MAP track ID unless it conflicts with an already-assigned ID **or** it would create a growth-rate violation against the nearest already-resolved adjacent census. When a candidate ID is rejected (by conflict or growth check), the next-best posterior alternative is tried. This prevents the greedy resolver from assembling trajectories that never existed in any individual sample. When `intervals`, `min_rate`, and `max_rate` are passed (the default), growth checking is active; when they are `NULL`, the resolver falls back to sequential census ordering (backward compatible).
 
-8. **Safety-net post-marginal repair**: `repair_marginal_growth_violations()` walks each reconstructed stem's trajectory and breaks tracks (assigns new unique IDs) at any point where the annualised growth rate violates hard bounds. This is a safety net — ideally it fires 0 breaks because step 6 already cleaned the samples. If it does fire, a warning is logged because the affected rows' posterior probabilities are stale (they were computed from pre-repair assignments).
+8. **Diagnostic growth-violation check**: After the growth-aware resolver, a diagnostic scan walks each reconstructed stem trajectory and counts residual hard-rate violations. With the growth-aware resolver, pin-consistent sample filtering, and sample-level repair, this count is expected to be 0. The check is diagnostic only — it does not modify `tree_data` or posteriors, which remain pristine after Pass 1. Any violations are logged as warnings.
 
 9. **TrueStemID re-stamping (anchor census only)**: After all repairs, rows at the anchor census carrying a known `TrueStemID` have their `ReconstructedStemID` restored to match `TrueStemID`, `DP_PosteriorReconstructedProb` set to 1.0, and `ReconstructionMethod` set to `"given"`. Pre-anchor rows with `TrueStemID` retain the identity assigned by the stochastic matcher.
 
@@ -1787,40 +1787,44 @@ Rscript dp_global/scripts/basal_area_uncertainty.R \
 
 ### Outputs
 
-Three CSV files are written to the run directory:
+Two CSV files and one PDF are written to the run directory:
 
 | File | Contents |
 |------|----------|
-| `basal_area_uncertainty_tag.csv` | Per-tag × census total BA: mean, SD, 95% CI (verifies invariance) |
-| `basal_area_uncertainty_stem.csv` | Per-stem × census BA posterior: weighted mean, SD, median, 95% CI, MAP value |
-| `basal_area_uncertainty_growth.csv` | Per-stem BA growth rate ($\Delta\text{BA}/\Delta t$) posterior: mean, SD, 95% CI |
+| `basal_area_tag_census.csv` | Per-tag × census: total BA (cm²), stem count, year |
+| `basal_area_tag_change.csv` | Per-tag BA change between consecutive censuses: MAP decomposition into growth (surviving stems), loss (mortality), and gain (recruitment), plus posterior mean, SD, and 95% CI for each component |
+| `basal_area_figures.pdf` | Multi-page PDF with summary pages and per-tag detail panels (BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics) |
 
 ### Column Reference
 
-**Tag-level** (`basal_area_uncertainty_tag.csv`):
+**Tag census** (`basal_area_tag_census.csv`):
 
 | Column | Description |
 |--------|-------------|
-| `BA_total_mean` | Probability-weighted mean total BA (cm²) |
-| `BA_total_sd` | SD across posterior paths (should be ~0 when all paths include same observations) |
-| `BA_total_q025`, `BA_total_q975` | 95% credible interval |
-| `BA_total_map` | Total BA from the MAP reconstruction |
+| `Tag` | Individual tree identifier |
+| `CensusID` | Census identifier |
+| `Year` | Calendar year (from mean ExactDate) |
+| `TotalBA_cm2` | Total basal area = Σ(π/4 × DBH²) across all stems |
+| `NumStems` | Number of stems with non-NA DBH |
 
-**Stem-level** (`basal_area_uncertainty_stem.csv`):
-
-| Column | Description |
-|--------|-------------|
-| `BA_mean`, `BA_sd` | Posterior mean and SD of BA for this stem × census |
-| `BA_median`, `BA_q025`, `BA_q975` | Posterior median and 95% CI |
-| `n_unique_dbh` | Number of distinct DBH values assigned to this stem across paths (1 = certain) |
-| `BA_map` | BA from the MAP reconstruction |
-
-**Growth rates** (`basal_area_uncertainty_growth.csv`):
+**Tag change** (`basal_area_tag_change.csv`):
 
 | Column | Description |
 |--------|-------------|
-| `dBA_rate_mean`, `dBA_rate_sd` | Posterior mean and SD of annualised BA change (cm²/yr) |
-| `dBA_rate_q025`, `dBA_rate_q975` | 95% CI of BA growth rate |
+| `Tag` | Individual tree identifier |
+| `CensusID_from`, `CensusID_to` | Census pair defining the interval |
+| `Interval_yr` | Interval length in years (from mean ExactDate) |
+| `Growth_BA` | MAP: BA change attributable to surviving stems (cm²) |
+| `Loss_BA` | MAP: BA removed by stem mortality (negative, cm²) |
+| `Gain_BA` | MAP: BA added by stem recruitment (cm²) |
+| `DeltaBA_total` | Total BA change = Growth + Loss + Gain (invariant to identity) |
+| `NumSurvivors`, `NumDeaths`, `NumRecruits` | MAP stem counts per demographic category |
+| `Growth_mean`, `Growth_sd`, `Growth_q025`, `Growth_q975` | Posterior summary of growth component |
+| `Loss_mean`, `Loss_sd`, `Loss_q025`, `Loss_q975` | Posterior summary of loss component |
+| `Gain_mean`, `Gain_sd`, `Gain_q025`, `Gain_q975` | Posterior summary of gain component |
+| `DeltaBA_check` | Posterior weighted mean of total BA change (should match `DeltaBA_total`) |
+| `NumSurvivors_mean`, `NumDeaths_mean`, `NumRecruits_mean` | Posterior weighted mean stem counts per demographic category |
+| `NumPaths` | Number of posterior paths used for uncertainty estimation |
 
 ---
 
