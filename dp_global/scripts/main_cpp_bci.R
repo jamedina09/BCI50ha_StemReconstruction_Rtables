@@ -211,3 +211,5 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=190932 --DP_MAX_STATES=2
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=171486 --DP_MAX_STATES=2
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=220311 --DP_MAX_STATES=10000
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=204785
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242114
