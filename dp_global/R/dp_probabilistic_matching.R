@@ -397,7 +397,7 @@ match_stems_probabilistic <- function(tree_data,
         export_probabilistic_posteriors(
             stitched, tree_data, obs_data, obs_census,
             tag_val         = tag_val,
-            n_samples       = n_samples,
+            n_samples       = length(stitched),
             posterior_samples_path   = posterior_samples_path,
             posterior_samples_format = posterior_samples_format,
             verbose         = verbose,
