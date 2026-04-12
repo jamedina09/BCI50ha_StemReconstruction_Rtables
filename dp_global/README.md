@@ -78,6 +78,7 @@ dp_global/
 │   ├── dp_global_bio.R               # Biological parameter estimation (estimate_bio_pars)
 │   ├── dp_global_dp.R                # Core DP solver (match_stems_dp_global_backward_marginals_batch)
 │   ├── dp_global_states.R            # State enumeration and track-DBH helpers
+│   ├── dp_global_matchers.R          # Fallback stepwise matching (igraph-based bipartite)
 │   ├── dp_probabilistic_matching.R   # Probabilistic greedy matching fallback (match_stems_probabilistic)
 │   ├── dp_global_utils.R             # Shared utilities (interval resolution, etc.)
 │   ├── dp_global_diag.R              # Diagnostics and PDF plotting
@@ -1150,9 +1151,9 @@ Both pathways enforce the same hard growth bounds (`MAX_SHRINK_FIXED`, `MAX_GROW
 
 The DP solver recognizes ForestGEO stem status codes that encode field-recorded events. These codes influence state enumeration, transition feasibility, and segment splitting.
 
-### Resprout Codes (R, OR)
+### Resprout Codes (R, RP, RF, RT, QR, OR)
 
-**Recognized codes:** `R` (resprout from main stem) and `OR` (other breakage resprout).
+**Recognized codes:** `R` (resprout from main stem), `RP` (resprout from main stem prior), `RF` (resprout from main stem following), `RT` (resprout from trunk), `QR` (questionable resprout), and `OR` (other breakage resprout).
 
 When the DP encounters an R code at any census before the anchor, two mechanisms activate:
 
@@ -1203,10 +1204,10 @@ The DP detects implicit "missing from field" events: censuses where all stems ha
 All ForestGEO code matching uses `grepl()` with `perl = TRUE` to ensure `\b` word-boundary anchors work correctly. The resprout regex pattern is:
 
 ```r
-"\\b(R|OR)\\b"
+"\\b(R|RP|RF|RT|QR|OR)\\b"
 ```
 
-This matches whole-word `R` or `OR` codes in fields that may contain multiple semicolon-separated codes (e.g., `"R;B"` matches, `"NORMAL"` does not).
+This matches whole-word `R`, `RP`, `RF`, `RT`, `QR`, or `OR` codes in fields that may contain multiple semicolon-separated codes (e.g., `"R;B"` matches, `"NORMAL"` does not).
 
 ## Pruning & Conservative Guards
 
