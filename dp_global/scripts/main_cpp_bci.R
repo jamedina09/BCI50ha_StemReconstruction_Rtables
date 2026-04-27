@@ -215,3 +215,14 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242114
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080 --USE_MEASUREMENT_ERROR=FALSE --MAX_SHRINK_FIXED=-2.5 --DP_MAX_STATES=2
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080 --USE_MEASUREMENT_ERROR=FALSE --MAX_SHRINK_FIXED=-0.5 --MAX_GROWTH_FIXED=5 --PRUNE_BOUND_FACTOR=5 --DP_MAX_STATES=2
+
+
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080 --DP_MAX_STATES=2 \
+#   --USE_BIO_HARD_SHRINK_IN_PROB=TRUE \
+#   --USE_BIO_HARD_GROWTH_IN_PROB=TRUE \
+#   --PRUNE_BOUND_FACTOR=5
+
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080 --DP_MAX_STATES=2 \
+#   --USE_BIO_HARD_SHRINK_IN_PROB=FALSE \
+#   --USE_BIO_HARD_GROWTH_IN_PROB=FALSE \
+#   --PRUNE_BOUND_FACTOR=5
