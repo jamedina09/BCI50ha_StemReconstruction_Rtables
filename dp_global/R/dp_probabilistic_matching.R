@@ -33,6 +33,8 @@ match_stems_probabilistic <- function(tree_data,
                                       prune_max_growth    = NULL,
                                       prune_recruit_max_dbh = NULL,
                                       prob_lookahead_weight = 0.5,  # backward conditioning weight [0,1]; 0 = independent
+                                      use_bio_hard_shrink_in_prob = TRUE,   # if FALSE, ignore Bio_Max_Shrink hard gate
+                                      use_bio_hard_growth_in_prob = TRUE,   # if FALSE, ignore Bio_Max_Growth hard gate
                                       pin_truestemid = TRUE,        # pin obs with known TrueStemID to their track
                                       verbose       = FALSE) {
     tree_data <- tree_data[order(CensusID)]
@@ -208,7 +210,9 @@ match_stems_probabilistic <- function(tree_data,
         iv <- intervals[i]
 
         L <- compute_pairwise_log_likelihood(dbh_curr, dbh_next, iv, bio,
-                                             eff_min_growth, eff_max_growth)
+                                             eff_min_growth, eff_max_growth,
+                                             use_bio_hard_shrink = use_bio_hard_shrink_in_prob,
+                                             use_bio_hard_growth = use_bio_hard_growth_in_prob)
         aug <- augment_cost_matrix(L, dbh_curr, dbh_next, iv, bio)
 
         pair_data[[i]] <- list(
@@ -308,7 +312,8 @@ match_stems_probabilistic <- function(tree_data,
     # Two layers: hard-rate bounds + ME-informed cumulative shrinkage.
     stitched <- repair_stitched_growth_violations(
         stitched, obs_data, intervals, eff_min_growth, eff_max_growth,
-        me_sd1_a = 0.0062, me_sd1_b = 0.0904, n_sigma_me = 3
+        me_sd1_a = 0.0062, me_sd1_b = 0.0904, n_sigma_me = 3,
+        use_bio_hard_shrink = use_bio_hard_shrink_in_prob
     )
     .sample_breaks    <- attr(stitched, "sample_level_breaks")
     .sample_me_breaks <- attr(stitched, "sample_level_me_breaks")
@@ -412,10 +417,21 @@ match_stems_probabilistic <- function(tree_data,
 # ---- Pairwise log-likelihood matrix --------------------------------------
 
 compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
-                                            bio, min_growth, max_growth) {
+                                            bio, min_growth, max_growth,
+                                            use_bio_hard_shrink = TRUE,
+                                            use_bio_hard_growth = TRUE) {
     n_curr <- length(dbh_curr)
     n_next <- length(dbh_next)
     L <- matrix(-Inf, nrow = n_curr, ncol = n_next)
+    
+    # DEBUG: Log flag status on first call (n_curr > 0)
+    if (n_curr > 0 && n_next > 0) {
+        .first_call_debug <- TRUE
+        if (.first_call_debug) {
+            cat("[compute_pairwise_log_likelihood] use_bio_hard_shrink=", use_bio_hard_shrink, 
+                " use_bio_hard_growth=", use_bio_hard_growth, "\n")
+        }
+    }
 
     mu_growth_fn <- function(d) {
         if (!is.finite(bio$mu_gamma) || bio$mu_gamma == 0 || !is.finite(d) || d <= 0)
@@ -434,7 +450,10 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
             # Hard growth constraints — infeasible edge
             if (is.finite(min_growth) && g < min_growth) next
             if (is.finite(max_growth) && g > max_growth) next
-            if (is.finite(bio$max_shrink) && g < bio$max_shrink) next
+            # Bio hard shrink gate (conditionally applied)
+            if (isTRUE(use_bio_hard_shrink) && is.finite(bio$max_shrink) && g < bio$max_shrink) next
+            # Bio hard growth gate (conditionally applied)
+            if (isTRUE(use_bio_hard_growth) && is.finite(bio$max_growth_bio) && g > bio$max_growth_bio) next
 
             # Growth likelihood (Gaussian)
             sigma_d <- max(bio$sigma0 + bio$sigma1 * d0, 1e-6)
@@ -760,7 +779,8 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                                               me_sd1_a    = 0.0062,
                                               me_sd1_b    = 0.0904,
                                               n_sigma_me  = 3,
-                                              max_passes  = 10L) {
+                                              max_passes  = 10L,
+                                              use_bio_hard_shrink = TRUE) {
     n_samples <- length(stitched)
     n_census  <- length(obs_data)
     if (n_census < 2L) return(stitched)
@@ -838,7 +858,9 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                     }
 
                     # --- Layer 2: ME cumulative-shrinkage check ------------
-                    if (d_curr < d_prev) {
+                    # Skip when bio hard shrink gate is disabled (mirrors DP which
+                    # uses soft penalties only, never a hard ME threshold).
+                    if (isTRUE(use_bio_hard_shrink) && d_curr < d_prev) {
                         cumul_shrink <- cumul_shrink + (d_prev - d_curr)
                         thresh <- n_sigma_me * sqrt(me_sd(d_run_start)^2 + me_sd(d_curr)^2)
                         if (cumul_shrink > thresh) {

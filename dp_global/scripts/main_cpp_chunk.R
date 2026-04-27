@@ -205,6 +205,12 @@ PROB_SPECIES <- character(0)
 # Lookahead weight for probabilistic matcher (0 = disabled, 0.5 = default)
 PROB_LOOKAHEAD_WEIGHT <- 0.5
 
+# Bio hard bounds control for probabilistic matcher:
+# When TRUE (default), use bio-estimated hard shrink/growth guardrails (strict).
+# When FALSE, rely only on prune bounds (relaxed, for continuity rescue).
+USE_BIO_HARD_SHRINK_IN_PROB <- TRUE
+USE_BIO_HARD_GROWTH_IN_PROB <- TRUE
+
 # Pin observations with known TrueStemID at non-anchor censuses to their
 # correct track.  Reduces state space and prevents misidentification.
 PIN_TRUESTEMID <- TRUE
@@ -327,6 +333,8 @@ CLI_REFERENCE <- list(
     PROB_N_SAMPLES = "PROB_N_SAMPLES",
     PROB_SPECIES = "PROB_SPECIES",
     PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT",
+    USE_BIO_HARD_SHRINK_IN_PROB = "USE_BIO_HARD_SHRINK_IN_PROB",
+    USE_BIO_HARD_GROWTH_IN_PROB = "USE_BIO_HARD_GROWTH_IN_PROB",
     PIN_TRUESTEMID = "PIN_TRUESTEMID"
 )
 
@@ -756,6 +764,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             prob_n_samples = PROB_N_SAMPLES,
             prob_species = PROB_SPECIES,
             prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+            use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
+            use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
             pin_truestemid = isTRUE(PIN_TRUESTEMID)
         ),
         error = function(e) {
@@ -777,6 +787,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR,
                 prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR,
                 prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+                use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
+                use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
                 pin_truestemid = isTRUE(PIN_TRUESTEMID),
                 verbose = isTRUE(DP_VERBOSE)
             )
@@ -1325,3 +1337,25 @@ if (sys.nframe() == 0L) {
 
 ## for probabilistic to certain species
 #     --PROB_SPECIES=sp2
+
+
+# Rscript dp_global/scripts/main_cpp_chunk.R \
+# --DP_MAX_STATES=10000 \
+# --MANUAL_CORES=TRUE \
+# --MANUAL_CORES_VALUE=16 \
+# --WRITE_DP_FEATHER=FALSE \
+# --WRITE_DP_PDF=TRUE \
+# --POSTERIOR_SAMPLES=250 \
+# --USE_MEASUREMENT_ERROR=FALSE \
+# --MAX_SHRINK_FIXED=-2.5 \
+# --MAX_GROWTH_FIXED=7.5
+
+# Rscript dp_global/scripts/main_cpp_chunk.R \
+# --DP_MAX_STATES=10000 \
+# --MANUAL_CORES=TRUE \
+# --MANUAL_CORES_VALUE=16 \
+# --WRITE_DP_FEATHER=FALSE \
+# --WRITE_DP_PDF=TRUE \
+# --POSTERIOR_SAMPLES=250 \
+# --USE_MEASUREMENT_ERROR=FALSE \
+# --PRUNE_BOUND_FACTOR=5
