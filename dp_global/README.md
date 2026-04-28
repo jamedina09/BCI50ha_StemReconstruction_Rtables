@@ -1023,7 +1023,7 @@ The DP solver automatically falls back to the probabilistic greedy matcher when:
 5. DP recursion yields no feasible keys
 6. Growth form or species forced to probabilistic
 
-**Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints. After the probabilistic matcher returns, `do_fallback()` applies **R-boundary splitting**: for each census with live R-coded stems, identity tracks crossing the boundary are severed by assigning new IDs to the pre-boundary rows. This mirrors the DP solver's resprout segment split and prevents the probabilistic matcher from chaining identities across resprout events.
+**Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints. It also receives the `use_bio_hard_shrink_in_prob` and `use_bio_hard_growth_in_prob` flags (propagated from `USE_BIO_HARD_SHRINK_IN_PROB` and `USE_BIO_HARD_GROWTH_IN_PROB`), which control whether the bio hard gates and ME cumulative-shrinkage check are active in the probabilistic matcher. After the probabilistic matcher returns, `do_fallback()` applies **R-boundary splitting**: for each census with live R-coded stems, identity tracks crossing the boundary are severed by assigning new IDs to the pre-boundary rows. This mirrors the DP solver's resprout segment split and prevents the probabilistic matcher from chaining identities across resprout events.
 
 **Error fallback:** `run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) wraps the DP call in a `tryCatch` block. If the solver throws a runtime error (e.g., memory exhaustion), the error handler falls back to the probabilistic matcher with R-boundary splitting rather than returning `NA` or crashing the run. The error message is logged via `log_msg()` for diagnostics.
 
@@ -1105,7 +1105,7 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 6. **Sample-level growth violation repair** (`repair_stitched_growth_violations()`): Before computing marginals, each sample's trajectories are walked and links violating growth constraints are severed. This ensures that `compute_marginals_from_samples()` only counts biologically valid paths, so posterior probabilities reflect post-constraint uncertainty. Two layers of defense:
 
    - **Hard-rate check:** Annualised growth outside `[min_rate, max_rate]` is severed immediately.
-   - **ME-informed cumulative-shrinkage check:** Tracks cumulative shrinkage along each trajectory. Even when each consecutive pair passes the hard rate, a long run of small decreases can accumulate more shrinkage than measurement error can explain. The threshold is derived from the small-error component of the BCI measurement-error model: $\text{SD}(D) = 0.0062 \times D + 0.0904$ cm. When cumulative shrinkage exceeds $n_\sigma \times \sqrt{\text{SD}(d_\text{start})^2 + \text{SD}(d_\text{curr})^2}$ (default $n_\sigma = 3$), the link at the start of the shrinkage run is severed.
+   - **ME-informed cumulative-shrinkage check** (active when `use_bio_hard_shrink_in_prob = TRUE`): Tracks cumulative shrinkage along each trajectory. Even when each consecutive pair passes the hard rate, a long run of small decreases can accumulate more shrinkage than measurement error can explain. The threshold is derived from the small-error component of the BCI measurement-error model: $\text{SD}(D) = 0.0062 \times D + 0.0904$ cm. When cumulative shrinkage exceeds $n_\sigma \times \sqrt{\text{SD}(d_\text{start})^2 + \text{SD}(d_\text{curr})^2}$ (default $n_\sigma = 3$), the link at the start of the shrinkage run is severed. Set `USE_BIO_HARD_SHRINK_IN_PROB=FALSE` to disable this check and allow confirmed large-shrinkage events without forced splitting.
 
    **Relationship to DP:** The exact DP solver does not need explicit trajectory repair because its global cost minimisation naturally penalises consecutive shrinkage — each per-step growth likelihood accumulates across the entire trajectory, so a run-of-decreases pays a compounding cost even when each individual step is within hard bounds. The probabilistic matcher, being a per-pair greedy approach, lacks this global cost accumulation. The ME cumulative-shrinkage check provides an analogous trajectory-level constraint adapted for the greedy matching context.
 
@@ -1130,6 +1130,8 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 | `me_sd1_a` | `0.0062` | ME model small-error slope: SD(D) = me_sd1_a × D + me_sd1_b |
 | `me_sd1_b` | `0.0904` | ME model small-error intercept (cm) |
 | `n_sigma_me` | `3` | Number of ME standard deviations for cumulative shrinkage threshold |
+| `use_bio_hard_shrink_in_prob` | `TRUE` | Apply `Bio_Max_Shrink` hard gate in pairwise edge construction and ME cumulative-shrinkage check in trajectory repair. When `FALSE`, edges with growth below `Bio_Max_Shrink` are allowed (penalised by soft `k_shrink` only) and the Layer 2 cumulative-shrinkage check is skipped. Propagated from `USE_BIO_HARD_SHRINK_IN_PROB`. |
+| `use_bio_hard_growth_in_prob` | `TRUE` | Apply `Bio_Max_Growth` hard gate in pairwise edge construction. When `FALSE`, edges exceeding `Bio_Max_Growth_Bio` are allowed (penalised by soft `k_growth` only). Propagated from `USE_BIO_HARD_GROWTH_IN_PROB`. |
 
 **Output columns:** The probabilistic matcher produces the same output schema as the DP solver (including `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`, `DP_PosteriorEntropy`, etc.) with `ReconstructionMethod = "probabilistic"`. Anchor-census rows with known `TrueStemID` are marked `ReconstructionMethod = "given"` with `DP_PosteriorReconstructedProb = 1.0`.
 
@@ -1140,10 +1142,11 @@ Both pathways enforce the same hard growth bounds (`MAX_SHRINK_FIXED`, `MAX_GROW
 | Aspect | DP (global) | Probabilistic (greedy) |
 |--------|-------------|----------------------|
 | **Scope** | Minimises total cost over the entire trajectory | Greedy per census-pair assignment |
-| **Shrinkage defence** | Global cost accumulation: each step's growth likelihood compounds across the trajectory, naturally penalising runs of decreases | Explicit trajectory repair: ME cumulative-shrinkage check severs runs exceeding the measurement-error threshold |
-| **Hard bounds** | Enforced in state enumeration (infeasible transitions pruned) | Enforced in hard-rate check during sample-level repair |
-| **Soft penalty** | Optional `k_shrink` quadratic penalty (currently 0) | Not applicable — uses ME threshold instead |
-| **Measurement error** | 4-component mixture model when `USE_MEASUREMENT_ERROR=TRUE` | ME coefficients (sd1_a, sd1_b) used as a ruler for the cumulative threshold regardless of `USE_MEASUREMENT_ERROR` |
+| **Shrinkage defence** | Global cost accumulation: each step's growth likelihood compounds across the trajectory, naturally penalising runs of decreases | Explicit trajectory repair: ME cumulative-shrinkage check severs runs exceeding the measurement-error threshold (when `use_bio_hard_shrink_in_prob = TRUE`) |
+| **Hard bounds** | Always enforced in state enumeration (infeasible transitions pruned) — unaffected by `USE_BIO_HARD_SHRINK_IN_PROB` | Enforced in hard-rate check during sample-level repair; bio gates in pairwise edge construction and Layer 2 ME check are conditional on `use_bio_hard_shrink_in_prob` / `use_bio_hard_growth_in_prob` |
+| **Soft penalty** | Optional `k_shrink` quadratic penalty (currently 0) | Applied to edges below `Bio_Max_Shrink` when the hard gate is disabled (`use_bio_hard_shrink_in_prob = FALSE`) |
+| **Measurement error** | 4-component mixture model when `USE_MEASUREMENT_ERROR=TRUE` | ME coefficients (sd1_a, sd1_b) used as a ruler for the cumulative threshold regardless of `USE_MEASUREMENT_ERROR`; threshold check skipped when `use_bio_hard_shrink_in_prob = FALSE` |
+| **Asymmetry** | Always applies bio bounds as hard constraints | With `use_bio_hard_shrink_in_prob = FALSE`, probabilistic is **more permissive** than the DP for the same tree; use with care |
 
 ---
 
