@@ -22,7 +22,7 @@ Because it examines every possibility, the DP always finds the mathematically op
 
 When there are too many stems for the DP to try every combination, the probabilistic matcher takes over. Instead of exhaustive enumeration, it uses a **sampling strategy**: it generates hundreds of plausible random assignments (using Gumbel-noise perturbations of the same biological scores), stitches each sample backward from the anchor to build full identity histories, removes any links that violate growth constraints, and then **takes a vote** across all surviving samples. The identity that wins the most votes for each observation becomes the final assignment, and the vote share becomes the posterior probability.
 
-To compensate for its greedy per-pair nature (which lacks the DP's global cost accumulation), the probabilistic matcher applies two extra safeguards: a hard-rate bound check and a measurement-error-informed cumulative-shrinkage detector that severs runs of small decreases that collectively exceed what measurement noise could plausibly explain.
+To compensate for its greedy per-pair nature (which lacks the DP's global cost accumulation), the probabilistic matcher applies two extra safeguards: a hard-rate bound check and a measurement-error-informed cumulative-shrinkage detector that severs runs of small decreases that collectively exceed what measurement noise could plausibly explain. Both the bio hard gates (`Bio_Max_Shrink`, `Bio_Max_Growth`) in pairwise edge construction and the ME cumulative-shrinkage check in trajectory repair can be selectively disabled via the `USE_BIO_HARD_SHRINK_IN_PROB` and `USE_BIO_HARD_GROWTH_IN_PROB` flags — useful when a known large-shrinkage or large-growth event (e.g., storm damage) would otherwise cause the matcher to artificially split a continuous stem.
 
 ### When Each Algorithm Runs
 
@@ -95,6 +95,8 @@ Key CLI parameters for controlling solver behavior:
 | `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching |
 | `--PROB_LOOKAHEAD_WEIGHT` | `0.5` | Sequential backward conditioning weight (0 = disabled) |
 | `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
+| `--USE_BIO_HARD_SHRINK_IN_PROB` | `TRUE` | Apply `Bio_Max_Shrink` hard gate and ME cumulative-shrinkage check in probabilistic matcher. Set `FALSE` to allow shrinkage beyond the bio bound (soft penalty only; useful for confirmed large-shrinkage events) |
+| `--USE_BIO_HARD_GROWTH_IN_PROB` | `TRUE` | Apply `Bio_Max_Growth` hard gate in probabilistic matcher. Set `FALSE` to allow growth beyond the bio bound (soft penalty only) |
 
 ### Understanding `DP_MAX_STATES`
 
