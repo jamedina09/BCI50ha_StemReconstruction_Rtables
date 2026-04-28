@@ -226,3 +226,6 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 #   --USE_BIO_HARD_SHRINK_IN_PROB=FALSE \
 #   --USE_BIO_HARD_GROWTH_IN_PROB=FALSE \
 #   --PRUNE_BOUND_FACTOR=5
+
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080 --DP_MAX_STATES=4000 \
+#   --PRUNE_BOUND_FACTOR=5
