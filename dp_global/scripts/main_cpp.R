@@ -760,8 +760,12 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         error = function(e) {
             msg <- conditionMessage(e)
             log_msg(sprintf("DP error for Tag=%s species=%s: %s — falling back to probabilistic", tag_label, species_label, msg), "WARN")
+            # Scope to pre-anchor rows only — mirrors do_fallback() inside the DP.
+            # Post-anchor rows are appended afterward with proper given/none_after_anchor labels.
+            .pre_anchor_eh <- dtg[CensusID <= ANCHOR_START_CENSUS]
+            .post_anchor_eh <- dtg[CensusID > ANCHOR_START_CENSUS]
             out <- match_stems_probabilistic(
-                tree_data = data.table::copy(dtg),
+                tree_data = data.table::copy(.pre_anchor_eh),
                 min_growth = MAX_SHRINK_FIXED,
                 max_growth = MAX_GROWTH_FIXED,
                 anchor_start = ANCHOR_START_CENSUS,
@@ -802,6 +806,20 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                         out[CensusID %in% .before_eh & ReconstructedStemID == .old_eh, ReconstructedStemID := as.integer(.mx_eh)]
                     }
                 }
+            }
+            # Append post-anchor rows with proper labeling (mirrors finalize_out / propagate_post_anchor_given)
+            if (nrow(.post_anchor_eh) > 0L) {
+                .post <- data.table::copy(.post_anchor_eh)
+                if (!("ReconstructedStemID" %in% names(.post))) .post[, ReconstructedStemID := NA_integer_]
+                if (!("ReconstructionMethod" %in% names(.post))) .post[, ReconstructionMethod := NA_character_]
+                if (!("ConstraintViolation" %in% names(.post))) .post[, ConstraintViolation := NA]
+                .post[!is.na(TrueStemID) & !is.na(DBH), `:=`(
+                    ReconstructedStemID = as.integer(TrueStemID),
+                    ReconstructionMethod = "given"
+                )]
+                .post[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]
+                .post[, DP_FallbackReason := paste0("error:", substr(msg, 1, 200))]
+                out <- data.table::rbindlist(list(out, .post), use.names = TRUE, fill = TRUE)
             }
             out
         }

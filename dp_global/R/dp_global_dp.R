@@ -1658,8 +1658,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # of adjacent census state spaces exceeds max_edges.  The C++
             # derive_phase_prev_batch_rcpp would try to allocate n_cc × n_next
             # items, which can exceed available memory for large multi-stem tags.
+            # Use >= so that the boundary case (both censuses capped at exactly
+            # max_states) also triggers fallback instead of crashing.
             n_cross <- as.double(n_states_cc) * as.double(n_next)
-            if (n_cross > as.double(max_edges)) {
+            if (n_cross >= as.double(max_edges)) {
                 vcat(
                     prefix, "  Edge overflow: ", format(n_cross, big.mark = ",", scientific = FALSE),
                     " candidate edges (", format(n_states_cc, big.mark = ","), " x ", format(n_next, big.mark = ","),
