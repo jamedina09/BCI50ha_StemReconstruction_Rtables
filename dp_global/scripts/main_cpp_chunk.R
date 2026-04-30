@@ -1356,7 +1356,6 @@ if (sys.nframe() == 0L) {
 ## for probabilistic to certain species
 #     --PROB_SPECIES=sp2
 
-
 # Rscript dp_global/scripts/main_cpp_chunk.R \
 # --DP_MAX_STATES=10000 \
 # --MANUAL_CORES=TRUE \
@@ -1365,11 +1364,10 @@ if (sys.nframe() == 0L) {
 # --WRITE_DP_PDF=TRUE \
 # --POSTERIOR_SAMPLES=250 \
 # --USE_MEASUREMENT_ERROR=FALSE \
-# --MAX_SHRINK_FIXED=-2.5 \
-# --MAX_GROWTH_FIXED=7.5
+# --PRUNE_BOUND_FACTOR=5
 
 # Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=10000 \
+# --DP_MAX_STATES=2 \
 # --MANUAL_CORES=TRUE \
 # --MANUAL_CORES_VALUE=16 \
 # --WRITE_DP_FEATHER=FALSE \

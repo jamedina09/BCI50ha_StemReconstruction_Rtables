@@ -8,15 +8,36 @@
 
 ## Biological Meaning of the R Code
 
-When a field crew records an R (or RP, RF, RT, QR, OR) code on a stem, it means:
+### What the field crew actually records
 
-> **"This bole broke or resprouted. The row records the FINAL measurement of the old stem before the break event. Any new bole(s) growing from the base or stump receive NEW stem IDs."**
+The R family of codes describes the **current physical state** of a stem at the time of census measurement. They are recorded by field workers when the bole has broken below the standard breast-height measurement point (1.3 m). They are NOT death codes — they drive `DFstatus = "broken below"`, not `"dead"` or `"stem dead"`. The tree individual may still be alive through basal resprouting.
+
+| Code | Full name | Precise meaning | DFstatus |
+|------|-----------|-----------------|----------|
+| `R`  | Broken | The bole has broken below 1.3 m. Primary trigger code. DBH may be NA (stump too low to measure) or >0 (stump remnant still measurable above break point). | `broken below` |
+| `RP` | Broken — resprout | Bole broken below 1.3 m **and** a new vegetative resprout is already visible and recorded at this census. The resprout itself receives a new StemID. | `broken below` |
+| `RF` | Broken — fallen | Broken bole has also fallen to the ground. | `broken below` |
+| `RT` | Broken — at top | Broken at or above the measurement point, but not high enough for a standard DBH re-measurement. | `broken below` |
+| `OR` | Other breakage | Structural damage not captured by R, RP, RF, or RT (e.g. partial splits, hinge breaks). | `broken below` |
+| `QR` | *(unverified)* | Present in the code regex throughout `dp_global_dp.R` but **not found in the BCI ForestGEO census data** or in the ForestGEO code reference (`forestgeo_codes_reference.qmd`). May be a legacy or site-specific code. Should be confirmed before the fix is applied. | — |
+
+### What the row represents for identity reconstruction
+
+The R-coded row records the state of the **old, pre-break bole** at the census where the break was first observed. It is the last time that physical bole was measurable. Crucially:
+
+- The R-coded row **IS the old stem** — it must carry the same `ReconstructedStemID` as all prior censuses where that stem was alive.
+- Any new bole(s) growing from the base or stump (often coded `RP` or appearing as a new StemID in subsequent censuses) are **genuinely new organisms** with new IDs.
+- The break event happened **between** the preceding census and this one. The R row marks the first observation of the post-break state, not the last observation of an intact bole.
+
+DBH on an R-coded row varies by field conditions:
+- `DBH = NA` — stump is too low (below 1.3 m) for any measurement. Common for `OR` stump chains.
+- `DBH > 0` — a remnant portion of the bole remains above 1.3 m and was still measured, even though it is no longer a growing bole.
 
 | Census | Row    | Code  | Meaning |
-|--------|--------|-------|---------|
+|--------|--------|-------|--------|
 | C1     | Stem A | —     | Alive, growing normally |
-| C2     | Stem A | **R** | Same bole, now broken — **last record of Stem A** |
-| C2     | Stem B | —     | New bole from base — **first record of Stem B** |
+| C2     | Stem A | **R** | Same bole, now broken — **last record of Stem A's physical bole** |
+| C2     | Stem B | —     | New basal resprout — **first record of Stem B** |
 | C3     | Stem B | —     | Growing |
 
 The R-coded row at C2 **IS Stem A** — it must carry the same `ReconstructedStemID` as C1.
@@ -461,9 +482,17 @@ Apply the same stamp in the equivalent block inside `do_fallback`.
 
 - The NA-R barrier path (Example 3) is a **separate code path** and appears correct for the
   case where pre-barrier stems exist. Verify it remains correct after the live-R fix.
-- ForestGEO codes `RP`, `RF`, `RT`, `QR` are grouped with `R` throughout. Confirm that all
-  mean "final record of old identity before break" before applying the fix uniformly.
-- `OR` (other breakage resprout) should be verified separately — it may have subtly
-  different field semantics in some ForestGEO datasets.
+- `R`, `RP`, `RF`, `RT`, `OR` all mean the same thing for identity reconstruction: **the
+  coded row IS the old stem's last record**; it must continue the pre-break track. This is
+  confirmed by their shared `DFstatus = "broken below"` and by the BCI census data (all five
+  codes appear exclusively in `broken below` rows in `codes_identification.csv`).
+- `QR` **does not appear in the BCI census data or the ForestGEO code reference**
+  (`forestgeo_codes_reference.qmd`). It is included in all four `resprout_regex` patterns in
+  `dp_global_dp.R` but its presence there is unverified. Before applying the fix, confirm
+  whether `QR` is a valid site-specific code or a historical artefact, and remove it from the
+  regex if it is not present in the target dataset.
+- `OR` is "other breakage" (partial splits, hinge breaks), not "other breakage resprout" — it
+  does not imply a resprout is present. Its identity semantics are identical to `R`: the row is
+  the old stem, not a new organism.
 - After fixing the DP, re-run tag 005558 (14 stems at C4, previously memory-crashed) and
   any tag known to have R events before the anchor to validate correctness.
