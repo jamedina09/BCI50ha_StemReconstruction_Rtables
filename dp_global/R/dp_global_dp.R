@@ -541,6 +541,31 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (isTRUE(has_mf_stash) && !is.null(mf_stash) && nrow(mf_stash) > 0L) {
             out <- reinsert_mf_rows(out, mf_stash)
         }
+        # ---- Hard-invariant FINAL sweep (TrueStemID Patch B/D — terminal) ----
+        # This is the LAST authoritative pass for the invariant
+        # ReconstructedStemID == TrueStemID on every row with non-NA TrueStemID
+        # (excluding provisional_dp rows whose TrueStemID is fabricated).
+        # It runs in BOTH success paths (DP completed) and fallback paths
+        # (do_fallback) because every code path ends here.  Critically, it
+        # runs AFTER the NA-R / R-boundary barrier severing inside
+        # do_fallback, which would otherwise overwrite pinned IDs with
+        # synthetic ones to break crossing tracks.  Synthetic IDs win for
+        # rows the DP/probabilistic matcher freely chose; the supplied
+        # TrueStemID always wins for rows where it is non-NA.
+        if (isTRUE(pin_truestemid) && "TrueStemID" %in% names(out)) {
+            # Note: provisional_dp rows are NOT excluded here because the
+            # restore block above (.prov_rows) has already reverted their
+            # TrueStemID to the original input value (NA for rows that had
+            # no real TrueStemID).  So `!is.na(out$TrueStemID)` correctly
+            # identifies only rows where the user supplied a real ID.
+            .has_true_final <- !is.na(out$TrueStemID)
+            if (any(.has_true_final)) {
+                out[.has_true_final, `:=`(
+                    ReconstructedStemID  = as.integer(TrueStemID),
+                    ReconstructionMethod = "given"
+                )]
+            }
+        }
         # Attach prune stats if available (some early returns may occur before prune_stats is initialized)
         attr(out, "DP_PruneInfo") <- if (exists("prune_stats")) prune_stats else list()
         # Row-count sanity check: output must have exactly as many rows as input
@@ -1250,12 +1275,38 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         return(do_fallback("K_too_small"))
     }
 
-    vcat(prefix, "Using K=", K, " identity tracks (", length(anchor_ids), " anchored + ", K - length(anchor_ids), " extra); worst-case states/census: ", format(max(n_states_by_census, na.rm = TRUE), big.mark = ","), " at C", census_range[which.max(n_states_by_census)])
+    # ---- Hard-invariant track-set extension (TruestemID Patch A) -----------
+    # Any pre-anchor row may carry a non-NA TrueStemID (e.g. via Step 2
+    # terminal propagation in main_cpp_bci.R) whose value is NOT present at
+    # the anchor census (typical case: a stem that died before the BCI
+    # re-tagging campaign at C7).  Without including these IDs in track_ids,
+    # the pin map below builds match(tsid, track_ids) -> NA and the row is
+    # silently left unpinned, allowing the DP to violate the invariant
+    # ReconstructedStemID == TrueStemID.  We enumerate them once here and
+    # add them to the slack track set.
+    .pre_anchor_tsids <- sort(unique(
+        tree_data$TrueStemID[
+            !is.na(tree_data$TrueStemID) &
+            tree_data$CensusID < anchor_start &
+            !(tree_data$TrueStemID %in% anchor_ids)
+        ]
+    ))
+    # Make sure K is large enough to host every anchor + pre-anchor pin.
+    .required_K <- length(anchor_ids) + length(.pre_anchor_tsids)
+    if (.required_K > K) {
+        K <- .required_K
+    }
 
-    n_extra <- K - length(anchor_ids)
-    current_max <- suppressWarnings(max(tree_data$TrueStemID, na.rm = TRUE))
+    vcat(prefix, "Using K=", K, " identity tracks (", length(anchor_ids), " anchored + ", length(.pre_anchor_tsids), " pre-anchor pinned + ", K - length(anchor_ids) - length(.pre_anchor_tsids), " extra); worst-case states/census: ", format(max(n_states_by_census, na.rm = TRUE), big.mark = ","), " at C", census_range[which.max(n_states_by_census)])
+
+    n_extra <- K - length(anchor_ids) - length(.pre_anchor_tsids)
+    current_max <- suppressWarnings(max(c(tree_data$TrueStemID, anchor_ids, .pre_anchor_tsids), na.rm = TRUE))
     if (!is.finite(current_max)) current_max <- 0
-    track_ids <- c(anchor_ids, if (n_extra > 0L) seq.int(from = current_max + 1L, length.out = n_extra) else integer(0))
+    track_ids <- c(
+        anchor_ids,
+        as.integer(.pre_anchor_tsids),
+        if (n_extra > 0L) seq.int(from = current_max + 1L, length.out = n_extra) else integer(0)
+    )
 
     # -----------------------------------------------------------------------
     # Constrained enumeration: backward per-interval arc consistency.
@@ -2086,6 +2137,23 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                          is.na(tree_data$ReconstructedStemID))
         if (length(.pinned_post_unassigned) > 0L) {
             tree_data[.pinned_post_unassigned, ReconstructedStemID := as.integer(TrueStemID)]
+        }
+        # ---- Hard-invariant pre-anchor sweep (TrueStemID Patch B) ----------
+        # Same fix as the post-anchor block above but for pre-anchor NA-DBH
+        # rows that the DP never visited (obs_row_idx filters !is.na(DBH)).
+        # A row carrying TrueStemID at C2 with DBH=NA and Status="dead"
+        # would otherwise leave finalize_out with ReconstructedStemID=NA and
+        # violate the invariant.  Runs BEFORE the NA-R barrier post-
+        # processing below, so the existing barrier guards (which test
+        # !is.na(TrueStemID)) see these rows already labelled.
+        .pinned_pre_unassigned <- which(!is.na(tree_data$TrueStemID) &
+                                        tree_data$CensusID < anchor_start &
+                                        is.na(tree_data$ReconstructedStemID))
+        if (length(.pinned_pre_unassigned) > 0L) {
+            tree_data[.pinned_pre_unassigned, `:=`(
+                ReconstructedStemID = as.integer(TrueStemID),
+                ReconstructionMethod = "given"
+            )]
         }
     }
 

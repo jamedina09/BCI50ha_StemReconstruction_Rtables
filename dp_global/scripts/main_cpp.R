@@ -813,7 +813,11 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                 if (!("ReconstructedStemID" %in% names(.post))) .post[, ReconstructedStemID := NA_integer_]
                 if (!("ReconstructionMethod" %in% names(.post))) .post[, ReconstructionMethod := NA_character_]
                 if (!("ConstraintViolation" %in% names(.post))) .post[, ConstraintViolation := NA]
-                .post[!is.na(TrueStemID) & !is.na(DBH), `:=`(
+                # TrueStemID Patch F: DROP the !is.na(DBH) guard.
+                # Terminal NA-DBH post-anchor rows with a known TrueStemID
+                # (Step 2 anchored death/resprout/broken-below) must also be
+                # honoured to satisfy the hard invariant.
+                .post[!is.na(TrueStemID), `:=`(
                     ReconstructedStemID = as.integer(TrueStemID),
                     ReconstructionMethod = "given"
                 )]
@@ -824,6 +828,21 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             out
         }
     )
+
+    # ---- TrueStemID HARD-INVARIANT backstop sweep (script-level) ----
+    # Final, idempotent enforcement of TrueStemID == ReconstructedStemID for
+    # every row with a non-NA TrueStemID, regardless of which engine path
+    # produced this output.  Mirrors the sweep in main_cpp_chunk.R.
+    if (isTRUE(PIN_TRUESTEMID) && !is.null(out) &&
+        all(c("TrueStemID", "ReconstructedStemID", "ReconstructionMethod") %in% names(out))) {
+        .ts_rows <- which(!is.na(out$TrueStemID))
+        if (length(.ts_rows) > 0L) {
+            out[.ts_rows, `:=`(
+                ReconstructedStemID  = as.integer(TrueStemID),
+                ReconstructionMethod = "given"
+            )]
+        }
+    }
 
     out
 }

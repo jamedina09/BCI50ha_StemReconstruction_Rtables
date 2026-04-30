@@ -397,6 +397,25 @@ match_stems_probabilistic <- function(tree_data,
     tree_data[.is_pinned & (.is_anchor | isTRUE(pin_truestemid)), ReconstructionMethod := "given"]
     tree_data[.is_prov, ReconstructionMethod := "provisional_dp"]
 
+    # ---- Hard-invariant final sweep (TrueStemID Patch D) -------------------
+    # The greedy/marginal stitching above honours pin_info[[i]] for rows whose
+    # TrueStemID is present at the anchor census (i.e. is in anchor_ids).
+    # Pre-anchor TrueStemIDs that are absent at the anchor are silently
+    # dropped by match(tsid, anchor_ids) -> NA, leaving those rows free to
+    # receive any greedy assignment.  This sweep enforces the hard invariant
+    # ReconstructedStemID == TrueStemID for ANY row with non-NA TrueStemID,
+    # regardless of DBH or census position.  Mirrors Patch B in the DP engine.
+    if (isTRUE(pin_truestemid)) {
+        .has_true_final <- !is.na(tree_data$TrueStemID) &
+                           !(tree_data$ReconstructionMethod %in% "provisional_dp")
+        if (any(.has_true_final)) {
+            tree_data[.has_true_final, `:=`(
+                ReconstructedStemID = as.integer(TrueStemID),
+                ReconstructionMethod = "given"
+            )]
+        }
+    }
+
     # --- Export posterior samples (same format as DP) -----------------------
     if (n_samples > 0L) {
         export_probabilistic_posteriors(
