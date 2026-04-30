@@ -289,11 +289,20 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Collect row indices to stash (union of explicit and implicit MF)
     episode_idx <- integer(0)
 
-    # --- A. Explicit MF detection (ListOfTSM contains "MF") ---
-    if ("ListOfTSM" %in% names(tree_data)) {
-        is_mf_anchor <- is.na(tree_data$DBH) &
+    # --- A. Explicit MF detection (ListOfTSM contains "MF", or Status == "missing") ---
+    {
+        is_mf_from_tsm <- if ("ListOfTSM" %in% names(tree_data)) {
             !is.na(tree_data$ListOfTSM) &
-            grepl("\\bMF\\b", tree_data$ListOfTSM, perl = TRUE)
+                grepl("\\bMF\\b", tree_data$ListOfTSM, perl = TRUE)
+        } else {
+            rep(FALSE, nrow(tree_data))
+        }
+        is_mf_from_status <- if ("Status" %in% names(tree_data)) {
+            !is.na(tree_data$Status) & tree_data$Status == "missing"
+        } else {
+            rep(FALSE, nrow(tree_data))
+        }
+        is_mf_anchor <- is.na(tree_data$DBH) & (is_mf_from_tsm | is_mf_from_status)
 
         if (any(is_mf_anchor)) {
             episode_idx <- which(is_mf_anchor)
@@ -310,10 +319,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     rows_at_next <- which(tree_data$CensusID == next_c)
                     if (length(rows_at_next) == 0L) break
                     if (all(is.na(tree_data$DBH[rows_at_next]))) {
-                        # Entire census is all-NA DBH → continuation of MF episode
                         episode_idx <- c(episode_idx, rows_at_next)
                     } else {
-                        # Census has at least one measured DBH → episode ends
                         break
                     }
                 }
