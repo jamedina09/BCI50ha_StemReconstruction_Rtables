@@ -2067,7 +2067,7 @@ tag_EC48 <- data.table(
 # 7: sp1     606162    1075846      1075846        5       NA        Ns    stem dead 2000-02-18
 
 tag_EC49 <- data.table(
-    Species = "sp1", Tag = 606162L,
+    Species = "sp1", Tag = 606163L,
     OriginalStemID = c(328837L, 328837L, 328837L, 328837L, 1075846L, 328837L, 1075846L),
     TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, 328837L, 1075846L, 328837L, 1075846L),
     CensusID = c(1L, 2L, 3L, 4L, 4L, 5L, 5L),
@@ -2137,7 +2137,7 @@ dt_complete_extra <- rbindlist(list(
     tag_EC37, tag_EC38, tag_EC39, tag_EC40, tag_EC41, tag_EC42,
     tag_EC43, tag_EC44, tag_EC45,
     tag_EC46, tag_EC47, tag_EC48, 
-    tag_EC49, tag_EC50
+    tag_EC49, tag_EC50, tag_EC51
 ), use.names = TRUE, fill = TRUE)
 
 # Include additional information about growth forms, trees, vs figs
@@ -2252,3 +2252,5 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
 # - Variable census intervals with random noise
 # - Stem identity masking for early censuses
 # - Diagnostic plots for validation
+
+unique(dt_complete_extra$Tag)
