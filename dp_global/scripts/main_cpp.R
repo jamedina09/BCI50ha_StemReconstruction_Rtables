@@ -813,10 +813,11 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                 if (!("ReconstructedStemID" %in% names(.post))) .post[, ReconstructedStemID := NA_integer_]
                 if (!("ReconstructionMethod" %in% names(.post))) .post[, ReconstructionMethod := NA_character_]
                 if (!("ConstraintViolation" %in% names(.post))) .post[, ConstraintViolation := NA]
-                # TrueStemID Patch F: DROP the !is.na(DBH) guard.
-                # Terminal NA-DBH post-anchor rows with a known TrueStemID
-                # (Step 2 anchored death/resprout/broken-below) must also be
-                # honoured to satisfy the hard invariant.
+                # NOTE: no !is.na(DBH) guard here.  Terminal NA-DBH post-
+                # anchor rows with a known TrueStemID (rows anchored by
+                # the pre-DP terminal-event propagation in main_cpp_bci.R
+                # Step 2 / Step 3) must also be honoured to satisfy the
+                # hard invariant.
                 .post[!is.na(TrueStemID), `:=`(
                     ReconstructedStemID = as.integer(TrueStemID),
                     ReconstructionMethod = "given"
@@ -829,14 +830,31 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         }
     )
 
-    # ---- TrueStemID HARD-INVARIANT backstop sweep (script-level) ----
+    # ---- TrueStemID HARD-INVARIANT backstop sweep (script-level) ----------
     # Final, idempotent enforcement of TrueStemID == ReconstructedStemID for
     # every row with a non-NA TrueStemID, regardless of which engine path
-    # produced this output.  Mirrors the sweep in main_cpp_chunk.R.
+    # produced this output (DP success, probabilistic fallback, MF
+    # re-insertion).  Mirrors the equivalent backstop in main_cpp_chunk.R
+    # so both single-tag and chunked drivers offer the same guarantee.
     if (isTRUE(PIN_TRUESTEMID) && !is.null(out) &&
         all(c("TrueStemID", "ReconstructedStemID", "ReconstructionMethod") %in% names(out))) {
         .ts_rows <- which(!is.na(out$TrueStemID))
         if (length(.ts_rows) > 0L) {
+            # ---- Script-level audit: detect engine-vs-pin disagreements ----
+            # Last-line defense.  At this point both finalize_out and the
+            # probabilistic matcher have already run their own audits, so any
+            # override caught here means a row leaked through both inner
+            # sweeps -- worth surfacing loudly.
+            if (!("SweepAuditOverride" %in% names(out))) {
+                out[, SweepAuditOverride := FALSE]
+            }
+            .pre_recon <- out$ReconstructedStemID[.ts_rows]
+            .true_int <- as.integer(out$TrueStemID[.ts_rows])
+            .override_local <- !is.na(.pre_recon) & .pre_recon != .true_int
+            if (any(.override_local)) {
+                out[.ts_rows[.override_local], SweepAuditOverride := TRUE]
+                log_msg(sprintf("[audit] script-level sweep overrode %d engine-assigned ReconstructedStemID value(s) for tag=%s (rows flagged via SweepAuditOverride=TRUE)", sum(.override_local), tag_label), "WARN")
+            }
             out[.ts_rows, `:=`(
                 ReconstructedStemID  = as.integer(TrueStemID),
                 ReconstructionMethod = "given"

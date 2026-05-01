@@ -196,13 +196,19 @@ Each observation in the output receives a `ReconstructionMethod` label indicatin
 
 | Method | Description |
 |--------|-------------|
-| `given` | Identity known from input `TrueStemID` (anchor or post-anchor census) |
+| `given` | Identity known from input `TrueStemID` (anchor, pre-anchor pin, post-anchor row, or hard-invariant sweep) |
 | `dp` | Assigned by the exact DP solver |
 | `probabilistic` | Assigned by the probabilistic greedy matching fallback |
 | `provisional_dp` | Provisional anchor assigned by DP |
 | `dp_mf_inferred` | Missing-from-field census identity inferred from flanking DP assignments |
 | `none_after_anchor` | Post-anchor row without assignment |
 | `skipped_no_data` | Tag had no usable data for reconstruction |
+
+### Hard-invariant sweep and the `SweepAuditOverride` audit column
+
+When `PIN_TRUESTEMID = TRUE` (default), every output row with a non-NA `TrueStemID` is forced to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"` by an idempotent sweep that runs at three sites: inside `finalize_out()` (DP path), inside `match_stems_probabilistic()` (probabilistic fallback), and at the script level in `run_dp_one_group()`. This sweep guarantees the invariant even on rows the DP never visits (NA-DBH terminal rows anchored by the pre-DP propagation in `main_cpp_bci.R` Steps 2/3, MF re-insertion edge cases, and probabilistic-fallback leaks).
+
+In the rare case where the DP or probabilistic engine had already assigned a non-NA `ReconstructedStemID` that disagrees with `TrueStemID`, the sweep silently overrides it. Those rows are flagged in the **`SweepAuditOverride`** logical column. Downstream consumers that propagate posterior uncertainty should treat any row where `SweepAuditOverride == TRUE` as observed (P=1, entropy=0) — the values in the `DP_PosteriorTop*` / `DP_PosteriorReconstructedProb` columns describe the *engine's* (overridden) choice, not the final `ReconstructedStemID`. For all other `given` rows the posterior collapses naturally to the pinned ID and the posterior columns are consistent with the final assignment.
 
 ## Conventions
 

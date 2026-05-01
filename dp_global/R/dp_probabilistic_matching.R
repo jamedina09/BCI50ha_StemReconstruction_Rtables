@@ -397,18 +397,35 @@ match_stems_probabilistic <- function(tree_data,
     tree_data[.is_pinned & (.is_anchor | isTRUE(pin_truestemid)), ReconstructionMethod := "given"]
     tree_data[.is_prov, ReconstructionMethod := "provisional_dp"]
 
-    # ---- Hard-invariant final sweep (TrueStemID Patch D) -------------------
+    # ---- Hard-invariant final sweep ----------------------------------------
     # The greedy/marginal stitching above honours pin_info[[i]] for rows whose
     # TrueStemID is present at the anchor census (i.e. is in anchor_ids).
     # Pre-anchor TrueStemIDs that are absent at the anchor are silently
     # dropped by match(tsid, anchor_ids) -> NA, leaving those rows free to
     # receive any greedy assignment.  This sweep enforces the hard invariant
     # ReconstructedStemID == TrueStemID for ANY row with non-NA TrueStemID,
-    # regardless of DBH or census position.  Mirrors Patch B in the DP engine.
+    # regardless of DBH or census position.  Mirrors the equivalent sweep
+    # in dp_global_dp.R::finalize_out().
     if (isTRUE(pin_truestemid)) {
         .has_true_final <- !is.na(tree_data$TrueStemID) &
                            !(tree_data$ReconstructionMethod %in% "provisional_dp")
         if (any(.has_true_final)) {
+            # ---- Audit: detect engine-vs-pin disagreements -----------------
+            # Mirrors the audit in dp_global_dp.R finalize_out.  Flags any
+            # row where the probabilistic engine had already assigned a
+            # non-NA ReconstructedStemID different from TrueStemID.
+            if (!("SweepAuditOverride" %in% names(tree_data))) {
+                tree_data[, SweepAuditOverride := FALSE]
+            }
+            .pre_recon <- tree_data$ReconstructedStemID
+            .override <- .has_true_final &
+                !is.na(.pre_recon) &
+                .pre_recon != as.integer(tree_data$TrueStemID)
+            if (any(.override)) {
+                tree_data[.override, SweepAuditOverride := TRUE]
+                .tag_id <- if ("Tag" %in% names(tree_data) && length(tree_data$Tag) > 0L) as.character(tree_data$Tag[[1L]]) else "<unknown>"
+                if (isTRUE(verbose)) message(sprintf("[probabilistic] [audit] sweep overrode %d engine-assigned ReconstructedStemID value(s) for tag %s (rows flagged via SweepAuditOverride=TRUE)", sum(.override), .tag_id))
+            }
             tree_data[.has_true_final, `:=`(
                 ReconstructedStemID = as.integer(TrueStemID),
                 ReconstructionMethod = "given"

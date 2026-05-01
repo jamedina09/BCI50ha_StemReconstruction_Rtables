@@ -222,6 +222,12 @@ Runner integration
 
 At the anchor census (`CensusID == ANCHOR_START_CENSUS`), `TrueStemID` values serve as hard constraints and `ReconstructedStemID` will equal `TrueStemID` for those rows (`ReconstructionMethod = "given"`). Pre-anchor rows with `TrueStemID` are processed by the solver (DP or probabilistic) and can receive different identity assignments based on biological likelihood.
 
+### Hard-invariant sweep and the `SweepAuditOverride` column
+
+When `PIN_TRUESTEMID = TRUE` (default), an idempotent **hard-invariant sweep** runs at three sites — inside `finalize_out()` (DP path), inside `match_stems_probabilistic()` (probabilistic fallback), and at the script-level inside `run_dp_one_group()` — forcing every row with a non-NA `TrueStemID` to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. This guarantees the invariant on rows the engines never visit (NA-DBH terminal rows anchored by the BCI driver's Steps 2/3, MF re-insertion edge cases, and probabilistic-fallback leaks).
+
+In the rare case where the engine had already assigned a non-NA `ReconstructedStemID` that disagrees with `TrueStemID`, the sweep silently overrides it. Each such row is flagged `TRUE` in the **`SweepAuditOverride`** boolean column (FALSE elsewhere) and a `[audit]` log line is emitted naming the tag and override count. Downstream uncertainty consumers should treat any `SweepAuditOverride == TRUE` row as observed (P=1, entropy=0); the `DP_PosteriorTop*` columns on those rows describe the engine's overridden choice, not the final `ReconstructedStemID`.
+
 **Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, growth-aware resolver diagnostics) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
 
 
@@ -229,19 +235,29 @@ At the anchor census (`CensusID == ANCHOR_START_CENSUS`), `TrueStemID` values se
 
 ## BCI Debug Driver (`main_cpp_bci.R`)
 
-`main_cpp_bci.R` is a lightweight wrapper around `main_cpp.R` designed for debugging single tags from the BCI (Barro Colorado Island) multi-stem census dataset. It:
+`main_cpp_bci.R` is a debug driver for single-tag runs on BCI (Barro Colorado Island) multi-stem census data. It sources `main_cpp.R` to inherit all helper functions and CLI handling, then overrides the input file and a few BCI-specific defaults, and adds a **pre-DP `TrueStemID` reconstruction** step that is specific to BCI's identity conventions.
 
-1. Sources `main_cpp.R` to load all helper functions and infrastructure modules.
-2. Loads `bci_data/bci_multistem_xrun_debug.rds` (an RDS file, not tracked by git) as input.
-3. Maps BCI-specific column names to the standard DP schema (e.g., `stemID` → `TrueStemID`, `dbh` → `DBH`, `censusID` → `CensusID`).
-4. Runs the full DP pipeline for a single tag (default or `--WHICH_TAG=<id>`).
+### Pre-DP TrueStemID propagation (BCI-specific, Steps 1–3)
+
+Before calling the DP, the BCI driver writes `TrueStemID` on every row whose biological identity is unambiguous from the BCI database conventions:
+
+- **Step 1a** — any row with a non-NA `StemTag` (the field crew physically tagged the stem) gets `TrueStemID = OriginalStemID`.
+- **Step 1b** — any row at `CensusID >= 7` (BCI's systematic re-tagging campaign from 2010 onward) gets `TrueStemID = OriginalStemID`.
+- **Step 2a/b/c** — within each `(Tag, OriginalStemID)` group, after the last live DBH measurement, terminal-event rows (`Status %in% c("dead", "stem dead", "broken below")` or R-family resprout codes in `ListOfTSM`) are anchored to their own `OriginalStemID`; remaining post-last-DBH gaps are filled by bidirectional LOCF/NOCB.
+- **Step 3a** — same direct anchoring of any remaining terminal-event rows, dropping the post-last-DBH guard.
+- **Step 3b** — within each `(Tag, OriginalStemID)` group, if all non-NA `TrueStemID` values agree, fill remaining NAs with that value; conflicting groups are left alone and counted in a diagnostic message.
+
+Pre-anchor rows without an unambiguous identity remain NA and are resolved by the DP. The combination of this pre-DP propagation and the DP/probabilistic engines' hard-invariant sweep (see below) guarantees `ReconstructedStemID == TrueStemID` on every row that Steps 1–3 anchored.
 
 ### BCI-specific defaults
 
-- Input: `bci_data/bci_multistem_xrun_debug.rds` (loaded via `readRDS()`)
-- Output: written to `dp_global/output/` under a BCI-specific run directory
-- Uses `withr::with_dir()` for bundle sourcing compatibility
-- `ANCHOR_START_CENSUS` defaults per the script configuration
+- `INPUT_FILE`: `bci_data/multistem_tags.rds` (loaded via `readRDS()`; not tracked by git)
+- `WHICH_TAG`: `"115203"` (a multi-stem debugging tag)
+- `FORCE_ONE_SPECIES_PARAMETERS`: `FALSE` (use real BCI species)
+- `MAX_GROWTH_FIXED`: `5.0`, `MAX_SHRINK_FIXED`: `-0.5`, `DP_MAX_STATES`: `1039L`
+- `ANCHOR_START_CENSUS`: `7L`
+- `PIN_TRUESTEMID`: `TRUE`
+- Output written to `dp_global/output/<timestamp>_BCI_tag<WHICH_TAG>_*` under the BCI-specific run directory naming scheme
 
 ### Example invocations
 
@@ -254,12 +270,15 @@ Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 
 # Quiet mode
 Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=187064 --DP_VERBOSE=FALSE
+
+# Tight state-space cap (force probabilistic fallback for testing)
+Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184 --DP_MAX_STATES=2
 ```
 
 ### Prerequisites
 
-- R packages: `data.table`, `here`, `withr` (in addition to standard DP prerequisites)
-- `bci_data/bci_multistem_xrun_debug.rds` must exist (not tracked by git; prepared separately)
+- R packages: `data.table`, `here` (in addition to the standard DP prerequisites)
+- `bci_data/multistem_tags.rds` (or whichever `INPUT_FILE` is set to) must exist; not tracked by git
 
 ---
 
