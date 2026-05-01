@@ -182,12 +182,15 @@ xraw[, rownum := .I]
 
 # ----- Step 1: certain anchors -----
 xraw[, TrueStemID := NA_integer_]
-xraw[!is.na(StemTag),                    TrueStemID := OriginalStemID]  # (a) physical tag
-xraw[is.na(TrueStemID) & CensusID >= 7L, TrueStemID := OriginalStemID]  # (b) C7+ re-tagging
+xraw[!is.na(StemTag), TrueStemID := OriginalStemID] # (a) physical tag
+xraw[is.na(TrueStemID) & CensusID >= 7L, TrueStemID := OriginalStemID] # (b) C7+ re-tagging
 
-xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 
 # ----- Step 2: terminal propagation -----
 
@@ -198,6 +201,7 @@ resprout_regex <- "\\b(R|RP|RF|RT|QR|OR)\\b"
 # 2a. Last census with a non-NA DBH per (Tag, OriginalStemID).
 #     CensusID > .last_dbh_census defines the terminal phase for that stem.
 #     setorder ensures rows are sorted before the LOCF/NOCB fill in 2c.
+# Find where “life ends”
 setorder(xraw, Tag, OriginalStemID, CensusID)
 .last_dbh <- xraw[
     !is.na(DBH),
@@ -206,9 +210,12 @@ setorder(xraw, Tag, OriginalStemID, CensusID)
 ]
 xraw[.last_dbh, on = .(Tag, OriginalStemID), .last_dbh_census := i.last_dbh_census]
 
-xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 
 # 2b. Anchor terminal-event rows directly to their own OriginalStemID.
 #     All five conditions must hold:
@@ -224,14 +231,17 @@ xraw[
         CensusID > .last_dbh_census &
         (
             (!is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE)) |
-            (!is.na(Status)    & Status %in% c("broken below", "dead", "stem dead"))
+                (!is.na(Status) & Status %in% c("broken below", "dead", "stem dead"))
         ),
     TrueStemID := OriginalStemID
 ]
 
-xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 
 # 2c. Bidirectional fill of remaining post-last-DBH NA gaps within each group.
 #     LOCF: carry a 2b anchor (or Step-1 anchor) forward to later terminal rows.
@@ -248,16 +258,73 @@ xraw[
 # 2d. Remove temporary column.
 xraw[, .last_dbh_census := NULL]
 
+# -----------------------------------------------------------------------
+# STEP 3 — Extended propagation: terminal-event anchoring + OriginalStemID match
+# -----------------------------------------------------------------------
+#
+#   Step 2 only anchors rows STRICTLY AFTER the last non-NA DBH for a stem.
+#   That misses several common patterns:
+#     • The last live row IS the broken-below row (DBH still recorded), so it
+#       coincides with last_dbh_census and is excluded by the 2b filter
+#       (e.g. tag 242114 c5 row 18: broken-below with DBH=8.6;
+#             tag 000012 c5: broken-below with DBH=1.9).
+#     • The dying-stem row never had a DBH, so .last_dbh_census is NA and
+#       2b rejects it (e.g. tag 115203 c6: NA-DBH broken-below R-coded row).
+#     • An early-census death row anchors its own OriginalStemID, but the
+#       earlier alive rows with the same OriginalStemID stay NA
+#       (e.g. tag 004808 c1 alive 4769 → c2 dead 4769;
+#             tag 006160, tag 264355).
+#
+#   Within a single Tag, identical OriginalStemID is treated as the same
+#   biological individual (BCI database invariant pre- and post-C7).  So:
+#
+#   3a. ANCHOR any unresolved row whose Status is "dead" / "stem dead" /
+#       "broken below" OR whose ListOfTSM contains an R-family resprout code.
+#       This is a STRICTLY STRONGER variant of 2b: the .last_dbh_census
+#       guard is dropped because a death/broken/resprout record is itself
+#       sufficient evidence that the OriginalStemID is the true identity.
+#
+#   3b. PROPAGATE within each (Tag, OriginalStemID) group: if any row in the
+#       group has a non-NA TrueStemID and the values are unanimous, fill all
+#       remaining NA rows of the group with that value.  This handles:
+#         • backward propagation from terminal anchors (Case 1, 4)
+#         • gap-filling between an early death row and a later C7+ row
+#         • any orphan NA rows in a group that has at least one anchor
+#       Conflicts (multiple distinct TrueStemIDs in one group) leave the NA
+#       rows alone and emit a warning so they can be inspected.
+
+# 3a. Direct anchor of terminal-event rows to their own OriginalStemID
+xraw[
+    is.na(TrueStemID) &
+        (
+            (!is.na(Status) & Status %in% c("broken below", "dead", "stem dead")) |
+                (!is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE))
+        ),
+    TrueStemID := OriginalStemID
+]
+
+# 3b. Propagate within (Tag, OriginalStemID) when a group has a unique anchor
+.n_before <- sum(is.na(xraw$TrueStemID))
+.n_conflicts <- 0L
+xraw[, TrueStemID := {
+    .v <- TrueStemID
+    if (anyNA(.v) && any(!is.na(.v))) {
+        .u <- unique(.v[!is.na(.v)])
+        if (length(.u) == 1L) {
+            .v[is.na(.v)] <- .u
+        } else {
+            .n_conflicts <<- .n_conflicts + 1L
+        }
+    }
+    .v
+}, by = .(Tag, OriginalStemID)]
+.n_after <- sum(is.na(xraw$TrueStemID))
+message(sprintf(
+    "[main_cpp_bci.R] Step 3 propagation: filled %d NA rows; %d (Tag,OriginalStemID) groups had conflicting TrueStemID and were left untouched.",
+    .n_before - .n_after, .n_conflicts
+))
+
 setorder(xraw, rownum)
-
-# xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "246746", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "567547", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-
-# xraw[Tag %in% unique(xraw[is.na(TrueStemID) & CensusID >= 7L, .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]$Tag)]
 
 # ----------------------------------------------------------------
 # 6. Ensure species column
@@ -355,3 +422,12 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242114
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=005558
+
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=144768
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=204431
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=619109
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000051
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000013
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=619109
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
