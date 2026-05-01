@@ -441,8 +441,6 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242114
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=005558
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=144768
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=204431
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=619109
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000051

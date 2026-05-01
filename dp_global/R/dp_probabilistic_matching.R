@@ -417,6 +417,12 @@ match_stems_probabilistic <- function(tree_data,
             if (!("SweepAuditOverride" %in% names(tree_data))) {
                 tree_data[, SweepAuditOverride := FALSE]
             }
+            # Snapshot the engine's pre-sweep ReconstructedStemID once
+            # (idempotent guard: later layered sweeps will not overwrite
+            # this column, preserving the original engine assignment).
+            if (!("ReconstructedStemID_PreSweep" %in% names(tree_data))) {
+                tree_data[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+            }
             .pre_recon <- tree_data$ReconstructedStemID
             .override <- .has_true_final &
                 !is.na(.pre_recon) &

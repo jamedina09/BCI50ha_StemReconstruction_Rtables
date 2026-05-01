@@ -862,6 +862,12 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             if (!("SweepAuditOverride" %in% names(out))) {
                 out[, SweepAuditOverride := FALSE]
             }
+            # Snapshot the engine's pre-sweep ReconstructedStemID once
+            # (idempotent guard: finalize_out / probabilistic matcher have
+            # likely already populated this column; if not, capture it now).
+            if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
+                out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+            }
             .pre_recon <- out$ReconstructedStemID[.ts_rows]
             .true_int <- as.integer(out$TrueStemID[.ts_rows])
             .override_local <- !is.na(.pre_recon) & .pre_recon != .true_int

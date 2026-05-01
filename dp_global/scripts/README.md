@@ -228,6 +228,8 @@ When `PIN_TRUESTEMID = TRUE` (default), an idempotent **hard-invariant sweep** r
 
 In the rare case where the engine had already assigned a non-NA `ReconstructedStemID` that disagrees with `TrueStemID`, the sweep silently overrides it. Each such row is flagged `TRUE` in the **`SweepAuditOverride`** boolean column (FALSE elsewhere) and a `[audit]` log line is emitted naming the tag and override count. Downstream uncertainty consumers should treat any `SweepAuditOverride == TRUE` row as observed (P=1, entropy=0); the `DP_PosteriorTop*` columns on those rows describe the engine's overridden choice, not the final `ReconstructedStemID`.
 
+The engine's pre-sweep `ReconstructedStemID` is preserved in the **`ReconstructedStemID_PreSweep`** column (snapshot taken once by the first sweep layer that fires). On `SweepAuditOverride == FALSE` rows it equals `ReconstructedStemID`; on `SweepAuditOverride == TRUE` rows it carries the engine's original (overridden) ID, allowing direct comparison without re-running the engine.
+
 **Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, growth-aware resolver diagnostics) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
 
 
