@@ -429,7 +429,6 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=119453
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115427
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115203
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242799
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
@@ -449,3 +448,4 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=002394
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184 --DP_MAX_STATES=2
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375 --DP_MAX_STATES=2
