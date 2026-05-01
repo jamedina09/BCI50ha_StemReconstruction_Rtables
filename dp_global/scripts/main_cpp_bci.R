@@ -450,4 +450,4 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=619109
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=002394
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184 --DP_MAX_STATES=2
