@@ -862,11 +862,16 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             if (!("SweepAuditOverride" %in% names(out))) {
                 out[, SweepAuditOverride := FALSE]
             }
-            # Snapshot the engine's pre-sweep ReconstructedStemID once
-            # (idempotent guard: finalize_out / probabilistic matcher have
-            # likely already populated this column; if not, capture it now).
+            # Snapshot the engine's pre-sweep ReconstructedStemID.
+            # Per-row backfill (see dp_global_dp.R::finalize_out): create the
+            # column if absent, otherwise populate only NA cells so rows that
+            # were appended after an inner sweep (post-anchor block, sub-
+            # segment merges) also get their pre-sweep value captured.
             if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
                 out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+            } else {
+                out[is.na(ReconstructedStemID_PreSweep),
+                    ReconstructedStemID_PreSweep := ReconstructedStemID]
             }
             .pre_recon <- out$ReconstructedStemID[.ts_rows]
             .true_int <- as.integer(out$TrueStemID[.ts_rows])

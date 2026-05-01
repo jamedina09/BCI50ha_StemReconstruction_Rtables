@@ -570,11 +570,18 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 if (!("SweepAuditOverride" %in% names(out))) {
                     out[, SweepAuditOverride := FALSE]
                 }
-                # Snapshot the engine's pre-sweep ReconstructedStemID once
-                # (idempotent guard: later layered sweeps will not overwrite
-                # this column, preserving the original engine assignment).
+                # Snapshot the engine's pre-sweep ReconstructedStemID.
+                # Per-row backfill: create the column if absent, otherwise
+                # populate only NA cells.  This handles the layered case
+                # where the column was created by an earlier sub-problem's
+                # finalize_out and later rows were appended (segment splits,
+                # post-anchor block) with NA for the new column.  Each cell
+                # is still snapshotted exactly once.
                 if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
                     out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+                } else {
+                    out[is.na(ReconstructedStemID_PreSweep),
+                        ReconstructedStemID_PreSweep := ReconstructedStemID]
                 }
                 .pre_recon <- out$ReconstructedStemID
                 .override <- .has_true_final &
