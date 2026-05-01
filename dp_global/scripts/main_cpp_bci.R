@@ -326,6 +326,25 @@ message(sprintf(
 
 setorder(xraw, rownum)
 
+# # find status dead and not broken below per tag in xraw
+# # Tags that have dead
+# tags_dead <- xraw[
+#     Status %in% c("dead", "stem dead") & CensusID <= 5,
+#     unique(Tag)
+# ]
+
+# # Tags that have broken below
+# tags_broken <- xraw[
+#     Status == "broken below" & CensusID <= 5,
+#     unique(Tag)
+# ]
+
+# # Tags with dead but no broken below
+# target_tags <- setdiff(tags_dead, tags_broken)
+
+# # Subset data
+# xraw[Tag %in% target_tags[600], .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+
 # ----------------------------------------------------------------
 # 6. Ensure species column
 # ----------------------------------------------------------------
@@ -422,7 +441,6 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242114
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=005558
-
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=144768
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=204431
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378
@@ -431,3 +449,5 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000013
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=619109
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=002394
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184
