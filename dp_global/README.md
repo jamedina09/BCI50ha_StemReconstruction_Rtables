@@ -315,6 +315,7 @@ All parameters must be present in the dataset before running DP. These are typic
 | `DP_KUsed` | Number of tracks used |
 | `DP_MaxStatesPerCensus` | Largest state space encountered |
 | `DP_MaxStatesCensusID` | Census with largest state space |
+| `SweepAuditOverride` | `TRUE` on rows where the hard-invariant sweep in `finalize_out()` (and the equivalent sweep in the probabilistic matcher / driver scripts) overrode an engine-assigned `ReconstructedStemID` to match a known `TrueStemID`. Use to surface engine-vs-pin disagreements that would otherwise be silently corrected. See the *Hard-invariant sweep and the `SweepAuditOverride` audit column* section in the top-level `README.md`. |
 
 Notes on post-anchor output semantics:
 - When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a non-NA `TrueStemID` will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
@@ -644,10 +645,15 @@ where $\tau$ is the temperature parameter:
 ### Primary Outputs
 
 1. **ReconstructedStemID:** Assigned identity for each observation
-2. **ReconstructionMethod:**
-   - `"given"`: From input `TrueStemID`
-   - `"dp"`: Assigned by DP solver
-   - `"probabilistic"`: Assigned by probabilistic greedy matching fallback
+2. **ReconstructionMethod:** One of:
+   - `"given"`: identity copied from `TrueStemID` (anchor row, post-anchor row with known `TrueStemID`, or row corrected by the hard-invariant sweep)
+   - `"dp"`: Assigned by the exact DP solver
+   - `"probabilistic"`: Assigned by the probabilistic greedy matching fallback
+   - `"provisional_dp"`: Provisional anchor assigned by the DP at the last observed DBH census when the requested anchor lacked `TrueStemID` (`allow_provisional_anchor = TRUE`)
+   - `"dp_mf_inferred"`: Identity carried across an inferred missing-from-field census
+   - `"none_after_anchor"`: Post-anchor row with no `TrueStemID` and no DP assignment
+   - `"skipped_no_data"`: Tag/segment skipped because there were no usable observations
+3. **SweepAuditOverride:** Boolean — `TRUE` flags rows where the hard-invariant sweep overrode an engine-assigned `ReconstructedStemID` to enforce a known `TrueStemID`. See the top-level `README.md` for downstream-uncertainty implications.
 
 ### Diagnostic Outputs
 

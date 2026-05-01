@@ -541,17 +541,17 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (isTRUE(has_mf_stash) && !is.null(mf_stash) && nrow(mf_stash) > 0L) {
             out <- reinsert_mf_rows(out, mf_stash)
         }
-        # ---- Hard-invariant FINAL sweep (TrueStemID Patch B/D — terminal) ----
-        # This is the LAST authoritative pass for the invariant
-        # ReconstructedStemID == TrueStemID on every row with non-NA TrueStemID
+        # ---- Hard-invariant FINAL sweep (terminal) -------------------------
+        # Authoritative enforcement of the invariant
+        #   ReconstructedStemID == TrueStemID  on every row with non-NA TrueStemID
         # (excluding provisional_dp rows whose TrueStemID is fabricated).
-        # It runs in BOTH success paths (DP completed) and fallback paths
-        # (do_fallback) because every code path ends here.  Critically, it
-        # runs AFTER the NA-R / R-boundary barrier severing inside
-        # do_fallback, which would otherwise overwrite pinned IDs with
-        # synthetic ones to break crossing tracks.  Synthetic IDs win for
-        # rows the DP/probabilistic matcher freely chose; the supplied
-        # TrueStemID always wins for rows where it is non-NA.
+        # Runs in both DP-success and fallback paths (do_fallback) because
+        # every code path ends in finalize_out.  Critically, it runs AFTER
+        # the NA-R / R-boundary barrier severing inside do_fallback, which
+        # would otherwise overwrite pinned IDs with synthetic ones to break
+        # crossing tracks.  Synthetic IDs win for rows the DP/probabilistic
+        # matcher freely chose; the supplied TrueStemID always wins where
+        # it is non-NA.
         if (isTRUE(pin_truestemid) && "TrueStemID" %in% names(out)) {
             # Note: provisional_dp rows are NOT excluded here because the
             # restore block above (.prov_rows) has already reverted their
@@ -560,6 +560,25 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # identifies only rows where the user supplied a real ID.
             .has_true_final <- !is.na(out$TrueStemID)
             if (any(.has_true_final)) {
+                # ---- Audit: detect engine-vs-pin disagreements -------------
+                # If a row already had a non-NA ReconstructedStemID assigned
+                # by the DP/probabilistic engine that differs from TrueStemID,
+                # the sweep is silently overriding an engine decision.  Flag
+                # these rows so downstream consumers can identify cases where
+                # the exported posteriors describe a different ID than the
+                # final ReconstructedStemID.
+                if (!("SweepAuditOverride" %in% names(out))) {
+                    out[, SweepAuditOverride := FALSE]
+                }
+                .pre_recon <- out$ReconstructedStemID
+                .override <- .has_true_final &
+                    !is.na(.pre_recon) &
+                    .pre_recon != as.integer(out$TrueStemID)
+                if (any(.override)) {
+                    out[.override, SweepAuditOverride := TRUE]
+                    .tag_id <- if ("Tag" %in% names(out) && length(out$Tag) > 0L) as.character(out$Tag[[1L]]) else "<unknown>"
+                    vcat(prefix, "  [audit] finalize_out sweep overrode ", sum(.override), " engine-assigned ReconstructedStemID value(s) for tag ", .tag_id, " (rows flagged via SweepAuditOverride=TRUE)")
+                }
                 out[.has_true_final, `:=`(
                     ReconstructedStemID  = as.integer(TrueStemID),
                     ReconstructionMethod = "given"
@@ -1275,7 +1294,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         return(do_fallback("K_too_small"))
     }
 
-    # ---- Hard-invariant track-set extension (TruestemID Patch A) -----------
+    # ---- Hard-invariant track-set extension --------------------------------
     # Any pre-anchor row may carry a non-NA TrueStemID (e.g. via Step 2
     # terminal propagation in main_cpp_bci.R) whose value is NOT present at
     # the anchor census (typical case: a stem that died before the BCI
@@ -2138,7 +2157,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         if (length(.pinned_post_unassigned) > 0L) {
             tree_data[.pinned_post_unassigned, ReconstructedStemID := as.integer(TrueStemID)]
         }
-        # ---- Hard-invariant pre-anchor sweep (TrueStemID Patch B) ----------
+        # ---- Hard-invariant pre-anchor sweep -----------------------------------
         # Same fix as the post-anchor block above but for pre-anchor NA-DBH
         # rows that the DP never visited (obs_row_idx filters !is.na(DBH)).
         # A row carrying TrueStemID at C2 with DBH=NA and Status="dead"
