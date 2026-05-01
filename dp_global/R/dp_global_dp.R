@@ -570,6 +570,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 if (!("SweepAuditOverride" %in% names(out))) {
                     out[, SweepAuditOverride := FALSE]
                 }
+                # Snapshot the engine's pre-sweep ReconstructedStemID once
+                # (idempotent guard: later layered sweeps will not overwrite
+                # this column, preserving the original engine assignment).
+                if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
+                    out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+                }
                 .pre_recon <- out$ReconstructedStemID
                 .override <- .has_true_final &
                     !is.na(.pre_recon) &

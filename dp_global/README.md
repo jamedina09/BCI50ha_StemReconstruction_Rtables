@@ -316,6 +316,7 @@ All parameters must be present in the dataset before running DP. These are typic
 | `DP_MaxStatesPerCensus` | Largest state space encountered |
 | `DP_MaxStatesCensusID` | Census with largest state space |
 | `SweepAuditOverride` | `TRUE` on rows where the hard-invariant sweep in `finalize_out()` (and the equivalent sweep in the probabilistic matcher / driver scripts) overrode an engine-assigned `ReconstructedStemID` to match a known `TrueStemID`. Use to surface engine-vs-pin disagreements that would otherwise be silently corrected. See the *Hard-invariant sweep and the `SweepAuditOverride` audit column* section in the top-level `README.md`. |
+| `ReconstructedStemID_PreSweep` | Snapshot of the engine's `ReconstructedStemID` *before* the hard-invariant sweep ran. Identical to `ReconstructedStemID` on rows where `SweepAuditOverride == FALSE`; differs from it (and equals the engine's original choice) on rows where `SweepAuditOverride == TRUE`. The column is populated once by the first sweep that fires (engine `finalize_out` → probabilistic matcher → script-level backstop) and preserved unchanged by later sweeps. |
 
 Notes on post-anchor output semantics:
 - When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a non-NA `TrueStemID` will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
@@ -654,6 +655,7 @@ where $\tau$ is the temperature parameter:
    - `"none_after_anchor"`: Post-anchor row with no `TrueStemID` and no DP assignment
    - `"skipped_no_data"`: Tag/segment skipped because there were no usable observations
 3. **SweepAuditOverride:** Boolean — `TRUE` flags rows where the hard-invariant sweep overrode an engine-assigned `ReconstructedStemID` to enforce a known `TrueStemID`. See the top-level `README.md` for downstream-uncertainty implications.
+4. **ReconstructedStemID_PreSweep:** Snapshot of the engine's `ReconstructedStemID` before the sweep. Equals `ReconstructedStemID` everywhere `SweepAuditOverride == FALSE`; on `SweepAuditOverride == TRUE` rows it carries the original engine choice that the sweep overrode.
 
 ### Diagnostic Outputs
 
