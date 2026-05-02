@@ -569,6 +569,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 # final ReconstructedStemID.
                 if (!("SweepAuditOverride" %in% names(out))) {
                     out[, SweepAuditOverride := FALSE]
+                } else {
+                    # Per-row backfill: rows appended after an earlier inner sweep
+                    # (segment merges, post-anchor block via rbindlist fill=TRUE)
+                    # arrive with NA; set them to FALSE so only genuine overrides
+                    # remain TRUE.
+                    out[is.na(SweepAuditOverride), SweepAuditOverride := FALSE]
                 }
                 # Snapshot the engine's pre-sweep ReconstructedStemID.
                 # Per-row backfill: create the column if absent, otherwise
@@ -583,10 +589,17 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     out[is.na(ReconstructedStemID_PreSweep),
                         ReconstructedStemID_PreSweep := ReconstructedStemID]
                 }
-                .pre_recon <- out$ReconstructedStemID
+                # Compute audit flag against the FIRST-EVER engine output
+                # (the PreSweep snapshot), not the current ReconstructedStemID.
+                # Otherwise post-engine renumbering (R-boundary track
+                # severance, segment merges) can re-introduce engine-vs-pin
+                # disagreements that the sweep would re-correct, falsely
+                # flagging rows whose original engine output already matched
+                # TrueStemID.
+                .pre_snap <- out$ReconstructedStemID_PreSweep
                 .override <- .has_true_final &
-                    !is.na(.pre_recon) &
-                    .pre_recon != as.integer(out$TrueStemID)
+                    !is.na(.pre_snap) &
+                    .pre_snap != as.integer(out$TrueStemID)
                 if (any(.override)) {
                     out[.override, SweepAuditOverride := TRUE]
                     .tag_id <- if ("Tag" %in% names(out) && length(out$Tag) > 0L) as.character(out$Tag[[1L]]) else "<unknown>"

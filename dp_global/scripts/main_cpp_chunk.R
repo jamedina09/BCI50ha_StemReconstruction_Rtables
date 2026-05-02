@@ -861,6 +861,9 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             # sweeps -- worth surfacing loudly.
             if (!("SweepAuditOverride" %in% names(out))) {
                 out[, SweepAuditOverride := FALSE]
+            } else {
+                # Per-row backfill — mirrors dp_global_dp.R finalize_out.
+                out[is.na(SweepAuditOverride), SweepAuditOverride := FALSE]
             }
             # Snapshot the engine's pre-sweep ReconstructedStemID.
             # Per-row backfill (see dp_global_dp.R::finalize_out): create the
@@ -873,7 +876,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 out[is.na(ReconstructedStemID_PreSweep),
                     ReconstructedStemID_PreSweep := ReconstructedStemID]
             }
-            .pre_recon <- out$ReconstructedStemID[.ts_rows]
+            .pre_recon <- out$ReconstructedStemID_PreSweep[.ts_rows]
             .true_int <- as.integer(out$TrueStemID[.ts_rows])
             .override_local <- !is.na(.pre_recon) & .pre_recon != .true_int
             if (any(.override_local)) {

@@ -103,11 +103,18 @@ match_stems_probabilistic <- function(tree_data,
     n_census <- length(obs_census)
 
     if (n_census <= 1L) {
-        # Single census — assign sequential IDs
+        # Single census — honor TrueStemID where present, otherwise sequential.
+        # The downstream sweep would otherwise have to override seq_len(.N)
+        # values on every anchored row, polluting ReconstructedStemID_PreSweep
+        # and inflating SweepAuditOverride.
         tree_data[CensusID == anchor_start & !is.na(DBH),
-                  ReconstructedStemID := seq_len(.N)]
+                  ReconstructedStemID := fifelse(!is.na(TrueStemID),
+                                                 as.integer(TrueStemID),
+                                                 seq_len(.N))]
         tree_data[is.na(ReconstructedStemID), ReconstructedStemID := NA_integer_]
         tree_data[, ReconstructionMethod := "probabilistic"]
+        tree_data[CensusID == anchor_start & !is.na(DBH) & !is.na(TrueStemID),
+                  ReconstructionMethod := "given"]
         return(tree_data)
     }
 
@@ -416,6 +423,9 @@ match_stems_probabilistic <- function(tree_data,
             # non-NA ReconstructedStemID different from TrueStemID.
             if (!("SweepAuditOverride" %in% names(tree_data))) {
                 tree_data[, SweepAuditOverride := FALSE]
+            } else {
+                # Per-row backfill — mirrors dp_global_dp.R finalize_out.
+                tree_data[is.na(SweepAuditOverride), SweepAuditOverride := FALSE]
             }
             # Snapshot the engine's pre-sweep ReconstructedStemID.
             # Per-row backfill (see dp_global_dp.R::finalize_out for details):
@@ -426,10 +436,14 @@ match_stems_probabilistic <- function(tree_data,
                 tree_data[is.na(ReconstructedStemID_PreSweep),
                           ReconstructedStemID_PreSweep := ReconstructedStemID]
             }
-            .pre_recon <- tree_data$ReconstructedStemID
+            # Audit flag is computed against the PreSweep snapshot
+            # (mirror dp_global_dp.R::finalize_out) so post-engine
+            # renumbering doesn't falsely flag rows whose original
+            # output already agreed with TrueStemID.
+            .pre_snap <- tree_data$ReconstructedStemID_PreSweep
             .override <- .has_true_final &
-                !is.na(.pre_recon) &
-                .pre_recon != as.integer(tree_data$TrueStemID)
+                !is.na(.pre_snap) &
+                .pre_snap != as.integer(tree_data$TrueStemID)
             if (any(.override)) {
                 tree_data[.override, SweepAuditOverride := TRUE]
                 .tag_id <- if ("Tag" %in% names(tree_data) && length(tree_data$Tag) > 0L) as.character(tree_data$Tag[[1L]]) else "<unknown>"
