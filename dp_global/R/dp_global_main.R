@@ -112,5 +112,61 @@ ReferenceStemID <- ConstraintViolationFlag <- NULL
 DP_MaxStatesPerCensus <- DP_MaxStatesCensusID <- DP_KUsed <- NULL
 species <- NULL
 
+## ---- 7) Shared post-engine helper: carried_terminal backfill -----------
+# Backfill orphan end-of-trajectory rows whose engine output is NA.
+#
+# A row is treated as an "orphan terminal" when ALL of the following hold:
+#   - ReconstructedStemID is NA after the engine has run
+#   - DBH is NA (death/break events typically have no measurement)
+#   - Status is one of "dead", "stem dead", "broken below"
+#
+# For each such row we copy the most recent prior non-NA ReconstructedStemID
+# from the same (Tag, OriginalStemID) group (LOCF). Biologically, a terminal
+# event ends the trajectory of the most recent prior identity carrying the
+# same OriginalStemID; without this fill these rows would be dropped from
+# any downstream trajectory.
+#
+# Returns the (potentially modified) data.table with `ReconstructionMethod`
+# set to "carried_terminal" on rows that were filled.
+apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
+    if (is.null(out) || nrow(out) == 0L) {
+        return(out)
+    }
+    needed <- c("Status", "DBH", "OriginalStemID", "Tag",
+                "CensusID", "ReconstructedStemID")
+    if (!all(needed %in% names(out))) {
+        return(out)
+    }
+    data.table::setorder(out, Tag, OriginalStemID, CensusID)
+    .term_mask <- is.na(out$ReconstructedStemID) &
+        is.na(out$DBH) &
+        !is.na(out$Status) &
+        out$Status %in% c("dead", "stem dead", "broken below")
+    if (!any(.term_mask)) {
+        return(out)
+    }
+    out[, .carried := data.table::nafill(ReconstructedStemID, type = "locf"),
+        by = .(Tag, OriginalStemID)]
+    .fill_mask <- .term_mask & !is.na(out$.carried)
+    .n_filled <- sum(.fill_mask)
+    if (.n_filled > 0L) {
+        if (!("ReconstructionMethod" %in% names(out))) {
+            out[, ReconstructionMethod := NA_character_]
+        }
+        out[.fill_mask, `:=`(
+            ReconstructedStemID  = .carried,
+            ReconstructionMethod = "carried_terminal"
+        )]
+        if (isTRUE(verbose)) {
+            message(sprintf(
+                "[apply_carried_terminal_backfill] backfilled %d orphan terminal-event row(s) from prior same-OriginalStemID Recon.",
+                .n_filled
+            ))
+        }
+    }
+    out[, .carried := NULL]
+    out
+}
+
 # End of dp_global_main.R
 # -------------------------------------------------------------------------

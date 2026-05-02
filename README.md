@@ -201,6 +201,7 @@ Each observation in the output receives a `ReconstructionMethod` label indicatin
 | `probabilistic` | Assigned by the probabilistic greedy matching fallback |
 | `provisional_dp` | Provisional anchor assigned by DP |
 | `dp_mf_inferred` | Missing-from-field census identity inferred from flanking DP assignments |
+| `carried_terminal` | Orphan terminal-event row (`Status` ∈ {`dead`, `stem dead`, `broken below`}, `DBH = NA`, engine returned `NA`) backfilled by post-engine LOCF from the most recent prior `ReconstructedStemID` in the same `(Tag, OriginalStemID)` group. Applied uniformly across all driver scripts via `apply_carried_terminal_backfill()` in `dp_global/R/dp_global_main.R`. |
 | `none_after_anchor` | Post-anchor row without assignment |
 | `skipped_no_data` | Tag had no usable data for reconstruction |
 

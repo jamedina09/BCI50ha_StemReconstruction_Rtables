@@ -310,7 +310,7 @@ All parameters must be present in the dataset before running DP. These are typic
 | Column | Description |
 |--------|-------------|
 | `ReconstructedStemID` | Assigned stem identity |
-| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"provisional_dp"`, `"dp_mf_inferred"`, `"none_after_anchor"`, `"skipped_no_data"` — see notes below |
+| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"provisional_dp"`, `"dp_mf_inferred"`, `"carried_terminal"`, `"none_after_anchor"`, `"skipped_no_data"` — see notes below |
 | `ConstraintViolation` | Post-hoc diagnostic flag |
 | `DP_KUsed` | Number of tracks used |
 | `DP_MaxStatesPerCensus` | Largest state space encountered |
@@ -652,6 +652,7 @@ where $\tau$ is the temperature parameter:
    - `"probabilistic"`: Assigned by the probabilistic greedy matching fallback
    - `"provisional_dp"`: Provisional anchor assigned by the DP at the last observed DBH census when the requested anchor lacked `TrueStemID` (`allow_provisional_anchor = TRUE`)
    - `"dp_mf_inferred"`: Identity carried across an inferred missing-from-field census
+   - `"carried_terminal"`: Orphan terminal-event row (`Status` ∈ {`dead`, `stem dead`, `broken below`} with `DBH = NA`) that the engine could not match. The post-engine helper `apply_carried_terminal_backfill()` (defined in `dp_global/R/dp_global_main.R` and invoked by all three driver scripts) copies the most recent prior `ReconstructedStemID` from the same `(Tag, OriginalStemID)` group via LOCF. Biologically these rows close out the trajectory of the most recent prior identity carrying that `OriginalStemID`.
    - `"none_after_anchor"`: Post-anchor row with no `TrueStemID` and no DP assignment
    - `"skipped_no_data"`: Tag/segment skipped because there were no usable observations
 3. **SweepAuditOverride:** Boolean — `TRUE` flags rows where the hard-invariant sweep overrode an engine-assigned `ReconstructedStemID` to enforce a known `TrueStemID`. See the top-level `README.md` for downstream-uncertainty implications.

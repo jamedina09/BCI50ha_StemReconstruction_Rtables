@@ -230,6 +230,24 @@ In the rare case where the engine had already assigned a non-NA `ReconstructedSt
 
 The engine's pre-sweep `ReconstructedStemID` is preserved in the **`ReconstructedStemID_PreSweep`** column (snapshot taken once by the first sweep layer that fires). On `SweepAuditOverride == FALSE` rows it equals `ReconstructedStemID`; on `SweepAuditOverride == TRUE` rows it carries the engine's original (overridden) ID, allowing direct comparison without re-running the engine.
 
+### Post-engine `carried_terminal` backfill (all drivers)
+
+After the DP/probabilistic engine returns and `maybe_add_posterior_bins()` has run, **every driver** (`main_cpp.R`, `main_cpp_chunk.R`, `main_cpp_bci.R`) calls the shared helper `apply_carried_terminal_backfill()` defined in `dp_global/R/dp_global_main.R`.
+
+The helper finds rows where **all three** conditions hold:
+
+- `is.na(ReconstructedStemID)` (engine produced no assignment),
+- `is.na(DBH)` (no measurement to match against), and
+- `Status %in% c("dead", "stem dead", "broken below")` (a terminal event for the stem).
+
+For each such row, after sorting by `(Tag, OriginalStemID, CensusID)`, it copies the most recent prior non-NA `ReconstructedStemID` from the same `(Tag, OriginalStemID)` group (LOCF) and sets `ReconstructionMethod = "carried_terminal"`. Biologically, a death/break row ends the trajectory of the most recent prior identity that shared the `OriginalStemID` — without this fill those rows would be dropped from any downstream trajectory.
+
+Where it fires:
+
+- `main_cpp.R` — Step 5.5b, immediately after `maybe_add_posterior_bins(out)`.
+- `main_cpp_chunk.R` — inside the per-chunk parallel block, applied to each `out_chunk` with `verbose = FALSE` to keep multi-tag chunked logs quiet.
+- `main_cpp_bci.R` — Step 9b. The BCI driver also performs an upstream pre-DP `TrueStemID` propagation (Steps 1–3, see the BCI section below) that is *not* applicable to non-BCI inputs; the post-engine `carried_terminal` step is the only piece that is universal across all three drivers.
+
 **Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, growth-aware resolver diagnostics) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
 
 
@@ -250,6 +268,10 @@ Before calling the DP, the BCI driver writes `TrueStemID` on every row whose bio
 - **Step 3b** — within each `(Tag, OriginalStemID)` group, if all non-NA `TrueStemID` values agree, fill remaining NAs with that value; conflicting groups are left alone and counted in a diagnostic message.
 
 Pre-anchor rows without an unambiguous identity remain NA and are resolved by the DP. The combination of this pre-DP propagation and the DP/probabilistic engines' hard-invariant sweep (see below) guarantees `ReconstructedStemID == TrueStemID` on every row that Steps 1–3 anchored.
+
+### Post-DP carried_terminal backfill (Step 9b)
+
+After `run_dp_one_group()` returns and `maybe_add_posterior_bins()` has been applied, the BCI driver invokes the shared helper `apply_carried_terminal_backfill()` (Step 9b). This is the same helper called by `main_cpp.R` (Step 5.5b) and `main_cpp_chunk.R`; see the *Post-engine `carried_terminal` backfill* section above for the rule and rationale. The helper is the only post-engine piece that is identical across all three drivers — the upstream Steps 1–3 above are BCI-input-specific and have no analogue in the simulator (which already ships `TrueStemID`).
 
 ### BCI-specific defaults
 
