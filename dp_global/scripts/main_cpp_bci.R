@@ -465,41 +465,23 @@ out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 
 # ----------------------------------------------------------------
 # 9b. Post-engine backfill of orphaned terminal-event rows.
-#     For rows with Status %in% {"dead","stem dead","broken below"} AND NA DBH
-#     that the engine could not match (ReconstructedStemID is NA), copy the
-#     ReconstructedStemID from the most recent prior row in the same
-#     (Tag, OriginalStemID) group. Biologically: a death/break event ends the
-#     trajectory of the most recent prior identity carrying the same
-#     OriginalStemID. The engine cannot match these rows on its own because
-#     they have no DBH; without this step they are dropped from the trajectory.
-#     Mark these rows with ReconstructionMethod = "carried_terminal" so they
-#     are auditable.
-if (!is.null(out) && nrow(out) > 0L &&
-    all(c("Status", "DBH", "OriginalStemID", "ReconstructedStemID") %in% names(out))) {
-    setorder(out, Tag, OriginalStemID, CensusID)
-    .term_mask <- is.na(out$ReconstructedStemID) &
-        is.na(out$DBH) &
-        !is.na(out$Status) &
-        out$Status %in% c("dead", "stem dead", "broken below")
-    .n_orphans <- sum(.term_mask)
-    if (.n_orphans > 0L) {
-        # Carry the most recent non-NA ReconstructedStemID forward within group.
-        out[, .carried := nafill(ReconstructedStemID, type = "locf"),
-            by = .(Tag, OriginalStemID)]
-        .fill_mask <- .term_mask & !is.na(out$.carried)
-        if (any(.fill_mask)) {
-            out[.fill_mask, `:=`(
-                ReconstructedStemID  = .carried,
-                ReconstructionMethod = "carried_terminal"
-            )]
-            message(sprintf(
-                "[main_cpp_bci.R] Step 9b: backfilled %d orphan terminal-event row(s) from prior same-OriginalStemID Recon.",
-                sum(.fill_mask)
-            ))
-        }
-        out[, .carried := NULL]
-    }
-}
+#
+#     A row is treated as an "orphan terminal" when:
+#       - ReconstructedStemID is NA after the engine has run
+#       - DBH is NA
+#       - Status is one of {"dead", "stem dead", "broken below"}
+#
+#     For each such row, the helper copies the most recent prior
+#     non-NA ReconstructedStemID from the same (Tag, OriginalStemID)
+#     group (LOCF) and sets ReconstructionMethod = "carried_terminal".
+#     Biologically, a terminal event ends the trajectory of the most
+#     recent prior identity carrying that OriginalStemID.
+#
+#     The helper `apply_carried_terminal_backfill()` lives in
+#     dp_global/R/dp_global_main.R and is invoked identically by
+#     main_cpp.R (Step 5.5b) and main_cpp_chunk.R (per-chunk).
+# ----------------------------------------------------------------
+out <- apply_carried_terminal_backfill(out)
 
 out <- maybe_add_posterior_bins(out)
 if (!is.null(out)) {

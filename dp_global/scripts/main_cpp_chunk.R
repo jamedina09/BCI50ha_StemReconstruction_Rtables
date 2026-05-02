@@ -1148,6 +1148,16 @@ run_main_chunked <- function() {
                 if (nrow(out_chunk) > 0L) {
                     out_chunk[, DP_Chunk := ci]
                     out_chunk <- maybe_add_posterior_bins(out_chunk)
+                    # Post-engine backfill of orphan terminal-event rows.
+                    # For rows with Status %in% {"dead","stem dead","broken below"}
+                    # AND NA DBH AND NA ReconstructedStemID, copy the
+                    # ReconstructedStemID from the most recent prior row in the
+                    # same (Tag, OriginalStemID) group (LOCF) and set
+                    # ReconstructionMethod = "carried_terminal".
+                    # Shared helper defined in dp_global/R/dp_global_main.R;
+                    # mirrors Step 9b in main_cpp_bci.R / Step 5.5b in main_cpp.R.
+                    # verbose = FALSE keeps multi-tag chunked logs quiet.
+                    out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
                     # Record run output directory (basename) in each row to avoid variable/column name collision
                     out_chunk[, run_out_dir := basename(out_dir)]
 

@@ -1098,6 +1098,16 @@ run_main <- function() {
     }
     out <- maybe_add_posterior_bins(out)
 
+    # 5.5b Post-engine backfill of orphan terminal-event rows.
+    #      For rows with Status %in% {"dead","stem dead","broken below"} AND
+    #      NA DBH that the engine could not match (ReconstructedStemID NA),
+    #      copy the ReconstructedStemID from the most recent prior row in the
+    #      same (Tag, OriginalStemID) group (LOCF). Sets
+    #      ReconstructionMethod = "carried_terminal" on filled rows.
+    #      Shared helper defined in dp_global/R/dp_global_main.R; mirrors
+    #      Step 9b in main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
+    out <- apply_carried_terminal_backfill(out)
+
     # Record run output directory (basename) in each row to avoid variable/column name collision
     if (!is.null(out)) {
         out[, run_out_dir := basename(out_dir)]
