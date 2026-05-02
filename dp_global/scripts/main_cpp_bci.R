@@ -183,7 +183,23 @@ xraw[, rownum := .I]
 # ----- Step 1: certain anchors -----
 xraw[, TrueStemID := NA_integer_]
 xraw[!is.na(StemTag), TrueStemID := OriginalStemID] # (a) physical tag
-xraw[is.na(TrueStemID) & CensusID >= 7L, TrueStemID := OriginalStemID] # (b) C7+ re-tagging
+# (b) C7+ re-tagging convention: every C7+ row gets its OriginalStemID pinned
+#     EXCEPT end-of-trajectory rows with NA DBH (dead / stem dead / broken-below
+#     without a measurement). Those rows describe a death/break event, not a
+#     new identity, and pinning them to OriginalStemID severs them from their
+#     prior alive trajectory (see tag 000378 C7-C9; bci_data/dead_pattern.html
+#     shows 99.8% of dead+NA-DBH rows have prior history at the same
+#     OriginalStemID). They will be backfilled post-engine in Step 11 below.
+xraw[
+    is.na(TrueStemID) &
+        CensusID >= 7L &
+        !(
+            is.na(DBH) &
+                !is.na(Status) &
+                Status %in% c("dead", "stem dead", "broken below")
+        ),
+    TrueStemID := OriginalStemID
+]
 
 # xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 # xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
@@ -191,6 +207,7 @@ xraw[is.na(TrueStemID) & CensusID >= 7L, TrueStemID := OriginalStemID] # (b) C7+
 # xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 # xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 # xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 
 # ----- Step 2: terminal propagation -----
 
@@ -216,22 +233,35 @@ xraw[.last_dbh, on = .(Tag, OriginalStemID), .last_dbh_census := i.last_dbh_cens
 # xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 # xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 # xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 
-# 2b. Anchor terminal-event rows directly to their own OriginalStemID.
-#     All five conditions must hold:
+# 2b. Anchor ONLY "start-of-new-trajectory" terminal-event rows to their own
+#     OriginalStemID. Conditions:
 #       • is.na(TrueStemID)            — not already anchored by Step 1
 #       • !is.na(.last_dbh_census)     — stem has a DBH history (was ever measured)
 #       • CensusID > .last_dbh_census  — strictly in the terminal phase
-#       • terminal event present:
-#           – R-family resprout code in ListOfTSM, OR
-#           – Status is "dead", "stem dead", or "broken below"
+#       • !is.na(DBH)                  — row carries a measurement (start of a
+#                                        new trajectory, e.g. broken-below + DBH)
+#       • terminal-event marker present:
+#           – Status == "broken below", OR
+#           – R-family resprout code in ListOfTSM
+#
+#     Rationale (bci_data/dead_pattern.html, broken_below_pattern.html):
+#       - dead / stem-dead / broken-below + NA DBH are END-OF-TRAJECTORY rows.
+#         99.8% of dead+NA-DBH rows have a prior alive record at the same
+#         (Tag, OriginalStemID). Pinning them to OriginalStemID here forces
+#         the engine to treat them as 1-row singletons and severs them from
+#         the actual prior trajectory. We now let the engine match them.
+#       - broken-below WITH DBH is a START-OF-NEW-TRAJECTORY row (~99% have no
+#         prior history at the same OriginalStemID) and IS correctly anchored.
 xraw[
     is.na(TrueStemID) &
         !is.na(.last_dbh_census) &
         CensusID > .last_dbh_census &
+        !is.na(DBH) &
         (
             (!is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE)) |
-                (!is.na(Status) & Status %in% c("broken below", "dead", "stem dead"))
+                (!is.na(Status) & Status == "broken below")
         ),
     TrueStemID := OriginalStemID
 ]
@@ -242,6 +272,8 @@ xraw[
 # xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 # xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 # xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# print(xraw[Tag == "125322", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)], nrow = 200)
 
 # 2c. Bidirectional fill of remaining post-last-DBH NA gaps within each group.
 #     LOCF: carry a 2b anchor (or Step-1 anchor) forward to later terminal rows.
@@ -257,6 +289,9 @@ xraw[
 
 # 2d. Remove temporary column.
 xraw[, .last_dbh_census := NULL]
+
+# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# print(xraw[Tag == "125322", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)], nrow = 200)
 
 # -----------------------------------------------------------------------
 # STEP 3 — Extended propagation: terminal-event anchoring + OriginalStemID match
@@ -293,27 +328,63 @@ xraw[, .last_dbh_census := NULL]
 #       Conflicts (multiple distinct TrueStemIDs in one group) leave the NA
 #       rows alone and emit a warning so they can be inspected.
 
-# 3a. Direct anchor of terminal-event rows to their own OriginalStemID
+# 3a. Direct anchor of START-OF-NEW-TRAJECTORY rows ONLY.
+#     Conditions:
+#       • Status == "broken below" with non-NA DBH, OR
+#       • R-family resprout code in ListOfTSM with non-NA DBH.
+#
+#     Pattern evidence (bci_data/broken_below_pattern.html, dead_pattern.html):
+#       - broken-below + DBH     : start of a NEW trajectory
+#                                  (~99% have NO prior history at the same
+#                                   OriginalStemID; ~51% appear alive later).
+#                                  → anchor to OriginalStemID is correct;
+#                                    no risk of pre-anchor collision.
+#       - broken-below + NA DBH  : END of an existing trajectory
+#                                  (~60% have prior alive history at same
+#                                   OriginalStemID).
+#                                  → DO NOT anchor; let the engine link the
+#                                    death back to its prior alive record.
+#       - dead / stem dead       : END of an existing trajectory
+#                                  (99.8% have prior history at same
+#                                   OriginalStemID; 0.0024% have DBH).
+#                                  → DO NOT anchor; let the engine match.
+#
+#     Pre-pinning a terminal end-of-trajectory row to its own OriginalStemID
+#     forces ReconstructionMethod = "given" on a 1-row singleton and severs
+#     the death from its prior alive trajectory (see tag 000184 C5 dead row;
+#     tag 000378 C6 alive row that gets back-propagated to 893101 by Step 3b).
 xraw[
     is.na(TrueStemID) &
+        !is.na(DBH) &
         (
-            (!is.na(Status) & Status %in% c("broken below", "dead", "stem dead")) |
+            (!is.na(Status) & Status == "broken below") |
                 (!is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE))
         ),
     TrueStemID := OriginalStemID
 ]
 
 # 3b. Propagate within (Tag, OriginalStemID) when a group has a unique anchor
+#     that comes from a DBH-bearing row (i.e. a real start-of-trajectory or
+#     C7+ retag anchor). Anchors that originated from terminal-event rows are
+#     no longer created by Step 2b/3a (after the dead-pattern fix), but this
+#     guard makes the propagation rule independent of upstream changes:
+#     end-of-trajectory rows must NEVER be allowed to back-propagate their
+#     OriginalStemID to earlier alive rows (see tag 000378 C6 case).
 .n_before <- sum(is.na(xraw$TrueStemID))
 .n_conflicts <- 0L
 xraw[, TrueStemID := {
     .v <- TrueStemID
     if (anyNA(.v) && any(!is.na(.v))) {
-        .u <- unique(.v[!is.na(.v)])
-        if (length(.u) == 1L) {
-            .v[is.na(.v)] <- .u
-        } else {
-            .n_conflicts <<- .n_conflicts + 1L
+        # Only consider anchors from rows that carry DBH (start-of-trajectory
+        # or measured retag). Terminal-only NA-DBH anchors are excluded.
+        .anchor_mask <- !is.na(.v) & !is.na(DBH)
+        if (any(.anchor_mask)) {
+            .u <- unique(.v[.anchor_mask])
+            if (length(.u) == 1L) {
+                .v[is.na(.v)] <- .u
+            } else {
+                .n_conflicts <<- .n_conflicts + 1L
+            }
         }
     }
     .v
@@ -324,7 +395,13 @@ message(sprintf(
     .n_before - .n_after, .n_conflicts
 ))
 
+# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# print(xraw[Tag == "125322", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)], nrow = 200)
+
 setorder(xraw, rownum)
+
+# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
+# print(xraw[Tag == "125322", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)], nrow = 200)
 
 # # find status dead and not broken below per tag in xraw
 # # Tags that have dead
@@ -386,6 +463,44 @@ message("[main_cpp_bci.R] Running DP for Tag ", WHICH_TAG, "...")
 dtg <- xrun_tag[Tag == WHICH_TAG]
 out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 
+# ----------------------------------------------------------------
+# 9b. Post-engine backfill of orphaned terminal-event rows.
+#     For rows with Status %in% {"dead","stem dead","broken below"} AND NA DBH
+#     that the engine could not match (ReconstructedStemID is NA), copy the
+#     ReconstructedStemID from the most recent prior row in the same
+#     (Tag, OriginalStemID) group. Biologically: a death/break event ends the
+#     trajectory of the most recent prior identity carrying the same
+#     OriginalStemID. The engine cannot match these rows on its own because
+#     they have no DBH; without this step they are dropped from the trajectory.
+#     Mark these rows with ReconstructionMethod = "carried_terminal" so they
+#     are auditable.
+if (!is.null(out) && nrow(out) > 0L &&
+    all(c("Status", "DBH", "OriginalStemID", "ReconstructedStemID") %in% names(out))) {
+    setorder(out, Tag, OriginalStemID, CensusID)
+    .term_mask <- is.na(out$ReconstructedStemID) &
+        is.na(out$DBH) &
+        !is.na(out$Status) &
+        out$Status %in% c("dead", "stem dead", "broken below")
+    .n_orphans <- sum(.term_mask)
+    if (.n_orphans > 0L) {
+        # Carry the most recent non-NA ReconstructedStemID forward within group.
+        out[, .carried := nafill(ReconstructedStemID, type = "locf"),
+            by = .(Tag, OriginalStemID)]
+        .fill_mask <- .term_mask & !is.na(out$.carried)
+        if (any(.fill_mask)) {
+            out[.fill_mask, `:=`(
+                ReconstructedStemID  = .carried,
+                ReconstructionMethod = "carried_terminal"
+            )]
+            message(sprintf(
+                "[main_cpp_bci.R] Step 9b: backfilled %d orphan terminal-event row(s) from prior same-OriginalStemID Recon.",
+                sum(.fill_mask)
+            ))
+        }
+        out[, .carried := NULL]
+    }
+}
+
 out <- maybe_add_posterior_bins(out)
 if (!is.null(out)) {
     out[, run_out_dir := basename(out_dir)]
@@ -446,6 +561,21 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000013
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=619109
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=002394
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=003954 --DP_MAX_STATES=2
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=003954
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=125322 --DP_MAX_STATES=10000
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184 --DP_MAX_STATES=2
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375 --DP_MAX_STATES=2
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=312065
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=158186
+# inc <- c("275629" "408101", "432477," "443579")
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=275629
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=408101
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=432477
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=443579
+
+
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
