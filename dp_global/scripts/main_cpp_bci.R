@@ -189,7 +189,7 @@ xraw[!is.na(StemTag), TrueStemID := OriginalStemID] # (a) physical tag
 #     new identity, and pinning them to OriginalStemID severs them from their
 #     prior alive trajectory (see tag 000378 C7-C9; bci_data/dead_pattern.html
 #     shows 99.8% of dead+NA-DBH rows have prior history at the same
-#     OriginalStemID). They will be backfilled post-engine in Step 11 below.
+#     OriginalStemID). They will be backfilled post-engine in Step 9b below.
 xraw[
     is.na(TrueStemID) &
         CensusID >= 7L &
