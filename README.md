@@ -215,7 +215,7 @@ The engine's pre-sweep choice is preserved alongside the final value in the **`R
 
 ## Conventions
 
-- Driver scripts: `dp_global/scripts/` — `main_cpp.R` (single-tag/small), `main_cpp_chunk.R` (large chunked), `main_cpp_bci.R` (BCI-specific with `withr` bundle sourcing), `basal_area_uncertainty.R` (posterior BA uncertainty).
+- Driver scripts: `dp_global/scripts/` — `main_cpp.R` (single-tag/small), `main_cpp_chunk.R` (large chunked), `main_cpp_bci.R` (BCI-specific, sources `main_cpp.R` for helpers and adds pre-DP TrueStemID propagation), `basal_area_uncertainty.R` (posterior BA uncertainty).
 - Module internals: `dp_global/R/` — sourced in order by `dp_global_main.R`.
 - Output directories: auto-created under `dp_global/output/` (not tracked by git).
 

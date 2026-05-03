@@ -888,6 +888,17 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 ReconstructionMethod = "given"
             )]
         }
+        # Unconditional materialisation of the audit columns: tags with NO
+        # non-NA TrueStemID never enter the .ts_rows branch above, so the
+        # columns would otherwise be missing from their output and downstream
+        # consumers would have to special-case schema differences.  Create
+        # them here with the no-override defaults if absent.
+        if (!("SweepAuditOverride" %in% names(out))) {
+            out[, SweepAuditOverride := FALSE]
+        }
+        if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
+            out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+        }
     }
 
     out

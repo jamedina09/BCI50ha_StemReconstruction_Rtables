@@ -98,7 +98,7 @@ dp_global/
 ├── scripts/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
 │   ├── main_cpp_chunk.R              # Chunked driver for large runs
-│   ├── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, withr bundle sourcing)
+│   ├── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, sources main_cpp.R for helpers)
 │   └── basal_area_uncertainty.R      # Posterior-based basal area uncertainty quantification
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
