@@ -202,6 +202,7 @@ Each observation in the output receives a `ReconstructionMethod` label indicatin
 | `provisional_dp` | Provisional anchor assigned by DP |
 | `dp_mf_inferred` | Missing-from-field census identity inferred from flanking DP assignments |
 | `carried_terminal` | Orphan terminal-event row (`Status` ∈ {`dead`, `stem dead`, `broken below`}, `DBH = NA`, engine returned `NA`) backfilled by post-engine LOCF from the most recent prior `ReconstructedStemID` in the same `(Tag, OriginalStemID)` group. Applied uniformly across all driver scripts via `apply_carried_terminal_backfill()` in `dp_global/R/dp_global_main.R`. |
+| `given_orphan` | "Born-orphan" stem row — the source identifier (`StemID` in production, `OriginalStemID` in this test repo) is non-NA, but `DBH`, `TrueStemID`, and the engine's `ReconstructedStemID` are all NA (e.g. a brand-new StemID first recorded as broken-below at C7+ with no measurement). The post-engine helper `apply_orphan_stem_backfill()` in `dp_global/R/dp_global_main.R` copies the source identifier into `ReconstructedStemID`. Runs after `apply_carried_terminal_backfill()` in every driver. |
 | `none_after_anchor` | Post-anchor row without assignment |
 | `skipped_no_data` | Tag had no usable data for reconstruction |
 
@@ -212,6 +213,10 @@ When `PIN_TRUESTEMID = TRUE` (default), every output row with a non-NA `TrueStem
 In the rare case where the DP or probabilistic engine had already assigned a non-NA `ReconstructedStemID` that disagrees with `TrueStemID`, the sweep silently overrides it. Those rows are flagged in the **`SweepAuditOverride`** logical column. Downstream consumers that propagate posterior uncertainty should treat any row where `SweepAuditOverride == TRUE` as observed (P=1, entropy=0) — the values in the `DP_PosteriorTop*` / `DP_PosteriorReconstructedProb` columns describe the *engine's* (overridden) choice, not the final `ReconstructedStemID`. For all other `given` rows the posterior collapses naturally to the pinned ID and the posterior columns are consistent with the final assignment.
 
 The engine's pre-sweep choice is preserved alongside the final value in the **`ReconstructedStemID_PreSweep`** column. It equals `ReconstructedStemID` everywhere `SweepAuditOverride == FALSE` and carries the original engine-assigned ID where `SweepAuditOverride == TRUE`. The column is populated once by the first sweep layer that fires (engine `finalize_out` → probabilistic matcher → script-level backstop) and preserved unchanged by later sweeps, so it always reflects the pre-sweep state regardless of which code path produced the row.
+
+### Duplicate-aware sweep and the `SweepRollbackToPreSweep` column
+
+The script-level sweep in `main_cpp.R` and `main_cpp_chunk.R` will refuse to pin `ReconstructedStemID := TrueStemID` when doing so would create two rows with the same `ReconstructedStemID` at the same `(Tag, CensusID)` (the canonical case is BCI tag `258411` C6, where retag-campaign reuse of an `OriginalStemID` would force two stems onto the same id). Pins are processed in deterministic row order; if the candidate value already appears on another row at the same `(Tag, CensusID)` in the working `ReconstructedStemID` column, the row is **rolled back to its `ReconstructedStemID_PreSweep` value** (respecting the engine's reconstruction), `ReconstructionMethod` is left untouched, and the row is flagged in the **`SweepRollbackToPreSweep`** boolean column (FALSE elsewhere). `SweepAuditOverride` continues to record the original disagreement; the rollback flag records the chosen resolution.
 
 ## Conventions
 
