@@ -32,8 +32,6 @@ source(here("dp_global", "scripts", "main_cpp.R"))
 #    CLI args (already captured in `overrides`) are re-applied
 #    below so they can still override these BCI defaults.
 # ----------------------------------------------------------------
-# INPUT_FILE                          <- here("bci_data", "bci_multistem_xrun_debug.rds")
-# INPUT_FILE                          <- here("bci_data", "wrong_tags.rds")
 INPUT_FILE <- here("bci_data", "multistem_tags.rds")
 WHICH_TAG <- "115203"
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE # use real species from BCI data
@@ -201,14 +199,6 @@ xraw[
     TrueStemID := OriginalStemID
 ]
 
-# xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-
 # ----- Step 2: terminal propagation -----
 
 # Word-boundary regex for R-family resprout codes in ListOfTSM.
@@ -226,14 +216,6 @@ setorder(xraw, Tag, OriginalStemID, CensusID)
     by = .(Tag, OriginalStemID)
 ]
 xraw[.last_dbh, on = .(Tag, OriginalStemID), .last_dbh_census := i.last_dbh_census]
-
-# xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 
 # 2b. Anchor ONLY "start-of-new-trajectory" terminal-event rows to their own
 #     OriginalStemID. Conditions:
@@ -266,15 +248,6 @@ xraw[
     TrueStemID := OriginalStemID
 ]
 
-# xraw[Tag == "004808", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "006160", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "264355", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "119453", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "115203", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "242114", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# print(xraw[Tag == "125322", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)], nrow = 200)
-
 # 2c. Bidirectional fill of remaining post-last-DBH NA gaps within each group.
 #     LOCF: carry a 2b anchor (or Step-1 anchor) forward to later terminal rows.
 #     NOCB: carry a later C7+ anchor backward to earlier terminal rows that had
@@ -289,9 +262,6 @@ xraw[
 
 # 2d. Remove temporary column.
 xraw[, .last_dbh_census := NULL]
-
-# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# print(xraw[Tag == "125322", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)], nrow = 200)
 
 # -----------------------------------------------------------------------
 # STEP 3 — Extended propagation: terminal-event anchoring + OriginalStemID match
@@ -453,32 +423,7 @@ message(sprintf(
     .n_before - .n_after, .n_conflicts
 ))
 
-# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# print(xraw[Tag == "125322", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)], nrow = 200)
-
 setorder(xraw, rownum)
-
-# xraw[Tag == "003954", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
-# print(xraw[Tag == "125322", .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)], nrow = 200)
-
-# # find status dead and not broken below per tag in xraw
-# # Tags that have dead
-# tags_dead <- xraw[
-#     Status %in% c("dead", "stem dead") & CensusID <= 5,
-#     unique(Tag)
-# ]
-
-# # Tags that have broken below
-# tags_broken <- xraw[
-#     Status == "broken below" & CensusID <= 5,
-#     unique(Tag)
-# ]
-
-# # Tags with dead but no broken below
-# target_tags <- setdiff(tags_dead, tags_broken)
-
-# # Subset data
-# xraw[Tag %in% target_tags[600], .(Tag, CensusID, OriginalStemID, TrueStemID, DBH, StemTag, ListOfTSM, Status)]
 
 # ----------------------------------------------------------------
 # 6. Ensure species column
@@ -489,10 +434,12 @@ xrun <- copy(xraw)
 # ----------------------------------------------------------------
 # 7. Validate tag
 # ----------------------------------------------------------------
-# if (!(WHICH_TAG %in% xrun$Tag)) {
-#     stop("Tag ", WHICH_TAG, " not found in data. ",
-#          "First few tags: ", paste(head(sort(unique(xrun$Tag))), collapse = ", "), " ...")
-# }
+if (!(WHICH_TAG %in% xrun$Tag)) {
+    stop(
+        "Tag ", WHICH_TAG, " not found in data. ",
+        "First few tags: ", paste(head(sort(unique(xrun$Tag))), collapse = ", "), " ..."
+    )
+}
 tag_sp <- unique(xrun[Tag == WHICH_TAG, species])
 message("[main_cpp_bci.R] Tag ", WHICH_TAG, " — species: ", paste(tag_sp, collapse = ", "))
 message("[main_cpp_bci.R] Tag ", WHICH_TAG, " — rows: ", nrow(xrun[Tag == WHICH_TAG]))
@@ -522,46 +469,23 @@ dtg <- xrun_tag[Tag == WHICH_TAG]
 out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 
 # ----------------------------------------------------------------
-# 9b. Post-engine backfill of orphaned terminal-event rows.
+# 9b. Post-engine helpers (order mirrors main_cpp.R / main_cpp_chunk.R):
 #
-#     A row is treated as an "orphan terminal" when:
-#       - ReconstructedStemID is NA after the engine has run
-#       - DBH is NA
-#       - Status is one of {"dead", "stem dead", "broken below"}
+#   1. maybe_add_posterior_bins()        — add per-row posterior bins.
+#   2. apply_carried_terminal_backfill() — fill orphan terminal-event
+#        rows (NA Recon, NA DBH, dead/broken-below) by LOCF within
+#        (Tag, OriginalStemID) and tag them ReconstructionMethod =
+#        "carried_terminal".
+#   3. apply_orphan_stem_backfill()      — handle "born-orphan" rows
+#        (NA Recon, NA TrueStemID, NA DBH, source-id non-NA) by setting
+#        Recon = source-id and ReconstructionMethod = "given_orphan".
 #
-#     For each such row, the helper copies the most recent prior
-#     non-NA ReconstructedStemID from the same (Tag, OriginalStemID)
-#     group (LOCF) and sets ReconstructionMethod = "carried_terminal".
-#     Biologically, a terminal event ends the trajectory of the most
-#     recent prior identity carrying that OriginalStemID.
-#
-#     The helper `apply_carried_terminal_backfill()` lives in
-#     dp_global/R/dp_global_main.R and is invoked identically by
-#     main_cpp.R (Step 5.5b) and main_cpp_chunk.R (per-chunk).
+#   Both backfill helpers live in dp_global/R/dp_global_main.R.
 # ----------------------------------------------------------------
+out <- maybe_add_posterior_bins(out)
 out <- apply_carried_terminal_backfill(out)
-
-# ----------------------------------------------------------------
-# 9c. Post-engine backfill of born-orphan stems.
-#
-#     A row is treated as a "born orphan" when:
-#       - ReconstructedStemID is NA after the engine has run
-#       - TrueStemID is NA (no upstream anchor)
-#       - DBH is NA (no signal for DP to disambiguate)
-#       - the source-id column (StemID / OriginalStemID) is non-NA
-#
-#     For each such row the helper sets Recon = source-id and
-#     ReconstructionMethod = "given_orphan". This handles brand-new stems
-#     whose first appearance was a measurement-less status row (e.g.
-#     broken-below at C7+ with DBH=NA), which the engine cannot reach.
-#
-#     The helper `apply_orphan_stem_backfill()` lives in
-#     dp_global/R/dp_global_main.R and is invoked identically by
-#     main_cpp.R (Step 5.5c) and main_cpp_chunk.R (per-chunk).
-# ----------------------------------------------------------------
 out <- apply_orphan_stem_backfill(out)
 
-out <- maybe_add_posterior_bins(out)
 if (!is.null(out)) {
     out[, run_out_dir := basename(out_dir)]
     message("[main_cpp_bci.R] DP done. ", nrow(out), " rows returned.")
@@ -602,57 +526,9 @@ if (isTRUE(WRITE_DP_PDF) && !is.null(out) && nrow(out) > 0L) {
 writeLines(as.character(Sys.time()), file.path(out_dir, "run_finished.txt"))
 message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=119453 --DP_MAX_STATES=2
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115427
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115203
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242799
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=277120
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=190932
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=171486
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=220311
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=204785
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242114
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=001080
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=005558
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=619109
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000051
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000013
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=619109
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=246746
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=003954 --DP_MAX_STATES=2
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=003954
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=125322 --DP_MAX_STATES=10000
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184 --DP_MAX_STATES=2
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375 --DP_MAX_STATES=2
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=312065
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=158186
-# inc <- c("275629" "408101", "432477," "443579")
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=275629
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=408101
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=432477
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=443579
+# Example invocations:
+#   Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115203
+#   Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=258411
+#   Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378 --DP_MAX_STATES=2
+#   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=258411
 
-
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184
-
-
-
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=258411
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=060145
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=233660
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=606162
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=639010
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=739002
-
-
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378 --DP_MAX_STATES=70000
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378 --DP_MAX_STATES=2
-
-
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=258411
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=000378
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=115427

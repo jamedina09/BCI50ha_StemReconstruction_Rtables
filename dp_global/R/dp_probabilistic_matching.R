@@ -482,15 +482,6 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
     n_curr <- length(dbh_curr)
     n_next <- length(dbh_next)
     L <- matrix(-Inf, nrow = n_curr, ncol = n_next)
-    
-    # DEBUG: Log flag status on first call (n_curr > 0)
-    if (n_curr > 0 && n_next > 0) {
-        .first_call_debug <- TRUE
-        if (.first_call_debug) {
-            cat("[compute_pairwise_log_likelihood] use_bio_hard_shrink=", use_bio_hard_shrink, 
-                " use_bio_hard_growth=", use_bio_hard_growth, "\n")
-        }
-    }
 
     mu_growth_fn <- function(d) {
         if (!is.finite(bio$mu_gamma) || bio$mu_gamma == 0 || !is.finite(d) || d <= 0)

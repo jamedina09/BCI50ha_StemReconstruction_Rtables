@@ -1014,6 +1014,40 @@ run_main_chunked <- function() {
     xraw <- ensure_species_column(xraw)
     xrun <- data.table::copy(xraw)
 
+    # 5.1b Step 3a.5 — same-OriginalStemID continuity for unanchored
+    # death/break trajectories (Fix 1; mirrors main_cpp_bci.R Step 3a.5).
+    #
+    # No-op unless the input already exposes a `TrueStemID` column (BCI
+    # preprocessing in main_cpp_bci.R builds it via Steps 1–3; simulated
+    # inputs supply it directly). For inputs that lack it entirely we
+    # fall through with a single message — Steps 1–3 of the BCI pre-DP
+    # pipeline have not yet been ported here (see improvements.md Plan 2).
+    if ("TrueStemID" %in% names(xrun) &&
+        all(c("OriginalStemID", "DBH", "Status") %in% names(xrun))) {
+        .n_before_3a5 <- sum(is.na(xrun$TrueStemID))
+        .n_groups_3a5 <- 0L
+        xrun[, TrueStemID := {
+            .v <- TrueStemID
+            if (all(is.na(.v))) {
+                .alive_mask <- !is.na(DBH) & !is.na(Status) & Status == "alive"
+                .terminal_mask <- is.na(DBH) & !is.na(Status) &
+                    Status %in% c("dead", "stem dead", "broken below")
+                if (any(.alive_mask) && any(.terminal_mask)) {
+                    .v[.alive_mask] <- OriginalStemID[.alive_mask]
+                    .n_groups_3a5 <<- .n_groups_3a5 + 1L
+                }
+            }
+            .v
+        }, by = .(Tag, OriginalStemID)]
+        .n_after_3a5 <- sum(is.na(xrun$TrueStemID))
+        log_msg(sprintf(
+            "[main_cpp_chunk.R] Step 3a.5 same-OS continuity: anchored %d alive row(s) across %d unanchored death/break group(s).",
+            .n_before_3a5 - .n_after_3a5, .n_groups_3a5
+        ))
+    } else {
+        log_msg("[main_cpp_chunk.R] Step 3a.5 skipped (TrueStemID/OriginalStemID/DBH/Status not all present in input).")
+    }
+
     # 5.2 Estimate biological parameters
     bio_pars <- list()
 
