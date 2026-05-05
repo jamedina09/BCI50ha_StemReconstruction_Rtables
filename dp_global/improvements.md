@@ -308,5 +308,238 @@ it.
 
 ---
 
-*End of Plan 1. Future plans should be appended below as new top-level
+## Plan 2 — Generalise the BCI Steps 1–3 pre-DP `TrueStemID` propagation
+
+### 2.1 Motivation
+
+The BCI debug driver
+[dp_global/scripts/main_cpp_bci.R](dp_global/scripts/main_cpp_bci.R)
+inlines ≈250 lines of pre-DP propagation logic (Steps 1, 2, 2b, 2c,
+2d, 3, 3a) that build a clean `TrueStemID` column from
+`OriginalStemID`, terminal events, and last-DBH census. Step 3a.5
+(same-OS continuity, Fix 1) has been **partially ported** to
+[dp_global/scripts/main_cpp_chunk.R](dp_global/scripts/main_cpp_chunk.R)
+as a guarded no-op block: it runs only when `TrueStemID` already
+exists in the input, so it is active for simulated inputs (and
+correctly does nothing there because `TrueStemID` is never all-NA per
+group), but it is a **no-op for raw BCI input** because Steps 1–3
+are still missing — there is no `TrueStemID` column to anchor onto.
+
+Result: a chunked production run on raw BCI data still emits the 5
+Class-B born-resprout duplicates that Fix 1 resolves in
+`main_cpp_bci.R`. Until Steps 1–3 are also ported, those tags must
+be either (a) handled by pre-processing the BCI input through the
+same Steps 1–3 logic before invoking `main_cpp_chunk.R`, or (b)
+accepted as known residual duplicates and patched in a follow-up.
+
+### 2.2 Proposal
+
+Extract Steps 1, 2, 2b, 2c, 2d, 3, 3a, **and 3a.5** into a single
+function `propagate_true_stem_id(dt, status_alive_set,
+status_terminal_set, source_id_col)` placed in a new module
+`dp_global/R/dp_global_preprocess.R`. Replace both the inline block
+in `main_cpp_bci.R` and the partial 3a.5-only block in
+`main_cpp_chunk.R` with a single call to the helper, guarded by a
+flag `--PROPAGATE_TRUE_STEM_ID` (default `TRUE` for BCI input,
+`FALSE` for synthetic data where `TrueStemID` is supplied by the
+simulator).
+
+### 2.3 Touch-points
+
+- New file: `dp_global/R/dp_global_preprocess.R`.
+- Loader: register in `load_dp_global()` in
+  [dp_global/R/dp_global_main.R](dp_global/R/dp_global_main.R).
+- Drivers: replace the inline block in `main_cpp_bci.R` and the
+  partial Step 3a.5 block in `main_cpp_chunk.R` with the helper
+  call; add the same call to `main_cpp.R` for symmetry.
+
+### 2.4 Validation
+
+Run the 26-tag regression harness with both flag values; with the
+flag enabled in `main_cpp.R` / `main_cpp_chunk.R`, per-tag output
+must be byte-identical to `main_cpp_bci.R` modulo the audit columns
+added by the script-level sweep. Then run a full BCI chunked pass
+and confirm the 5 Class-B tags (060145, 233660, 606162, 639010,
+739002) are duplicate-free.
+
+---
+
+## Plan 3 — Lift duplicate-aware sweep into engine-level `finalize_out`
+
+### 3.1 Motivation
+
+Fix 2 (duplicate-aware pinning) currently lives in the script-level
+post-engine sweep in
+[dp_global/scripts/main_cpp.R](dp_global/scripts/main_cpp.R) and is
+mirrored in
+[dp_global/scripts/main_cpp_chunk.R](dp_global/scripts/main_cpp_chunk.R).
+The probabilistic matcher
+([dp_global/R/dp_probabilistic_matching.R](dp_global/R/dp_probabilistic_matching.R))
+and the inner `finalize_out` sweep in
+[dp_global/R/dp_global_dp.R](dp_global/R/dp_global_dp.R) can in
+principle still emit duplicates of their own (the script-level sweep
+currently catches them only because it runs after both). Defense in
+depth would push the duplicate check down to every place a Recon is
+written.
+
+### 3.2 Proposal
+
+Factor the rollback-vs-pin decision into a small helper
+`commit_pin_or_rollback(out, rows, true_vec)` in
+`dp_global/R/dp_global_main.R`, and call it from:
+
+1. `finalize_out()` in `dp_global/R/dp_global_dp.R` (engine sweep).
+2. The probabilistic matcher's id-emission step
+   ([dp_global/R/dp_probabilistic_matching.R](dp_global/R/dp_probabilistic_matching.R)
+   lines 150–162 and 1054).
+3. The script-level sweep in both drivers.
+
+### 3.3 Validation
+
+Run the 26-tag regression harness — outcome must be unchanged. Then
+remove the script-level sweep block (in a separate follow-up) and
+re-run; outcome must still be unchanged. If it changes, the engine
+sweep is missing a code path the script-level sweep was silently
+patching.
+
+---
+
+## Plan 4 — Post-pass sanity assertion for residual duplicates
+
+### 4.1 Motivation
+
+The current pipeline depends on the layered ordering of Steps 5.5b /
+5.5c / posterior_bins / script-level sweep to produce a duplicate-free
+output. There is no terminal assertion — a future refactor that
+reorders steps could silently re-introduce duplicates and the run
+would still complete.
+
+### 4.2 Proposal
+
+Add `assert_no_duplicate_recon(out)` at the very end of `main_cpp.R`,
+`main_cpp_chunk.R` (per-chunk), and `main_cpp_bci.R`. The check is
+
+```r
+dup <- out[!is.na(ReconstructedStemID),
+           .N, by = .(Tag, CensusID, ReconstructedStemID)][N > 1]
+if (nrow(dup) > 0L) {
+    fwrite(dup, file.path(out_dir, "DUPLICATE_RECON_AUDIT.csv"))
+    stop(sprintf("[assert] %d duplicate (Tag,CensusID,ReconstructedStemID) triples; see DUPLICATE_RECON_AUDIT.csv", nrow(dup)))
+}
+```
+
+Cheap (single `data.table` aggregation), proportional to chunk size.
+
+### 4.3 Validation
+
+Drop into the current pipeline and re-run the 26-tag harness — must
+not abort.
+
+---
+
+## Plan 5 — Vectorise the per-row R loop in Fix 2
+
+### 5.1 Motivation
+
+Fix 2 is implemented as a `for (.r in .ts_rows)` loop in
+[dp_global/scripts/main_cpp.R](dp_global/scripts/main_cpp.R) (≈lines
+907–924) and mirrored in `main_cpp_chunk.R`. The hot path is
+`O(length(.ts_rows))` per chunk with R-level `c()` accumulation. For
+chunks of ≈10⁵ pinnable rows this becomes the dominant cost.
+
+### 5.2 Proposal
+
+Replace the loop with a `data.table` group-aware operation:
+
+```r
+.dt <- data.table(.r = .ts_rows,
+                  key = .grp_key[.ts_rows],
+                  v   = .true_vec_all[.ts_rows])
+# precompute, per (Tag,CensusID), the set of peer Recon values
+# (engine-assigned baseline) and check membership in O(N log N)
+```
+
+Use `data.table`'s `set()` for the pin/rollback writes and accumulate
+indices via `which(...)` rather than `c()`-growth.
+
+### 5.3 Validation
+
+Run the 26-tag harness; output must be byte-identical (including
+audit columns). Then benchmark on a single 100k-row chunk and confirm
+≥10× speedup.
+
+---
+
+## Plan 6 — Promote the regression harness into the repository
+
+### 6.1 Motivation
+
+The 26-tag regression suite lives in `/tmp/run_tag_list.R`,
+`/tmp/twenty_six_tags.txt`, and `/tmp/cmp2.R`. These are essential
+to re-validate Fix 1 + Fix 2 after any future change but are outside
+the repo and therefore not version-controlled.
+
+### 6.2 Proposal
+
+Move into `tests/regression/`:
+
+- `tests/regression/run_tag_list.R`
+- `tests/regression/twenty_six_tags.txt`
+- `tests/regression/expected/post_final.csv` (golden output)
+- `tests/regression/cmp.R` (comparison + summary)
+- `tests/regression/README.md` (one-screen run-and-interpret guide)
+
+Add a `make regression` target in `Makefile` that runs the harness
+and exits non-zero on any duplicate or control-row regression.
+
+---
+
+## Plan 7 — Unit test for `apply_orphan_stem_backfill` source-id auto-detect
+
+### 7.1 Motivation
+
+`apply_orphan_stem_backfill()` in
+[dp_global/R/dp_global_main.R](dp_global/R/dp_global_main.R) auto-detects
+whether the source-id column is `StemID` (production) or
+`OriginalStemID` (this test repo). The detection logic is exercised
+only implicitly via end-to-end runs, so a column-rename or schema
+drift could silently flip the wrong column with no error.
+
+### 7.2 Proposal
+
+Add a focused unit test in `tests/testthat/test-orphan-backfill.R`:
+
+- Synthetic 4-row `data.table` with both `StemID` and `OriginalStemID`
+  columns; assert `StemID` wins.
+- Synthetic 4-row `data.table` with only `OriginalStemID`; assert
+  it is used.
+- Synthetic 4-row `data.table` with neither; assert the function
+  returns the input unchanged with an informative `message()`.
+
+---
+
+## Plan 8 — Surface empirical justification for Step 3a.5 in the README
+
+### 8.1 Motivation
+
+Step 3a.5 (same-OS continuity anchor — Fix 1) is justified by the
+evidence-ratio analysis in
+[bci_data/dead_pattern.qmd](bci_data/dead_pattern.qmd) and
+[bci_data/broken_below_pattern.qmd](bci_data/broken_below_pattern.qmd)
+(≈99.8% of dead transitions and ≈60% of broken-below transitions
+follow the same-OS-continuity pattern). These numbers are not
+referenced in the engine README, so a future maintainer reading
+[dp_global/README.md](dp_global/README.md) sees the rule but not the
+evidence.
+
+### 8.2 Proposal
+
+Add a one-paragraph "Empirical justification" subsection to
+[dp_global/README.md](dp_global/README.md) immediately under the
+Step 3a.5 description, citing the two qmd files and the
+99.8% / ~60% evidence ratios. No code changes.
+
+---
+
+*End of Plans 1–8. Future plans should be appended below as new top-level
 sections.*
