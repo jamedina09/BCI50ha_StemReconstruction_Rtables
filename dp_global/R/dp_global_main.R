@@ -132,12 +132,19 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
     if (is.null(out) || nrow(out) == 0L) {
         return(out)
     }
-    needed <- c("Status", "DBH", "OriginalStemID", "Tag",
+    src_col <- if ("StemID" %in% names(out)) {
+        "StemID"
+    } else if ("OriginalStemID" %in% names(out)) {
+        "OriginalStemID"
+    } else {
+        return(out)
+    }
+    needed <- c("Status", "DBH", src_col, "Tag",
                 "CensusID", "ReconstructedStemID")
     if (!all(needed %in% names(out))) {
         return(out)
     }
-    data.table::setorder(out, Tag, OriginalStemID, CensusID)
+    data.table::setorderv(out, c("Tag", src_col, "CensusID"))
     .term_mask <- is.na(out$ReconstructedStemID) &
         is.na(out$DBH) &
         !is.na(out$Status) &
@@ -146,7 +153,7 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
         return(out)
     }
     out[, .carried := data.table::nafill(ReconstructedStemID, type = "locf"),
-        by = .(Tag, OriginalStemID)]
+        by = c("Tag", src_col)]
     .fill_mask <- .term_mask & !is.na(out$.carried)
     .n_filled <- sum(.fill_mask)
     if (.n_filled > 0L) {
@@ -159,8 +166,8 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
         )]
         if (isTRUE(verbose)) {
             message(sprintf(
-                "[apply_carried_terminal_backfill] backfilled %d orphan terminal-event row(s) from prior same-OriginalStemID Recon.",
-                .n_filled
+                "[apply_carried_terminal_backfill] backfilled %d orphan terminal-event row(s) from prior same-%s Recon.",
+                .n_filled, src_col
             ))
         }
     }
