@@ -33,6 +33,12 @@
 
 library(data.table)
 
+suppressPackageStartupMessages({
+    library(ggplot2)
+    library(patchwork)
+    library(scales)
+})
+
 # ---- 0. CLI and file discovery ------------------------------------------
 
 cli_args <- commandArgs(trailingOnly = TRUE)
@@ -224,6 +230,7 @@ weighted_quantile <- function(vals, w, prob) {
 
 post_change_list <- list()
 all_path_decomp_list <- list()
+all_paths_by_tag  <- list()  # tag -> data.table(path_idx, path_prob, obs_row_id, StemID, CensusID, DBH, BA)
 
 for (tg_str in names(post_tag_map)) {
     tg <- tryCatch(as.integer(tg_str), warning = function(w) tg_str)
@@ -273,6 +280,11 @@ for (tg_str in names(post_tag_map)) {
     path_decomp <- rbindlist(path_decomp_list, use.names = TRUE)
     path_decomp[, Tag := tg]
     all_path_decomp_list[[length(all_path_decomp_list) + 1L]] <- path_decomp
+
+    # Retain per-path stem assignments for trajectory figures
+    ap <- copy(all_paths)
+    ap[, Tag := tg]
+    all_paths_by_tag[[as.character(tg)]] <- ap
 
     # Weighted summary across paths
     post_summary <- path_decomp[,
@@ -734,6 +746,322 @@ if (length(all_path_decomp_list) > 0L) {
     }
 }
 
+# --- 7e. 3 x 3 stem-trajectory page (ggplot) -----------------------------
+# Top-left  : MAP reconstructed stem trajectory (DBH ~ census, coloured by
+#             ReconstructedStemID).
+# Other 8   : independent samples of posterior path assignments,
+#             sampled with probability proportional to path_prob.
+# Helps visualise the *identity* uncertainty that drives the BA
+# decomposition uncertainty quantified below.
+
+theme_traj <- function() {
+    theme_bw(base_size = 9) +
+        theme(
+            legend.position = "none",
+            plot.title = element_text(face = "bold", size = 9),
+            plot.subtitle = element_text(size = 7.5, colour = "grey25"),
+            panel.grid.minor = element_blank(),
+            strip.background = element_rect(fill = "grey92", colour = NA)
+        )
+}
+
+build_traj_panel <- function(rec_tag, assign_dt, title_str, subtitle_str,
+                             stem_levels, stem_palette) {
+    d <- merge(rec_tag[, .(obs_row_id, CensusID, DBH)],
+        assign_dt[, .(obs_row_id, StemID)],
+        by = "obs_row_id"
+    )
+    d <- d[!is.na(DBH) & !is.na(StemID)]
+    d[, StemID := factor(StemID, levels = stem_levels)]
+    ggplot(d, aes(x = CensusID, y = DBH, colour = StemID, group = StemID)) +
+        geom_line(linewidth = 0.55, alpha = 0.9) +
+        geom_point(size = 1.4) +
+        scale_colour_manual(values = stem_palette, drop = FALSE) +
+        scale_x_continuous(breaks = sort(unique(d$CensusID))) +
+        labs(title = title_str, subtitle = subtitle_str,
+             x = "Census", y = "DBH (mm)") +
+        theme_traj()
+}
+
+set.seed(20260505L)
+
+for (tg_str in names(post_tag_map)) {
+    tg <- tryCatch(as.integer(tg_str), warning = function(w) tg_str)
+    ap <- all_paths_by_tag[[as.character(tg)]]
+    if (is.null(ap) || nrow(ap) == 0L) next
+
+    tag_rec <- rec[Tag == tg]
+    if (nrow(tag_rec) == 0L) next
+
+    map_assign <- tag_rec[!is.na(ReconstructedStemID),
+        .(obs_row_id, StemID = ReconstructedStemID)]
+    if (nrow(map_assign) == 0L) next
+
+    # Build a stable colour palette across all panels using the union of
+    # stem IDs that appear anywhere (MAP + posterior samples).
+    all_ids <- sort(unique(c(map_assign$StemID, ap$StemID)))
+    pal <- setNames(
+        scales::hue_pal(l = 55, c = 80)(length(all_ids)),
+        as.character(all_ids)
+    )
+    stem_levels <- as.character(all_ids)
+
+    # Pick 8 posterior paths weighted by path_prob (without replacement
+    # if possible).
+    path_summary <- unique(ap[, .(path_idx, path_prob)])
+    setorder(path_summary, -path_prob)
+    n_avail <- nrow(path_summary)
+    n_pick <- min(8L, n_avail)
+    pick_idx <- if (n_avail <= n_pick) {
+        path_summary$path_idx
+    } else {
+        # Top-1 then weighted sample for diversity
+        top1 <- path_summary$path_idx[1]
+        rest <- path_summary[path_idx != top1]
+        sampled <- sample(
+            rest$path_idx, size = n_pick - 1L,
+            prob = rest$path_prob, replace = FALSE
+        )
+        c(top1, sampled)
+    }
+
+    map_panel <- build_traj_panel(
+        tag_rec, map_assign,
+        title_str = "MAP reconstruction",
+        subtitle_str = "posterior mode (final ReconstructedStemID)",
+        stem_levels = stem_levels, stem_palette = pal
+    )
+
+    sample_panels <- lapply(seq_along(pick_idx), function(i) {
+        ip <- pick_idx[i]
+        ap_i <- ap[path_idx == ip]
+        pp <- ap_i$path_prob[1]
+        build_traj_panel(
+            tag_rec, ap_i[, .(obs_row_id, StemID)],
+            title_str = sprintf("Posterior sample %d", i),
+            subtitle_str = sprintf("path_idx = %d  -  path_prob = %.3f", ip, pp),
+            stem_levels = stem_levels, stem_palette = pal
+        )
+    })
+
+    # Pad to 8 if fewer posterior paths than 8
+    while (length(sample_panels) < 8L) {
+        sample_panels[[length(sample_panels) + 1L]] <-
+            ggplot() + theme_void()
+    }
+
+    panels <- c(list(map_panel), sample_panels)
+    page <- wrap_plots(panels, ncol = 3, nrow = 3) +
+        plot_annotation(
+            title = sprintf("Tag %s -- Stem-identity trajectories", tg_str),
+            subtitle = sprintf(
+                "MAP path (top-left) vs %d posterior samples drawn with prob proportional to path_prob",
+                length(pick_idx)
+            ),
+            caption = paste0(
+                "Each panel: DBH (mm) per stem over censuses, coloured by ",
+                "StemID under that path.  Differences across panels reflect ",
+                "identity uncertainty in the DP reconstruction; tag-level ",
+                "total BA per census is invariant, but Growth/Loss/Gain ",
+                "decompositions are not."
+            ),
+            theme = theme(
+                plot.title = element_text(face = "bold", size = 12),
+                plot.subtitle = element_text(size = 9, colour = "grey25"),
+                plot.caption = element_text(
+                    size = 7.5, colour = "grey30", hjust = 0
+                )
+            )
+        )
+
+    print(page)
+}
+
+# --- 7f. Uncertainty propagation page (ggplot) ---------------------------
+# Shows how identity uncertainty across posterior trajectories propagates
+# into per-stem BA paths and into the BA-change decomposition.
+
+theme_prop <- function() {
+    theme_bw(base_size = 10) +
+        theme(
+            plot.title = element_text(face = "bold", size = 10),
+            plot.subtitle = element_text(size = 8.5, colour = "grey25"),
+            panel.grid.minor = element_blank(),
+            strip.background = element_rect(fill = "grey92", colour = NA),
+            legend.position = "bottom",
+            legend.title = element_text(size = 8),
+            legend.text = element_text(size = 7.5)
+        )
+}
+
+for (tg_str in names(post_tag_map)) {
+    tg <- tryCatch(as.integer(tg_str), warning = function(w) tg_str)
+    ap <- all_paths_by_tag[[as.character(tg)]]
+    if (is.null(ap) || nrow(ap) == 0L) next
+
+    tag_rec <- rec[Tag == tg]
+    if (nrow(tag_rec) == 0L) next
+
+    # ----- Panel A: per-stem BA trajectories under each posterior path ----
+    pa_dat <- ap[!is.na(BA),
+        .(BA_stem = sum(BA)),
+        by = .(path_idx, path_prob, CensusID, StemID)
+    ]
+    pa_dat[, line_id := paste(path_idx, StemID, sep = "_")]
+    pa_dat[, weight := path_prob / max(path_prob)]
+
+    # MAP per-stem trajectory for highlight
+    map_stem_traj <- tag_rec[!is.na(DBH) & !is.na(ReconstructedStemID),
+        .(BA_stem = ba_m2(DBH)),
+        by = .(CensusID, StemID = ReconstructedStemID)
+    ]
+
+    pA <- ggplot() +
+        geom_line(data = pa_dat,
+            aes(x = CensusID, y = BA_stem, group = line_id, alpha = weight),
+            colour = "#1f77b4", linewidth = 0.35
+        ) +
+        geom_line(data = map_stem_traj,
+            aes(x = CensusID, y = BA_stem, group = factor(StemID)),
+            colour = "black", linewidth = 0.7
+        ) +
+        geom_point(data = map_stem_traj,
+            aes(x = CensusID, y = BA_stem),
+            colour = "black", size = 1.4
+        ) +
+        scale_alpha_continuous(range = c(0.05, 0.6),
+            name = "path_prob (rescaled)") +
+        scale_x_continuous(breaks = sort(unique(pa_dat$CensusID))) +
+        scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
+        labs(
+            title = "A. Per-stem BA trajectories",
+            subtitle = "Blue: posterior paths (alpha = path_prob).  Black: MAP per-stem path.",
+            x = "Census", y = expression("Per-stem BA (m"^2 * ")")
+        ) +
+        theme_prop()
+
+    # ----- Panel B: tag-level total BA (invariant) ------------------------
+    tc <- tag_census[Tag == tg]
+    pB <- ggplot(tc, aes(x = CensusID, y = TotalBA_m2)) +
+        geom_line(colour = "grey20", linewidth = 0.8) +
+        geom_point(colour = "grey20", size = 2.2) +
+        scale_x_continuous(breaks = tc$CensusID) +
+        scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
+        labs(
+            title = "B. Tag-level total BA per census",
+            subtitle = "Invariant across posterior paths (sum of all DBHs is fixed).",
+            x = "Census", y = expression("Total BA (m"^2 * ")")
+        ) +
+        theme_prop()
+
+    # ----- Panel C: posterior distributions of decomposition --------------
+    pd <- all_path_decomp_list
+    pd <- if (length(pd) > 0L) {
+        rbindlist(pd, use.names = TRUE, fill = TRUE)
+    } else {
+        data.table()
+    }
+    pd <- pd[Tag == tg]
+
+    if (nrow(pd) > 0L) {
+        long <- melt(pd,
+            id.vars = c("Tag", "CensusID_from", "CensusID_to",
+                        "path_idx", "path_prob"),
+            measure.vars = c("Growth_BA", "Loss_BA", "Gain_BA"),
+            variable.name = "Component", value.name = "BA"
+        )
+        long[, Component := factor(Component,
+            levels = c("Growth_BA", "Loss_BA", "Gain_BA"),
+            labels = c("Growth (survivors)",
+                       "Loss (mortality)",
+                       "Gain (recruitment)")
+        )]
+        long[, Interval := factor(
+            sprintf("C%d->C%d", CensusID_from, CensusID_to),
+            levels = unique(sprintf("C%d->C%d",
+                sort(unique(CensusID_from)),
+                sort(unique(CensusID_to))))
+        )]
+
+        # Weighted mean per component x interval
+        wmean_dt <- long[, .(wmean = sum(BA * path_prob) / sum(path_prob)),
+            by = .(Component, Interval)]
+
+        comp_cols <- c(
+            "Growth (survivors)" = COL_G,
+            "Loss (mortality)"   = COL_L,
+            "Gain (recruitment)" = COL_R
+        )
+
+        pC <- ggplot(long, aes(x = Interval, y = BA, fill = Component)) +
+            geom_violin(aes(weight = path_prob),
+                scale = "width", width = 0.8, alpha = 0.55,
+                colour = NA, trim = TRUE
+            ) +
+            geom_jitter(aes(size = path_prob),
+                width = 0.08, height = 0,
+                alpha = 0.35, colour = "grey25"
+            ) +
+            geom_point(data = wmean_dt,
+                aes(x = Interval, y = wmean),
+                shape = 23, fill = "white", colour = "black",
+                size = 2.6, stroke = 0.6,
+                inherit.aes = FALSE
+            ) +
+            geom_hline(yintercept = 0, linetype = 2, colour = "grey60") +
+            facet_wrap(~Component, ncol = 3, scales = "free_y") +
+            scale_fill_manual(values = comp_cols, guide = "none") +
+            scale_size_continuous(range = c(0.4, 2),
+                name = "path_prob") +
+            scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
+            labs(
+                title = "C. Posterior distributions of BA-change decomposition",
+                subtitle = paste(
+                    "Violins weighted by path_prob.  Jittered points: one",
+                    "per posterior path.  White diamond: posterior mean."
+                ),
+                x = "Census interval",
+                y = expression(Delta * "BA component (m"^2 * ")")
+            ) +
+            theme_prop() +
+            theme(axis.text.x = element_text(angle = 30, hjust = 1))
+    } else {
+        pC <- ggplot() + theme_void() +
+            labs(title = "C. (no posterior decomposition available)")
+    }
+
+    page <- (pA + pB) / pC +
+        plot_layout(heights = c(1, 1.2)) +
+        plot_annotation(
+            title = sprintf(
+                "Tag %s -- Propagation of identity uncertainty into BA",
+                tg_str
+            ),
+            subtitle = paste0(
+                "Identity uncertainty (Section 7e) leaves total BA per ",
+                "census unchanged but moves mass between Growth, Loss and ",
+                "Gain components."
+            ),
+            caption = paste0(
+                "A: each blue line = one stem under one posterior path; ",
+                "alpha proportional to path_prob.  Black overlay = MAP ",
+                "per-stem trajectory.\n",
+                "B: tag-level total BA, identical for every posterior path.\n",
+                "C: posterior distribution of each BA-change component per ",
+                "census interval, with posterior-mean diamond."
+            ),
+            theme = theme(
+                plot.title = element_text(face = "bold", size = 12),
+                plot.subtitle = element_text(size = 9, colour = "grey25"),
+                plot.caption = element_text(
+                    size = 7.5, colour = "grey30", hjust = 0
+                )
+            )
+        )
+
+    print(page)
+}
+
 invisible(dev.off())
 cat("[BA] Wrote figures:", pdf_out, "\n")
 
@@ -807,4 +1135,4 @@ if (nrow(tag_change) > 0L && "Growth_sd" %in% names(tag_change)) {
 
 cat("\nDone.\n")
 
-# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260411_133614_BCI_tag171486_T171486_DP_MB_ME_g5_sm0p5_kg0_ks0_rcpp"
+# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260505_091755_BCI_tag258411_T258411_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
