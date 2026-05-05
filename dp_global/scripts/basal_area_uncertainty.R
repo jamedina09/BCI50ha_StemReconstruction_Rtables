@@ -1135,4 +1135,7 @@ if (nrow(tag_change) > 0L && "Growth_sd" %in% names(tag_change)) {
 
 cat("\nDone.\n")
 
-# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260505_091755_BCI_tag258411_T258411_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
+# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260505_112731_BCI_tag258411_T258411_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
+# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260505_112753_BCI_tag000378_T000378_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
+# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260505_112815_BCI_tag115427_T115427_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
+

@@ -602,7 +602,7 @@ if (isTRUE(WRITE_DP_PDF) && !is.null(out) && nrow(out) > 0L) {
 writeLines(as.character(Sys.time()), file.path(out_dir, "run_finished.txt"))
 message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=119453
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=119453 --DP_MAX_STATES=2
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115427
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=115203
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=242799
@@ -647,3 +647,12 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=606162
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=639010
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=739002
+
+
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378 --DP_MAX_STATES=70000
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378 --DP_MAX_STATES=2
+
+
+# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=258411
+# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=000378
+# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=115427
