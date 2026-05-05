@@ -230,6 +230,12 @@ In the rare case where the engine had already assigned a non-NA `ReconstructedSt
 
 The engine's pre-sweep `ReconstructedStemID` is preserved in the **`ReconstructedStemID_PreSweep`** column (snapshot taken once by the first sweep layer that fires). On `SweepAuditOverride == FALSE` rows it equals `ReconstructedStemID`; on `SweepAuditOverride == TRUE` rows it carries the engine's original (overridden) ID, allowing direct comparison without re-running the engine.
 
+#### Duplicate-aware pinning and `SweepRollbackToPreSweep`
+
+The script-level sweep additionally enforces `ReconstructedStemID` uniqueness within each `(Tag, CensusID)`. Pins are processed in stable row order; before applying `ReconstructedStemID := TrueStemID` on a row, the sweep checks whether that integer value is already present on another row at the same `(Tag, CensusID)` in the working `ReconstructedStemID` column (engine baseline + any pins committed earlier in this pass). If a collision would result, the sweep **respects the engine's reconstruction**: the row's `ReconstructedStemID` is restored to its `ReconstructedStemID_PreSweep` value, `ReconstructionMethod` is left untouched, and the row is flagged in the new **`SweepRollbackToPreSweep`** boolean column (FALSE elsewhere). A `[audit]` log line is emitted naming the tag and rollback count.
+
+`SweepAuditOverride` continues to mark the disagreement; `SweepRollbackToPreSweep` records the chosen resolution. The canonical case is BCI tag `258411` C6, where retag-campaign reuse of `OriginalStemID = 995110` would otherwise put two distinct stems on the same `ReconstructedStemID` at C6; the engine's fresh id (`995113`) is retained instead.
+
 ### Post-engine `carried_terminal` backfill (all drivers)
 
 After the DP/probabilistic engine returns and `maybe_add_posterior_bins()` has run, **every driver** (`main_cpp.R`, `main_cpp_chunk.R`, `main_cpp_bci.R`) calls the shared helper `apply_carried_terminal_backfill()` defined in `dp_global/R/dp_global_main.R`.
@@ -248,6 +254,21 @@ Where it fires:
 - `main_cpp_chunk.R` — inside the per-chunk parallel block, applied to each `out_chunk` with `verbose = FALSE` to keep multi-tag chunked logs quiet.
 - `main_cpp_bci.R` — Step 9b. The BCI driver also performs an upstream pre-DP `TrueStemID` propagation (Steps 1–3, see the BCI section below) that is *not* applicable to non-BCI inputs; the post-engine `carried_terminal` step is the only piece that is universal across all three drivers.
 
+### Post-engine `given_orphan` backfill (all drivers)
+
+Immediately after `apply_carried_terminal_backfill()`, every driver also calls `apply_orphan_stem_backfill()` (defined alongside it in `dp_global/R/dp_global_main.R`). The helper finds rows where **all four** conditions hold:
+
+- `is.na(ReconstructedStemID)` (engine produced no assignment, and `apply_carried_terminal_backfill()` did not fill it either),
+- `is.na(TrueStemID)` (no upstream anchor),
+- `is.na(DBH)` (no measurement to match against), and
+- the source-id column (`StemID` if present, otherwise `OriginalStemID`) is non-NA.
+
+For each such row it copies the source id into `ReconstructedStemID` and sets `ReconstructionMethod = "given_orphan"`. This handles "born-orphan" stems whose source identifier first appears with no DBH and no upstream anchor (e.g. a brand-new stem id first recorded as broken-below at C7+). The source id is unambiguous, the DP has no signal to disambiguate without DBH, and there is no collision risk because the DP never reached these rows. Where it fires:
+
+- `main_cpp.R` — Step 5.5c, immediately after `apply_carried_terminal_backfill()`.
+- `main_cpp_chunk.R` — inside the per-chunk parallel block, applied with `verbose = FALSE` immediately after the chunk's `carried_terminal` backfill.
+- `main_cpp_bci.R` — Step 9c, immediately after Step 9b.
+
 **Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, growth-aware resolver diagnostics) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
 
 
@@ -265,13 +286,14 @@ Before calling the DP, the BCI driver writes `TrueStemID` on every row whose bio
 - **Step 1b** — any row at `CensusID >= 7` (BCI's systematic re-tagging campaign from 2010 onward) gets `TrueStemID = OriginalStemID`.
 - **Step 2a/b/c** — within each `(Tag, OriginalStemID)` group, after the last live DBH measurement, terminal-event rows (`Status %in% c("dead", "stem dead", "broken below")` or R-family resprout codes in `ListOfTSM`) are anchored to their own `OriginalStemID`; remaining post-last-DBH gaps are filled by bidirectional LOCF/NOCB.
 - **Step 3a** — same direct anchoring of any remaining terminal-event rows, dropping the post-last-DBH guard.
+- **Step 3a.5** — same-`OriginalStemID` continuity anchor. Within each `(Tag, OriginalStemID)` group, if (a) every row is currently still unanchored (no non-NA `TrueStemID`), (b) there is at least one alive DBH-bearing row, and (c) there is at least one NA-DBH terminal row (`Status ∈ {"dead", "stem dead", "broken below"}`), then the alive DBH-bearing rows of the group are anchored to their own `OriginalStemID`. Empirical evidence (`bci_data/dead_pattern.qmd`, `bci_data/broken_below_pattern.qmd`) shows that ~99.8% of dead/stem-dead NA-DBH terminals and ~60% of broken-below NA-DBH terminals continue the same `OriginalStemID`'s trajectory. Without this step, an unanchored alive history can be reassigned by the DP to a competing newly-born stem and produce duplicate `ReconstructedStemID` values at later censuses (BCI tags `060145`, `233660`, `606162`, `639010`, `739002`).
 - **Step 3b** — within each `(Tag, OriginalStemID)` group, if all non-NA `TrueStemID` values agree, fill remaining NAs with that value; conflicting groups are left alone and counted in a diagnostic message.
 
 Pre-anchor rows without an unambiguous identity remain NA and are resolved by the DP. The combination of this pre-DP propagation and the DP/probabilistic engines' hard-invariant sweep (see below) guarantees `ReconstructedStemID == TrueStemID` on every row that Steps 1–3 anchored.
 
 ### Post-DP carried_terminal backfill (Step 9b)
 
-After `run_dp_one_group()` returns and `maybe_add_posterior_bins()` has been applied, the BCI driver invokes the shared helper `apply_carried_terminal_backfill()` (Step 9b). This is the same helper called by `main_cpp.R` (Step 5.5b) and `main_cpp_chunk.R`; see the *Post-engine `carried_terminal` backfill* section above for the rule and rationale. The helper is the only post-engine piece that is identical across all three drivers — the upstream Steps 1–3 above are BCI-input-specific and have no analogue in the simulator (which already ships `TrueStemID`).
+After `run_dp_one_group()` returns and `maybe_add_posterior_bins()` has been applied, the BCI driver invokes the shared helper `apply_carried_terminal_backfill()` (Step 9b), then immediately calls `apply_orphan_stem_backfill()` (Step 9c). These are the same helpers called by `main_cpp.R` (Steps 5.5b/5.5c) and `main_cpp_chunk.R`; see the *Post-engine `carried_terminal` backfill* and *Post-engine `given_orphan` backfill* sections above for the rules and rationale. Together with the script-level hard-invariant + duplicate-aware sweep (which also runs in this driver via the inherited `run_dp_one_group()`), these are the only post-engine pieces that are identical across all three drivers — the upstream Steps 1–3 above are BCI-input-specific and have no analogue in the simulator (which already ships `TrueStemID`).
 
 ### BCI-specific defaults
 

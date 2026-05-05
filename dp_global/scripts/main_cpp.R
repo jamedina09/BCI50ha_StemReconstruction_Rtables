@@ -869,10 +869,81 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                 out[.ts_rows[.override_local], SweepAuditOverride := TRUE]
                 log_msg(sprintf("[audit] script-level sweep overrode %d engine-assigned ReconstructedStemID value(s) for tag=%s (rows flagged via SweepAuditOverride=TRUE)", sum(.override_local), tag_label), "WARN")
             }
-            out[.ts_rows, `:=`(
-                ReconstructedStemID  = as.integer(TrueStemID),
-                ReconstructionMethod = "given"
-            )]
+
+            # ---- Fix 2: duplicate-aware pinning -------------------------
+            # Per-row decision: tentatively pin Recon := TrueStemID, but
+            # only commit if doing so does NOT create a duplicate
+            # ReconstructedStemID at the same (Tag, CensusID) given the
+            # current state of the column (engine-assigned baseline +
+            # any pins already committed earlier in this pass). If a pin
+            # would collide, RESPECT THE ID GIVEN BY THE FULL ENGINE
+            # RECONSTRUCTION — keep the PreSweep value, flag the row via
+            # SweepRollbackToPreSweep=TRUE, and leave its
+            # ReconstructionMethod untouched. SweepAuditOverride above
+            # already records the disagreement; the rollback flag
+            # records the chosen resolution.
+            #
+            # Rows are processed in stable index order so the outcome is
+            # deterministic. Tag 258411 C6 is the canonical case: a
+            # retag-campaign reuse of OriginalStemID 995110 would force
+            # two rows at (Tag=258411, CensusID=6) onto Recon=995110;
+            # the engine had already given the second row a fresh ID
+            # (995113), which we now retain.
+            if (!("SweepRollbackToPreSweep" %in% names(out))) {
+                out[, SweepRollbackToPreSweep := FALSE]
+            } else {
+                out[is.na(SweepRollbackToPreSweep), SweepRollbackToPreSweep := FALSE]
+            }
+
+            .working_recon <- as.integer(out$ReconstructedStemID)
+            .tag_vec <- out$Tag
+            .cen_vec <- out$CensusID
+            .true_vec_all <- as.integer(out$TrueStemID)
+
+            # Pre-build (Tag, CensusID) -> row index map for fast peer lookup.
+            .grp_key <- paste(.tag_vec, .cen_vec, sep = "\u0001")
+            .grp_map <- split(seq_len(nrow(out)), .grp_key)
+
+            .pin_idx <- integer(0)
+            .rollback_idx <- integer(0)
+            for (.r in .ts_rows) {
+                .v <- .true_vec_all[.r]
+                .peers <- .grp_map[[.grp_key[.r]]]
+                .peers <- .peers[.peers != .r]
+                if (length(.peers) > 0L) {
+                    .peer_vals <- .working_recon[.peers]
+                    if (any(!is.na(.peer_vals) & .peer_vals == .v)) {
+                        # Collision: skip the pin, keep engine's value.
+                        .rollback_idx <- c(.rollback_idx, .r)
+                        next
+                    }
+                }
+                .working_recon[.r] <- .v
+                .pin_idx <- c(.pin_idx, .r)
+            }
+
+            if (length(.pin_idx) > 0L) {
+                out[.pin_idx, `:=`(
+                    ReconstructedStemID  = .true_vec_all[.pin_idx],
+                    ReconstructionMethod = "given"
+                )]
+            }
+            if (length(.rollback_idx) > 0L) {
+                # Revert ReconstructedStemID back to the engine's pre-sweep
+                # value (in case an inner finalize_out sweep already pinned
+                # the row before script-level sweep runs). Leave
+                # ReconstructionMethod untouched — it reflects the engine's
+                # original assignment path.
+                .pre_for_rollback <- out$ReconstructedStemID_PreSweep[.rollback_idx]
+                out[.rollback_idx, `:=`(
+                    ReconstructedStemID = .pre_for_rollback,
+                    SweepRollbackToPreSweep = TRUE
+                )]
+                log_msg(sprintf(
+                    "[audit] script-level sweep skipped %d TrueStemID pin(s) for tag=%s to avoid duplicate ReconstructedStemID at same (Tag,CensusID); engine's PreSweep id retained (rows flagged via SweepRollbackToPreSweep=TRUE)",
+                    length(.rollback_idx), tag_label
+                ), "WARN")
+            }
         }
         # Unconditional materialisation of the audit columns: tags with NO
         # non-NA TrueStemID never enter the .ts_rows branch above, so the
@@ -884,6 +955,9 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         }
         if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
             out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+        }
+        if (!("SweepRollbackToPreSweep" %in% names(out))) {
+            out[, SweepRollbackToPreSweep := FALSE]
         }
     }
 
@@ -1118,6 +1192,14 @@ run_main <- function() {
     #      Shared helper defined in dp_global/R/dp_global_main.R; mirrors
     #      Step 9b in main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
     out <- apply_carried_terminal_backfill(out)
+
+    # 5.5c Born-orphan stem backfill. Rows with NA Recon, NA TrueStemID,
+    #      NA DBH, and a non-NA source-id (StemID / OriginalStemID) are stems
+    #      whose first appearance had no measurement (e.g. born broken-below
+    #      at C7+); the engine cannot reach them. Fill Recon = source-id and
+    #      tag ReconstructionMethod = "given_orphan". Mirrors Step 9c in
+    #      main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
+    out <- apply_orphan_stem_backfill(out)
 
     # Record run output directory (basename) in each row to avoid variable/column name collision
     if (!is.null(out)) {

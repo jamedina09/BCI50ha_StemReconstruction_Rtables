@@ -363,6 +363,64 @@ xraw[
     TrueStemID := OriginalStemID
 ]
 
+# 3a.5 Same-OriginalStemID continuity for unanchored death/break trajectories.
+#
+#     Empirical evidence (bci_data/dead_pattern.qmd,
+#     bci_data/broken_below_pattern.qmd):
+#       - dead / stem-dead + NA DBH : 99.8% have prior alive history at the
+#                                     same OriginalStemID.
+#       - broken-below     + NA DBH : ~60% have prior alive history at the
+#                                     same OriginalStemID.
+#     In both cases the NA-DBH terminal record is overwhelmingly the END
+#     of the SAME stem's trajectory.
+#
+#     Trigger conditions per (Tag, OriginalStemID) group:
+#       • the group is currently entirely unanchored (every row's
+#         TrueStemID is still NA after Steps 1, 2, 3a), AND
+#       • the group has at least one alive DBH-bearing row, AND
+#       • the group has at least one NA-DBH terminal row whose Status is
+#         "dead" / "stem dead" / "broken below".
+#     When all three hold, anchor TrueStemID := OriginalStemID on the
+#     ALIVE DBH-bearing rows of the group only. Step 3b then propagates
+#     that anchor across the rest of the group; the post-engine
+#     `apply_carried_terminal_backfill()` carries Recon forward to the
+#     NA-DBH terminal rows.
+#
+#     Why this is safe:
+#       - The "currently unanchored" guard means Steps 1a/1b/2/3a have
+#         already declined to commit on this group — there is no
+#         competing pre-existing anchor to break.
+#       - Anchoring only the alive DBH-bearing rows preserves the
+#         dead-pattern policy of NOT pinning NA-DBH terminal singletons
+#         (those are filled later by carried_terminal backfill).
+#       - The OriginalStemID of a death record is the unambiguous
+#         continuation of the same stem; the DP would otherwise be free
+#         to reassign the unanchored alive history to a competing
+#         newly-born stem and create duplicate Recon values at the
+#         post-anchor censuses (see tags 060145, 233660, 606162, 639010,
+#         739002, where a born-resprout stem at C8+ pulls the dying
+#         stem's pre-C7 alive trajectory into its own track).
+.n_before_3a5 <- sum(is.na(xraw$TrueStemID))
+.n_groups_3a5 <- 0L
+xraw[, TrueStemID := {
+    .v <- TrueStemID
+    if (all(is.na(.v))) {
+        .alive_mask <- !is.na(DBH) & !is.na(Status) & Status == "alive"
+        .terminal_mask <- is.na(DBH) & !is.na(Status) &
+            Status %in% c("dead", "stem dead", "broken below")
+        if (any(.alive_mask) && any(.terminal_mask)) {
+            .v[.alive_mask] <- OriginalStemID[.alive_mask]
+            .n_groups_3a5 <<- .n_groups_3a5 + 1L
+        }
+    }
+    .v
+}, by = .(Tag, OriginalStemID)]
+.n_after_3a5 <- sum(is.na(xraw$TrueStemID))
+message(sprintf(
+    "[main_cpp_bci.R] Step 3a.5 same-OS continuity: anchored %d alive row(s) across %d unanchored death/break group(s).",
+    .n_before_3a5 - .n_after_3a5, .n_groups_3a5
+))
+
 # 3b. Propagate within (Tag, OriginalStemID) when a group has a unique anchor
 #     that comes from a DBH-bearing row (i.e. a real start-of-trajectory or
 #     C7+ retag anchor). Anchors that originated from terminal-event rows are
@@ -483,6 +541,26 @@ out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 # ----------------------------------------------------------------
 out <- apply_carried_terminal_backfill(out)
 
+# ----------------------------------------------------------------
+# 9c. Post-engine backfill of born-orphan stems.
+#
+#     A row is treated as a "born orphan" when:
+#       - ReconstructedStemID is NA after the engine has run
+#       - TrueStemID is NA (no upstream anchor)
+#       - DBH is NA (no signal for DP to disambiguate)
+#       - the source-id column (StemID / OriginalStemID) is non-NA
+#
+#     For each such row the helper sets Recon = source-id and
+#     ReconstructionMethod = "given_orphan". This handles brand-new stems
+#     whose first appearance was a measurement-less status row (e.g.
+#     broken-below at C7+ with DBH=NA), which the engine cannot reach.
+#
+#     The helper `apply_orphan_stem_backfill()` lives in
+#     dp_global/R/dp_global_main.R and is invoked identically by
+#     main_cpp.R (Step 5.5c) and main_cpp_chunk.R (per-chunk).
+# ----------------------------------------------------------------
+out <- apply_orphan_stem_backfill(out)
+
 out <- maybe_add_posterior_bins(out)
 if (!is.null(out)) {
     out[, run_out_dir := basename(out_dir)]
@@ -559,5 +637,13 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 
 
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184
+
+
+
 # Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378
-# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=258411
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=060145
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=233660
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=606162
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=639010
+# Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=739002

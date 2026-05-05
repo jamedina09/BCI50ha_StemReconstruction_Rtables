@@ -168,5 +168,66 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
     out
 }
 
+## ---- 8) Shared post-engine helper: orphan-stem backfill ----------------
+# Backfill rows for "born-orphan" stems that the engine cannot reach.
+#
+# A stem is "born orphan" when its source identifier (StemID in production,
+# OriginalStemID in this test repo) first appears with no DBH and no
+# upstream TrueStemID anchor (e.g. a brand-new StemID first recorded as
+# broken-below at C7+). Without DBH the DP has no signal to disambiguate
+# and TrueStemID is never assigned, so the engine leaves
+# ReconstructedStemID = NA on every census of that stem.
+#
+# Rule (post-engine, after carried_terminal backfill):
+#   where  is.na(ReconstructedStemID)
+#     AND  is.na(TrueStemID)
+#     AND  is.na(DBH)
+#     AND  source-id column is non-NA
+#   then  ReconstructedStemID  := <source-id>
+#         ReconstructionMethod := "given_orphan"
+#
+# Justified because (a) the source ID is unambiguous, (b) DBH=NA means DP
+# has no signal, (c) the new method label keeps the trail auditable, and
+# (d) collision risk is zero — DP cannot have reached these rows.
+apply_orphan_stem_backfill <- function(out, verbose = TRUE) {
+    if (is.null(out) || nrow(out) == 0L) {
+        return(out)
+    }
+    src_col <- if ("StemID" %in% names(out)) {
+        "StemID"
+    } else if ("OriginalStemID" %in% names(out)) {
+        "OriginalStemID"
+    } else {
+        return(out)
+    }
+    needed <- c(src_col, "TrueStemID", "DBH", "ReconstructedStemID")
+    if (!all(needed %in% names(out))) {
+        return(out)
+    }
+    .src <- out[[src_col]]
+    .orphan_mask <- is.na(out$ReconstructedStemID) &
+        is.na(out$TrueStemID) &
+        is.na(out$DBH) &
+        !is.na(.src)
+    n_orphan <- sum(.orphan_mask)
+    if (n_orphan == 0L) {
+        return(out)
+    }
+    if (!("ReconstructionMethod" %in% names(out))) {
+        out[, ReconstructionMethod := NA_character_]
+    }
+    out[.orphan_mask, `:=`(
+        ReconstructedStemID  = .src[.orphan_mask],
+        ReconstructionMethod = "given_orphan"
+    )]
+    if (isTRUE(verbose)) {
+        message(sprintf(
+            "[apply_orphan_stem_backfill] backfilled %d orphan stem row(s) using %s.",
+            n_orphan, src_col
+        ))
+    }
+    out
+}
+
 # End of dp_global_main.R
 # -------------------------------------------------------------------------
