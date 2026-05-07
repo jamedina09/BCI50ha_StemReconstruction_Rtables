@@ -310,7 +310,7 @@ All parameters must be present in the dataset before running DP. These are typic
 | Column | Description |
 |--------|-------------|
 | `ReconstructedStemID` | Assigned stem identity |
-| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"provisional_dp"`, `"dp_mf_inferred"`, `"carried_terminal"`, `"none_after_anchor"`, `"skipped_no_data"` — see notes below |
+| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"provisional_dp"`, `"dp_mf_inferred"`, `"carried_terminal"`, `"given_orphan"`, `"bb_split"`, `"bb_split_carry"`, `"bb_post_terminator_split"`, `"bb_post_terminator_split_carry"`, `"none_after_anchor"`, `"skipped_no_data"` — see notes below |
 | `ConstraintViolation` | Post-hoc diagnostic flag |
 | `DP_KUsed` | Number of tracks used |
 | `DP_MaxStatesPerCensus` | Largest state space encountered |
@@ -654,6 +654,10 @@ where $\tau$ is the temperature parameter:
    - `"dp_mf_inferred"`: Identity carried across an inferred missing-from-field census
    - `"carried_terminal"`: Orphan terminal-event row (`Status` ∈ {`dead`, `stem dead`, `broken below`} with `DBH = NA`) that the engine could not match. The post-engine helper `apply_carried_terminal_backfill()` (defined in `dp_global/R/dp_global_main.R` and invoked by all three driver scripts) copies the most recent prior `ReconstructedStemID` from the same `(Tag, OriginalStemID)` group via LOCF. Biologically these rows close out the trajectory of the most recent prior identity carrying that `OriginalStemID`.
    - `"given_orphan"`: "Born-orphan" stem row that the engine could not match. The source identifier (`StemID` in production, `OriginalStemID` in this test repo) is non-NA, but `DBH`, `TrueStemID`, and the engine's `ReconstructedStemID` are all NA — typically a brand-new stem id first recorded as broken-below at C7+ with no DBH and no upstream `TrueStemID`. The post-engine helper `apply_orphan_stem_backfill()` (defined in `dp_global/R/dp_global_main.R` and invoked after `apply_carried_terminal_backfill()` by all three driver scripts) copies the source identifier into `ReconstructedStemID`. Collision risk is zero because the DP never reached these rows.
+   - `"bb_split"`: Broken-below row that violated the **R1 (split-at-resurrection)** invariant — a per-(Tag, series-key) trajectory contained at least one alive+DBH row *after* a `broken below` event with no DBH. The post-engine helper `apply_broken_below_invariants()` (defined in `dp_global/R/dp_global_main.R`) relabels every row from the BB event up to but not including the next alive+DBH row to a fresh `ReconstructedStemID` (the smallest non-colliding integer at the relevant `(Tag, CensusID)` cells). The series resumes its previous identity at the resurrection census. Series key precedence: `StemTag` → `OriginalStemID` → `StemID`.
+   - `"bb_split_carry"`: Continuation rows of a BB-split run (subsequent BB or terminal rows carrying the new identity assigned at the splitting BB row). Same `apply_broken_below_invariants()` pass; method tag distinguishes the carry rows from the splitting BB row itself for downstream filtering.
+   - `"bb_post_terminator_split"`: Row that violated the **R2 (post-terminator)** invariant — an alive+DBH row appearing after a hard terminator (`dead`, `stem dead`, or any BB run preceding a non-resurrection census) within the same series. Re-identified to a fresh `ReconstructedStemID` by `apply_broken_below_invariants()`.
+   - `"bb_post_terminator_split_carry"`: Continuation rows of a post-terminator split run.
    - `"none_after_anchor"`: Post-anchor row with no `TrueStemID` and no DP assignment
    - `"skipped_no_data"`: Tag/segment skipped because there were no usable observations
 3. **SweepAuditOverride:** Boolean — `TRUE` flags rows where the hard-invariant sweep overrode an engine-assigned `ReconstructedStemID` to enforce a known `TrueStemID`. See the top-level `README.md` for downstream-uncertainty implications.
@@ -666,6 +670,23 @@ where $\tau$ is the temperature parameter:
 - **DP_KUsed:** Actual number of tracks used
 - **DP_MaxStatesPerCensus:** Worst-case state space size
 - **DP_MaxStatesCensusID:** Census achieving maximum states
+
+### Broken-Below Invariants (Post-Engine Pass)
+
+Two life-cycle invariants are enforced **after** the DP / probabilistic engine and **after** `apply_carried_terminal_backfill()` / `apply_orphan_stem_backfill()`, by `apply_broken_below_invariants()` (defined in `dp_global/R/dp_global_main.R`). The pass is deterministic, idempotent, and operates per `(Tag, series_key)` group with series-key precedence `StemTag` → `OriginalStemID` → `StemID`.
+
+- **R1 (split-at-resurrection):** Within one series, a `broken below` row with `DBH = NA` *cannot* be followed by an alive+DBH row carrying the same `ReconstructedStemID`. A BB stem that is later observed alive must be a *new* physical stem (resprout / coppice ingrowth) and therefore a different identity.
+- **R2 (post-terminator):** Within one series, no row may appear after a hard terminator (`dead`, `stem dead`, or any BB run preceding a non-resurrection census) carrying the same `ReconstructedStemID` as the terminator block.
+
+When a violation is detected, every row of the violating run (from the BB / terminator event up to but not including the next alive+DBH row, if any) is relabeled to a fresh `ReconstructedStemID` — the smallest non-colliding integer at the relevant `(Tag, CensusID)` cells — and the trajectory resumes its previous identity at the resurrection census. The splitting row itself is tagged `"bb_split"` (R1) or `"bb_post_terminator_split"` (R2); subsequent rows in the same run are tagged `"bb_split_carry"` / `"bb_post_terminator_split_carry"`.
+
+**Pin-override semantics.** `apply_broken_below_invariants()` may modify rows where the engine had set `ReconstructedStemID = TrueStemID` (e.g. BCI Step 3a pre-stamps `TrueStemID = OriginalStemID` on BB+DBH rows). The post-engine pass treats the R1/R2 invariants as harder than the `TrueStemID` pin and overrides the pin where the contract is violated. The pre-sweep value is preserved in `ReconstructedStemID_PreSweep`. (The script-level `TrueStemID` backstop sweep is intentionally **not** re-run after the BB pass.)
+
+**Posterior writers.** The same operator is applied per posterior sample inside `match_stems_dp_global_backward_marginals_batch()` (`dp_global/R/dp_global_dp.R`) and `export_probabilistic_posteriors()` (`dp_global/R/dp_probabilistic_matching.R`), via the helper `apply_bb_invariants_to_samples()`. The path-signature aggregation (`paste0(ReconstructedStemID, collapse = "-")` grouped by sample) is computed *after* per-sample relabel, so identical post-relabel paths collapse correctly and `sum(path_prob) == 1` is preserved.
+
+**Tests.** Eight fixtures (A–H) covering simple BB, multi-BB-at-one-census, post-terminator, multi-tracker, idempotence, integer-id collision, and orphan interaction are at `dp_global/tests/test_broken_below_invariants.R`. Run with `make test-bb` or `Rscript dp_global/tests/test_broken_below_invariants.R`. All 22 assertions pass.
+
+**Audit.** `dp_global/scripts/bb_audit.R` reports R1/R2 violation counts on any reconstruction CSV. Expected to print `R1: 0/N, R2: 0/N` after `apply_broken_below_invariants()` has been applied.
 
 ### Visualization
 

@@ -1201,6 +1201,12 @@ run_main <- function() {
     #      main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
     out <- apply_orphan_stem_backfill(out)
 
+    # 5.5d Broken-below invariant pass. Enforce R1 (split-on-break) and R2
+    #      (terminate-on-stump) per `apply_broken_below_invariants` in
+    #      dp_global/R/dp_global_main.R. Mirrors Step 9d in main_cpp_bci.R
+    #      and the per-chunk call in main_cpp_chunk.R.
+    out <- apply_broken_below_invariants(out)
+
     # Record run output directory (basename) in each row to avoid variable/column name collision
     if (!is.null(out)) {
         out[, run_out_dir := basename(out_dir)]

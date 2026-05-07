@@ -1418,6 +1418,9 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
     }
     samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
     samples_dt <- samples_dt[order(Sample, CensusID)]
+    # Strategy A: enforce broken-below R1/R2 invariants per posterior sample
+    # so MAP and posteriors agree on contract-compliant trajectories.
+    samples_dt <- apply_bb_invariants_to_samples(samples_dt, tree_data, verbose = FALSE)
 
     # Path signatures (same as DP)
     sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")), by = Sample]
