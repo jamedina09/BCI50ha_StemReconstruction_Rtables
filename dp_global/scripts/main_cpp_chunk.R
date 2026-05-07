@@ -1272,6 +1272,7 @@ run_main_chunked <- function() {
                     # verbose = FALSE keeps multi-tag chunked logs quiet.
                     out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
                     out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
+                    out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
                     # Record run output directory (basename) in each row to avoid variable/column name collision
                     out_chunk[, run_out_dir := basename(out_dir)]
 

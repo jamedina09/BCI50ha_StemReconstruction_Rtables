@@ -2533,6 +2533,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
         # Ensure rows are ordered for signature construction
         samples_dt <- samples_dt[order(Sample, CensusID)]
+        # Strategy A: enforce broken-below R1/R2 invariants per posterior sample
+        # so MAP and posteriors agree on contract-compliant trajectories.
+        # path_sig is computed AFTER this relabel.
+        samples_dt <- apply_bb_invariants_to_samples(samples_dt, tree_data, verbose = FALSE)
         sampling_profile$samples_dt_size_bytes <- as.numeric(object.size(samples_dt))
         sampling_profile$after_samples_time <- tic() - t_sampling_start
 

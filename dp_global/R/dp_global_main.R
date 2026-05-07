@@ -236,5 +236,229 @@ apply_orphan_stem_backfill <- function(out, verbose = TRUE) {
     out
 }
 
+## ---- 9) Shared post-engine helper: broken-below invariant pass --------
+# Enforce two invariants on the final reconstruction:
+#
+#   R1 (split-on-break): within a (Tag, series) group ordered by CensusID,
+#       a row with Status == "broken below" and !is.na(DBH) MUST have a
+#       ReconstructedStemID that does not equal any prior row's
+#       ReconstructedStemID in the same series.  When violated, mint a
+#       fresh ID (max(existing)+1, monotonic per-call) and propagate it
+#       forward through subsequent rows of the series that currently share
+#       the pre-split ID, until the next break event or the next pinned
+#       TrueStemID row.  Tag method = "bb_split" (first row) /
+#       "bb_split_carry" (carried forward).
+#
+#   R2 (terminate-on-stump): a row with Status == "broken below" and
+#       is.na(DBH) terminates the trajectory.  Any later row in the same
+#       series that has !is.na(DBH) and currently shares the terminator's
+#       ReconstructedStemID MUST be re-IDed.  Mint a fresh ID and propagate
+#       analogously.  Tag method = "bb_post_terminator_split" /
+#       "bb_post_terminator_split_carry".  NA-DBH dead/BB/stem-dead corpse
+#       rows already labelled by `apply_carried_terminal_backfill` keep
+#       their ID (LOCF on terminator is allowed).
+#
+# Pinned rows (non-NA TrueStemID) are normally respected, BUT when a pin
+# conflicts with the contract (typical case: BCI driver pre-stamps
+# TrueStemID = OriginalStemID on every BB+DBH row under the assumption
+# they begin a new trajectory; ~28% of the time the OriginalStemID is
+# reused from a prior alive row in the same StemTag and the pin therefore
+# locks in a contract violation), the pass overrides the pin and updates
+# both ReconstructedStemID and TrueStemID to the newly-minted ID.  Each
+# such override is counted and reported.  The pass is deterministic and
+# idempotent: running it twice on the same input yields the same output
+# as one run.
+#
+# Series key: prefer StemTag (mirrors `broken_below_tags.csv` diagnostic)
+# then OriginalStemID then StemID.
+#
+# This function operates only on the MAP-level table.  Posterior CSVs need
+# the same operator applied per-sample with `path_sig` recomputation; that
+# is handled separately at the posterior writer site.
+apply_broken_below_invariants <- function(out, verbose = TRUE) {
+    if (is.null(out) || nrow(out) == 0L) {
+        return(out)
+    }
+    needed <- c("Tag", "CensusID", "Status", "DBH", "ReconstructedStemID")
+    if (!all(needed %in% names(out))) {
+        return(out)
+    }
+    series_col <- if ("StemTag" %in% names(out)) {
+        "StemTag"
+    } else if ("OriginalStemID" %in% names(out)) {
+        "OriginalStemID"
+    } else if ("StemID" %in% names(out)) {
+        "StemID"
+    } else {
+        return(out)
+    }
+    data.table::setorderv(out, c("Tag", series_col, "CensusID"))
+    if (!("ReconstructionMethod" %in% names(out))) {
+        out[, ReconstructionMethod := NA_character_]
+    }
+    cur_max <- suppressWarnings(max(out$ReconstructedStemID, na.rm = TRUE))
+    if (!is.finite(cur_max)) cur_max <- 0L
+    next_id <- as.integer(cur_max) + 1L
+
+    has_true <- "TrueStemID" %in% names(out)
+    rid    <- as.integer(out$ReconstructedStemID)
+    mth    <- as.character(out$ReconstructionMethod)
+    sts    <- out$Status
+    dbh    <- out$DBH
+    trueid <- if (has_true) as.integer(out$TrueStemID) else rep(NA_integer_, nrow(out))
+
+    # Group row indices by (Tag, series) — preserves the setorderv ordering.
+    groups <- out[, .(.idxs = list(.I)), by = c("Tag", series_col)]
+
+    n_r1 <- 0L; n_r2 <- 0L; n_pin_override <- 0L
+
+    for (g in seq_len(nrow(groups))) {
+        ix <- groups$.idxs[[g]]
+        n_g <- length(ix)
+        if (n_g <= 1L) next
+
+        ## ---- R1: split-on-break ----
+        for (a in seq_len(n_g)) {
+            i <- ix[a]
+            if (is.na(sts[i]) || sts[i] != "broken below" || is.na(dbh[i])) next
+            if (a == 1L) next
+            prior <- rid[ix[seq_len(a - 1L)]]
+            prior <- prior[!is.na(prior)]
+            if (length(prior) == 0L || is.na(rid[i]) || !(rid[i] %in% prior)) next
+            # Pin override: the BCI driver pre-stamps TrueStemID = OriginalStemID
+            # on BB+DBH rows under the assumption that they start a new
+            # trajectory.  When the contract is violated despite the pin, the
+            # pin was applied on a wrong assumption and we override it.  We
+            # also update TrueStemID to keep the two columns consistent.
+            if (!is.na(trueid[i])) n_pin_override <- n_pin_override + 1L
+            old_id <- rid[i]
+            new_id <- next_id; next_id <- next_id + 1L
+            for (b in a:n_g) {
+                j <- ix[b]
+                if (is.na(rid[j]) || rid[j] != old_id) break
+                if (b > a && !is.na(sts[j]) && sts[j] == "broken below" && !is.na(dbh[j])) break
+                rid[j] <- new_id
+                if (!is.na(trueid[j]) && trueid[j] == old_id) trueid[j] <- new_id
+                mth[j] <- if (b == a) "bb_split" else "bb_split_carry"
+            }
+            n_r1 <- n_r1 + 1L
+        }
+
+        ## ---- R2: terminate-on-stump ----
+        for (a in seq_len(n_g)) {
+            i <- ix[a]
+            if (is.na(sts[i]) || sts[i] != "broken below" || !is.na(dbh[i])) next
+            term_id <- rid[i]
+            if (is.na(term_id)) next
+            if (a + 1L > n_g) next
+            for (b in (a + 1L):n_g) {
+                j <- ix[b]
+                if (is.na(rid[j]) || rid[j] != term_id || is.na(dbh[j])) next
+                # alive (non-NA DBH) row reusing terminator id — split
+                if (!is.na(trueid[j])) n_pin_override <- n_pin_override + 1L
+                old2 <- rid[j]
+                new2 <- next_id; next_id <- next_id + 1L
+                for (k_ in b:n_g) {
+                    k <- ix[k_]
+                    if (is.na(rid[k]) || rid[k] != old2) break
+                    if (k_ > b && !is.na(sts[k]) && sts[k] == "broken below" && !is.na(dbh[k])) break
+                    rid[k] <- new2
+                    if (!is.na(trueid[k]) && trueid[k] == old2) trueid[k] <- new2
+                    mth[k] <- if (k_ == b) "bb_post_terminator_split" else "bb_post_terminator_split_carry"
+                }
+                n_r2 <- n_r2 + 1L
+                break
+            }
+        }
+    }
+
+    out[, ReconstructedStemID := rid]
+    out[, ReconstructionMethod := mth]
+    if (has_true) out[, TrueStemID := trueid]
+    if (isTRUE(verbose)) {
+        message(sprintf(
+            "[apply_broken_below_invariants] R1 splits: %d, R2 splits: %d, pin overrides: %d.",
+            n_r1, n_r2, n_pin_override
+        ))
+    }
+    out
+}
+
+# -------------------------------------------------------------------------
+# apply_bb_invariants_to_samples()
+#
+# Per-sample relabel of broken-below contract violations on a posterior
+# `samples_dt` produced by `dp_global_dp.R` or `dp_probabilistic_matching.R`.
+# Strategy A: apply the same deterministic R1/R2 operator implemented in
+# `apply_broken_below_invariants()` to each posterior sample independently.
+#
+# Inputs:
+#   samples_dt : data.table with columns at least Sample, CensusID,
+#                ReconstructedStemID, ObsRowID. Rows ordered by Sample, CensusID.
+#   tree_data  : the engine's per-row data.table; must contain `obs_row_id`,
+#                `Status`, `DBH`, and a series column (StemTag /
+#                OriginalStemID / StemID). `Tag` is optional but used if present.
+#   verbose    : log a single summary message.
+#
+# Returns: samples_dt with `ReconstructedStemID` rewritten so each sample
+# satisfies R1 (BB+DBH must not reuse a prior live ID in the same series)
+# and R2 (BB+NA-DBH terminator must not be followed by a live row reusing
+# its ID). The relabel is independent per sample, so freshly-minted IDs do
+# not need to be globally unique across samples — `path_sig` will continue
+# to collapse identical reconstructions correctly because `paste0` over the
+# rewritten ids is deterministic given the (sample, ordering) inputs.
+#
+# Use sites: posterior writers in `dp_global_dp.R` and
+# `dp_probabilistic_matching.R`, immediately AFTER samples are sorted and
+# BEFORE `path_sig` / `path_count` aggregation.
+apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE) {
+    if (is.null(samples_dt) || nrow(samples_dt) == 0L) return(samples_dt)
+    if (!all(c("Sample", "CensusID", "ReconstructedStemID", "ObsRowID") %in% names(samples_dt))) {
+        return(samples_dt)
+    }
+    if (is.null(tree_data) || !("obs_row_id" %in% names(tree_data))) {
+        return(samples_dt)
+    }
+    series_col <- if ("StemTag" %in% names(tree_data)) {
+        "StemTag"
+    } else if ("OriginalStemID" %in% names(tree_data)) {
+        "OriginalStemID"
+    } else if ("StemID" %in% names(tree_data)) {
+        "StemID"
+    } else {
+        return(samples_dt)
+    }
+    if (!all(c("Status", "DBH") %in% names(tree_data))) return(samples_dt)
+
+    meta <- as.data.table(tree_data)[, c("obs_row_id", "Status", "DBH", series_col), with = FALSE]
+    data.table::setnames(meta, "obs_row_id", "ObsRowID")
+
+    tag_local <- if ("Tag" %in% names(samples_dt)) samples_dt$Tag[1L] else NA_integer_
+    samples <- sort(unique(samples_dt$Sample))
+    new_rid_all <- integer(nrow(samples_dt))
+    n_changed_samples <- 0L
+
+    for (s in samples) {
+        sel <- which(samples_dt$Sample == s)
+        sdt <- samples_dt[sel, .(ObsRowID, CensusID, ReconstructedStemID)]
+        sdt[, .ord := seq_len(.N)]
+        sdt <- merge(sdt, meta, by = "ObsRowID", all.x = TRUE, sort = FALSE)
+        if (!("Tag" %in% names(sdt))) sdt[, Tag := tag_local]
+        before <- sdt$ReconstructedStemID
+        sdt2 <- apply_broken_below_invariants(sdt, verbose = FALSE)
+        data.table::setorder(sdt2, .ord)
+        if (!identical(before, sdt2$ReconstructedStemID)) n_changed_samples <- n_changed_samples + 1L
+        new_rid_all[sel] <- sdt2$ReconstructedStemID
+    }
+    samples_dt[, ReconstructedStemID := new_rid_all]
+    if (isTRUE(verbose)) {
+        message(sprintf(
+            "[apply_bb_invariants_to_samples] Relabeled %d / %d posterior sample(s) for BB invariants.",
+            n_changed_samples, length(samples)
+        ))
+    }
+    samples_dt
+}
+
 # End of dp_global_main.R
 # -------------------------------------------------------------------------

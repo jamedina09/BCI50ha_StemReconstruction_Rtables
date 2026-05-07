@@ -485,6 +485,7 @@ out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 out <- maybe_add_posterior_bins(out)
 out <- apply_carried_terminal_backfill(out)
 out <- apply_orphan_stem_backfill(out)
+out <- apply_broken_below_invariants(out)
 
 if (!is.null(out)) {
     out[, run_out_dir := basename(out_dir)]
@@ -531,4 +532,7 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 #   Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=258411
 #   Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378 --DP_MAX_STATES=2
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=258411
+#   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=227398
+
+
 
