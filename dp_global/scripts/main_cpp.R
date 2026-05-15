@@ -208,6 +208,12 @@ PROB_LOOKAHEAD_WEIGHT <- 0.5
 USE_BIO_HARD_SHRINK_IN_PROB <- TRUE
 USE_BIO_HARD_GROWTH_IN_PROB <- TRUE
 
+# ME cumulative-shrinkage threshold for probabilistic matcher (Layer 2 repair).
+# Trajectories where cumulative shrinkage exceeds n_sigma_me * sqrt(SD(d_start)^2 + SD(d_curr)^2)
+# are severed. Lower values = sever sooner (less negative growth). 0 = sever at first decline.
+# Only active when USE_BIO_HARD_SHRINK_IN_PROB = TRUE.
+PROB_N_SIGMA_ME <- 1
+
 # Pin observations with known TrueStemID at non-anchor censuses to their
 # correct track.  Reduces state space and prevents misidentification.
 # Set FALSE to revert to pre-pinning behavior.
@@ -315,6 +321,7 @@ CLI_REFERENCE <- list(
     PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT",
     USE_BIO_HARD_SHRINK_IN_PROB = "USE_BIO_HARD_SHRINK_IN_PROB",
     USE_BIO_HARD_GROWTH_IN_PROB = "USE_BIO_HARD_GROWTH_IN_PROB",
+    PROB_N_SIGMA_ME = "PROB_N_SIGMA_ME",
     PIN_TRUESTEMID = "PIN_TRUESTEMID"
 )
 
@@ -755,6 +762,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
             use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
             use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
+            prob_n_sigma_me = as.numeric(PROB_N_SIGMA_ME),
             pin_truestemid = isTRUE(PIN_TRUESTEMID)
         ),
         error = function(e) {
@@ -780,6 +788,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                 prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
                 use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
                 use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
+                n_sigma_me = as.numeric(PROB_N_SIGMA_ME),
                 pin_truestemid = isTRUE(PIN_TRUESTEMID),
                 verbose = isTRUE(DP_VERBOSE)
             )

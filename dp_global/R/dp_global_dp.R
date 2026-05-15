@@ -90,6 +90,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            prob_lookahead_weight = 0.5, # backward conditioning weight [0,1]
                                                            use_bio_hard_shrink_in_prob = TRUE, # use bio hard shrink gate in probabilistic
                                                            use_bio_hard_growth_in_prob = TRUE, # use bio hard growth gate in probabilistic
+                                                           prob_n_sigma_me = 1,            # ME cumulative-shrinkage threshold for probabilistic matcher
                                                            # --- TrueStemID pinning at non-anchor censuses ---
                                                            pin_truestemid = TRUE) # pin obs with known TrueStemID to their track
 {
@@ -660,6 +661,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             prob_lookahead_weight = prob_lookahead_weight,
             use_bio_hard_shrink_in_prob = use_bio_hard_shrink_in_prob,
             use_bio_hard_growth_in_prob = use_bio_hard_growth_in_prob,
+            n_sigma_me = prob_n_sigma_me,
             pin_truestemid = pin_truestemid,
             verbose = verbose
         )
@@ -1183,6 +1185,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             prob_n_samples = prob_n_samples,
             prob_species = prob_species,
             prob_lookahead_weight = prob_lookahead_weight,
+            prob_n_sigma_me = prob_n_sigma_me,
             pin_truestemid = pin_truestemid
         )
 
