@@ -33,7 +33,7 @@ source(here("dp_global", "scripts", "main_cpp.R"))
 #    below so they can still override these BCI defaults.
 # ----------------------------------------------------------------
 INPUT_FILE <- here("bci_data", "multistem_tags.rds")
-WHICH_TAG <- "115203"
+WHICH_TAG <- "080297" # default tag for testing; override with --WHICH_TAG
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE # use real species from BCI data
 MAX_GROWTH_FIXED <- 5.0
 MAX_SHRINK_FIXED <- -0.5
@@ -465,6 +465,8 @@ ensure_dir(out_dir)
 writeLines(as.character(Sys.time()), file.path(out_dir, "run_started.txt"))
 message("[main_cpp_bci.R] Running DP for Tag ", WHICH_TAG, "...")
 
+# names(dtg) # sanity check: ensure dtg has columns and is not empty
+
 dtg <- xrun_tag[Tag == WHICH_TAG]
 out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 
@@ -534,5 +536,12 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=258411
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=227398
 
-
-
+# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=255814 \
+#     --DP_MAX_STATES=10000 \
+#     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
+#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
+#     --POSTERIOR_SAMPLE_SEED=42 \
+#     --MANUAL_CORES=TRUE \
+#     --MANUAL_CORES_VALUE=16 \
+#     --DP_CHUNK_SIZE=16 \
+#     --USE_MEASUREMENT_ERROR=FALSE
