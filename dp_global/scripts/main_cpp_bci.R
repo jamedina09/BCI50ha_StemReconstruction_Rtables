@@ -78,6 +78,7 @@ RECRUIT_MAX_SOURCE <- "fixed"
 # matcher.  Empty vector means all species go through DP normally.
 PROB_SPECIES <- character(0)
 PROB_LOOKAHEAD_WEIGHT <- 0.5
+PROB_N_SIGMA_ME <- 1   # ME cumulative-shrinkage threshold; lower = sever sooner
 PIN_TRUESTEMID <- TRUE
 
 # ----------------------------------------------------------------
@@ -545,3 +546,14 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 #     --MANUAL_CORES_VALUE=16 \
 #     --DP_CHUNK_SIZE=16 \
 #     --USE_MEASUREMENT_ERROR=FALSE
+
+# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=166553 \
+#     --DP_MAX_STATES=10000 \
+#     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
+#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
+#     --POSTERIOR_SAMPLE_SEED=42 \
+#     --MANUAL_CORES=TRUE \
+#     --MANUAL_CORES_VALUE=16 \
+#     --DP_CHUNK_SIZE=16 \
+#     --USE_MEASUREMENT_ERROR=FALSE
+
