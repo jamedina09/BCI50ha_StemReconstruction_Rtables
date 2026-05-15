@@ -2,7 +2,7 @@
 # _sigma_stats.R  <csv_path> <sigma_value>
 args <- commandArgs(trailingOnly = TRUE)
 csv_path <- args[1]
-sigma    <- args[2]
+sigma <- args[2]
 
 library(data.table)
 x <- fread(csv_path)
