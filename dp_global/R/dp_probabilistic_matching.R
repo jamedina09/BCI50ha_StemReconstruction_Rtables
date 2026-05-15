@@ -23,34 +23,42 @@ match_stems_probabilistic <- function(tree_data,
                                       min_growth,
                                       max_growth,
                                       anchor_start,
-                                      n_samples     = 200L,
-                                      temperature   = 1.0,
+                                      n_samples = 200L,
+                                      temperature = 1.0,
                                       posterior_top_k = 2L,
                                       posterior_samples_path = NULL,
                                       posterior_samples_format = "csv",
                                       posterior_sample_seed = NULL,
-                                      prune_min_growth    = NULL,
-                                      prune_max_growth    = NULL,
+                                      prune_min_growth = NULL,
+                                      prune_max_growth = NULL,
                                       prune_recruit_max_dbh = NULL,
-                                      prob_lookahead_weight = 0.5,  # backward conditioning weight [0,1]; 0 = independent
-                                      use_bio_hard_shrink_in_prob = TRUE,   # if FALSE, ignore Bio_Max_Shrink hard gate
-                                      use_bio_hard_growth_in_prob = TRUE,   # if FALSE, ignore Bio_Max_Growth hard gate
-                                      pin_truestemid = TRUE,        # pin obs with known TrueStemID to their track
-                                      n_sigma_me    = 1,            # ME cumulative-shrinkage threshold (n * SD); lower = sever sooner
-                                      verbose       = FALSE) {
+                                      prob_lookahead_weight = 0.5, # backward conditioning weight [0,1]; 0 = independent
+                                      use_bio_hard_shrink_in_prob = TRUE, # if FALSE, ignore Bio_Max_Shrink hard gate
+                                      use_bio_hard_growth_in_prob = TRUE, # if FALSE, ignore Bio_Max_Growth hard gate
+                                      pin_truestemid = TRUE, # pin obs with known TrueStemID to their track
+                                      n_sigma_me = 1, # ME cumulative-shrinkage threshold (n * SD); lower = sever sooner
+                                      verbose = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
     posterior_top_k <- max(1L, as.integer(posterior_top_k))
 
     vcat <- function(...) {
-        if (!isTRUE(verbose)) return(invisible(NULL))
-        cat(..., "\n"); flush.console(); invisible(NULL)
+        if (!isTRUE(verbose)) {
+            return(invisible(NULL))
+        }
+        cat(..., "\n")
+        flush.console()
+        invisible(NULL)
     }
 
-    tag_val <- tryCatch({
-        u <- unique(tree_data$Tag); u <- u[!is.na(u)]
-        if (length(u) == 1L) u[[1L]] else NA
-    }, error = function(e) NA)
+    tag_val <- tryCatch(
+        {
+            u <- unique(tree_data$Tag)
+            u <- u[!is.na(u)]
+            if (length(u) == 1L) u[[1L]] else NA
+        },
+        error = function(e) NA
+    )
     prefix <- paste0("[prob_match Tag=", if (!is.na(tag_val)) tag_val else "?", "] ")
 
     # --- Resolve effective prune bounds (mirrors DP logic) ----------------
@@ -59,29 +67,32 @@ match_stems_probabilistic <- function(tree_data,
 
     # --- Extract bio parameters from tree_data (same as dp_global_dp.R) ---
     bio <- list(
-        mu_const   = unique(tree_data$Bio_Mu_Growth)[1],
-        mu_gamma   = if ("Bio_Gamma_Growth" %in% names(tree_data)) unique(tree_data$Bio_Gamma_Growth)[1] else 0,
-        sigma0     = unique(tree_data$Bio_Sigma0_Growth)[1],
-        sigma1     = unique(tree_data$Bio_Sigma1_Growth)[1],
+        mu_const = unique(tree_data$Bio_Mu_Growth)[1],
+        mu_gamma = if ("Bio_Gamma_Growth" %in% names(tree_data)) unique(tree_data$Bio_Gamma_Growth)[1] else 0,
+        sigma0 = unique(tree_data$Bio_Sigma0_Growth)[1],
+        sigma1 = unique(tree_data$Bio_Sigma1_Growth)[1],
         max_shrink = unique(tree_data$Bio_Max_Shrink)[1],
-        k_shrink   = unique(tree_data$Bio_K_Shrink)[1],
+        k_shrink = unique(tree_data$Bio_K_Shrink)[1],
         max_growth_bio = if ("Bio_Max_Growth" %in% names(tree_data)) unique(tree_data$Bio_Max_Growth)[1] else Inf,
-        k_growth   = if ("Bio_K_Growth" %in% names(tree_data)) unique(tree_data$Bio_K_Growth)[1] else 0,
-        h0         = unique(tree_data$Bio_H0_Mortality)[1],
-        beta_mort  = unique(tree_data$Bio_Beta_Mortality)[1],
+        k_growth = if ("Bio_K_Growth" %in% names(tree_data)) unique(tree_data$Bio_K_Growth)[1] else 0,
+        h0 = unique(tree_data$Bio_H0_Mortality)[1],
+        beta_mort = unique(tree_data$Bio_Beta_Mortality)[1],
         recruit_meanlog = unique(tree_data$Bio_Recruit_Meanlog)[1],
-        recruit_sdlog   = unique(tree_data$Bio_Recruit_Sdlog)[1],
+        recruit_sdlog = unique(tree_data$Bio_Recruit_Sdlog)[1],
         recruit_max_dbh = if (!is.null(prune_recruit_max_dbh)) prune_recruit_max_dbh else unique(tree_data$Bio_Recruit_MaxDBH_unit)[1],
-        recruit_lambda  = unique(tree_data$Bio_Recruitment_lambda)[1]
+        recruit_lambda = unique(tree_data$Bio_Recruitment_lambda)[1]
     )
 
     # --- Identify censuses and observations --------------------------------
-    if (!("ReconstructionMethod" %in% names(tree_data)))
+    if (!("ReconstructionMethod" %in% names(tree_data))) {
         tree_data[, ReconstructionMethod := NA_character_]
-    if (!("ConstraintViolation" %in% names(tree_data)))
+    }
+    if (!("ConstraintViolation" %in% names(tree_data))) {
         tree_data[, ConstraintViolation := NA]
-    if (!("obs_row_id" %in% names(tree_data)))
+    }
+    if (!("obs_row_id" %in% names(tree_data))) {
         tree_data[, obs_row_id := seq_len(.N)]
+    }
 
     # Anchor census: use TrueStemID if available, else provisional
     anchor_obs <- tree_data[CensusID == anchor_start & !is.na(DBH)]
@@ -108,14 +119,20 @@ match_stems_probabilistic <- function(tree_data,
         # The downstream sweep would otherwise have to override seq_len(.N)
         # values on every anchored row, polluting ReconstructedStemID_PreSweep
         # and inflating SweepAuditOverride.
-        tree_data[CensusID == anchor_start & !is.na(DBH),
-                  ReconstructedStemID := fifelse(!is.na(TrueStemID),
-                                                 as.integer(TrueStemID),
-                                                 seq_len(.N))]
+        tree_data[
+            CensusID == anchor_start & !is.na(DBH),
+            ReconstructedStemID := fifelse(
+                !is.na(TrueStemID),
+                as.integer(TrueStemID),
+                seq_len(.N)
+            )
+        ]
         tree_data[is.na(ReconstructedStemID), ReconstructedStemID := NA_integer_]
         tree_data[, ReconstructionMethod := "probabilistic"]
-        tree_data[CensusID == anchor_start & !is.na(DBH) & !is.na(TrueStemID),
-                  ReconstructionMethod := "given"]
+        tree_data[
+            CensusID == anchor_start & !is.na(DBH) & !is.na(TrueStemID),
+            ReconstructionMethod := "given"
+        ]
         return(tree_data)
     }
 
@@ -126,7 +143,7 @@ match_stems_probabilistic <- function(tree_data,
         idx <- which(tree_data$CensusID == cc & !is.na(tree_data$DBH))
         obs_data[[i]] <- list(
             census_id = cc,
-            idx       = idx,                       # row indices in tree_data
+            idx       = idx, # row indices in tree_data
             dbh       = tree_data$DBH[idx],
             row_id    = tree_data$obs_row_id[idx],
             n         = length(idx)
@@ -140,14 +157,14 @@ match_stems_probabilistic <- function(tree_data,
         d0 <- .dt_pi$MeanDate[.dt_pi$CensusID == obs_census[i]]
         d1 <- .dt_pi$MeanDate[.dt_pi$CensusID == obs_census[i + 1L]]
         intervals[i] <- (d1 - d0) / 365.25
-        if (!is.finite(intervals[i]) || intervals[i] <= 0) intervals[i] <- 5.0  # safe fallback
+        if (!is.finite(intervals[i]) || intervals[i] <= 0) intervals[i] <- 5.0 # safe fallback
     }
 
     # --- Anchor IDs --------------------------------------------------------
     # Build IDs for ALL anchor observations (one per row).  Where TrueStemID
     # is available, use it; where NA, assign new sequential IDs starting
     # above the max known TrueStemID so they don't collide.
-    anchor_pos <- n_census  # anchor is the last observed census
+    anchor_pos <- n_census # anchor is the last observed census
     anchor_ids <- integer(nrow(anchor_obs))
     has_true <- !is.na(anchor_obs$TrueStemID)
     if (any(has_true)) {
@@ -166,17 +183,20 @@ match_stems_probabilistic <- function(tree_data,
     .anchor_rows <- which(tree_data$CensusID == anchor_start & !is.na(tree_data$DBH))
     tree_data[.anchor_rows, ReconstructedStemID := anchor_ids]
     .is_provisional <- tree_data$ReconstructionMethod[.anchor_rows] %in% "provisional_dp"
-    .has_tsid       <- !is.na(tree_data$TrueStemID[.anchor_rows])
-    .method_vec     <- ifelse(.is_provisional, "provisional_dp",
-                       ifelse(.has_tsid, "given", "probabilistic"))
+    .has_tsid <- !is.na(tree_data$TrueStemID[.anchor_rows])
+    .method_vec <- ifelse(.is_provisional, "provisional_dp",
+        ifelse(.has_tsid, "given", "probabilistic")
+    )
     tree_data[.anchor_rows, ReconstructionMethod := .method_vec]
 
     # K = number of tracks (at least max obs across any census)
     max_obs <- max(vapply(obs_data, function(x) x$n, integer(1)))
     K <- max(length(anchor_ids), max_obs)
 
-    vcat(prefix, "Probabilistic matching: ", n_census, " censuses, K=", K,
-         ", max_obs=", max_obs, ", n_samples=", n_samples)
+    vcat(
+        prefix, "Probabilistic matching: ", n_census, " censuses, K=", K,
+        ", max_obs=", max_obs, ", n_samples=", n_samples
+    )
 
     # --- Pre-compute TrueStemID pin map for non-anchor censuses -------------
     # pin_info[[i]][j] = anchor-position index (1..n_anchor) for obs j, or NA
@@ -185,7 +205,7 @@ match_stems_probabilistic <- function(tree_data,
     if (isTRUE(pin_truestemid)) {
         n_anchor <- length(anchor_ids)
         for (i in seq_len(n_census)) {
-            if (i == n_census) next  # anchor pinned via anchor_ids directly
+            if (i == n_census) next # anchor pinned via anchor_ids directly
             n_obs_i <- obs_data[[i]]$n
             if (n_obs_i == 0L) next
             tsid <- tree_data$TrueStemID[obs_data[[i]]$idx]
@@ -196,9 +216,11 @@ match_stems_probabilistic <- function(tree_data,
             for (.j in seq_along(tidx)) {
                 if (is.na(tidx[.j])) next
                 if (tidx[.j] %in% .seen) {
-                    vcat(prefix, "WARNING: duplicate TrueStemID pin at C",
-                         obs_data[[i]]$census_id, " for anchor ID ", anchor_ids[tidx[.j]],
-                         "; keeping first, releasing obs ", .j)
+                    vcat(
+                        prefix, "WARNING: duplicate TrueStemID pin at C",
+                        obs_data[[i]]$census_id, " for anchor ID ", anchor_ids[tidx[.j]],
+                        "; keeping first, releasing obs ", .j
+                    )
                     tidx[.j] <- NA_integer_
                 } else {
                     .seen <- c(.seen, tidx[.j])
@@ -218,9 +240,10 @@ match_stems_probabilistic <- function(tree_data,
         iv <- intervals[i]
 
         L <- compute_pairwise_log_likelihood(dbh_curr, dbh_next, iv, bio,
-                                             eff_min_growth, eff_max_growth,
-                                             use_bio_hard_shrink = use_bio_hard_shrink_in_prob,
-                                             use_bio_hard_growth = use_bio_hard_growth_in_prob)
+            eff_min_growth, eff_max_growth,
+            use_bio_hard_shrink = use_bio_hard_shrink_in_prob,
+            use_bio_hard_growth = use_bio_hard_growth_in_prob
+        )
         aug <- augment_cost_matrix(L, dbh_curr, dbh_next, iv, bio)
 
         pair_data[[i]] <- list(
@@ -235,7 +258,7 @@ match_stems_probabilistic <- function(tree_data,
 
     all_samples <- vector("list", n_samples)
     use_lookahead <- is.finite(prob_lookahead_weight) && prob_lookahead_weight > 0 &&
-                     n_census >= 3L && K >= 4L
+        n_census >= 3L && K >= 4L
 
     for (s in seq_len(n_samples)) {
         # For each census pair (working backward from anchor-1 to 1),
@@ -323,16 +346,20 @@ match_stems_probabilistic <- function(tree_data,
         me_sd1_a = 0.0062, me_sd1_b = 0.0904, n_sigma_me = n_sigma_me,
         use_bio_hard_shrink = use_bio_hard_shrink_in_prob
     )
-    .sample_breaks    <- attr(stitched, "sample_level_breaks")
+    .sample_breaks <- attr(stitched, "sample_level_breaks")
     .sample_me_breaks <- attr(stitched, "sample_level_me_breaks")
     if (!is.null(.sample_breaks) && .sample_breaks > 0L) {
-        .msg <- paste0(prefix, "Sample-level repair: ", .sample_breaks,
-             " growth violation(s) broken across ", n_samples, " samples",
-             if (!is.null(.sample_me_breaks) && .sample_me_breaks > 0L)
-                 paste0(" (", .sample_me_breaks, " from ME cumulative-shrinkage check)")
-             else "")
+        .msg <- paste0(
+            prefix, "Sample-level repair: ", .sample_breaks,
+            " growth violation(s) broken across ", n_samples, " samples",
+            if (!is.null(.sample_me_breaks) && .sample_me_breaks > 0L) {
+                paste0(" (", .sample_me_breaks, " from ME cumulative-shrinkage check)")
+            } else {
+                ""
+            }
+        )
         vcat(.msg)
-        message(.msg)  # ensure it appears on stderr / captured by log redirection
+        message(.msg) # ensure it appears on stderr / captured by log redirection
     }
 
     # --- Filter to pin-consistent samples (before marginals) ---------------
@@ -350,11 +377,12 @@ match_stems_probabilistic <- function(tree_data,
     # rejects candidate IDs whose growth rate against the nearest already-resolved
     # census violates hard bounds.  Posteriors (Top-K, entropy) are unaffected.
     tree_data <- compute_marginals_from_samples(stitched, tree_data, obs_data,
-                                                obs_census, anchor_pos,
-                                                posterior_top_k,
-                                                intervals = intervals,
-                                                min_rate = eff_min_growth,
-                                                max_rate = eff_max_growth)
+        obs_census, anchor_pos,
+        posterior_top_k,
+        intervals = intervals,
+        min_rate = eff_min_growth,
+        max_rate = eff_max_growth
+    )
 
     # --- Diagnostic check: count residual growth violations from greedy
     #     conflict resolution.  With growth-aware resolver + pin-consistent
@@ -380,9 +408,11 @@ match_stems_probabilistic <- function(tree_data,
             }
         }
         if (.n_violations > 0L) {
-            .msg <- paste0(prefix, "WARNING: ", .n_violations,
-                           " residual growth violation(s) in marginal trajectory ",
-                           "(post-marginal repair DISABLED — posteriors preserved)")
+            .msg <- paste0(
+                prefix, "WARNING: ", .n_violations,
+                " residual growth violation(s) in marginal trajectory ",
+                "(post-marginal repair DISABLED — posteriors preserved)"
+            )
             vcat(.msg)
             message(.msg)
         }
@@ -398,9 +428,9 @@ match_stems_probabilistic <- function(tree_data,
     #   pre-anchor + real TrueStemID + pin active   -> "given"
     #   everything else                             -> "probabilistic"
     .is_anchor <- tree_data$CensusID == anchor_start
-    .has_tsid  <- !is.na(tree_data$TrueStemID)
-    .is_prov   <- tree_data$ReconstructionMethod %in% "provisional_dp"
-    .is_pinned <- .has_tsid & !.is_prov  # real TrueStemID = pinned
+    .has_tsid <- !is.na(tree_data$TrueStemID)
+    .is_prov <- tree_data$ReconstructionMethod %in% "provisional_dp"
+    .is_pinned <- .has_tsid & !.is_prov # real TrueStemID = pinned
     tree_data[, ReconstructionMethod := "probabilistic"]
     tree_data[.is_pinned & (.is_anchor | isTRUE(pin_truestemid)), ReconstructionMethod := "given"]
     tree_data[.is_prov, ReconstructionMethod := "provisional_dp"]
@@ -416,7 +446,7 @@ match_stems_probabilistic <- function(tree_data,
     # in dp_global_dp.R::finalize_out().
     if (isTRUE(pin_truestemid)) {
         .has_true_final <- !is.na(tree_data$TrueStemID) &
-                           !(tree_data$ReconstructionMethod %in% "provisional_dp")
+            !(tree_data$ReconstructionMethod %in% "provisional_dp")
         if (any(.has_true_final)) {
             # ---- Audit: detect engine-vs-pin disagreements -----------------
             # Mirrors the audit in dp_global_dp.R finalize_out.  Flags any
@@ -434,8 +464,10 @@ match_stems_probabilistic <- function(tree_data,
             if (!("ReconstructedStemID_PreSweep" %in% names(tree_data))) {
                 tree_data[, ReconstructedStemID_PreSweep := ReconstructedStemID]
             } else {
-                tree_data[is.na(ReconstructedStemID_PreSweep),
-                          ReconstructedStemID_PreSweep := ReconstructedStemID]
+                tree_data[
+                    is.na(ReconstructedStemID_PreSweep),
+                    ReconstructedStemID_PreSweep := ReconstructedStemID
+                ]
             }
             # Audit flag is computed against the PreSweep snapshot
             # (mirror dp_global_dp.R::finalize_out) so post-engine
@@ -461,13 +493,13 @@ match_stems_probabilistic <- function(tree_data,
     if (n_samples > 0L) {
         export_probabilistic_posteriors(
             stitched, tree_data, obs_data, obs_census,
-            tag_val         = tag_val,
-            n_samples       = length(stitched),
-            posterior_samples_path   = posterior_samples_path,
+            tag_val = tag_val,
+            n_samples = length(stitched),
+            posterior_samples_path = posterior_samples_path,
             posterior_samples_format = posterior_samples_format,
-            verbose         = verbose,
-            prefix          = prefix,
-            vcat            = vcat
+            verbose = verbose,
+            prefix = prefix,
+            vcat = vcat
         )
     }
 
@@ -485,8 +517,9 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
     L <- matrix(-Inf, nrow = n_curr, ncol = n_next)
 
     mu_growth_fn <- function(d) {
-        if (!is.finite(bio$mu_gamma) || bio$mu_gamma == 0 || !is.finite(d) || d <= 0)
+        if (!is.finite(bio$mu_gamma) || bio$mu_gamma == 0 || !is.finite(d) || d <= 0) {
             return(bio$mu_const)
+        }
         bio$mu_const + bio$mu_gamma * log(d)
     }
 
@@ -547,16 +580,18 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
     # enough recruit rows for cols where ALL survival entries are -Inf.
     must_die <- 0L
     if (n_curr > 0L && n_next > 0L) {
-        for (i in seq_len(n_curr))
+        for (i in seq_len(n_curr)) {
             if (all(L[i, ] == -Inf)) must_die <- must_die + 1L
+        }
     } else if (n_curr > 0L) {
         must_die <- n_curr
     }
 
     must_recruit <- 0L
     if (n_curr > 0L && n_next > 0L) {
-        for (j in seq_len(n_next))
+        for (j in seq_len(n_next)) {
             if (all(L[, j] == -Inf)) must_recruit <- must_recruit + 1L
+        }
     } else if (n_next > 0L) {
         must_recruit <- n_next
     }
@@ -603,8 +638,10 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
                 if (!is.finite(d1) || d1 <= 0) next
                 # Recruitment: lognormal size distribution
                 ll_recruit <- log(p_recruit) +
-                    dlnorm(d1, meanlog = bio$recruit_meanlog,
-                           sdlog = bio$recruit_sdlog, log = TRUE)
+                    dlnorm(d1,
+                        meanlog = bio$recruit_meanlog,
+                        sdlog = bio$recruit_sdlog, log = TRUE
+                    )
                 # Respect recruit max DBH
                 if (is.finite(bio$recruit_max_dbh) && d1 > bio$recruit_max_dbh) {
                     ll_recruit <- -Inf
@@ -618,7 +655,7 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
     if (n_curr < K && n_next < K) {
         for (ii in (n_curr + 1L):K) {
             for (jj in (n_next + 1L):K) {
-                A[ii, jj] <- -20  # small log-prob: neither recruit nor die
+                A[ii, jj] <- -20 # small log-prob: neither recruit nor die
             }
         }
     }
@@ -650,22 +687,25 @@ condition_cost_matrix <- function(aug_cost, n_curr, n_next,
                                   dbh_next, next_assignment,
                                   n_next_next, dbh_further,
                                   interval_next, bio, weight) {
-    if (weight <= 0 || n_next == 0L || n_next_next == 0L) return(aug_cost)
+    if (weight <= 0 || n_next == 0L || n_next_next == 0L) {
+        return(aug_cost)
+    }
 
     # Growth mean function (same as in compute_pairwise_log_likelihood)
     mu_growth_fn <- function(d) {
         if (!is.finite(bio$mu_gamma) || bio$mu_gamma == 0 ||
-            !is.finite(d) || d <= 0)
+            !is.finite(d) || d <= 0) {
             return(bio$mu_const)
+        }
         bio$mu_const + bio$mu_gamma * log(d)
     }
 
     # Pass 1: compute raw continuity log-LL for each real column j
-    raw_bonus <- rep(0, n_next)  # 0 = neutral (no info)
-    has_info  <- logical(n_next)
+    raw_bonus <- rep(0, n_next) # 0 = neutral (no info)
+    has_info <- logical(n_next)
     for (j in seq_len(n_next)) {
         k <- next_assignment[j]
-        if (k > n_next_next) next  # j died — no forward info
+        if (k > n_next_next) next # j died — no forward info
 
         d_j <- dbh_next[j]
         d_k <- dbh_further[k]
@@ -683,7 +723,9 @@ condition_cost_matrix <- function(aug_cost, n_curr, n_next,
     # Cap the maximum penalty at -2 log units to prevent small-DBH stems
     # (which have tight growth variance) from dominating the cost matrix.
     info_vals <- raw_bonus[has_info]
-    if (length(info_vals) == 0L) return(aug_cost)  # nothing to condition on
+    if (length(info_vals) == 0L) {
+        return(aug_cost)
+    } # nothing to condition on
 
     max_bonus <- max(info_vals)
     bonus <- rep(0, n_next)
@@ -692,7 +734,7 @@ condition_cost_matrix <- function(aug_cost, n_curr, n_next,
     # Pass 2: apply weighted normalized bonus to all feasible cells
     K <- nrow(aug_cost)
     for (j in seq_len(n_next)) {
-        if (bonus[j] == 0) next  # no adjustment needed
+        if (bonus[j] == 0) next # no adjustment needed
         adj <- weight * bonus[j]
         for (r in seq_len(min(n_curr, K))) {
             if (is.finite(aug_cost[r, j])) {
@@ -726,7 +768,7 @@ apply_pin_mask <- function(cost_matrix, pin_for_curr, next_obs_to_anchor_pos,
         if (is.na(target)) next
         # Find column j at next census carrying this anchor position
         j_candidates <- which(next_obs_to_anchor_pos[seq_len(n_next)] == target)
-        if (length(j_candidates) != 1L) next  # target died or ambiguous — skip
+        if (length(j_candidates) != 1L) next # target died or ambiguous — skip
         j <- j_candidates[1L]
         # Mask all columns except j to -Inf for row r
         cost_matrix[r, -j] <- -Inf
@@ -779,7 +821,7 @@ greedy_assignment_gumbel <- function(log_cost_matrix, temperature = 1.0) {
 
     # Greedy assignment: for each row in descending max-noisy-score order,
     # assign to the best available column
-    assignment <- integer(K)  # assignment[row] = col
+    assignment <- integer(K) # assignment[row] = col
     used_cols <- logical(K)
 
     # Order rows by their maximum noisy value (descending)
@@ -827,14 +869,16 @@ greedy_assignment_gumbel <- function(log_cost_matrix, temperature = 1.0) {
 
 repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                                               min_rate, max_rate,
-                                              me_sd1_a    = 0.0062,
-                                              me_sd1_b    = 0.0904,
-                                              n_sigma_me  = 1,
-                                              max_passes  = 10L,
+                                              me_sd1_a = 0.0062,
+                                              me_sd1_b = 0.0904,
+                                              n_sigma_me = 1,
+                                              max_passes = 10L,
                                               use_bio_hard_shrink = TRUE) {
     n_samples <- length(stitched)
-    n_census  <- length(obs_data)
-    if (n_census < 2L) return(stitched)
+    n_census <- length(obs_data)
+    if (n_census < 2L) {
+        return(stitched)
+    }
 
     # Global break-ID counter: start above the max ID in any sample to
     # avoid collisions when marginals aggregate across samples.
@@ -852,8 +896,8 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
     # ME helper: SD for the small-error component
     me_sd <- function(d) me_sd1_a * d + me_sd1_b
 
-    total_breaks      <- 0L
-    total_me_breaks   <- 0L
+    total_breaks <- 0L
+    total_me_breaks <- 0L
 
     for (s in seq_len(n_samples)) {
         for (pass in seq_len(max_passes)) {
@@ -862,7 +906,7 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
             # Build reverse map: stem_id -> list of (ci, oi, dbh)
             traj_map <- list()
             for (ci in seq_len(n_census)) {
-                ids  <- stitched[[s]][[ci]]
+                ids <- stitched[[s]][[ci]]
                 dbhs <- obs_data[[ci]]$dbh
                 n_obs <- obs_data[[ci]]$n
                 for (oi in seq_len(n_obs)) {
@@ -878,9 +922,9 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                 if (length(entries) < 2L) next
 
                 # entries are already in census order (built ci=1..n_census)
-                cumul_shrink   <- 0
-                shrink_run_start <- 1L  # index into entries where current shrinkage run began
-                d_run_start    <- entries[[1L]]$dbh  # DBH at start of shrinkage run
+                cumul_shrink <- 0
+                shrink_run_start <- 1L # index into entries where current shrinkage run began
+                d_run_start <- entries[[1L]]$dbh # DBH at start of shrinkage run
 
                 for (r in 2:length(entries)) {
                     ci_prev <- entries[[r - 1L]]$ci
@@ -898,14 +942,14 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
 
                     d_prev <- entries[[r - 1L]]$dbh
                     d_curr <- entries[[r]]$dbh
-                    rate   <- (d_curr - d_prev) / iv
+                    rate <- (d_curr - d_prev) / iv
 
                     # --- Layer 1: hard-rate check --------------------------
                     if (rate < min_rate || rate > max_rate) {
                         break_base <- break_base + 1L
                         stitched[[s]][[entries[[r - 1L]]$ci]][entries[[r - 1L]]$oi] <- break_base
                         breaks_this_pass <- breaks_this_pass + 1L
-                        break  # re-evaluate shortened trajectory in next pass
+                        break # re-evaluate shortened trajectory in next pass
                     }
 
                     # --- Layer 2: ME cumulative-shrinkage check ------------
@@ -919,24 +963,24 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                             break_base <- break_base + 1L
                             stitched[[s]][[entries[[shrink_run_start]]$ci]][entries[[shrink_run_start]]$oi] <- break_base
                             breaks_this_pass <- breaks_this_pass + 1L
-                            total_me_breaks  <- total_me_breaks + 1L
-                            break  # re-evaluate shortened trajectory
+                            total_me_breaks <- total_me_breaks + 1L
+                            break # re-evaluate shortened trajectory
                         }
                     } else {
                         # Growth step: reset cumulative shrinkage tracker
-                        cumul_shrink     <- 0
+                        cumul_shrink <- 0
                         shrink_run_start <- r
-                        d_run_start      <- d_curr
+                        d_run_start <- d_curr
                     }
                 }
             }
 
             total_breaks <- total_breaks + breaks_this_pass
-            if (breaks_this_pass == 0L) break  # this sample converged
+            if (breaks_this_pass == 0L) break # this sample converged
         }
     }
 
-    attr(stitched, "sample_level_breaks")    <- total_breaks
+    attr(stitched, "sample_level_breaks") <- total_breaks
     attr(stitched, "sample_level_me_breaks") <- total_me_breaks
     stitched
 }
@@ -967,7 +1011,9 @@ filter_pin_consistent_samples <- function(stitched, pin_info, anchor_ids,
                                           vcat = function(...) invisible(NULL),
                                           prefix = "") {
     n_samples <- length(stitched)
-    if (n_samples == 0L) return(stitched)
+    if (n_samples == 0L) {
+        return(stitched)
+    }
 
     # Gather all (census, obs, expected_track_id) triples
     pin_checks <- list()
@@ -1012,17 +1058,21 @@ filter_pin_consistent_samples <- function(stitched, pin_info, anchor_ids,
     # Safety net: if too few survive, warn and keep all
     .min_safe <- min(min_keep, max(1L, as.integer(n_samples / 4L)))
     if (n_kept < .min_safe) {
-        .msg <- paste0(prefix, "WARNING: pin-consistent filter would keep only ",
-                       n_kept, "/", n_samples, " samples (min_safe=", .min_safe,
-                       "); keeping ALL samples (degrading to soft-pin behavior)")
+        .msg <- paste0(
+            prefix, "WARNING: pin-consistent filter would keep only ",
+            n_kept, "/", n_samples, " samples (min_safe=", .min_safe,
+            "); keeping ALL samples (degrading to soft-pin behavior)"
+        )
         vcat(.msg)
         message(.msg)
         attr(stitched, "n_pin_filtered") <- 0L
         return(stitched)
     }
 
-    .msg <- paste0(prefix, "Pin-consistent filter: kept ", n_kept, "/",
-                   n_samples, " samples (", n_dropped, " dropped)")
+    .msg <- paste0(
+        prefix, "Pin-consistent filter: kept ", n_kept, "/",
+        n_samples, " samples (", n_dropped, " dropped)"
+    )
     vcat(.msg)
     message(.msg)
 
@@ -1059,12 +1109,12 @@ stitch_assignments_backward <- function(all_samples, obs_data, anchor_ids, K) {
 
         # Anchor: obs positions map directly to anchor_ids
         n_anchor <- obs_data[[anchor_pos]]$n
-        next_obs_to_track <- anchor_ids  # length n_anchor
+        next_obs_to_track <- anchor_ids # length n_anchor
         recon_by_census[[anchor_pos]] <- next_obs_to_track
 
         # Walk backward
         for (i in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
-            assignment <- sample_assignments[[i]]  # K_pair-length: assignment[row] = col
+            assignment <- sample_assignments[[i]] # K_pair-length: assignment[row] = col
             n_curr <- obs_data[[i]]$n
             n_next <- obs_data[[i + 1L]]$n
 
@@ -1109,10 +1159,12 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
         if (!(id_col %in% names(tree_data))) tree_data[, (id_col) := NA_integer_]
         if (!(prob_col %in% names(tree_data))) tree_data[, (prob_col) := NA_real_]
     }
-    if (!("DP_PosteriorEntropy" %in% names(tree_data)))
+    if (!("DP_PosteriorEntropy" %in% names(tree_data))) {
         tree_data[, DP_PosteriorEntropy := NA_real_]
-    if (!("DP_PosteriorReconstructedProb" %in% names(tree_data)))
+    }
+    if (!("DP_PosteriorReconstructedProb" %in% names(tree_data))) {
         tree_data[, DP_PosteriorReconstructedProb := NA_real_]
+    }
 
     # ---- Pass 1: compute per-obs marginal posteriors ----
     all_posteriors <- vector("list", n_census)
@@ -1154,7 +1206,7 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
         anchor_out_order <- anchor_pos
         for (.d in seq_len(n_census - 1L)) {
             .before <- anchor_pos - .d
-            .after  <- anchor_pos + .d
+            .after <- anchor_pos + .d
             if (.before >= 1L) anchor_out_order <- c(anchor_out_order, .before)
             if (.after <= n_census) anchor_out_order <- c(anchor_out_order, .after)
         }
@@ -1163,11 +1215,16 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
 
         # Interval between two census positions (handles gaps)
         .census_iv <- function(ci_a, ci_b) {
-            lo <- min(ci_a, ci_b); hi <- max(ci_a, ci_b)
-            if (lo == hi) return(0)
+            lo <- min(ci_a, ci_b)
+            hi <- max(ci_a, ci_b)
+            if (lo == hi) {
+                return(0)
+            }
             idx_rng <- lo:(hi - 1L)
             idx_rng <- idx_rng[idx_rng <= length(intervals)]
-            if (length(idx_rng) == 0L) return(5.0)
+            if (length(idx_rng) == 0L) {
+                return(5.0)
+            }
             iv <- sum(intervals[idx_rng])
             if (!is.finite(iv) || iv <= 0) 5.0 else iv
         }
@@ -1175,7 +1232,9 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
         # Check growth rate against nearest resolved assignment on each side
         .growth_ok <- function(sid_key, ci_new, dbh_new) {
             trk <- .stem_tracks[[sid_key]]
-            if (is.null(trk)) return(TRUE)
+            if (is.null(trk)) {
+                return(TRUE)
+            }
             trk_cis <- vapply(trk, function(x) x$ci, numeric(1))
             # Closest already-resolved census BEFORE ci_new
             below_idx <- which(trk_cis < ci_new)
@@ -1183,7 +1242,9 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
                 j <- below_idx[which.max(trk_cis[below_idx])]
                 iv <- .census_iv(trk_cis[j], ci_new)
                 rate <- (dbh_new - trk[[j]]$dbh) / iv
-                if (rate < min_rate || rate > max_rate) return(FALSE)
+                if (rate < min_rate || rate > max_rate) {
+                    return(FALSE)
+                }
             }
             # Closest already-resolved census AFTER ci_new
             above_idx <- which(trk_cis > ci_new)
@@ -1191,7 +1252,9 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
                 j <- above_idx[which.min(trk_cis[above_idx])]
                 iv <- .census_iv(ci_new, trk_cis[j])
                 rate <- (trk[[j]]$dbh - dbh_new) / iv
-                if (rate < min_rate || rate > max_rate) return(FALSE)
+                if (rate < min_rate || rate > max_rate) {
+                    return(FALSE)
+                }
             }
             TRUE
         }
@@ -1211,8 +1274,8 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
         }, numeric(1))
         order_by_conf <- order(max_probs, decreasing = TRUE)
 
-        used_ids    <- integer(0)
-        resolved_ids   <- integer(n_obs)
+        used_ids <- integer(0)
+        resolved_ids <- integer(n_obs)
         resolved_probs <- numeric(n_obs)
 
         for (rank_pos in seq_along(order_by_conf)) {
@@ -1227,9 +1290,11 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
                 if (growth_aware) {
                     dbh_oi <- obs_data[[ci]]$dbh[oi]
                     if (!is.na(dbh_oi) &&
-                        !.growth_ok(as.character(cand_id), ci, dbh_oi)) next
+                        !.growth_ok(as.character(cand_id), ci, dbh_oi)) {
+                        next
+                    }
                 }
-                resolved_ids[oi]   <- cand_id
+                resolved_ids[oi] <- cand_id
                 resolved_probs[oi] <- post$probs[j]
                 used_ids <- c(used_ids, cand_id)
                 assigned <- TRUE
@@ -1238,10 +1303,12 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
             if (!assigned) {
                 # All posterior alternatives are taken or growth-violated —
                 # assign a new unique (break) ID
-                new_id <- max(c(tree_data$ReconstructedStemID, used_ids,
-                                resolved_ids), na.rm = TRUE) + 1L
+                new_id <- max(c(
+                    tree_data$ReconstructedStemID, used_ids,
+                    resolved_ids
+                ), na.rm = TRUE) + 1L
                 if (!is.finite(new_id)) new_id <- 1L
-                resolved_ids[oi]   <- new_id
+                resolved_ids[oi] <- new_id
                 resolved_probs[oi] <- 0
                 used_ids <- c(used_ids, new_id)
             }
@@ -1264,10 +1331,14 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
         # Write resolved assignments + posteriors into tree_data
         for (oi in seq_len(n_obs)) {
             tree_data_row <- idx[oi]
-            data.table::set(tree_data, tree_data_row, "ReconstructedStemID",
-                            resolved_ids[oi])
-            data.table::set(tree_data, tree_data_row, "DP_PosteriorReconstructedProb",
-                            resolved_probs[oi])
+            data.table::set(
+                tree_data, tree_data_row, "ReconstructedStemID",
+                resolved_ids[oi]
+            )
+            data.table::set(
+                tree_data, tree_data_row, "DP_PosteriorReconstructedProb",
+                resolved_probs[oi]
+            )
 
             # Top-k posteriors (marginal, may differ from resolved assignment)
             post <- census_posts[[oi]]
@@ -1307,16 +1378,19 @@ repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
                                               intervals, min_rate, max_rate,
                                               posterior_top_k, vcat, prefix) {
     n_census <- length(obs_census)
-    if (n_census < 2L) return(tree_data)
+    if (n_census < 2L) {
+        return(tree_data)
+    }
 
     # Build date-based interval lookup for arbitrary census pairs
     dt_dates <- tree_data[, .(MeanDate = mean(as.numeric(as.Date(ExactDate)),
-                              na.rm = TRUE)), by = CensusID]
+        na.rm = TRUE
+    )), by = CensusID]
 
     max_id <- suppressWarnings(max(tree_data$ReconstructedStemID, na.rm = TRUE))
     if (!is.finite(max_id)) max_id <- 0L
     total_breaks <- 0L
-    max_passes <- 10L  # safety limit
+    max_passes <- 10L # safety limit
 
     for (pass in seq_len(max_passes)) {
         # Rebuild observation table each pass to reflect prior breaks
@@ -1339,9 +1413,11 @@ repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
                 c_curr <- dsub$CensusID[r]
                 md0 <- dt_dates$MeanDate[dt_dates$CensusID == c_prev]
                 md1 <- dt_dates$MeanDate[dt_dates$CensusID == c_curr]
-                iv <- if (length(md0) > 0L && length(md1) > 0L)
-                          (md1[1] - md0[1]) / 365.25
-                      else 5.0
+                iv <- if (length(md0) > 0L && length(md1) > 0L) {
+                    (md1[1] - md0[1]) / 365.25
+                } else {
+                    5.0
+                }
                 if (!is.finite(iv) || iv <= 0) iv <- 5.0
 
                 rate <- (dsub$DBH[r] - dsub$DBH[r - 1L]) / iv
@@ -1350,8 +1426,10 @@ repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
                 # Violation: break the earlier census obs to a new unique ID
                 row_prev <- dsub$row_idx[r - 1L]
                 max_id <- max_id + 1L
-                data.table::set(tree_data, as.integer(row_prev),
-                                "ReconstructedStemID", as.integer(max_id))
+                data.table::set(
+                    tree_data, as.integer(row_prev),
+                    "ReconstructedStemID", as.integer(max_id)
+                )
                 breaks_this_pass <- breaks_this_pass + 1L
                 # After breaking, don't check further pairs for this stem
                 # in this pass — re-evaluate in next pass
@@ -1360,15 +1438,17 @@ repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
         }
 
         total_breaks <- total_breaks + breaks_this_pass
-        if (breaks_this_pass == 0L) break  # converged
+        if (breaks_this_pass == 0L) break # converged
     }
 
     if (total_breaks > 0L) {
-        .warn_msg <- paste0(prefix, "WARNING: Post-marginal safety-net repair fired ",
-             total_breaks, " break(s) — probabilities for these rows are stale ",
-             "(greedy conflict resolution created new violations)")
+        .warn_msg <- paste0(
+            prefix, "WARNING: Post-marginal safety-net repair fired ",
+            total_breaks, " break(s) — probabilities for these rows are stale ",
+            "(greedy conflict resolution created new violations)"
+        )
         vcat(.warn_msg)
-        message(.warn_msg)  # ensure it appears on stderr / captured by log redirection
+        message(.warn_msg) # ensure it appears on stderr / captured by log redirection
     }
     tree_data
 }
@@ -1393,9 +1473,13 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
     if (!dir.exists(out_dir_post)) dir.create(out_dir_post, recursive = TRUE, showWarnings = FALSE)
 
     ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
-    out_path_base <- file.path(out_dir_post,
-                               paste0("tag_", ifelse(is.na(tag_val), "NA", tag_val),
-                                      "_posterior_samples_", ts_local))
+    out_path_base <- file.path(
+        out_dir_post,
+        paste0(
+            "tag_", ifelse(is.na(tag_val), "NA", tag_val),
+            "_posterior_samples_", ts_local
+        )
+    )
 
     n_census <- length(obs_data)
 
@@ -1437,7 +1521,8 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
 
     # Compact reconstruction mapping
     recon_by_path <- samples_dt[, .(recon = paste0(ObsRowID, ":", ReconstructedStemID, collapse = ";")),
-                                by = .(path_sig = sample_sigs$path_sig[match(Sample, sample_sigs$Sample)])]
+        by = .(path_sig = sample_sigs$path_sig[match(Sample, sample_sigs$Sample)])
+    ]
     recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
     paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
 

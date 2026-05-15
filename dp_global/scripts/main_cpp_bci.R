@@ -78,7 +78,7 @@ RECRUIT_MAX_SOURCE <- "fixed"
 # matcher.  Empty vector means all species go through DP normally.
 PROB_SPECIES <- character(0)
 PROB_LOOKAHEAD_WEIGHT <- 0.5
-PROB_N_SIGMA_ME <- 1   # ME cumulative-shrinkage threshold; lower = sever sooner
+PROB_N_SIGMA_ME <- 1 # ME cumulative-shrinkage threshold; lower = sever sooner
 PIN_TRUESTEMID <- TRUE
 
 # ----------------------------------------------------------------
@@ -556,4 +556,3 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 #     --MANUAL_CORES_VALUE=16 \
 #     --DP_CHUNK_SIZE=16 \
 #     --USE_MEASUREMENT_ERROR=FALSE
-
