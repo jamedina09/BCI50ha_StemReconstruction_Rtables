@@ -228,6 +228,12 @@ USE_BIO_HARD_GROWTH_IN_PROB <- TRUE
 # correct track.  Reduces state space and prevents misidentification.
 PIN_TRUESTEMID <- TRUE
 
+# ME cumulative-shrinkage threshold for Layer 2 trajectory repair in the
+# probabilistic matcher.  A trajectory is severed when cumulative shrinkage
+# exceeds n_sigma_me * sqrt(SD(d_start)^2 + SD(d_curr)^2).  Lower = sever
+# sooner.  Only active when USE_BIO_HARD_SHRINK_IN_PROB = TRUE.
+PROB_N_SIGMA_ME <- 3
+
 ############################################################
 ### 3.3) Chunking & posterior sampling settings
 ############################################################
@@ -346,7 +352,8 @@ CLI_REFERENCE <- list(
     PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT",
     USE_BIO_HARD_SHRINK_IN_PROB = "USE_BIO_HARD_SHRINK_IN_PROB",
     USE_BIO_HARD_GROWTH_IN_PROB = "USE_BIO_HARD_GROWTH_IN_PROB",
-    PIN_TRUESTEMID = "PIN_TRUESTEMID"
+    PIN_TRUESTEMID = "PIN_TRUESTEMID",
+    PROB_N_SIGMA_ME = "PROB_N_SIGMA_ME"
 )
 
 # Sensitivity and realism flags are not applicable to the chunked runner
@@ -782,6 +789,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
             verbose = isTRUE(DP_VERBOSE),
             prob_n_samples = PROB_N_SAMPLES,
+            prob_n_sigma_me = as.numeric(PROB_N_SIGMA_ME),
             prob_species = PROB_SPECIES,
             prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
             use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
@@ -811,6 +819,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR,
                 prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR,
                 prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+                n_sigma_me = as.numeric(PROB_N_SIGMA_ME),
                 use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
                 use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
                 pin_truestemid = isTRUE(PIN_TRUESTEMID),
@@ -1989,8 +1998,6 @@ run_main_chunked <- function() {
 
     # 5.3 Attach Bio_* columns (DP reads parameters from columns)
     xrun <- attach_bio_columns(xrun, bio_pars)
-
-    # NOTE: Return the same mnemonic names to species
 
     setnames(xrun, "species", "parameter_set_for_species")
     xrun[, Species := Mnemonic]
