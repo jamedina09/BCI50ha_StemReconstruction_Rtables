@@ -232,7 +232,7 @@ PIN_TRUESTEMID <- TRUE
 # probabilistic matcher.  A trajectory is severed when cumulative shrinkage
 # exceeds n_sigma_me * sqrt(SD(d_start)^2 + SD(d_curr)^2).  Lower = sever
 # sooner.  Only active when USE_BIO_HARD_SHRINK_IN_PROB = TRUE.
-PROB_N_SIGMA_ME <- 3
+PROB_N_SIGMA_ME <- 2.5
 
 ############################################################
 ### 3.3) Chunking & posterior sampling settings
@@ -287,7 +287,8 @@ OUT_DIR_OVERRIDE <- NULL
 WRITE_DP_CSV <- FALSE
 WRITE_DP_RDS <- FALSE
 WRITE_DP_FEATHER <- TRUE
-WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- FALSE
+# FIXME
+WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- TRUE
 # Set to FALSE when input data have no TrueStemID reference lines to plot.
 DP_PDF_INCLUDE_REFERENCE <- FALSE
 
@@ -2002,8 +2003,11 @@ run_main_chunked <- function() {
     setnames(xrun, "species", "parameter_set_for_species")
     xrun[, Species := Mnemonic]
 
+    # unique(xrun[growth_form == "strangler"]$Species)
+    xrun[Species == "ficuc2"]
+    message(sprintf("DP run setup complete. Starting DP with %d rows and %d unique tags/species.", nrow(xrun), length(unique(xrun$Tag))))
     ## FIXME: START - ADD TEST TAGS
-    xrun <- xrun[Tag %in% c("005204")] # for testing
+    xrun <- xrun[Tag %in% "002371"] # for testing
     ## FIXME: END - ADD TEST TAGS
 
     # 5.4 DP meta settings
