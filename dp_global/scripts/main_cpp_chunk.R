@@ -203,7 +203,7 @@ PROB_N_SAMPLES <- 200L
 PROB_SPECIES <- character(0)
 
 # Lookahead weight for probabilistic matcher (0 = disabled, 0.5 = default)
-PROB_LOOKAHEAD_WEIGHT <- 0.5
+PROB_LOOKAHEAD_WEIGHT <- 1
 
 # Bio hard bounds control for probabilistic matcher:
 # When TRUE (default), use bio-estimated hard shrink/growth guardrails (strict).

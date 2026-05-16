@@ -93,7 +93,7 @@ Key CLI parameters for controlling solver behavior:
 |------|---------|---------|
 | `--DP_MAX_STATES` | `40000` | Max injective states per census before probabilistic fallback |
 | `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching |
-| `--PROB_LOOKAHEAD_WEIGHT` | `0.5` | Sequential backward conditioning weight (0 = disabled) |
+| `--PROB_LOOKAHEAD_WEIGHT` | `1` | Sequential backward conditioning weight (0 = disabled) |
 | `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
 | `--USE_BIO_HARD_SHRINK_IN_PROB` | `TRUE` | Apply `Bio_Max_Shrink` hard gate and ME cumulative-shrinkage check in probabilistic matcher. Set `FALSE` to allow shrinkage beyond the bio bound (soft penalty only; useful for confirmed large-shrinkage events) |
 | `--USE_BIO_HARD_GROWTH_IN_PROB` | `TRUE` | Apply `Bio_Max_Growth` hard gate in probabilistic matcher. Set `FALSE` to allow growth beyond the bio bound (soft penalty only) |
