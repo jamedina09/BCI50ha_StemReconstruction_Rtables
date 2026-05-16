@@ -54,21 +54,20 @@ library(here) # project-relative paths
 library(TNRS) # Taxonomic Name Resolution Service client
 library(stringr) # string helpers (str_to_sentence, str_trim, etc.)
 
-data.table::setDTthreads(1) # use all available CPU threads for data.table
 data.table::getDTthreads()
 
 # =============================================================================
 # FILE PATHS
 # =============================================================================
 TAXONOMY_NEW <- here(
-    "DATA", "RAW", "TAXONOMY_ROLANDO_P",
-    "Lista de especies de la Flora de Panamá_nov25 original.xlsx"
+    "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables",
+    "Lista_bci_mnemonics_formadevida.xlsx"
 )
 TAXONOMY_OLD <- here(
-    "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewTaxonomy_bci.csv"
+    "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewTaxonomy_bci.csv"
 )
 INPUT_FILE <- here(
-    "DATA", "PROCESSED", "1_ViewFullTable_no_missing_tags_census.rds"
+    "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv"
 )
 
 # =============================================================================
@@ -101,7 +100,7 @@ colnames(spp_old) <- stringr::str_trim(colnames(spp_old))
 spp_old[spp_old == "NULL"] <- NA
 
 # --- 1c. BCI inventory (pre-processed; no missing tags/censuses) -------------
-sp_bci_raw_input <- as.data.table(readRDS(INPUT_FILE))
+sp_bci_raw_input <- as.data.table(fread(INPUT_FILE))
 # Keep only unique Tag–Mnemonic pairs so each physical tree is counted once;
 # census-level rows are not needed at this stage.
 sp_bci_raw <- unique(sp_bci_raw_input[, .(Tag, Mnemonic)])
@@ -247,7 +246,7 @@ results <- TNRS(
     sources         = c("wfo", "wcvp"),
     matches         = "best"
 )
-results_dt <- as.data.table(results)
+results_dt_raw <- as.data.table(results)
 
 # --- 2e. Fix TNRS merged-ID artefact ----------------------------------------
 # TNRS occasionally merges two rows that submitted identical name strings into
@@ -256,25 +255,22 @@ results_dt <- as.data.table(results)
 # Fix: duplicate that result row, assign each original ID separately.
 
 # Identify any merged-ID rows
-results_dt[grepl(",", ID)]
-# Expected output:
-#           ID    Accepted_name     Accepted_species  Accepted_name_author Taxonomic_status Overall_score
-# 1: 1559,1558 Swartzia simplex  Swartzia simplex    (Sw.) Spreng.         Accepted         1
+results_dt_raw[grepl(",", ID)]$ID
 
-double_row <- copy(results_dt[ID == "1559,1558"])
+double_row <- copy(results_dt_raw[ID == results_dt_raw[grepl(",", ID)]$ID])
 
 # Create one row per original ID
-row_1558 <- copy(double_row)
-row_1558[, ID := "1558"]
+row_284 <- copy(double_row)
+row_284[, ID := "284"]
 
-row_1559 <- copy(double_row)
-row_1559[, ID := "1559"]
+row_283 <- copy(double_row)
+row_283[, ID := "283"]
 
 # Remove the merged row and insert the two corrected rows
-results_dt <- results_dt[ID != "1559,1558"]
-results_dt <- rbind(results_dt, row_1558, row_1559)
+results_dt <- results_dt_raw[ID != results_dt_raw[grepl(",", ID)]$ID]
+results_dt <- rbind(results_dt, row_283, row_284)
 
-results_dt[ID %in% c("1558", "1559")] # confirm both rows are present with correct IDs
+results_dt[ID %in% results_dt_raw[grepl(",", ID)]$ID] # confirm both rows are present with correct IDs
 
 # Verify that the corrected results cover all expected IDs
 setdiff(results_dt$ID, 1:nrow(spp_new)) # IDs in results not in spp_new
@@ -572,16 +568,6 @@ col_translation <- c(
 tnrs_cols_present <- intersect(names(col_translation), names(spp_new))
 setnames(spp_new, old = tnrs_cols_present, new = col_translation[tnrs_cols_present])
 
-# Export annotated new taxonomy (drop the row-index ID before writing)
-writexl::write_xlsx(
-    spp_new[, ID := NULL],
-    here(
-        "DATA", "RAW", "TAXONOMY_ROLANDO_P",
-        "Lista_de_especies_de_la_Flora_de_Panamá_nov25_original_con_puntajes.xlsx"
-    )
-)
-message("Exported: TNRS-annotated new taxonomy")
-
 # =============================================================================
 # 3. SUMMARISE MNEMONICS IN THE BCI INVENTORY
 # =============================================================================
@@ -620,9 +606,7 @@ old_sp <- old_sp[mnemonic %in% sp_bci$Mnemonic]
 # is present in the BCI 50-ha plot inventory
 spp_new[, BCI50ha := ifelse(codigo %in% sp_bci$Mnemonic, "si", "no")]
 
-# Quick coverage check (commented out; uncomment to re-run)
-# setdiff(sp_bci$Mnemonic, old_sp$mnemonic)  # BCI codes absent from old taxonomy
-# setdiff(old_sp$mnemonic, sp_bci$Mnemonic)  # old taxonomy codes absent from BCI
+unique(spp_new$BCI50ha)
 
 # =============================================================================
 # 5. DIAGNOSTIC: COVERAGE DISCREPANCIES BETWEEN SOURCES
@@ -662,21 +646,16 @@ setdiff(old_sp$mnemonic, sp_bci$Mnemonic) # old taxonomy codes absent from BCI
 missing_from_new <- setdiff(sp_bci$Mnemonic, spp_new[BCI50ha == "si", codigo])
 message("BCI mnemonics absent from new taxonomy 'codigo' column:")
 print(missing_from_new)
-# Expected: "apeihy" "nects1" "nects3" "uniden"
-# (3 species not yet in the new list + 1 unidentified-individual code)
+# Expected: "pterof" "uniden"
 
 # --- 5c. Old taxonomy codes absent from the new taxonomy --------------------
 message("Old taxonomy mnemonics not found in new taxonomy:")
 print(setdiff(old_sp$mnemonic, spp_new[BCI50ha == "si", codigo]))
-# Expected: "apeihy" "nects1" "nects3" "uniden"
+# Expected: "pterof" "uniden"
 
 # --- 5d. New taxonomy codes absent from the old taxonomy --------------------
 message("New taxonomy codes not found in old taxonomy:")
 print(setdiff(spp_new[BCI50ha == "si", codigo], old_sp$mnemonic))
-
-# Summary of what the merged table will look like:
-#   apeihy, nects1, nects3, uniden → old-taxonomy columns present, new-taxonomy NAs
-#   all other BCI species           → both sources populated
 
 # =============================================================================
 # 6. PREPARE OLD TAXONOMY FOR MERGING
@@ -752,12 +731,6 @@ full_out <- merge(
 # Drop the helper BCI flag column (no longer needed after join)
 full_out[, BCI50ha := NULL]
 
-# Spot-check a known species to verify merge correctness
-full_out[codigo == "quara1"]
-old_sp_out[prev_mnemonic == "quara1"]
-spp_new[codigo == "quara1"]
-sp_bci[Mnemonic == "quara1"]
-
 # =============================================================================
 # 8. INITIAL EXPORT OF MERGED LOOKUP TABLE
 # =============================================================================
@@ -771,7 +744,7 @@ full_out <- full_out[codigo != "uniden"]
 # Excel workbook — primary output for manual curation (shared with curators)
 writexl::write_xlsx(
     full_out,
-    here("DATA", "RAW", "TAXONOMY_ROLANDO_P", "check_bci_mnemonics.xlsx")
+    here("BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "check_bci_mnemonics.xlsx")
 )
 message("Exported: check_bci_mnemonics.xlsx")
 
@@ -787,7 +760,7 @@ full_out[, fotos := NULL]
 # Tab-delimited text file — useful for version control and diff comparisons
 fwrite(
     full_out,
-    here("DATA", "RAW", "TAXONOMY_ROLANDO_P", "check_bci_mnemonics_to_check.txt"),
+    here("BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "check_bci_mnemonics_to_check.txt"),
     sep = "\t"
 )
 message("Exported: check_bci_mnemonics_to_check.txt")
@@ -929,7 +902,8 @@ cols_Rolando_clean <- c(
     "especie", # updated species epithet
     "autoridad", # updated authority (standardised by TNRS)
     "sinonimos", # old synonymised name (populated only for CHECK 3 rows)
-    "forma_de_vida", # growth form from Rolando's list
+    "f_de_vida_r_foster", #
+    "f_de_vida_r_perez_s_aguilar", #
     "nombre_comum", # common name
     "herbario", # herbarium voucher reference
     # "ntags_in_bci",  # tag count — omitted from curator output
@@ -966,7 +940,7 @@ print(full_out[updated_authority == "yes", .(codigo, prev_authority, autoridad)]
 # Export comparison table (tab-delimited for easy diff / version control)
 fwrite(
     full_out,
-    here("DATA", "RAW", "TAXONOMY_ROLANDO_P", "check_bci_mnemonics_Rolando_comparison.txt"),
+    here("BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "check_bci_mnemonics_Rolando_comparison.txt"),
     sep = "\t"
 )
 message("Exported: check_bci_mnemonics_Rolando_comparison.txt")
@@ -1017,7 +991,8 @@ cols_clean <- c(
     "subspecies", # subspecies epithet (NA for full species)
     "autoridad", # accepted authority (standardised by TNRS)
     "sinonimos", # previous synonymised name where applicable
-    "forma_de_vida", # growth form (from Rolando's list)
+    "f_de_vida_r_foster", # growth form (from Foster's list)
+    "f_de_vida_r_perez_s_aguilar", # growth form (from Pérez & Aguilar's list)
     "nombre_comum", # common name
     "herbario" # herbarium voucher reference
 )
@@ -1033,49 +1008,22 @@ setnames(
     full_out,
     old = c(
         "codigo", "familia", "genero", "especie", "subspecies",
-        "autoridad", "sinonimos", "forma_de_vida", "nombre_comum", "herbario"
+        "autoridad", "sinonimos", "f_de_vida_r_foster", "f_de_vida_r_perez_s_aguilar", "nombre_comum", "herbario"
     ),
     new = c(
         "Mnemonic", "Family", "Genus", "SpeciesName", "Subspecies",
-        "Authority", "Synonyms", "Lifeform", "CommonName", "Herbarium"
+        "Authority", "Synonyms", "Lifeform_RFoster", "Lifeform_RPerez_SAguilar", "CommonName", "Herbarium"
     )
 )
 
-table(full_out$Lifeform, useNA = "ifany") # check lifeform categories and missing values
+table(full_out$Lifeform_RPerez_SAguilar, useNA = "ifany") # check lifeform categories and missing values
 
-# translate to English and standardise lifeform categories
-full_out[
-    Lifeform %in% c("árbol", "arbolito"),
-    Lifeform := "tree"
-]
-full_out[
-    Lifeform == "arbusto",
-    Lifeform := "shrub"
-]
-full_out[
-    Lifeform == "Helecho arbóreo",
-    Lifeform := "tree_fern"
-]
-full_out[
-    Lifeform == "Palma",
-    Lifeform := "palm"
-]
+unique(full_out[, .(Lifeform_RPerez_SAguilar, Lifeform_RFoster)])
 
-# if commonname has "abraza palo" and genus is Ficus, 
-# change Lifeform to strangler_fig
-full_out[
-    grepl("abraza palo", CommonName, ignore.case = TRUE) & Genus == "Ficus",
-    Lifeform := "strangler_fig"
-]
+# count nrows per Lifeform_RPerez_SAguilar
+full_out[, .N, by = Lifeform_RPerez_SAguilar]
 
 # full_out[is.na(Lifeform), Lifeform := "tree"] # replace any remaining NAs with "unknown"
-
-chk <- sp_bci_raw_input[Mnemonic %in% full_out[is.na(Lifeform)]$Mnemonic, .(Mnemonic, CensusID, DBH)]
-chk[, DBH_cm := DBH / 10]
-
-full_out[is.na(Lifeform), Lifeform := "tree"]
-
-table(full_out$Lifeform, useNA = "ifany") # final check of lifeform categories
 
 # --- 11e. Export -------------------------------------------------------------
 bci.spptable <- full_out
@@ -1083,7 +1031,7 @@ bci.spptable <- full_out
 # Tab-delimited plain text — portable, version-control friendly
 fwrite(
     bci.spptable,
-    here("DATA", "SPP_TABLE", "bci_spptable.txt"),
+    here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.txt"),
     sep = "\t"
 )
 message("Exported: DATA/SPP_TABLE/bci_spptable.txt")
@@ -1091,6 +1039,6 @@ message("Exported: DATA/SPP_TABLE/bci_spptable.txt")
 # R binary format — for direct use in downstream R scripts
 save(
     bci.spptable,
-    file = here("DATA", "SPP_TABLE", "bci_spptable.RData")
+    file = here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.RData")
 )
 message("Exported: DATA/SPP_TABLE/bci_spptable.RData")

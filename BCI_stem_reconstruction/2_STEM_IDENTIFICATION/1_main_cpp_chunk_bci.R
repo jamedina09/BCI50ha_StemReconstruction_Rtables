@@ -125,11 +125,6 @@ if (!requireNamespace("here", quietly = TRUE)) {
 }
 library(here)
 
-if (!requireNamespace("withr", quietly = TRUE)) {
-    stop("Please install the 'withr' package to run this script.")
-}
-library(withr)
-
 ############################################################
 ### 3) Defaults — editable run defaults
 ############################################################
@@ -138,7 +133,8 @@ library(withr)
 ### 3.1) Biological parameter estimation settings
 ############################################################
 # Input data and species handling
-INPUT_FILE <- here("DATA", "PROCESSED", "6_ViewFullTable_taper_corrected_growth_forms.rds")
+
+INPUT_FILE <- here("BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_taper_corrected_growth_forms.rds")
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
     FORCED_SPECIES_LABEL <- "all"
@@ -151,10 +147,6 @@ SPECIES_COL <- NULL
 # Biological parameter sources and fixed fallback values.
 # _SOURCE controls whether the bound is estimated from data ("data") or fixed ("fixed").
 # _FIXED is the fallback value used when _SOURCE = "fixed" or data are too sparse.
-
-# NOTE: DEFINE VERSION OF DP BUNDLE - The Code
-dp_bundle_path <- here("2_STEM_IDENTIFICATION", "dpglobal_bundle_full_20260507_180743")
-
 USE_MEASUREMENT_ERROR <- TRUE
 MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_GROWTH_FIXED <- 5
@@ -224,7 +216,7 @@ PROB_N_SAMPLES <- 200L
 PROB_SPECIES <- c("oenoma", "bactma", "ficuob", "ficupo", "ficuc2", "ficubu", "ficuc1", "ficuci", "ficupe")
 
 # Lookahead weight for probabilistic matcher (0 = disabled, 0.5 = default)
-PROB_LOOKAHEAD_WEIGHT <- 0.5
+PROB_LOOKAHEAD_WEIGHT <- 1
 
 # Bio hard bounds control for probabilistic matcher:
 # When TRUE (default), use bio-estimated hard shrink/growth guardrails (strict).
@@ -265,7 +257,7 @@ MANUAL_CORES_VALUE <- 16L # Number of cores to use if MANUAL_CORES=TRUE
 # file.
 # Pass --BASE_OUT_DIR=/some/path on the CLI to redirect output anywhere
 # (e.g. a home-directory folder on a remote machine).
-base_out_dir <- here("2_STEM_IDENTIFICATION", "output")
+base_out_dir <- here("BCI_stem_reconstruction", "output")
 message("[dp_global main_cpp_chunk_bci.R] here root: ", here::here())
 message("[dp_global main_cpp_chunk_bci.R] base_out_dir (raw): ", base_out_dir)
 base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
@@ -300,7 +292,7 @@ BATCH_TS <- ""
 # Naming helpers (encode_num, build_out_dir_name) live in a separate helper
 # file to keep the main script concise. Source it early so it's available
 # when we compute `out_dir` below.
-with_dir(dp_bundle_path, source(file.path("dp_global", "R", "naming_helpers.R")))
+source(here("dp_global", "R", "naming_helpers.R"))
 
 ############################################################
 ### 4) CLI reference & override mapping
@@ -626,7 +618,7 @@ if (!is.null(POSTERIOR_SAMPLE_SEED)) {
 ############################################################
 # Load dp_global R modules: DP solver, biological parameter estimation,
 # sensitivity and realism helpers, naming utilities.
-with_dir(dp_bundle_path, source(file.path("dp_global", "R", "dp_global_main.R")))
+source(here("dp_global", "R", "dp_global_main.R"))
 # NOTE: sensitivity_transition_cost_bio.R, realism_calibration.R, and
 # k_tuning_viz.R are NOT sourced here — they require a fully assembled
 # output object and are not applicable to the chunked runner.
@@ -1043,7 +1035,14 @@ run_main_chunked <- function() {
     cat("[dp_global main_cpp_chunk_bci.R] Loading input data from: ", INPUT_FILE, "\n")
     xraw <- as.data.table(readRDS(INPUT_FILE))
 
-    xraw[, growth_form := as.character(Lifeform)]
+    # growth form - ORDER MATTERS: check for strangler BEFORE general árbol
+    xraw[grepl("estrangulador", Lifeform, ignore.case = TRUE), growth_form := "strangler"]
+    xraw[grepl("árbol", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "tree"]
+    xraw[grepl("palma", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "palm"]
+    xraw[grepl("helecho", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "fern"]
+    xraw[grepl("arbusto", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "shrub"]
+    xraw[is.na(growth_form), growth_form := "tree"]
+
     xraw[, Lifeform := NULL]
 
     xraw[, StemID := as.integer(as.character(StemID))] # ensure StemID is integer (handles cases where it might be read as numeric or factor)
@@ -1251,78 +1250,78 @@ run_main_chunked <- function() {
         out
     }
 
-    ## ---- Diagnostic: sweep parameter grid for species coverage ----------------
-    # For each growth_form group, sweep over candidate values of min_tags,
-    # min_pairs, n_bins, and min_per_bin.  Returns a data.table with one row
-    # per parameter combination showing how many (and which fraction of)
-    # species pass all filters.
-    sweep_bio_thresholds <- function(dt,
-                                     growth_forms,
-                                     min_tags_vals = c(5L, 10L, 15L, 20L, 30L, 50L),
-                                     min_pairs_vals = c(3L, 5L, 10L, 15L, 20L),
-                                     n_bins_vals = c(3L, 4L, 5L),
-                                     min_per_bin_vals = c(3L, 4L, 5L, 8L)) {
-        sub <- dt[growth_form %in% growth_forms]
-        if (nrow(sub) == 0L) {
-            warning("No rows match growth_forms: ", paste(growth_forms, collapse = ", "))
-            return(data.table())
-        }
+    # ## ---- Diagnostic: sweep parameter grid for species coverage ----------------
+    # # For each growth_form group, sweep over candidate values of min_tags,
+    # # min_pairs, n_bins, and min_per_bin.  Returns a data.table with one row
+    # # per parameter combination showing how many (and which fraction of)
+    # # species pass all filters.
+    # sweep_bio_thresholds <- function(dt,
+    #                                  growth_forms,
+    #                                  min_tags_vals = c(5L, 10L, 15L, 20L, 30L, 50L),
+    #                                  min_pairs_vals = c(3L, 5L, 10L, 15L, 20L),
+    #                                  n_bins_vals = c(3L, 4L, 5L),
+    #                                  min_per_bin_vals = c(3L, 4L, 5L, 8L)) {
+    #     sub <- dt[growth_form %in% growth_forms]
+    #     if (nrow(sub) == 0L) {
+    #         warning("No rows match growth_forms: ", paste(growth_forms, collapse = ", "))
+    #         return(data.table())
+    #     }
 
-        mnemonics <- unique(sub$Mnemonic)
-        n_total <- length(mnemonics)
+    #     mnemonics <- unique(sub$Mnemonic)
+    #     n_total <- length(mnemonics)
 
-        # Pre-compute per-species scalars (these don't depend on n_bins / min_per_bin)
-        sp_stats <- sub[, .(
-            n_tags              = first(n_tags),
-            n_valid_growth_pair = first(n_valid_growth_pair)
-        ), by = Mnemonic]
+    #     # Pre-compute per-species scalars (these don't depend on n_bins / min_per_bin)
+    #     sp_stats <- sub[, .(
+    #         n_tags              = first(n_tags),
+    #         n_valid_growth_pair = first(n_valid_growth_pair)
+    #     ), by = Mnemonic]
 
-        # Pre-compute has_dbh_coverage for every (species, n_bins, min_per_bin) combo
-        coverage_grid <- CJ(
-            Mnemonic = mnemonics,
-            n_bins = n_bins_vals,
-            min_per_bin = min_per_bin_vals,
-            sorted = FALSE
-        )
+    #     # Pre-compute has_dbh_coverage for every (species, n_bins, min_per_bin) combo
+    #     coverage_grid <- CJ(
+    #         Mnemonic = mnemonics,
+    #         n_bins = n_bins_vals,
+    #         min_per_bin = min_per_bin_vals,
+    #         sorted = FALSE
+    #     )
 
-        coverage_grid[, passes_coverage := {
-            has_dbh_coverage(sub[Mnemonic == .BY$Mnemonic],
-                n_bins = .BY$n_bins,
-                min_per_bin = .BY$min_per_bin
-            )
-        }, by = .(Mnemonic, n_bins, min_per_bin)]
+    #     coverage_grid[, passes_coverage := {
+    #         has_dbh_coverage(sub[Mnemonic == .BY$Mnemonic],
+    #             n_bins = .BY$n_bins,
+    #             min_per_bin = .BY$min_per_bin
+    #         )
+    #     }, by = .(Mnemonic, n_bins, min_per_bin)]
 
-        # Full parameter grid
-        param_grid <- CJ(
-            min_tags = min_tags_vals,
-            min_pairs = min_pairs_vals,
-            n_bins = n_bins_vals,
-            min_per_bin = min_per_bin_vals,
-            sorted = FALSE
-        )
+    #     # Full parameter grid
+    #     param_grid <- CJ(
+    #         min_tags = min_tags_vals,
+    #         min_pairs = min_pairs_vals,
+    #         n_bins = n_bins_vals,
+    #         min_per_bin = min_per_bin_vals,
+    #         sorted = FALSE
+    #     )
 
-        # For each parameter combo, count passing species
-        results <- param_grid[,
-            {
-                cov <- coverage_grid[n_bins == .BY$n_bins & min_per_bin == .BY$min_per_bin]
-                merged <- sp_stats[cov, on = "Mnemonic"]
-                pass <- merged[n_tags >= .BY$min_tags &
-                    n_valid_growth_pair >= .BY$min_pairs &
-                    passes_coverage == TRUE, Mnemonic]
-                .(
-                    n_species = length(pass),
-                    pct_species = round(100 * length(pass) / n_total, 1),
-                    species_list = list(pass)
-                )
-            },
-            by = .(min_tags, min_pairs, n_bins, min_per_bin)
-        ]
+    #     # For each parameter combo, count passing species
+    #     results <- param_grid[,
+    #         {
+    #             cov <- coverage_grid[n_bins == .BY$n_bins & min_per_bin == .BY$min_per_bin]
+    #             merged <- sp_stats[cov, on = "Mnemonic"]
+    #             pass <- merged[n_tags >= .BY$min_tags &
+    #                 n_valid_growth_pair >= .BY$min_pairs &
+    #                 passes_coverage == TRUE, Mnemonic]
+    #             .(
+    #                 n_species = length(pass),
+    #                 pct_species = round(100 * length(pass) / n_total, 1),
+    #                 species_list = list(pass)
+    #             )
+    #         },
+    #         by = .(min_tags, min_pairs, n_bins, min_per_bin)
+    #     ]
 
-        setattr(results, "n_total_species", n_total)
-        setattr(results, "growth_forms", growth_forms)
-        setorder(results, -n_species, min_tags, min_pairs, n_bins, min_per_bin)
-        results
-    }
+    #     setattr(results, "n_total_species", n_total)
+    #     setattr(results, "growth_forms", growth_forms)
+    #     setorder(results, -n_species, min_tags, min_pairs, n_bins, min_per_bin)
+    #     results
+    # }
 
     # # Sweep for trees
     # sweep_ts <- sweep_bio_thresholds(to_do, growth_forms = "shrub")
@@ -1342,6 +1341,9 @@ run_main_chunked <- function() {
 
     ## ---- Get Bio Pars per species within growth_form -------------------------
     # Per-species estimates for trees/shrubs (species with sufficient data)
+
+    unique(to_do$growth_form)
+
     to_do_tree_sp <- prepare_bio_data(
         dt = to_do,
         growth_forms = "tree",
@@ -1386,19 +1388,19 @@ run_main_chunked <- function() {
     )
 
     # Pooled palms + tree ferns (NOTE: no tree fern data in census 7, 8, 9)
-    to_do_palm_tree_fern_sp <- prepare_bio_data(
+    to_do_palm_fern_sp <- prepare_bio_data(
         dt = to_do,
-        growth_forms = c("palm", "tree_fern"),
-        species_label = "all_palm_tree_fern",
+        growth_forms = c("palm", "fern"),
+        species_label = "all_palm_fern",
         min_tags = min_tags, min_pairs = min_pairs,
         n_bins = n_bins, min_per_bin = min_per_bin
     )
 
     # Pooled strangler figs (relax tag requirement; rely on size-coverage filter)
-    to_do_strangler_fig_all_sp <- prepare_bio_data(
+    to_do_strangler_all_sp <- prepare_bio_data(
         dt = to_do,
-        growth_forms = "strangler_fig",
-        species_label = "all_strangler_fig",
+        growth_forms = "strangler",
+        species_label = "all_strangler",
         min_tags = 10, min_pairs = 5,
         n_bins = 3, min_per_bin = 3
     )
@@ -1483,8 +1485,8 @@ run_main_chunked <- function() {
     bio_pars_shrub_sp <- run_bio_par_estimation(to_do_shrub_sp, verbose = TRUE)
     bio_pars_shrub_all_sp <- run_bio_par_estimation(to_do_shrub_all_sp, verbose = TRUE)
     bio_pars_palm_sp <- run_bio_par_estimation(to_do_palm_sp, verbose = TRUE)
-    bio_pars_palm_tree_fern_sp <- run_bio_par_estimation(to_do_palm_tree_fern_sp, verbose = TRUE)
-    bio_pars_strangler_fig_all_sp <- run_bio_par_estimation(to_do_strangler_fig_all_sp, verbose = TRUE)
+    bio_pars_palm_fern_sp <- run_bio_par_estimation(to_do_palm_fern_sp, verbose = TRUE)
+    bio_pars_strangler_all_sp <- run_bio_par_estimation(to_do_strangler_all_sp, verbose = TRUE)
     # For unknown species, use the tree all species parameters as a fallback, but
     # with a distinct name to avoid confusion in downstream analyses.
     bio_pars_unknown_sp <- bio_pars_tree_all_sp
@@ -1500,9 +1502,9 @@ run_main_chunked <- function() {
         # palm parameters
         bio_pars_palm_sp,
         # palm + tree fern parameters (these are pooled together since tree ferns have no data in recent censuses)
-        bio_pars_palm_tree_fern_sp,
+        bio_pars_palm_fern_sp,
         # strangler fig parameters
-        bio_pars_strangler_fig_all_sp,
+        bio_pars_strangler_all_sp,
         # unkonwn species parameters (use tree all sp as fallback, but with a distinct name)
         bio_pars_unknown_sp
     )
@@ -1535,20 +1537,20 @@ run_main_chunked <- function() {
         growth_form == "palm",
         species := fifelse(
             Mnemonic %in% names(bio_pars_palm_sp),
-            Mnemonic, "all_palm_tree_fern"
+            Mnemonic, "all_palm_fern"
         )
     ]
 
     # unique(xraw[is.na(species)]$growth_form)
     xraw[
-        growth_form %in% c("tree_fern"),
-        species := "all_palm_tree_fern"
+        growth_form %in% c("fern"),
+        species := "all_palm_fern"
     ]
 
     # unique(xraw[is.na(species)]$growth_form)
     xraw[
-        growth_form == "strangler_fig",
-        species := "all_strangler_fig"
+        growth_form == "strangler",
+        species := "all_strangler"
     ]
 
     # unique(xraw[is.na(species)]$growth_form)
@@ -1913,12 +1915,11 @@ run_main_chunked <- function() {
         to_do,
         to_do_tree_sp, to_do_tree_all_sp,
         to_do_shrub_sp, to_do_shrub_all_sp,
-        to_do_palm_tree_fern_sp,
+        to_do_palm_fern_sp,
         bio_pars_tree_sp, bio_pars_tree_all_sp,
-        bio_pars_shrub_sp, # bio_pars_shrub_all_sp,
-        bio_pars_palm_sp, bio_pars_palm_tree_fern_sp,
-        # bio_pars_fig_sp, bio_pars_fig_all_sp,
-        bio_pars_strangler_fig_all_sp,
+        bio_pars_shrub_sp,
+        bio_pars_palm_sp, bio_pars_palm_fern_sp,
+        bio_pars_strangler_all_sp,
         bio_pars_unknown_sp,
         xraw_multi_stems
     )
