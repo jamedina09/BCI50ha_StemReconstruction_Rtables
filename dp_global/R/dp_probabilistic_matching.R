@@ -36,7 +36,7 @@ match_stems_probabilistic <- function(tree_data,
                                       use_bio_hard_shrink_in_prob = TRUE, # if FALSE, ignore Bio_Max_Shrink hard gate
                                       use_bio_hard_growth_in_prob = TRUE, # if FALSE, ignore Bio_Max_Growth hard gate
                                       pin_truestemid = TRUE, # pin obs with known TrueStemID to their track
-                                      n_sigma_me = 1, # ME cumulative-shrinkage threshold (n * SD); lower = sever sooner
+                                      n_sigma_me = 3, # ME cumulative-shrinkage threshold (n * SD); lower = sever sooner
                                       verbose = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
@@ -871,7 +871,7 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                                               min_rate, max_rate,
                                               me_sd1_a = 0.0062,
                                               me_sd1_b = 0.0904,
-                                              n_sigma_me = 1,
+                                              n_sigma_me = 3,
                                               max_passes = 10L,
                                               use_bio_hard_shrink = TRUE) {
     n_samples <- length(stitched)

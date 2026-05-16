@@ -212,7 +212,7 @@ USE_BIO_HARD_GROWTH_IN_PROB <- TRUE
 # Trajectories where cumulative shrinkage exceeds n_sigma_me * sqrt(SD(d_start)^2 + SD(d_curr)^2)
 # are severed. Lower values = sever sooner (less negative growth). 0 = sever at first decline.
 # Only active when USE_BIO_HARD_SHRINK_IN_PROB = TRUE.
-PROB_N_SIGMA_ME <- 1
+PROB_N_SIGMA_ME <- 3
 
 # Pin observations with known TrueStemID at non-anchor censuses to their
 # correct track.  Reduces state space and prevents misidentification.
