@@ -23,3 +23,5 @@ baseline_pre_change/
 baseline_pre_greedy_fix/
 
 broken_below_tags.csv
+
+BCI_stem_reconstruction/
