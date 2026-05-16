@@ -1,0 +1,33 @@
+## START
+Rscript 2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
+    --DP_MAX_STATES=10000 \
+    --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
+    --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
+    --POSTERIOR_SAMPLE_SEED=42 \
+    --MANUAL_CORES=TRUE \
+    --MANUAL_CORES_VALUE=16 \
+    --DP_CHUNK_SIZE=16 \
+    --USE_MEASUREMENT_ERROR=FALSE \
+    --BASE_OUT_DIR=/Users/medinaja/outputs_bci_stem_identification
+
+## CONTINUE — EXAMPLE CHUNK 4501
+Rscript 2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
+    --OUT_DIR_OVERRIDE=/Users/medinaja/outputs_bci_stem_identification/20260507_183832_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp \
+    --DP_CHUNK_RESUME=TRUE \
+    --DP_MAX_STATES=10000 \
+    --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
+    --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
+    --POSTERIOR_SAMPLE_SEED=42 \
+    --MANUAL_CORES=TRUE \
+    --MANUAL_CORES_VALUE=16 \
+    --DP_CHUNK_SIZE=16 \
+    --USE_MEASUREMENT_ERROR=FALSE \
+    --DP_CHUNK_START=5150 \
+    --DP_CHUNK_END=8266
+
+# How many states?
+# 2. Compute states for a specific stem count
+n <- 5   # max observed stems in any census
+K <- n + 2 # (slack + 1 birth)
+states <- prod(K:(K - n + 1))  # P(8, 6) = 20,160
+cat("States:", states, "\n")
