@@ -1,4 +1,252 @@
 # ========================================================================
+# SCRIPT: 1_compare_tables1_and_tables2.R
+# PURPOSE: Reconcile two BCI `ViewFullTable` datasets and produce a single
+#          validated, analysis-ready dataset with complete Tag x Census mapping.
+#
+# Detailed process (Table of Contents):
+#   0. Setup (deterministic environment)
+#      - Remove objects from previous sessions,
+#      - Load required packages (`data.table`, `here`),
+#      - Set number of threads for deterministic performance.
+#   1. Configuration (environment-specific inputs)
+#      - Define site code,
+#      - Set paths for two source dataset versions,
+#      - Define output/check directories and create them if missing.
+#   2. Load input files (exact schema expectation)
+#      - Load two versions as tab-separated with explicit colClasses,
+#      - Enforce existence of the source files, and standardize missradianing values.
+#   3. Quick QA (sanity checks)
+#      - Quick `table()` counts on `ListOfTSM`/`Status`,
+#      - Ensure `ExactDate` coverage includes 2022 and 2023.
+#   4. Compare datasets (2022-2023 subset + data equivalence checks)
+#      - Subset both tables to 2022/2023,
+#      - Compare each column for identity,
+#      - Compute DBH density and KS tests to confirm distributions match.
+#   5. Prepare main table (canonicalization and normalization)
+#      - Choose authoritative dataset (`ViewFullTable_1` unless differences found),
+#      - Preserve original `CensusID` in `CensusID_raw`,
+#      - Normalize factor IDs for joins and consistency.
+#   6. Fill missing rows (Tag x Census completeness)
+#      - Generate full tag-by-census grid,
+#      - Add intentionally missing rows (tag/census combos) for run-level completeness.
+#   7. Save outputs (persistent results and diagnostics)
+#      - Write processed dataset to `DATA/PROCESSED`,
+#      - Write QA outputs to `DATA/CHECKS`.
+#
+# Notes:
+#  - Uses `data.table` for speed and memory efficiency.
+#  - Input expectations: tab-delimited `ViewFullTable_*` files with columns
+#    `ExactDate`, `Tag`, `StemTag`, `TreeID`, `StemID`, `CensusID`, `DBH`.
+# ========================================================================
+
+# ---- 0. Setup ----
+# Clean workspace to avoid conflicts from previous sessions
+rm(list = ls())
+
+# Load required libraries
+library(data.table) # fast data manipulation
+library(here) # convenient file paths
+# References: https://arelbundock.com/posts/dt_tb_df/index.html
+#             https://rdatatable.gitlab.io/data.table/
+
+# ---- 1. Configuration ----
+# User-editable variables and file locations. Ensure the paths below point to
+# the expected tab-delimited `ViewFullTable` files for the site.
+
+site <- "bci" # Site code for BCI
+
+# Input folders for the two datasets to compare
+INPUT_folder_1 <- here::here("BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses")
+
+# Output and diagnostics folders
+OUTPUT_folder <- here::here("BCI_stem_reconstruction", "DATA", "PROCESSED")
+if (!dir.exists(OUTPUT_folder)) {
+  dir.create(OUTPUT_folder, recursive = TRUE)
+}
+
+CHECK_folder <- here::here("BCI_stem_reconstruction", "DATA", "CHECKS")
+if (!dir.exists(CHECK_folder)) {
+  dir.create(CHECK_folder, recursive = TRUE)
+}
+
+# End of configuration (adjust above values as needed for local runs)
+
+# ---- 2. Load and verify input data ----
+# Read the two versions of ViewFullTable. We expect tab-delimited tables with
+# columns such as `ExactDate`, `Tag`, `StemTag`, `TreeID`, `StemID`, `DBH`.
+
+file1 <- file.path(INPUT_folder_1, paste0("ViewFullTable_", site, ".csv"))
+stopifnot(file.exists(file1))
+
+ViewFullTable <- fread(
+  file = file1,
+  sep = "\t",
+  colClasses = c(
+    PlotName = "factor",
+    PlotID = "factor",
+    CensusID = "factor",
+    QuadratName = "character",
+    ExactDate = "Date"
+  ),
+  stringsAsFactors = FALSE,
+  na.strings = c("NA", "NULL", "")
+)
+
+# Rename CensusID to CensusID_raw to preserve original labels, then assign
+# standardized sequential CensusID values below.
+setnames(ViewFullTable, "CensusID", "CensusID_raw")
+# Ensure important identifier columns are factors for efficient joins and memory
+ViewFullTable[, Tag := as.factor(Tag)]
+ViewFullTable[, StemTag := as.factor(StemTag)]
+ViewFullTable[, TreeID := as.factor(TreeID)]
+ViewFullTable[, StemID := as.factor(StemID)]
+
+# Summarize census dates for each CensusID_raw
+censusid_dates <- ViewFullTable[, .(
+  n_dates = uniqueN(ExactDate),
+  min_date = min(ExactDate, na.rm = TRUE),
+  mean_date = mean(ExactDate, na.rm = TRUE),
+  max_date = max(ExactDate, na.rm = TRUE)
+), by = CensusID_raw][order(mean_date)]
+
+# Assign sequential CensusID values
+censusid_dates[, CensusID := seq_len(.N)]
+
+# Set keys for efficient joining
+setkey(ViewFullTable, CensusID_raw)
+setkey(censusid_dates, CensusID_raw)
+
+# Join new CensusID into main table
+ViewFullTable <-
+  censusid_dates[, .(CensusID_raw, CensusID)][
+    ViewFullTable,
+    on = "CensusID_raw"
+  ]
+
+# Remove old CensusID_raw column (now replaced)
+ViewFullTable[, CensusID_raw := NULL]
+
+# ---- 6. Fill missing rows (Tag x CensusID completeness) ----
+# Goal: create a complete grid of all Tag x CensusID combinations and add rows
+# with NA measurements where these combinations are missing (so downstream
+# longitudinal analyses have a full panel for every Tag).
+
+sort(unique(round(ViewFullTable[!is.na(DBH)]$DBH, 1)))
+
+# NOTE: 13 INDIVIDUALS WITH DBH < 10 CM — LIKELY TAPERING ERRORS
+# NOTE: no individual with zero DBH
+table(ViewFullTable[DBH < 10]$DBH)
+range(ViewFullTable$DBH, na.rm = TRUE)
+
+# sort print(inspectdf::inspect_na(ViewFullTable), n = 50) by tag and censusID
+## NOTE: Tag and CensusID have no NAs, so we can use them to create a complete grid
+
+tag_census_unique <- unique(copy(ViewFullTable[, .(Tag, CensusID)]))
+
+# Create complete grid of all Tag-CensusID combinations
+tag_ranges <- tag_census_unique[, .(min_c = min(CensusID), max_c = max(CensusID)), by = Tag]
+
+## Get all combinations tags and census IDs
+complete_grid <- tag_ranges[, .(CensusID = seq.int(min_c, max_c)), by = Tag]
+
+# Find which combinations are missing from the original data
+missing_combinations <- complete_grid[!ViewFullTable,
+  on = .(Tag, CensusID)
+]
+
+unique(ViewFullTable[, .(Tag, TreeID)])
+
+# NOTE: 141 MISSING TAG-CENSUSID COMBINATIONS TO ADD
+nrow(missing_combinations)
+
+### LETS GET THE METADATA FOR THE MISSING INFORMATION
+# Get metadata columns (excluding measurements)
+
+diff_names <- setdiff(names(ViewFullTable), names(missing_combinations))
+
+for (col in diff_names) {
+  col_class <- class(ViewFullTable[[col]])
+  if (any(col_class %in% c("factor", "character"))) {
+    missing_combinations[, (col) := as.character(NA)]
+  } else if (any(col_class %in% c("integer", "numeric"))) {
+    missing_combinations[, (col) := as.numeric(NA)]
+  } else if (inherits(ViewFullTable[[col]], "Date")) {
+    missing_combinations[, (col) := as.Date(NA)]
+  } else {
+    missing_combinations[, (col) := NA]
+  }
+}
+
+## sort columns to match ViewFullTable
+setcolorder(missing_combinations, names(ViewFullTable))
+
+# Scalar values (same for all rows)
+missing_combinations[, PlotName := unique(ViewFullTable$PlotName)]
+missing_combinations[, PlotID := unique(ViewFullTable$PlotID)]
+
+# Tag-level attributes (one join instead of 13 separate joins)
+tag_cols <- c(
+  "Family", "Genus", "SpeciesName", "Mnemonic", "Subspecies",
+  "SpeciesID", "SubspeciesID", "QuadratName", "QuadratID",
+  "PX", "PY", "QX", "QY", "TreeID"
+)
+
+tag_lookup <- unique(ViewFullTable[, c("Tag", tag_cols), with = FALSE], by = "Tag")
+
+missing_combinations[tag_lookup,
+  (tag_cols) := mget(paste0("i.", tag_cols)),
+  on = "Tag"
+]
+
+# CensusID-level attributes
+missing_combinations[
+  unique(ViewFullTable[, .(CensusID, PlotCensusNumber)]),
+  PlotCensusNumber := i.PlotCensusNumber,
+  on = "CensusID"
+]
+
+unique(missing_combinations$DBH)
+
+# QuadratID + QuadratName + CensusID level attributes (one join instead of two)
+census_quadrat_lookup <- unique(ViewFullTable[, .(QuadratID, QuadratName, CensusID, ExactDate, Date)])
+
+missing_combinations[census_quadrat_lookup,
+  `:=`(ExactDate = i.ExactDate, Date = i.Date),
+  on = .(QuadratID, QuadratName, CensusID)
+]
+
+# Verify columns propagated
+columns_to_propagate <- c(
+  "PlotName", "PlotID", "Family", "Genus", "SpeciesName", "Mnemonic",
+  "Subspecies", "SpeciesID", "SubspeciesID", "QuadratName", "QuadratID",
+  "PX", "PY", "QX", "QY", "TreeID", "PlotCensusNumber", "ExactDate", "Date"
+)
+
+# Check for any NAs in propagated columns
+sapply(missing_combinations[, columns_to_propagate, with = FALSE], function(x) sum(is.na(x)))
+
+unique(names(ViewFullTable) == names(missing_combinations))
+
+# Add the missing rows to the main dataset
+ViewFullTable_no_missing_tags_census <- rbindlist(
+  list(ViewFullTable[, missing_tag_census := FALSE], missing_combinations[, missing_tag_census := TRUE]),
+  fill = TRUE,
+  use.names = TRUE
+)
+
+(nrow(ViewFullTable) + nrow(missing_combinations)) == nrow(ViewFullTable_no_missing_tags_census)
+
+# Sort by Tag and CensusID for cleaner viewing
+setorder(ViewFullTable_no_missing_tags_census, Tag, CensusID)
+
+## CHECK AGAIN IF MISSING TAG CENSUS COMBINATIONS
+
+missing_combinations_final <- complete_grid[!ViewFullTable_no_missing_tags_census,
+  on = .(Tag, CensusID)
+]
+# good
+
+# ========================================================================
 # SCRIPT: 2_check_revised_viewfulltable.R
 # PURPOSE: Identify and correct DBH / HOM measurement issues before stem
 #          identification. This script produces diagnostic files and a
@@ -21,33 +269,31 @@
 #   9. Finalize complete table (add missing rows)
 # ========================================================================
 
-# ---- 0. Setup & packages ----
-rm(list = ls())
+# # ---- 0. Setup & packages ----
+# rm(list = ls())
 
-# Core packages
-library(data.table) # fast table manipulation
+# # Core packages
+# library(data.table) # fast table manipulation
 library(ggplot2) # diagnostics/plots
-library(here) # project-relative paths
-library(patchwork)
+# library(here) # project-relative paths
+# library(patchwork)
 
-# Set data.table threads to use available physical cores (tune if needed)
-getDTthreads() # current threads
-setDTthreads(parallel::detectCores(logical = FALSE))
-getDTthreads() # show updated threads
-setDTthreads(1)
-# Notes:
-# - Keep operations in data.table style for memory and speed.
-# - Where possible, caching (saveRDS/readRDS) is used to avoid expensive recomputations.
+# # Set data.table threads to use available physical cores (tune if needed)
+# getDTthreads() # current threads
+# setDTthreads(parallel::detectCores(logical = FALSE))
+# getDTthreads() # show updated threads
+# setDTthreads(1)
+# # Notes:
+# # - Keep operations in data.table style for memory and speed.
+# # - Where possible, caching (saveRDS/readRDS) is used to avoid expensive recomputations.
 
 # ---- 1. Load input data ----
 # Read previously validated ViewFullTable and Condit-derived datasets used for
 # cross-checks and reference comparisons.
-ViewFullTable <- as.data.table(readRDS(here::here("DATA", "PROCESSED", "1_ViewFullTable_no_missing_tags_census.rds")))
+ViewFullTable <- ViewFullTable_no_missing_tags_census # as.data.table(readRDS(here::here("DATA", "PROCESSED", "1_ViewFullTable_no_missing_tags_census.rds")))
 ViewFullTable <- ViewFullTable[, missing_tag_census := NULL] # remove auxiliary column
 ## add rowid for tracking
 ViewFullTable[, RowID := .I]
-
-ViewFullTable[Tag == "227850" & CensusID == 9]
 
 # Check wether all tags have the whole observations between minimum and maximum census
 ViewFullTable[, .(CensusID = list(sort(unique(CensusID)))), by = Tag][
@@ -60,13 +306,6 @@ ViewFullTable[, .(CensusID = list(sort(unique(CensusID)))), by = Tag][
   by = complete
 ]
 # NOTE: Yes, they do. All tags have complete observations between their minimum and maximum census.
-
-# Condit-derived dryad dataset for cross-checks
-bci_dryad <- as.data.table(readRDS(here::here("DATA", "DRYAD_CONDIT", "bci_dryad_condit.rds")))
-setnames(bci_dryad,
-  old = c("tag", "stemID", "treeID", "dbh", "hom"),
-  new = c("Tag", "StemID", "TreeID", "DBH", "HOM")
-)
 
 # ---- 2. Measurement error checks ----
 # Run several QC steps to identify likely measurement errors (DBH/HOM).
@@ -152,11 +391,7 @@ plot_stem <- function(data, tag) {
   return(p)
 }
 
-plot_stem(ViewFullTable, inc) /
-  plot_stem(bci_dryad, inc)
-
-# bci_dryad[Tag %in% inc[2], .(Tag, StemTag, TreeID, StemID, CensusID, DBH, HOM, codes, sp)]
-# ViewFullTable[Tag %in% inc[2], .(Tag, StemTag, TreeID, StemID, CensusID, DBH, HOM, ListOfTSM)]
+plot_stem(ViewFullTable, inc)
 
 # FIXME: For stems with multiple observations within a census (e.g., tag 003036 in census 3),
 # FIXME: we must select the measurement with the highest HOM. By definition, this corresponds
@@ -192,8 +427,7 @@ plot_stem(ViewFullTable, inc) /
 
 inc <- c("151991")
 
-plot_stem(ViewFullTable, inc) /
-  plot_stem(bci_dryad, inc)
+plot_stem(ViewFullTable, inc)
 
 ViewFullTable[Tag %in% inc][
   order(Tag, StemID, CensusID)
@@ -227,8 +461,7 @@ multi_obs_groups <- ViewFullTable[
 
 inc <- multi_obs_groups$Tag[1:6]
 
-plot_stem(ViewFullTable, inc) /
-  plot_stem(bci_dryad, inc)
+plot_stem(ViewFullTable, inc)
 
 # --
 # Step 2: For multi-row groups, compute quality control (QC) flags and HOM_max
@@ -487,9 +720,6 @@ rm(single_obs)
 rm(ViewFullTable_hom_corrected)
 gc()
 
-# saveRDS(ViewFullTable_hom_corrected_clean, here::here("DATA", "PROCESSED", "2_ViewFullTable_hom_corrected_clean.rds"))
-ViewFullTable_hom_corrected_clean <- as.data.table(readRDS(here::here("DATA", "PROCESSED", "2_ViewFullTable_hom_corrected_clean.rds")))
-
 # Include rowid for tracking
 ViewFullTable_hom_corrected_clean[, RowIDN1 := .I]
 
@@ -543,12 +773,6 @@ ViewFullTable_hom_corrected_clean[Tag %in% inc][
   order(Tag, StemID, CensusID)
 ][
   , .(Tag, StemTag, TreeID, StemID, CensusID, DBH, HOM, ListOfTSM)
-][!is.na(DBH)]
-
-bci_dryad[Tag %in% inc][
-  order(Tag, StemTag, TreeID, StemID, CensusID)
-][
-  , .(Tag, StemTag, TreeID, StemID, CensusID, DBH, HOM, codes)
 ][!is.na(DBH)]
 
 # ---- 6.1 DBH introduction errors (log-difference method) ----
@@ -677,8 +901,6 @@ multi_summary[is.infinite(stem_max_error_score), stem_max_error_score := NA_real
 # Optional: combine both summaries
 stem_summary <- rbind(single_summary, multi_summary)
 
-# saveRDS(stem_summary, here::here("DATA", "PROCESSED", "stem_summary_errors_bci.rds"))
-
 # Assign in-place
 setkey(valid_DBH, Tag, StemTag, TreeID, StemID)
 valid_DBH[stem_summary, `:=`(
@@ -711,11 +933,6 @@ ViewFullTable_measurement_error_indication <- rbindlist(list(valid_DBH, NA_DBH),
 # setorder(ViewFullTable_measurement_error_indication, Tag, StemTag, TreeID, StemID, CensusID)
 setorder(ViewFullTable_measurement_error_indication, RowIDN1)
 
-# saveRDS(
-#   ViewFullTable_measurement_error_indication,
-#   here::here("DATA", "PROCESSED", "3_ViewFullTable_measurement_error_indication.rds")
-# )
-
 # how many errors detected?
 table(ViewFullTable_measurement_error_indication$entry_error_any, useNA = "ifany")
 
@@ -729,21 +946,6 @@ ViewFullTable_measurement_error_indication[, dbh_candidate := fifelse(
   exp((log_prev + log_next) / 2),
   NA_real_
 )]
-
-# Export table with error indications
-# ---- 7. Export: Suspicious measurements for manual QC ----
-# Save rows with `stem_has_any_error == TRUE` and key diagnostics for manual
-# inspection. This CSV is the primary QC report for human reviewers.
-fwrite(
-  ViewFullTable_measurement_error_indication[stem_has_any_error == TRUE][, c(
-    "Tag", "StemTag", "TreeID", "StemID", "CensusID", "DBH", "HOM", "ListOfTSM", 
-    "entry_error_any", "error_score", "dbh_candidate"
-  )][order(Tag, StemTag, TreeID, StemID, CensusID)],
-  file = here::here("DATA", "CHECKS", "ViewFullTable_suspicious_dbh_measurements.csv"),
-  row.names = FALSE
-)
-# Guidance: inspect stems ordered by `stem_max_error_score` to prioritize
-# manual corrections. Once corrected, update DBH values and re-run taper correction.
 
 # ---- 8. Prepare DBH candidates (for taper correction) ----
 # Prepare data to correct for possible measurement errors prior to taper
@@ -799,7 +1001,7 @@ if (nrow(missing_tags) > 0) {
 ViewFullTable_measurement_error_indication[, HOM_for_taper_correction := HOM]
 
 # Load taper utilities (provides `apply_taper_correction()` and `taper()`)
-source(here::here("1_DATA_PREPARATION", "HELPER_FUNCTIONS", "taper_correction.R"))
+source(here::here("BCI_stem_reconstruction", "1_DATA_PREPARATION", "HELPER_FUNCTIONS", "taper_correction.R"))
 
 # Inspect HOM_for_taper_correction values
 range(ViewFullTable_measurement_error_indication$HOM_for_taper_correction, na.rm = TRUE)
@@ -826,15 +1028,15 @@ range(ViewFullTable_measurement_error_indication$HOM_for_taper_correction, na.rm
 # (quantile(ViewFullTable_measurement_error_indication$dbh_with_best_candidate, na.rm = TRUE) / 10) / 100
 
 ## lOAD SPECIES DATA
-
-load("./DATA/SPP_TABLE/bci_spptable.RData")
+load("./BCI_stem_reconstruction/DATA/SPP_TABLE/bci_spptable.RData")
 
 # ## Load growth forms
+bci.spptable[, Lifeform := tolower(Lifeform_RPerez_SAguilar)]
 growth_forms <- bci.spptable[, .(Mnemonic, Lifeform)]
 
-table(growth_forms$Lifeform, useNA = "ifany")
-growth_forms_to_use_tapper_corrected_dbh <- c("tree", "shrub")
-species_to_use_tapper_corrected_dbh <- growth_forms[Lifeform %in% growth_forms_to_use_tapper_corrected_dbh]$Mnemonic
+species_to_use_tapper_corrected_dbh <- growth_forms[
+  is.na(Lifeform) | grepl(pattern = "árbol|arbusto", x = Lifeform)
+]$Mnemonic
 
 ViewFullTable_taper_corrected <- apply_taper_correction(ViewFullTable_measurement_error_indication,
   # dbh input in mm
@@ -873,12 +1075,6 @@ ViewFullTable_taper_corrected[Tag %in% inc][
   )
 ][!is.na(dbh_with_best_candidate)]
 
-bci_dryad[Tag %in% inc][
-  order(Tag, StemTag, TreeID, StemID, CensusID)
-][
-  , .(Tag, StemTag, TreeID, StemID, CensusID, DBH, HOM, codes)
-][!is.na(DBH)]
-
 # Order `ViewFullTable_taper_corrected` for inspection
 setorder(ViewFullTable_taper_corrected, RowIDN1)
 
@@ -907,15 +1103,6 @@ ViewFullTable_taper_corrected <- ViewFullTable_taper_corrected[, ..select_cols]
 # make new rowid
 ViewFullTable_taper_corrected[, RowID := .I]
 
-# Save taper-corrected table
-saveRDS(
-  ViewFullTable_taper_corrected,
-  here::here("DATA", "PROCESSED", "4_ViewFullTable_taper_corrected.rds")
-)
-
-# Load saved object back (idempotent step)
-# ViewFullTable_taper_corrected <- readRDS(here::here("DATA", "PROCESSED", "4_ViewFullTable_taper_corrected.rds"))
-
 #### CHECK SINGLE VS MULTIPLE-STEMS TAGS ----
 ## ---- Mark single stem tags ------------------------------------------------------
 id_single_stem_tags <- ViewFullTable_taper_corrected[
@@ -943,15 +1130,6 @@ tags_info <- round(table(id_single_stem_tags$all_stemtag_na & id_single_stem_tag
 ## Export percentage of single vs multiple stem tags
 single_stem_percentage <- tags_info["TRUE"]
 multiple_stem_percentage <- tags_info["FALSE"]
-
-write.csv(
-  data.frame(
-    Category = c("Single Stem", "Multiple Stems"),
-    Percentage = c(single_stem_percentage, multiple_stem_percentage)
-  ),
-  file = here::here("1_DATA_PREPARATION", "single_vs_multiple_stem_tags_percentage.csv"),
-  row.names = FALSE
-)
 
 # select tags with all StemTag NA but only one unique StemID
 # These have been already identified as single individual
@@ -990,7 +1168,7 @@ inspectdf::inspect_na(ViewFullTable_taper_corrected[Tag %in% tags_with_one_stemi
 single_stem_tags <- id_single_stem_tags[Tag %in% tags_with_one_stemid_no_stemtag]$Tag
 multiple_stem_tags <- id_single_stem_tags[!Tag %in% tags_with_one_stemid_no_stemtag]$Tag
 
-#! SANITY CHECKS
+# ! SANITY CHECKS
 # Are the counts (single + multiple) correct?
 (length(single_stem_tags) + length(multiple_stem_tags)) ==
   length(unique(ViewFullTable_taper_corrected$Tag)) # should be TRUE
@@ -1012,86 +1190,86 @@ setorder(ViewFullTable_single_vs_multiple_stem_tags, RowID)
 rm(ViewFullTable_taper_corrected)
 gc()
 
-#! SANITY CHECKS
+# ! SANITY CHECKS
 length(unique(ViewFullTable_single_vs_multiple_stem_tags[single_stem_tags == TRUE]$Tag)) == length(single_stem_tags)
 length(unique(ViewFullTable_single_vs_multiple_stem_tags[single_stem_tags == FALSE]$Tag)) == length(multiple_stem_tags)
 
 table(ViewFullTable_single_vs_multiple_stem_tags$single_stem_tags, useNA = "ifany")
 
-# ------------------------------------------------------------------
-# Section: trajectory comparison against Dryad 'condit' stemIDs
-# ------------------------------------------------------------------
-# Summarize DBH by Tag and stem identifier in both datasets and check if
-# the sorted sums match.  If they differ, the reconstructed trajectory
-# deviates from the original assignment.
-# remove indices for faster processing
-setindex(ViewFullTable_single_vs_multiple_stem_tags, NULL)  # removes all indices
-indat_compare <- copy(ViewFullTable_single_vs_multiple_stem_tags)
-table(indat_compare$single_stem_tags)
-indat_compare <- indat_compare[CensusID <= 8]
-indat_compare <- indat_compare[Tag %in% tags_with_one_stemid_no_stemtag]
-indat_compare <- indat_compare[, Tag := as.character(Tag)][, StemID := as.numeric(as.character(StemID))]
+# # ------------------------------------------------------------------
+# # Section: trajectory comparison against Dryad 'condit' stemIDs
+# # ------------------------------------------------------------------
+# # Summarize DBH by Tag and stem identifier in both datasets and check if
+# # the sorted sums match.  If they differ, the reconstructed trajectory
+# # deviates from the original assignment.
+# # remove indices for faster processing
+# setindex(ViewFullTable_single_vs_multiple_stem_tags, NULL) # removes all indices
+# indat_compare <- copy(ViewFullTable_single_vs_multiple_stem_tags)
+# table(indat_compare$single_stem_tags)
+# indat_compare <- indat_compare[CensusID <= 8]
+# indat_compare <- indat_compare[Tag %in% tags_with_one_stemid_no_stemtag]
+# indat_compare <- indat_compare[, Tag := as.character(Tag)][, StemID := as.numeric(as.character(StemID))]
 
-#! Check how condit did when codes are involved
-# add DBH per Tag and ReconstructedStemID
-quantile(indat_compare$DBH, na.rm = TRUE)
-quantile(bci_dryad$DBH, na.rm = TRUE)
+# # ! Check how condit did when codes are involved
+# # add DBH per Tag and ReconstructedStemID
+# quantile(indat_compare$DBH, na.rm = TRUE)
+# quantile(bci_dryad$DBH, na.rm = TRUE)
 
-indat_compare_summary <- indat_compare[!is.na(DBH), sum(DBH, na.rm = TRUE), by = .(Tag, StemID)]
-indat_compare_summary[, TotalDBH := V1]
-indat_compare_summary[, V1 := NULL]
+# indat_compare_summary <- indat_compare[!is.na(DBH), sum(DBH, na.rm = TRUE), by = .(Tag, StemID)]
+# indat_compare_summary[, TotalDBH := V1]
+# indat_compare_summary[, V1 := NULL]
 
-dryad_summary <- bci_dryad[!is.na(DBH), sum(DBH, na.rm = TRUE), by = .(Tag, StemID)]
-dryad_summary[, TotalDBH_Condit := V1]
-dryad_summary[, V1 := NULL]
+# dryad_summary <- bci_dryad[!is.na(DBH), sum(DBH, na.rm = TRUE), by = .(Tag, StemID)]
+# dryad_summary[, TotalDBH_Condit := V1]
+# dryad_summary[, V1 := NULL]
 
-# for each StemID in dryad summary, sort TotalDBH_Condit. do the same for each
-# ReconstructedStemID in indat summary. Then, compare the sorted TotalDBH_Condit
-# with the sorted TotalDBH for each tag. If they are the same, then the
-# trajectories are the same, if they are different, then the trajectories are
-# different.
+# # for each StemID in dryad summary, sort TotalDBH_Condit. do the same for each
+# # ReconstructedStemID in indat summary. Then, compare the sorted TotalDBH_Condit
+# # with the sorted TotalDBH for each tag. If they are the same, then the
+# # trajectories are the same, if they are different, then the trajectories are
+# # different.
 
-# Pre-split data (fast!)
-dryad_split <- split(dryad_summary[Tag %in% tags_with_one_stemid_no_stemtag], by = "Tag", keep.by = FALSE)
-indat_split <- split(indat_compare_summary[Tag %in% tags_with_one_stemid_no_stemtag], by = "Tag", keep.by = FALSE)
+# # Pre-split data (fast!)
+# dryad_split <- split(dryad_summary[Tag %in% tags_with_one_stemid_no_stemtag], by = "Tag", keep.by = FALSE)
+# indat_split <- split(indat_compare_summary[Tag %in% tags_with_one_stemid_no_stemtag], by = "Tag", keep.by = FALSE)
 
-length(dryad_split)
-length(indat_split)
+# length(dryad_split)
+# length(indat_split)
 
-compare_differences <- function(tag) {
-  dryad_tag <- dryad_split[[as.character(tag)]]
-  indat_tag <- indat_split[[as.character(tag)]]
-  if (is.null(dryad_tag) || is.null(indat_tag)) {
-    return(NA)
-  }
-  setorder(dryad_tag, TotalDBH_Condit)
-  setorder(indat_tag, TotalDBH)
-  all(dryad_tag$TotalDBH_Condit == indat_tag$TotalDBH)
-}
+# compare_differences <- function(tag) {
+#   dryad_tag <- dryad_split[[as.character(tag)]]
+#   indat_tag <- indat_split[[as.character(tag)]]
+#   if (is.null(dryad_tag) || is.null(indat_tag)) {
+#     return(NA)
+#   }
+#   setorder(dryad_tag, TotalDBH_Condit)
+#   setorder(indat_tag, TotalDBH)
+#   all(dryad_tag$TotalDBH_Condit == indat_tag$TotalDBH)
+# }
 
-setkey(dryad_summary, Tag)
-setkey(indat_compare_summary, Tag)
+# setkey(dryad_summary, Tag)
+# setkey(indat_compare_summary, Tag)
 
-comparison_results <- dryad_summary[indat_compare_summary,
-  .(equal = all(sort(TotalDBH_Condit) == sort(TotalDBH))),
-  by = .EACHI,
-  on = "Tag"
-]
-(table(comparison_results$equal, useNA = "ifany") / nrow(comparison_results)) * 100
-# TRUE 
-#  100
+# comparison_results <- dryad_summary[indat_compare_summary,
+#   .(equal = all(sort(TotalDBH_Condit) == sort(TotalDBH))),
+#   by = .EACHI,
+#   on = "Tag"
+# ]
+# (table(comparison_results$equal, useNA = "ifany") / nrow(comparison_results)) * 100
+# # TRUE
+# #  100
 
-## ALL SINGLE STEM TAGS ARE THE SAME AS CONDIT, WHICH IS EXPECTED SINCE THEY WERE NOT CHANGED IN THE RECONSTRUCTION.
-## THIS PROCESS SUGGEST THAT DP RECONSTRCTION SHOULD FOCUS ON THE MULTIPLE-STEMMED TAGS.
+# ## ALL SINGLE STEM TAGS ARE THE SAME AS CONDIT, WHICH IS EXPECTED SINCE THEY WERE NOT CHANGED IN THE RECONSTRUCTION.
+# ## THIS PROCESS SUGGEST THAT DP RECONSTRCTION SHOULD FOCUS ON THE MULTIPLE-STEMMED TAGS.
 
-ViewFullTable_single_vs_multiple_stem_tags
-setorder(ViewFullTable_single_vs_multiple_stem_tags, RowID)
+# ViewFullTable_single_vs_multiple_stem_tags
+# setorder(ViewFullTable_single_vs_multiple_stem_tags, RowID)
 
-# SAVE SINGLE VS MULTI-STEM COLUMN TABLE
-saveRDS(
-  ViewFullTable_single_vs_multiple_stem_tags,
-  here::here("DATA", "PROCESSED", "5_ViewFullTable_single_vs_multiple_stem_tags.rds")
-)
+# # SAVE SINGLE VS MULTI-STEM COLUMN TABLE
+# saveRDS(
+#   ViewFullTable_single_vs_multiple_stem_tags,
+#   here::here("DATA", "PROCESSED", "5_ViewFullTable_single_vs_multiple_stem_tags.rds")
+# )
 
 # ---------------------------------------------------------------------------
 # merge the categorical labels back into the full observation table so we can
@@ -1108,12 +1286,12 @@ unique(ViewFullTable_single_vs_multiple_stem_tags[is.na(Lifeform), .(Mnemonic, G
 tags_per_growth_form <- unique(ViewFullTable_single_vs_multiple_stem_tags[, .(Tag, single_stem_tags, Lifeform)])
 # check individuals epr growth form with multiple vs single stem
 tags_per_growth_form[
-    , .N,
-    by = .(single_stem_tags, Lifeform)
+  , .N,
+  by = .(single_stem_tags, Lifeform)
 ][order(single_stem_tags, -N)]
 
 # save the enriched observation table (typo in filename preserved for legacy)
-saveRDS(ViewFullTable_single_vs_multiple_stem_tags, "./DATA/PROCESSED/6_ViewFullTable_taper_corrected_growth_forms.rds")
+saveRDS(ViewFullTable_single_vs_multiple_stem_tags, "./BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds")
 
 # make sure SpeciesName in ViewFullTable_single_vs_multiple_stem_tags matches your full "Genus species" format
 nobs_growth_form <- ViewFullTable_single_vs_multiple_stem_tags[!is.na(DBH)][
@@ -1122,8 +1300,8 @@ nobs_growth_form <- ViewFullTable_single_vs_multiple_stem_tags[!is.na(DBH)][
 ]
 
 nobs_growth_form[
-    , .N,
-    by = Lifeform
+  , .N,
+  by = Lifeform
 ][order(-N)]
 
 # ---- 10. Check all tags x censusid are complete ----
