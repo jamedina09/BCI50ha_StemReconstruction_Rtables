@@ -1,5 +1,5 @@
 # ========================================================================
-# SCRIPT: 1_compare_tables1_and_tables2.R
+# SCRIPT: compare_tables1_and_tables2.R
 # PURPOSE: Reconcile two BCI `ViewFullTable` datasets and produce a single
 #          validated, analysis-ready dataset with complete Tag x Census mapping.
 #
@@ -393,34 +393,19 @@ plot_stem <- function(data, tag) {
 
 plot_stem(ViewFullTable, inc)
 
-# FIXME: For stems with multiple observations within a census (e.g., tag 003036 in census 3),
-# FIXME: we must select the measurement with the highest HOM. By definition, this corresponds
-# FIXME: to a smaller DBH due to stem taper.
-
-# FIXME: STEMIDs are assigned in the database to distinguish multiple stems within each
-# FIXME: census. This allows us to use StemID to select the measurement with the highest HOM
-# FIXME: for each census, which is required for the taper correction step.
-
-# FIXME: Why is taper correction needed?
-# FIXME: We developed a method to track the identity of each stem across censuses, but this
-# FIXME: approach requires growth, ingrowth, and mortality data standardized at the same
-# FIXME: measurement height (HOM = 1.3 m, i.e., DBH).
-
-# FIXME: Taper correction will be applied to stems with HOM > 1.3 m and code "B".
-
-# FIXME: For stems measured below 1.3 m (HOM < 1.3), taper correction is also required,
-# FIXME: since DBH must be standardized to 1.3 m for accurate stem matching.
-
-# FIXME: For stems with HOM > 1.3 m but without code "B", these may represent cases
-# FIXME: such as stem swelling or bifurcation at 1.3 m, where measurements were taken above
-# FIXME: that height. Since stem matching requires measurements at 1.3 m, taper correction
-# FIXME: must also be applied in these cases.
-
-# FIXME: This correction is only used for stem matching purposes. The original DBH
-# FIXME: values in the R tables will remain unchanged.
-
-# FIXME: If no stemtag at all after 2010, it means the tag/tree is not multiple stemmed, so,
-# FIXME: it is the same tree (at least for the last three censuses).
+# NOTE: Measurement-selection and taper-correction rules used downstream
+#   - When a (Tag, StemID, Census) has multiple observations (e.g. tag 003036,
+#     census 3), select the row with the highest HOM (smallest DBH due to taper).
+#   - StemIDs distinguish stems within a census, enabling the HOM selection step.
+#   - Taper correction is needed because stem matching across censuses requires
+#     all measurements standardized at HOM = 1.3 m (DBH). It is applied to:
+#       (i) HOM > 1.3 m with code "B" (buttressed),
+#       (ii) HOM < 1.3 m (correct upward to 1.3 m),
+#       (iii) HOM > 1.3 m without "B" (e.g. swelling/bifurcation at 1.3 m).
+#   - Correction is used only for stem matching; original DBH values in the R
+#     tables remain unchanged.
+#   - Absence of any stem tag after 2010 implies a single-stemmed tree (at
+#     least across the last three censuses).
 
 # When the measurements between stems were not clearly distinguishable throughout
 # In some censuses the original stemIDs were retained, as in the case of tag 151991.
@@ -759,15 +744,11 @@ ViewFullTable_hom_corrected_clean
 # Check example tags where stem IDs were reassigned
 inc <- c("001112")
 
-# FIXME: For those stems with the same stemid in multiple census, we can rely on
-# FIXME: those stemids to try to identify possible DBH introduction errors by looking
-# FIXME:  at the temporal log-differences. For those stems with different stemids in
-# FIXME:  multiple census, we can not rely on those stemids to try to identify possible
-# FIXME:  DBH introduction errors by looking at the temporal log-differences, since we
-# FIXME:  can not be sure about the identity of the stem across censuses.
-# NOTE: This process will help the stem matching algorithm to be more accurate, since
-# NOTE:  it will be based on more accurate DBH values. This process won't change the
-# NOTE:  dbh values for the user in the R tables.
+# NOTE: log-DBH-difference checks for data-entry errors are reliable only
+# for stems with a consistent StemID across censuses. Stems whose StemIDs
+# change cannot be tracked confidently and are excluded from that check.
+# This correction feeds the matching algorithm; user-facing DBH values in
+# the R tables are not modified.
 
 ViewFullTable_hom_corrected_clean[Tag %in% inc][
   order(Tag, StemID, CensusID)

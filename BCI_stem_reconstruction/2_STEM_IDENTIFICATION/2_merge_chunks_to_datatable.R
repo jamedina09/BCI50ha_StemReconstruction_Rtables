@@ -141,23 +141,13 @@ ds_final <- data.table::as.data.table(ds_final)
 # the single merged Parquet file has been written to disk.
 unlink(temp_dir, recursive = TRUE)
 
-chk <- ds_final[, .(TreeID, Tag, StemID, TrueStemID, ReconstructedStemID, StemTag, CensusID, DBH, obs_row_id)][!is.na(StemTag)]
-
-unique(chk[StemID != ReconstructedStemID]$CensusID)
-
 # =============================================================================
 # 4. VALIDATION HELPER
 # =============================================================================
 
-# compare_columns() performs a column-by-column equality check between two
-# data.tables.  Strategy:
-#   1. Find the set of column names present in both tables.
-#   2. Coerce each column pair to factors with a unified level set, which
-#      correctly handles mixed types (e.g. character vs. numeric) and
-#      explicit NA values (addNA() adds NA as a proper factor level).
-#   3. Compare integer codes of the aligned factors; if every code matches,
-#      the column is "Similar", otherwise "Different".
-# Columns present in only one table are silently ignored.
+# compare_columns() performs column-by-column equality checks between two
+# data.tables using unified factor levels to handle mixed types and NAs
+# correctly. Columns present in only one table are silently ignored.
 # Returns: data.table with columns 'column' and 'result' (one row per shared column).
 compare_columns <- function(dt1, dt2) {
     cols <- intersect(names(dt1), names(dt2))
@@ -213,8 +203,6 @@ setorder(input_multi_stem_data, RowID)
 # The DP algorithm stores the species mnemonic in a column named 'species',
 # which duplicates the original 'Mnemonic' column from the raw input.
 # Verify they are identical for every row before dropping the redundant copy.
-# NOTE: isTRUE(unique(...)) returns TRUE only when the comparison vector
-# contains exactly one distinct value and that value is TRUE (all rows agree).
 if (isTRUE(unique(ds_final$Mnemonic == ds_final$Species))) {
     cat("OK: 'Mnemonic' and 'species' columns are identical; dropping 'species'.\n")
     ds_final[, Species := NULL]
@@ -274,8 +262,6 @@ original_names <- names(xraw)
 # Columns added by the DP stem-identification algorithm that do not exist in
 # the original raw table.  Only the four active columns are retained in the
 # final output; posterior-probability columns are excluded to reduce file size.
-# To include them, uncomment the relevant lines and ensure the rbind schemas
-# in the single-stem and multi-stem blocks are updated accordingly.
 new_names <- c(
     "TrueStemID", # definitive stem identifier assigned by the DP run
     "ReconstructedStemID", # stem ID reconstructed across historical censuses
@@ -285,10 +271,6 @@ new_names <- c(
     "ReconstructionMethod", # algorithm branch taken (e.g., "DP", "fallback")
     "DP_FallbackReason", # reason a fallback was triggered; NA when DP succeeded
     "obs_row_id", # sequential row number within each tag, assigned by the DP during processing
-    # "DP_PosteriorTop1ID" ,    # top posterior assignment: stem ID
-    # "DP_PosteriorTop1Prob" # ,  # top posterior assignment: posterior probability
-    # "DP_PosteriorTop2ID",    # second-best posterior assignment: stem ID
-    # "DP_PosteriorTop2Prob"   # second-best posterior assignment: probability
     "DP_PosteriorReconstructedProb"
 )
 
@@ -325,13 +307,9 @@ input_single_stem_data[, ReconstructedStemID := StemID]
 input_single_stem_data[, ReconstructionMethod := as.character(ReconstructionMethod)]
 input_single_stem_data[, ReconstructionMethod := "single_stem_tag_no_reconstructed"]
 
-input_single_stem_data[is.na(ReconstructedStemID)]
-
-# Verify that single-stem records with NA StemID also lack a DBH value.
-# If any NA-StemID record has a non-NA DBH, it would represent an ambiguous
-# placement that needs investigation before the final merge.
+# Verify that single-stem records with NA StemID also lack a DBH value
+# (NA StemID with non-NA DBH would indicate an ambiguous placement).
 unique(input_single_stem_data[is.na(StemID)]$DBH)
-# Expected: a single NA — confirms all NA-StemID records also have no DBH measurement.
 
 # Combine single-stem (from raw) and multi-stem (from DP output) into one table
 complete_dataset <- rbind(input_single_stem_data, output_multistem_data)
@@ -344,10 +322,6 @@ if (nrow(complete_dataset) == nrow(xraw)) {
 } else {
     stop("\nRow count mismatch: complete dataset has ", nrow(complete_dataset), " rows, but raw table has ", nrow(xraw), " rows.")
 }
-
-inc <- unique(output_multistem_data[is.na(DBH), ReconstructedStemID])
-output_multistem_data[ReconstructedStemID %in% inc[5], .(Tag, StemID, TrueStemID, ReconstructedStemID, StemTag, CensusID, DBH)]
-rm(inc)
 
 # =============================================================================
 # 9. FINAL VALIDATION: COMPLETE DATASET VS. RAW TABLE (SHARED COLUMNS)
@@ -394,14 +368,11 @@ cat("  ReconstructionMethod dist.:\n")
 print(table(complete_dataset$ReconstructionMethod, useNA = "ifany"))
 
 table(complete_dataset$ReconstructionMethod, useNA = "ifany")
-# NOTE: There are 47 rows with ReconstructionMethod == "skipped_no_data"
-# which means that DP did not assign a ReconstructedStemID to these rows because they had no data
-# Fill in ReconstructedStemID for these rows using StemID
+# Fill ReconstructedStemID for skipped_no_data rows (DP had no data to assign);
+# StemID is safe here because these rows had NA ReconstructedStemID but valid StemID.
 
 chk_skipped_no_data_tags <- unique(complete_dataset[ReconstructionMethod == "skipped_no_data"]$Tag)
 complete_dataset[Tag %in% chk_skipped_no_data_tags, .(Tag, CensusID, ReconstructedStemID, StemID, DBH, ReconstructionMethod)][order(Tag, CensusID)]
-# NOTE: all of them in census 9 and all have NA in ReconstructedStemID but not
-# in StemID, so we can fill them with StemID without introducing any errors
 
 complete_dataset[
     Tag %in% chk_skipped_no_data_tags & is.na(ReconstructedStemID)
@@ -412,11 +383,8 @@ complete_dataset[
     ReconstructedStemID := StemID
 ]
 
+# Sanity: skipped tags (no DBH/CensusID data) are expected to have NA obs_row_id.
 complete_dataset[is.na(obs_row_id) & single_stem_tags == FALSE]
-# all this are skipped tags because they didnt have any data (no DBH, no
-# censusid, etc) and were not processed by the DP algorithm. This is expected.
-
-# We refilled the ReconstructedStemID for the skipped_no_data rows with the original StemID, so now there should be no NA values in ReconstructedStemID for the multi-stem subset.
 
 # Directory containing posterior feather files from the stem identification run
 # (expand tilde to user home directory for portability)

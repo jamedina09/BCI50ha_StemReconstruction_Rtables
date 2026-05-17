@@ -274,16 +274,6 @@ stopifnot(
 #   show_levels(ViewFullTable, n_to_print = Inf, output = "print")
 ################################################################################
 show_levels <- function(df, n_to_print = 10, output = "print") {
-  # PURPOSE:
-  #   Show all unique values in categorical columns for data validation
-  # PARAMETERS:
-  #   df: Data frame or data.table to examine
-  #   n_to_print: Max number of unique values to display (Inf = show all)
-  #   output: "print" to print values, "df" to return data frame
-  # OUTPUT:
-  #   If output="print": Prints formatted text showing unique values
-  #   If output="df": Returns data frame with levels as rows, columns as vars
-  # -----------------------------------------------------------------------
   cat_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
   if (length(cat_cols) == 0) {
     if (output == "print") {
@@ -415,7 +405,7 @@ ViewFullTable[, Raw_StemID := StemID] # preserve original DB StemID
 setkey(ViewFullTable, TreeID)
 setkey(ViewFullTable, Tag)
 
-## Check wether tag and treeid can be interchanged
+## DIAGNOSTIC: Verify Tag <-> TreeID 1:1 mapping
 ViewFullTable[, .(n_tags = uniqueN(Tag)), by = TreeID][order(-n_tags)]
 ViewFullTable[, .(n_treeid = uniqueN(TreeID)), by = Tag][order(-n_treeid)]
 
@@ -557,13 +547,10 @@ fwrite(show_levels(ViewFullTable, n_to_print = Inf, output = "df"),
 # Apply this immediately after the StemID overwrite block
 # ViewFullTable <- ViewFullTable[!grepl("_NA$", StemID)]
 
-# To select the fixed columns, this is an iterative process. For other forestgeo
-# sites, and for original bci data, the stemid is different However, the
-# reconstructed algorithm change the wrong used stemids So, we need to base the
-# R table reconstruction using the reconstructedstemids Iterative because we
-# need to find the minimum identifiers that are fixed across censuses, and that
-# can be used to reconstruct the stemid
-
+# fixed_columns: the minimum identifier set that does not change across
+# censuses. Reconstruction is keyed on ReconstructedStemID (legacy database
+# StemIDs were rewritten in step 2); StemID below is the composite
+# TreeID_ReconstructedStemID created earlier.
 fixed_columns <- c(
   "PlotName", "PlotID",
   "Mnemonic",
@@ -824,11 +811,9 @@ if (identical(seq_along(ViewFullTable_split), unique(DT_Status$census))) {
 #   (StemID × census) and avoids any matrix indexing later.  After this
 #   step the Status field no longer contains "broken below".
 #
-# NOTE on rule for plain "dead" / "stem dead":
-#   These are taken at face value here (mapped to "D" further below).
-#   The pipeline still treats a "D" as real UNLESS the same stem appears
-#   alive ("A") in a later census, in which case fix_resurrections() in
-#   Section 9 backfills the spurious deads.  No change is needed here.
+# Rule: "dead" / "stem dead" are taken as terminal here (mapped to "D" below).
+# fix_resurrections() in Section 9 will later backfill any "D" that is
+# contradicted by a later "A" for the same stem.
 # ------------------------------------------------------------------------
 n_broken_total <- DT_Status[Status == "broken below", .N]
 n_broken_with_dbh <- DT_Status[Status == "broken below" & !is.na(DBH), .N]
@@ -882,10 +867,9 @@ original_status <- gsub("alive", "A", original_status)
 # We'll distinguish between these in Section 6
 original_status[is.na(original_status)] <- "N"
 
-# NOTE: For BCI data, broken below in some cases have DBH and in other cases it doesnt.
-# Step 3: "broken below" → already resolved above by DBH-aware rule
-# (rows have been rewritten to "alive" or "dead" before the wide pivot,
-# so this gsub is a defensive no-op — kept for documentation).
+# BCI rule: "broken below" with DBH → "alive"; without DBH → "dead".
+# Already resolved above before the wide pivot, so this gsub is a defensive
+# no-op kept only for documentation.
 original_status <- gsub("broken below", "G", original_status)
 
 # Step 4: Everything else → "D"
@@ -2457,9 +2441,9 @@ compute_tree_for_row_checking <- function(stem_strings) {
 tree_histories_list <- lapply(new_status_split, compute_tree_for_row)
 
 # Optional diagnostic: re-run with the strict tree_exists_check() guard
-# and report which trees would have been flagged invalid. This is OFF by
-# default because the strict check returns NA for trees ending in P+D/G,
-# which is a known false positive (see FIXME in tree_exists_check()).
+# and report which trees would have been flagged invalid. OFF by default
+# because the strict check returns NA for trees ending in P+D/G (known
+# false positive).
 RUN_TREE_EXISTS_DIAGNOSTIC <- FALSE
 if (RUN_TREE_EXISTS_DIAGNOSTIC) {
   tree_histories_list_checking <- lapply(new_status_split, compute_tree_for_row_checking)
@@ -3438,33 +3422,6 @@ impute_tree_coords <- function(split_list,
 }
 
 cat("🗺️  Imputing missing PX / PY / QuadratName across censuses...\n")
-# ViewFullTable_split[[1]][, ..ViewFullTable_columns_to_keep]
-# inspectdf::inspect_na(ViewFullTable_split[[1]][, ..ViewFullTable_columns_to_keep])
-
-# FIXME: fill in dates
-
-## create sample dataset for impute_tree_coords testing
-test_dt <- list(
-  data.table(
-    TreeID = c(1, 1, 1, 2, 2, 2, 2),
-    Tag = c("A", "A", "A", "B", "B", "B", "B"),
-    PX = c(NA, NA, 2, 5, 5, 4, NA),
-    PY = c(NA, NA, 3, 10, 10, 9, NA),
-    QuadratName = c("Q", NA, NA, "Q1", "Q1", NA, "Q3")
-  )
-)
-
-test_dt
-
-test_dt_corr <- impute_tree_coords(
-  split_list = test_dt,
-  id_cols = c("TreeID", "Tag"),
-  coord_cols = c("PX", "PY", "QuadratName"),
-  strict = FALSE,
-  multi_val = "mode"
-)
-
-test_dt_corr
 
 ViewFullTable_split <- impute_tree_coords(
   split_list = ViewFullTable_split,
@@ -3584,88 +3541,6 @@ date_mode <- function(x) {
   ux <- unique(x)
   ux[which.max(tabulate(match(x, ux)))]
 }
-
-# ============================================================================
-# TEST DATA
-# ============================================================================
-
-set.seed(123)
-
-# Census 1
-census1_test <- data.table(
-  TreeID = c(1, 1, 1, 1, 2, 2, 3, 4, 5, 6),
-  Tag = c(101, 101, 101, 101, 102, 102, 103, 104, 105, 106),
-  QuadratName = c("Q1", "Q1", "Q1", "Q1", "Q1", "Q1", "Q2", "Q2", "Q2", "Q3"),
-  ExactDate = as.Date(c(
-    "1981-06-12", "1981-06-12", "1981-06-15", NA, # Tree 1: multiple obs, mode = 1981-06-12
-    "1981-06-12", NA, # Tree 2: one value, one NA
-    NA, # Tree 3: NA (should get Q2 mode)
-    "1981-06-20", # Tree 4: has value
-    NA, # Tree 5: NA (should get Q2 mode)
-    NA # Tree 6: NA (Q3 has no other dates)
-  )),
-  PX = c(10, 10, 10, 10, 20, 20, 30, 40, 50, 60),
-  PY = c(15, 15, 15, 15, 25, 25, 35, 45, 55, 65)
-)
-
-# Census 2
-census2_test <- data.table(
-  TreeID = c(1, 2, 2, 2, 3, 4, 5, 6, 7),
-  Tag = c(101, 102, 102, 102, 103, 104, 105, 106, 107),
-  QuadratName = c("Q1", "Q1", "Q1", "Q1", "Q2", "Q2", "Q2", "Q3", "Q3"),
-  ExactDate = as.Date(c(
-    "1985-07-10", # Tree 1: different date than census 1 (expected!)
-    "1985-07-10", "1985-07-10", "1985-07-12", # Tree 2: mode = 1985-07-10
-    NA, # Tree 3: NA (should get Q2 value)
-    "1985-07-15", # Tree 4: has value
-    "1985-07-15", # Tree 5: has value
-    NA, # Tree 6: NA
-    "1985-08-01" # Tree 7: has value
-  )),
-  PX = c(10, 20, 20, 20, 30, 40, 50, 60, 70),
-  PY = c(15, 25, 25, 25, 35, 45, 55, 65, 75)
-)
-
-test_data <- list(census1_test, census2_test)
-
-# ============================================================================
-# RUN TESTS
-# ============================================================================
-
-cat("\n===== STRICT MODE (only within-tree imputation) =====\n")
-result_strict <- impute_tree_dates(test_data, strict = TRUE)
-
-cat("\n\nCensus 1 results (strict):\n")
-print(result_strict[[1]][order(TreeID)])
-
-cat("\n\nCensus 2 results (strict):\n")
-print(result_strict[[2]][order(TreeID)])
-
-cat("\n\n===== NON-STRICT MODE (tree + quadrat imputation) =====\n")
-result_nonstrict <- impute_tree_dates(test_data, strict = FALSE)
-
-cat("\n\nCensus 1 results (non-strict):\n")
-print(result_nonstrict[[1]][order(TreeID)])
-
-cat("\n\nCensus 2 results (non-strict):\n")
-print(result_nonstrict[[2]][order(TreeID)])
-
-# ============================================================================
-# CHECK TESTS
-# ============================================================================
-
-result_strict[[1]] <- result_strict[[1]][, .(TreeID, QuadratName, ExactDate)]
-result_strict[[2]] <- result_strict[[2]][, .(TreeID, QuadratName, ExactDate)]
-
-result_nonstrict[[1]] <- result_nonstrict[[1]][, .(TreeID, QuadratName, ExactDate)]
-result_nonstrict[[2]] <- result_nonstrict[[2]][, .(TreeID, QuadratName, ExactDate)]
-
-list(
-  census1_test[, .(TreeID, QuadratName, ExactDate)],
-  census2_test[, .(TreeID, QuadratName, ExactDate)]
-)
-result_strict
-result_nonstrict
 
 ViewFullTable_split <- impute_tree_dates(
   split_list = ViewFullTable_split,
