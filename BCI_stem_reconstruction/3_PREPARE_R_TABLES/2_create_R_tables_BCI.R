@@ -56,7 +56,7 @@
 #                        live stem at last census: D→G; A and P preserved).
 #                        This is the canonical exported per-stem code.
 #   tree_histories       per-tree encounter history aggregated from all
-#                        stems of a Tag via tree_state() (Section 11).
+#                        stems of a TreeID via tree_state() (Section 11).
 #   DBHs                 numeric matrix [n_stems x n_censuses] of DBH,
 #                        built once in Section 8 and reused throughout.
 #   Rstatus              column name in the EXPORTED tables holding the
@@ -162,23 +162,20 @@ site <- "bci" # ⚠️ CHANGE THIS for your site (e.g., "bci", "scbi", "hkk")
 cat("Processing site:", site, "\n")
 
 # 3. Input folder containing ViewFullTable and ViewTaxonomy CSV files
-# INPUT_folder <- file.path(main_path, "DATA", "PROCESSED", "20260503_011038_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp")
-# INPUT_folder <- file.path(main_path, "DATA", "PROCESSED", "20260505_224445_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp")
-INPUT_folder <- file.path(main_path, "DATA", "PROCESSED", "20260507_183832_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp")
-
+INPUT_folder <- file.path(main_path, "BCI_stem_reconstruction", "DATA", "PROCESSED")
 # ℹ️ Files required:
 #    - ViewFullTable_[site].csv (tab-delimited)
 #    - ViewTaxonomy_[site].csv (tab-delimited)
 
 # 4. Output folder for final .Rdata files
-OUTPUT_folder <- file.path(main_path, "DATA", "RTABLES")
+OUTPUT_folder <- file.path(main_path, "BCI_stem_reconstruction", "DATA", "RTABLES")
 if (!dir.exists(OUTPUT_folder)) {
   dir.create(OUTPUT_folder, recursive = TRUE)
   cat("✓ Created OUTPUT folder:", OUTPUT_folder, "\n")
 }
 
 # 5. Diagnostics folder for QA/QC reports
-CHECK_folder <- file.path(main_path, "3_PREPARE_R_TABLES/CHECKS")
+CHECK_folder <- file.path(main_path, "BCI_stem_reconstruction", "3_PREPARE_R_TABLES", "CHECKS")
 if (!dir.exists(CHECK_folder)) {
   dir.create(CHECK_folder, recursive = TRUE)
   cat("✓ Created CHECKS folder:", CHECK_folder, "\n")
@@ -348,7 +345,7 @@ cat("📂 Loading ViewFullTable_RAW...\n")
 
 ViewFullTable_RAW <- as.data.table(readRDS(file.path(
   INPUT_folder,
-  "7_complete_dataset_with_reconstructed_stemids.rds"
+  "complete_dataset_with_reconstructed_stemids.rds"
 )))
 
 # ── Standardize column types ──────────────────────────────────────────────────
@@ -370,16 +367,17 @@ ViewFullTable_RAW <- as.data.table(readRDS(file.path(
 #   QuadratName              → character : codes like "0001" must stay as strings;
 #                                          integer coercion silently drops leading zeros
 ViewFullTable_RAW <- transform(ViewFullTable_RAW,
-  PlotName            = as.factor(PlotName),
-  PlotID              = as.factor(PlotID),
-  CensusID            = as.numeric(as.character(CensusID)), # factor → character → numeric
-  ExactDate           = as.Date(ExactDate),
-  Tag                 = as.character(Tag),
+  PlotName = as.factor(PlotName),
+  PlotID = as.factor(PlotID),
+  CensusID = as.numeric(as.character(CensusID)), # factor → character → numeric
+  ExactDate = as.Date(ExactDate),
+  Tag = as.character(Tag),
+  TreeID = as.character(TreeID),
   ReconstructedStemID = as.character(ReconstructedStemID),
-  StemID              = as.character(StemID),
-  StemTag             = as.character(StemTag),
-  TrueStemID          = as.character(TrueStemID),
-  QuadratName         = as.character(QuadratName) # preserve leading zeros
+  StemID = as.character(StemID),
+  StemTag = as.character(StemTag),
+  TrueStemID = as.character(TrueStemID),
+  QuadratName = as.character(QuadratName) # preserve leading zeros
 )
 
 # ── DIAGNOSTIC: Verify ReconstructedStemID coverage relative to StemID ───────
@@ -399,30 +397,40 @@ ViewFullTable_RAW[!is.na(StemID) & single_stem_tags == FALSE, .(
 # 1. Create a copy and apply the function
 ViewFullTable <- copy(ViewFullTable_RAW)
 
-# ── FINAL STEP: Overwrite StemID with stable Tag_ReconstructedStemID ──────────
+# ── FINAL STEP: Overwrite StemID with stable TreeID_ReconstructedStemID ──────────
 # WHY: The original DB StemID is NOT stable across censuses. ForestGEO can assign
 #   different integer IDs to the same physical stem in different censuses (e.g.,
 #   when a stem resprout-codes and is re-entered with a new StemID). The
 #   ReconstructedStemID assigned by DP IS stable: it tracks the same biological
 #   stem across all censuses regardless of DB StemID changes.
-# CONSTRUCTION: paste(Tag, ReconstructedStemID, sep="_") produces a globally
-#   unique key combining tree identity (Tag) with stem identity (ReconstructedStemID).
+# CONSTRUCTION: paste(TreeID, ReconstructedStemID, sep="_") produces a globally
+#   unique key combining tree identity (TreeID) with stem identity (ReconstructedStemID).
 # Raw_StemID: the original DB StemID is preserved in this new column for
 #   traceability and cross-checking against the raw database export.
-# IMPORTANT: Rows with NA ReconstructedStemID become StemID = "Tag_NA".
+# IMPORTANT: Rows with NA ReconstructedStemID become StemID = "TreeID_NA".
 #   These are dead/broken stems for which no DP identity could be established
 #   (see analysis above). They carry no DBH and do not affect size or growth analyses.
 ViewFullTable[, Raw_StemID := StemID] # preserve original DB StemID
-ViewFullTable[, StemID := paste(Tag, ReconstructedStemID, sep = "_")] # new stable StemID
 
-# ── DIAGNOSTIC: Report "Tag_NA" StemIDs ───────────────────────────────────────
-# Any row still with NA ReconstructedStemID becomes StemID = "Tag_NA" after the
+setkey(ViewFullTable, TreeID)
+setkey(ViewFullTable, Tag)
+
+## Check wether tag and treeid can be interchanged
+ViewFullTable[, .(n_tags = uniqueN(Tag)), by = TreeID][order(-n_tags)]
+ViewFullTable[, .(n_treeid = uniqueN(TreeID)), by = Tag][order(-n_treeid)]
+
+ViewFullTable[is.na(Tag)]
+ViewFullTable[is.na(TreeID)]
+
+ViewFullTable[, StemID := paste(TreeID, ReconstructedStemID, sep = "_")] # new stable StemID
+
+# ── DIAGNOSTIC: Report "TreeID_NA" StemIDs ───────────────────────────────────────
+# Any row still with NA ReconstructedStemID becomes StemID = "TreeID_NA" after the
 # paste() above. This is expected for dead/broken stems that DP never processed
-# (see analysis in problem_tags_pre_anchor.csv). We report count, status
-# distribution, and census distribution so the analyst can verify the scale
-# is as expected (~28,000 rows for BCI across 9 censuses).
+# . We report count, status
+# distribution, and census distribution so the analyst can verify the scale.
 stemid_problem <- ViewFullTable[grepl("_NA$", StemID)]
-cat("\nRows with 'Tag_NA' StemID (dead/broken stems without DP identity):", nrow(stemid_problem), "\n")
+cat("\nRows with 'TreeID_NA' StemID (dead/broken stems without DP identity):", nrow(stemid_problem), "\n")
 if (nrow(stemid_problem) > 0L) {
   cat("\nBy Status:\n")
   print(stemid_problem[, .N, by = Status][order(-N)])
@@ -430,40 +438,39 @@ if (nrow(stemid_problem) > 0L) {
   print(stemid_problem[, .N, by = CensusID][order(CensusID)])
 }
 
-# ── DIAGNOSTIC: Tag × CensusID completeness ──────────────────────────────────
-# Purpose: identify tags that are missing one or more intermediate census records.
-# "Complete" means every census between the tag's first and last observed census
+# ── DIAGNOSTIC: TreeID × CensusID completeness ──────────────────────────────────
+# Purpose: identify TreeID that are missing one or more intermediate census records.
+# "Complete" means every census between the TreeID's first and last observed census
 #   is present. A gap means a row is missing from the raw ViewFullTable for that
-#   tag × census combination.
-# NOTE: Tags that first appear or die mid-study are NOT considered gaps —
+#   TreeID × census combination.
 #   only MISSING INTERMEDIATE censuses count (e.g., present in census 2 and 4
 #   but absent in census 3 would be a gap of 1).
-xraw_unique <- unique(ViewFullTable[, .(Tag, CensusID)])
-# Get the range per tag
-tag_ranges <- xraw_unique[, .(min_c = min(as.character(as.numeric(CensusID))), max_c = max(as.character(as.numeric(CensusID)))), by = Tag]
+xraw_unique <- unique(ViewFullTable[, .(TreeID, CensusID)])
+# Get the range per TreeID
+TreeID_ranges <- xraw_unique[, .(min_c = min(as.character(as.numeric(CensusID))), max_c = max(as.character(as.numeric(CensusID)))), by = TreeID]
 # Add expected count (how many censuses should exist)
-tag_ranges[, expected_count := as.numeric(max_c) - as.numeric(min_c) + 1L]
-# Get actual count per tag
-actual_counts <- xraw_unique[, .(actual_count = .N), by = Tag]
+TreeID_ranges[, expected_count := as.numeric(max_c) - as.numeric(min_c) + 1L]
+# Get actual count per TreeID
+actual_counts <- xraw_unique[, .(actual_count = .N), by = TreeID]
 # Merge and compare
-tag_check <- tag_ranges[actual_counts, on = "Tag"]
-tag_check[, complete := actual_count == expected_count]
+TreeID_check <- TreeID_ranges[actual_counts, on = "TreeID"]
+TreeID_check[, complete := actual_count == expected_count]
 # Summary
-tag_check[, .N, by = complete]
-# See tags with missing censuses
-missing_tags <- tag_check[complete == FALSE]
-missing_tags[, gap := expected_count - actual_count]
+TreeID_check[, .N, by = complete]
+# See TreeIDs with missing censuses
+missing_TreeIDs <- TreeID_check[complete == FALSE]
+missing_TreeIDs[, gap := expected_count - actual_count]
 # Summary stats
-cat("Total tags:", nrow(tag_check), "\n")
-cat("Complete tags:", tag_check[complete == TRUE, .N], "\n")
-cat("Tags with gaps:", tag_check[complete == FALSE, .N], "\n")
-if (nrow(missing_tags) > 0) {
-  cat("Total missing observations:", sum(missing_tags$gap), "\n")
+cat("Total TreeIDs:", nrow(TreeID_check), "\n")
+cat("Complete TreeIDs:", TreeID_check[complete == TRUE, .N], "\n")
+cat("TreeIDs with gaps:", TreeID_check[complete == FALSE, .N], "\n")
+if (nrow(missing_TreeIDs) > 0) {
+  cat("Total missing observations:", sum(missing_TreeIDs$gap), "\n")
 }
 
 # ── DIAGNOSTIC: StemID × CensusID completeness ───────────────────────────────
 # Purpose: same completeness check as above, but at the reconstructed stem level.
-# Each unique StemID ("Tag_ReconstructedStemID") should appear in every census
+# Each unique StemID ("TreeID_ReconstructedStemID") should appear in every census
 #   between its first and last observed census. Gaps here would indicate that
 #   the StemID overwrite collapsed or lost rows for some stems.
 xraw_unique <- unique(ViewFullTable[, .(StemID, CensusID)])
@@ -567,11 +574,6 @@ fixed_columns <- c(
   # "StemTag"
 )
 
-# NOTE: Including StemNumber and StemTag leads to repeated fixed values because Stemid is the same but reconstruction
-# NOTE:  led to the same stemid having different stemtags. Stemtag and possibly stemnumber will be addedd later on
-# NOTE:  after census number is included.
-# NOTE: Tag 005204 and 198419 have different coordinates - used the mode coordinates
-
 # Convert to data.table if not already (defensive coding)
 setDT(ViewFullTable)
 
@@ -639,7 +641,6 @@ lapply(ViewFullTable_split_unbalanced, dim)
 #   3. Fill missing stems with NA rows
 #   4. Fill in fixed attributes from master list
 #   5. Fill in census identifiers (CensusID, PlotCensusNumber)
-
 ViewFullTable_split <- lapply(ViewFullTable_split_unbalanced, function(X) {
   # Ensure it's a data.table
   if (!is.data.table(X)) setDT(X)
@@ -867,10 +868,6 @@ print(table(c(original_status), useNA = "ifany"))
 sum_status_pre <- DT_Status[, .(nobs = .N), by = census:Status][order(Status, census)]
 cat("\n📊 Full Status by Census before transformation:\n")
 sum_status_pre[, .N, by = .(Status, census)][N > 1]
-dcast(sum_status_pre,
-  formula = Status ~ census,
-  value.var = "nobs"
-)[order(Status)]
 
 ## Replace english words by corresponding codes ####
 # Transform verbose English status terms into single-letter codes
@@ -886,7 +883,6 @@ original_status <- gsub("alive", "A", original_status)
 original_status[is.na(original_status)] <- "N"
 
 # NOTE: For BCI data, broken below in some cases have DBH and in other cases it doesnt.
-# NOTE: Check fix above
 # Step 3: "broken below" → already resolved above by DBH-aware rule
 # (rows have been rewritten to "alive" or "dead" before the wide pivot,
 # so this gsub is a defensive no-op — kept for documentation).
@@ -2252,13 +2248,13 @@ if (nrow(tags_per_treeid) == 0L && nrow(treeids_per_tag) == 0L) {
 }
 
 #--------------------------------------------------------------
-# 11.2  Group stem-level new_status by Tag (one tree = one element)
+# 11.2  Group stem-level new_status by TreeID (one tree = one element)
 #--------------------------------------------------------------
-DT_ns <- data.table(Tag = unique_StemID$Tag, new_status = new_status)
-new_status_split <- DT_ns[, .(new_status_list = list(new_status)), by = Tag]
+DT_ns <- data.table(TreeID = unique_StemID$TreeID, new_status = new_status)
+new_status_split <- DT_ns[, .(new_status_list = list(new_status)), by = TreeID]
 new_status_split <- setNames(
   new_status_split[["new_status_list"]],
-  new_status_split[["Tag"]]
+  new_status_split[["TreeID"]]
 )
 
 # ========================================================================
@@ -2457,7 +2453,7 @@ compute_tree_for_row_checking <- function(stem_strings) {
 # 11.4  APPLY TREE-LEVEL CALCULATION TO ACTUAL DATA
 # ========================================================================
 
-# Compute tree-level encounter history for every Tag (one pass).
+# Compute tree-level encounter history for every TreeID (one pass).
 tree_histories_list <- lapply(new_status_split, compute_tree_for_row)
 
 # Optional diagnostic: re-run with the strict tree_exists_check() guard
@@ -2487,8 +2483,8 @@ if (any(!is_valid)) {
   print(unique(unlist(tree_histories_list[!is_valid])))
 }
 
-# Match tree status to each stem's Tag
-tree_histories <- tree_histories_list[as.character(unique_StemID$Tag)]
+# Match tree status to each stem's TreeID
+tree_histories <- tree_histories_list[as.character(unique_StemID$TreeID)]
 # Convert list to matrix (rows = stems, columns = censuses)
 tree_histories <- do.call(rbind, tree_histories)
 cat("✓ Tree status matched to stem level\n\n")
@@ -2641,16 +2637,16 @@ stopifnot(nrow(new_status_matrix) == nrow(unique_StemID))
 
 n_cens <- ncol(new_status_matrix)
 last_col <- new_status_matrix[, n_cens]
-tag_vec <- unique_StemID$Tag
+TreeID_vec <- unique_StemID$TreeID
 
 # Per-tree summaries broadcast back to per-stem rows.
 tree_dt <- data.table(
-  row_idx       = seq_len(nrow(new_status_matrix)),
-  Tag           = tag_vec,
+  row_idx = seq_len(nrow(new_status_matrix)),
+  TreeID = TreeID_vec,
   is_alive_last = last_col == "A"
 )
-tree_dt[, n_stems_in_tree := .N, by = Tag]
-tree_dt[, any_alive_at_last := any(is_alive_last), by = Tag]
+tree_dt[, n_stems_in_tree := .N, by = TreeID]
+tree_dt[, any_alive_at_last := any(is_alive_last), by = TreeID]
 setorder(tree_dt, row_idx)
 
 # Per-row classification of which remap (if any) applies.
@@ -2689,7 +2685,7 @@ cat(sprintf(
 
 rm(
   tree_dt, AP_in, AP_out, single_stem_row, all_dead_row, some_alive_row,
-  G_to_D_mask, D_to_G_mask, last_col, tag_vec
+  G_to_D_mask, D_to_G_mask, last_col, TreeID_vec
 )
 
 tbl_sorted_new_status <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
@@ -2884,27 +2880,27 @@ cat("\n📋 Creating diagnostic reports...\n")
 # Build wide DBH/Status/ListOfTSM via rbindlist + dcast:
 DT_long <- rbindlist(
   lapply(seq_along(ViewFullTable_split), function(i) {
-    ViewFullTable_split[[i]][, .(Tag, StemID, DBH, Status, ListOfTSM, census = i)]
+    ViewFullTable_split[[i]][, .(TreeID, StemID, DBH, Status, ListOfTSM, census = i)]
   }),
   use.names = TRUE, fill = TRUE
 )
 
 DBH_wide <- dcast(DT_long,
-  formula = Tag + StemID ~ census,
+  formula = TreeID + StemID ~ census,
   value.var = "DBH"
 )
 
 Status_wide <- dcast(DT_long,
-  formula = Tag + StemID ~ census,
+  formula = TreeID + StemID ~ census,
   value.var = "Status"
 )
 
 TSM_wide <- dcast(DT_long,
-  formula = Tag + StemID ~ census,
+  formula = TreeID + StemID ~ census,
   value.var = "ListOfTSM"
 )
 
-problem_dt <- DBH_wide[Status_wide, on = .(Tag, StemID)][TSM_wide, on = .(Tag, StemID)]
+problem_dt <- DBH_wide[Status_wide, on = .(TreeID, StemID)][TSM_wide, on = .(TreeID, StemID)]
 
 # Find reordering indices: match master stem order (unique_StemID) to current rows
 idx <- match(
@@ -2974,7 +2970,7 @@ cat("  ✓ Saved: subset_stems_never_alive.csv\n")
 # Find cases where G goes to A (gone then alive)
 # These are stems that were gone/lost but then reappeared as alive
 # Important to review as they may indicate:
-#   - Tagging errors (different stem given same tag)
+#   - Tagging errors (different stem given same TreeID)
 #   - Data entry errors
 #   - Misidentification
 
@@ -3293,7 +3289,7 @@ rm(
 #   Required columns (renamed from database format):
 #     - treeID (from TreeID)
 #     - stemID (from StemID)
-#     - tag (from Tag)
+#     - TreeID (from TreeID)
 #     - StemTag (from StemTag)
 #     - sp (from Mnemonic - species code)
 #     - quadrat (from QuadratName)
@@ -3357,7 +3353,9 @@ coord_mode <- function(x) {
   # Statistical mode for a vector of any type (NA-aware).
   # For ties, returns the first value in order of first appearance.
   x <- x[!is.na(x)]
-  if (length(x) == 0L) return(NA)
+  if (length(x) == 0L) {
+    return(NA)
+  }
   ux <- unique(x)
   ux[which.max(tabulate(match(x, ux)))]
 }
@@ -3445,14 +3443,35 @@ cat("🗺️  Imputing missing PX / PY / QuadratName across censuses...\n")
 
 # FIXME: fill in dates
 
+## create sample dataset for impute_tree_coords testing
+test_dt <- list(
+  data.table(
+    TreeID = c(1, 1, 1, 2, 2, 2, 2),
+    Tag = c("A", "A", "A", "B", "B", "B", "B"),
+    PX = c(NA, NA, 2, 5, 5, 4, NA),
+    PY = c(NA, NA, 3, 10, 10, 9, NA),
+    QuadratName = c("Q", NA, NA, "Q1", "Q1", NA, "Q3")
+  )
+)
+
+test_dt
+
+test_dt_corr <- impute_tree_coords(
+  split_list = test_dt,
+  id_cols = c("TreeID", "Tag"),
+  coord_cols = c("PX", "PY", "QuadratName"),
+  strict = FALSE,
+  multi_val = "mode"
+)
+
+test_dt_corr
 
 ViewFullTable_split <- impute_tree_coords(
   split_list = ViewFullTable_split,
-  id_cols    = c("TreeID", "Tag"),
+  id_cols = c("TreeID", "Tag"),
   coord_cols = c("PX", "PY", "QuadratName"),
-  strict     = TRUE # fill only when exactly 1 unique value exists per tree
-  # if strict = FALSE, numeric columns with multiple values will be aggregated by
-  # multi_val (mode/mean/median), and character columns will be aggregated by mode.
+  strict = FALSE,
+  multi_val = "mode"
 )
 cat("✓ Location imputation complete.\n\n")
 
@@ -3461,20 +3480,218 @@ cat("💾 Exporting census tables to .Rdata files...\n")
 ## Format and export each census as ForestGEO R table ####
 # Loop through each census and export in standardized format
 check_data <- rbindlist(lapply(ViewFullTable_split, function(dt) dt[, ..ViewFullTable_columns_to_keep]))
-# check unique px per tag and unique py per tag
-check_coordinates <- check_data[, .(Tag, PX, PY, QuadratName)]
+# check unique px per TreeID and unique py per TreeID
+check_coordinates <- check_data[, .(TreeID, PX, PY, QuadratName)]
 check_coordinates[, c("n_px", "n_py", "n_quadrat") :=
   .(uniqueN(PX), uniqueN(PY), uniqueN(QuadratName)),
-by = Tag
+by = TreeID
 ]
 check_coordinates <- unique(check_coordinates[
   n_px > 1L |
     n_py > 1L |
     n_quadrat > 1L,
-  .(Tag, n_px, n_py, n_quadrat)
+  .(TreeID, n_px, n_py, n_quadrat)
 ])
 
-fwrite(check_coordinates, "./3_PREPARE_R_TABLES/TODO_CHECKS_VIEWFULLTABLE/repeated_coordinates.csv")
+check_coordinates
+
+if (dir.exists("./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS")) {
+  cat("✓ CHECK folder exists: ./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS\n")
+} else {
+  dir.create("./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS", recursive = TRUE)
+  cat("✓ Created CHECK folder: ./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS\n")
+}
+
+fwrite(check_coordinates, "./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/repeated_coordinates.csv")
+
+
+
+
+impute_tree_dates <- function(split_list,
+                              id_cols = c("TreeID", "Tag"),
+                              date_col = "ExactDate",
+                              quadrat_col = "QuadratName",
+                              strict = TRUE) {
+  # Process each census independently
+  split_list <- lapply(seq_along(split_list), function(i) {
+    dt <- copy(split_list[[i]])
+    n_na_before <- sum(is.na(dt[[date_col]]))
+
+    if (n_na_before == 0L) {
+      cat(sprintf("  [impute_tree_dates] census %d: no missing dates\n", i))
+      return(dt)
+    }
+
+    # Step 1: Within-tree imputation (multiple observations per tree in same census)
+    tree_ref <- dt[!is.na(get(date_col)),
+      .(ref_date = {
+        vals <- get(date_col)
+        n_uniq <- length(unique(vals))
+        if (n_uniq == 1L) vals[1L] else date_mode(vals)
+      }),
+      by = id_cols
+    ]
+
+    dt <- merge(dt, tree_ref, by = id_cols, all.x = TRUE, suffixes = c("", ".tree_ref"))
+    dt[is.na(get(date_col)), (date_col) := ref_date]
+    dt[, ref_date := NULL]
+
+    n_na_after_tree <- sum(is.na(dt[[date_col]]))
+    n_filled_tree <- n_na_before - n_na_after_tree
+
+    if (!strict && n_na_after_tree > 0L) {
+      # Step 2: Quadrat-level imputation
+      quadrat_ref <- dt[!is.na(get(date_col)),
+        .(ref_date = {
+          vals <- get(date_col)
+          n_uniq <- length(unique(vals))
+          if (n_uniq == 1L) vals[1L] else date_mode(vals)
+        }),
+        by = quadrat_col
+      ]
+
+      dt <- merge(dt, quadrat_ref,
+        by = quadrat_col, all.x = TRUE,
+        suffixes = c("", ".quad_ref")
+      )
+      dt[is.na(get(date_col)), (date_col) := ref_date]
+      dt[, ref_date := NULL]
+
+      n_na_final <- sum(is.na(dt[[date_col]]))
+      n_filled_quadrat <- n_na_after_tree - n_na_final
+
+      cat(sprintf(
+        "  [impute_tree_dates] census %d: filled %d from tree-level, %d from quadrat-level; %d remain NA\n",
+        i, n_filled_tree, n_filled_quadrat, n_na_final
+      ))
+    } else {
+      cat(sprintf(
+        "  [impute_tree_dates] census %d: filled %d from tree-level%s; %d remain NA\n",
+        i, n_filled_tree,
+        if (strict) " (strict mode: no quadrat imputation)" else "",
+        n_na_after_tree
+      ))
+    }
+
+    dt
+  })
+
+  split_list
+}
+
+# Mode function for dates
+date_mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# ============================================================================
+# TEST DATA
+# ============================================================================
+
+set.seed(123)
+
+# Census 1
+census1_test <- data.table(
+  TreeID = c(1, 1, 1, 1, 2, 2, 3, 4, 5, 6),
+  Tag = c(101, 101, 101, 101, 102, 102, 103, 104, 105, 106),
+  QuadratName = c("Q1", "Q1", "Q1", "Q1", "Q1", "Q1", "Q2", "Q2", "Q2", "Q3"),
+  ExactDate = as.Date(c(
+    "1981-06-12", "1981-06-12", "1981-06-15", NA, # Tree 1: multiple obs, mode = 1981-06-12
+    "1981-06-12", NA, # Tree 2: one value, one NA
+    NA, # Tree 3: NA (should get Q2 mode)
+    "1981-06-20", # Tree 4: has value
+    NA, # Tree 5: NA (should get Q2 mode)
+    NA # Tree 6: NA (Q3 has no other dates)
+  )),
+  PX = c(10, 10, 10, 10, 20, 20, 30, 40, 50, 60),
+  PY = c(15, 15, 15, 15, 25, 25, 35, 45, 55, 65)
+)
+
+# Census 2
+census2_test <- data.table(
+  TreeID = c(1, 2, 2, 2, 3, 4, 5, 6, 7),
+  Tag = c(101, 102, 102, 102, 103, 104, 105, 106, 107),
+  QuadratName = c("Q1", "Q1", "Q1", "Q1", "Q2", "Q2", "Q2", "Q3", "Q3"),
+  ExactDate = as.Date(c(
+    "1985-07-10", # Tree 1: different date than census 1 (expected!)
+    "1985-07-10", "1985-07-10", "1985-07-12", # Tree 2: mode = 1985-07-10
+    NA, # Tree 3: NA (should get Q2 value)
+    "1985-07-15", # Tree 4: has value
+    "1985-07-15", # Tree 5: has value
+    NA, # Tree 6: NA
+    "1985-08-01" # Tree 7: has value
+  )),
+  PX = c(10, 20, 20, 20, 30, 40, 50, 60, 70),
+  PY = c(15, 25, 25, 25, 35, 45, 55, 65, 75)
+)
+
+test_data <- list(census1_test, census2_test)
+
+# ============================================================================
+# RUN TESTS
+# ============================================================================
+
+cat("\n===== STRICT MODE (only within-tree imputation) =====\n")
+result_strict <- impute_tree_dates(test_data, strict = TRUE)
+
+cat("\n\nCensus 1 results (strict):\n")
+print(result_strict[[1]][order(TreeID)])
+
+cat("\n\nCensus 2 results (strict):\n")
+print(result_strict[[2]][order(TreeID)])
+
+cat("\n\n===== NON-STRICT MODE (tree + quadrat imputation) =====\n")
+result_nonstrict <- impute_tree_dates(test_data, strict = FALSE)
+
+cat("\n\nCensus 1 results (non-strict):\n")
+print(result_nonstrict[[1]][order(TreeID)])
+
+cat("\n\nCensus 2 results (non-strict):\n")
+print(result_nonstrict[[2]][order(TreeID)])
+
+# ============================================================================
+# CHECK TESTS
+# ============================================================================
+
+result_strict[[1]] <- result_strict[[1]][, .(TreeID, QuadratName, ExactDate)]
+result_strict[[2]] <- result_strict[[2]][, .(TreeID, QuadratName, ExactDate)]
+
+result_nonstrict[[1]] <- result_nonstrict[[1]][, .(TreeID, QuadratName, ExactDate)]
+result_nonstrict[[2]] <- result_nonstrict[[2]][, .(TreeID, QuadratName, ExactDate)]
+
+list(
+  census1_test[, .(TreeID, QuadratName, ExactDate)],
+  census2_test[, .(TreeID, QuadratName, ExactDate)]
+)
+result_strict
+result_nonstrict
+
+ViewFullTable_split <- impute_tree_dates(
+  split_list = ViewFullTable_split,
+  id_cols = c("TreeID", "Tag"),
+  date_col = "ExactDate",
+  quadrat_col = "QuadratName",
+  strict = FALSE
+)
+cat("✓ Dates imputation complete.\n\n")
+
+cat("💾 Exporting census tables to .Rdata files...\n")
+
+## Format and export each census as ForestGEO R table ####
+# Loop through each census and export in standardized format
+check_data <- rbindlist(lapply(ViewFullTable_split, function(dt) dt[, ..ViewFullTable_columns_to_keep]))
+setorder(check_data, TreeID, StemID, CensusID)
+# check unique date per TreeID
+check_dates <- unique(check_data[, .(TreeID, ExactDate, CensusID)])
+
+# get nunique exactdate per treeid and census
+check_dates[, c("n_dates") :=
+  .(uniqueN(ExactDate)),
+by = .(CensusID, TreeID)
+]
+
+inc <- unique(check_dates[n_dates > 1L]$TreeID)
 
 for (census in seq_along(ViewFullTable_split)) {
   cat(sprintf("  Processing census %d...\n", census))
@@ -3569,7 +3786,7 @@ cat(sprintf("\n✓✓ All %d census tables exported successfully\n\n", length(Vi
 # --------------------------------------------------------------------
 # --------------------------------------------------------------------
 ViewTaxonomy <- fread(
-  file = file.path("./DATA/SPP_TABLE/bci_spptable.txt"),
+  file = file.path("./BCI_stem_reconstruction/DATA/SPP_TABLE/bci_spptable.txt"),
   sep = "\t",
   stringsAsFactors = FALSE, # Keep text as character strings
   na.strings = c("NA", "NULL", "")
@@ -3611,7 +3828,8 @@ cols_to_keep <- c(
   "Authority", # Taxonomic authority
   # "IDLevel", # Identification confidence level
   "Synonyms", # Historical synonyms
-  "Lifeform", # Lifeform (e.g., tree, shrub, liana)
+  "Lifeform_RFoster",
+  "Lifeform_RPerez_SAguilar",
   "CommonName", # Common name (if available)
   "Herbarium" # Herbarium voucher information (if available)
 )
@@ -3633,7 +3851,7 @@ setnames(sptable,
 
 # Filter to only species that actually appear in the census data
 # This removes species from the taxonomy list that aren't in this plot
-species_in_census <- unique(ViewFullTable$Mnemonic)
+species_in_census <- sort(unique(ViewFullTable$Mnemonic))
 sptable <- sptable[sp %in% species_in_census]
 
 cat(sprintf("  Species in this plot: %d\n", nrow(sptable)))

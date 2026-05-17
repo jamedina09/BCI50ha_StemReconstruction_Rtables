@@ -46,11 +46,11 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Select the run subfolder by index from the list of directories in `home_dir`.
 # Run list.files(home_dir) interactively to inspect available runs and confirm
 # the correct index BEFORE executing the rest of this script.
-run_code <- list.files(home_dir)[1]
+run_code <- list.files(home_dir)[2]
 
 # Derived paths -----------------------------------------------------------------
 chunks_path <- file.path(home_dir, run_code) # Feather input directory
-outputs_path <- here("2_STEM_IDENTIFICATION", "output", run_code) # merged output directory
+outputs_path <- here("BCI_stem_reconstruction", "DATA", run_code) # merged output directory
 
 # Create the output directory if it does not already exist
 if (!dir.exists(outputs_path)) {
@@ -89,7 +89,7 @@ group_size <- 500 # files per batch
 n_groups <- ceiling(length(feathers) / group_size)
 
 # Temporary directory for intermediate Parquet parts (removed after final merge)
-temp_dir <- here("2_STEM_IDENTIFICATION", "output", "temp_parts")
+temp_dir <- here("BCI_stem_reconstruction", "DATA", "temp_parts")
 dir.create(temp_dir, recursive = TRUE, showWarnings = FALSE)
 
 # Process each batch sequentially:
@@ -186,8 +186,9 @@ compare_columns <- function(dt1, dt2) {
 # The raw table produced in step 6 of the data-preparation pipeline; it
 # contains both single-stem and multi-stem records and is the reference for
 # all validation steps below.
+
 xraw <- as.data.table(readRDS(here(
-    "DATA", "PROCESSED", "6_ViewFullTable_taper_corrected_growth_forms.rds"
+    "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_taper_corrected_growth_forms.rds"
 )))
 xraw[, growth_form := Lifeform]
 xraw[, Lifeform := NULL]
@@ -214,17 +215,15 @@ setorder(input_multi_stem_data, RowID)
 # Verify they are identical for every row before dropping the redundant copy.
 # NOTE: isTRUE(unique(...)) returns TRUE only when the comparison vector
 # contains exactly one distinct value and that value is TRUE (all rows agree).
-if (isTRUE(unique(ds_final$Mnemonic == ds_final$species))) {
+if (isTRUE(unique(ds_final$Mnemonic == ds_final$Species))) {
     cat("OK: 'Mnemonic' and 'species' columns are identical; dropping 'species'.\n")
-    ds_final[, species := NULL]
+    ds_final[, Species := NULL]
 } else {
     stop("PROBLEM: 'Mnemonic' and 'species' differ — investigate before proceeding.")
 }
 
 # Sort the merged output to match the ordering of the raw multi-stem subset
 setorder(ds_final, RowID)
-
-length(unique(ds_final$species))
 
 # =============================================================================
 # 6. FIRST VALIDATION PASS: DP OUTPUT VS. RAW MULTI-STEM DATA
@@ -271,8 +270,6 @@ names(ds_final)
 
 # Column names from the original raw table
 original_names <- names(xraw)
-
-head(ds_final, 2)
 
 # Columns added by the DP stem-identification algorithm that do not exist in
 # the original raw table.  Only the four active columns are retained in the
@@ -406,7 +403,14 @@ complete_dataset[Tag %in% chk_skipped_no_data_tags, .(Tag, CensusID, Reconstruct
 # NOTE: all of them in census 9 and all have NA in ReconstructedStemID but not
 # in StemID, so we can fill them with StemID without introducing any errors
 
-complete_dataset[Tag %in% chk_skipped_no_data_tags & is.na(ReconstructedStemID), ReconstructedStemID := StemID]
+complete_dataset[
+    Tag %in% chk_skipped_no_data_tags & is.na(ReconstructedStemID)
+]
+
+complete_dataset[
+    Tag %in% chk_skipped_no_data_tags & is.na(ReconstructedStemID),
+    ReconstructedStemID := StemID
+]
 
 complete_dataset[is.na(obs_row_id) & single_stem_tags == FALSE]
 # all this are skipped tags because they didnt have any data (no DBH, no
@@ -414,14 +418,11 @@ complete_dataset[is.na(obs_row_id) & single_stem_tags == FALSE]
 
 # We refilled the ReconstructedStemID for the skipped_no_data rows with the original StemID, so now there should be no NA values in ReconstructedStemID for the multi-stem subset.
 
-name_out_directory <- list.files(home_dir)[3]
-
 # Directory containing posterior feather files from the stem identification run
 # (expand tilde to user home directory for portability)
 post_dir <- path.expand(
     file.path(
-        "./DATA/PROCESSED",
-        name_out_directory
+        "./BCI_stem_reconstruction/DATA/PROCESSED"
     )
 )
 
@@ -432,10 +433,5 @@ if (!dir.exists(post_dir)) {
 
 saveRDS(
     complete_dataset,
-    here(post_dir, "7_complete_dataset_with_reconstructed_stemids.rds")
-)
-
-cat(
-    "\nDone. Final dataset saved to:\n  ",
-    here("DATA", "PROCESSED", "7_complete_dataset_with_reconstructed_stemids.rds"), "\n"
+    here(post_dir, "complete_dataset_with_reconstructed_stemids.rds")
 )

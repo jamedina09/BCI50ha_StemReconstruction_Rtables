@@ -55,7 +55,7 @@ library(plotrix) # addtable2plot(): embed data tables inside base-R plot panels
 #                path if the default is not found (useful when running from a
 #                different working directory).
 # Returns: data.table with the Dryad measurements ready for comparison.
-load_dryad <- function(dryad_path = here("DATA/DRYAD_CONDIT/bci_dryad_condit.rds")) {
+load_dryad <- function(dryad_path = here("BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds")) {
     if (!file.exists(dryad_path)) {
         candidate <- here("..", "DATA", "DRYAD_CONDIT", "bci_dryad_condit.rds")
         if (!file.exists(candidate)) {
@@ -240,7 +240,7 @@ render_comparison_pdf <- function(tags, file_name, indat, dryad, n_rows = NULL) 
 # Reconstructed dataset produced by 2_merge_chunks_to_datatable.R.
 # DBH is stored in millimetres in the pipeline output; convert to centimetres
 # here so that it is on the same scale as the Dryad reference data.
-indat <- as.data.table(readRDS("./DATA/PROCESSED/20260507_183832_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp/7_complete_dataset_with_reconstructed_stemids.rds"))
+indat <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_with_reconstructed_stemids.rds"))
 
 # Check the DBH distribution to confirm the expected scale (mm) before conversion.
 quantile(indat$DBH, probs = seq(0, 1, 0.25), na.rm = TRUE)
@@ -343,13 +343,13 @@ cat("Total unique tags in Dryad reference:", length(unique(dryad$Tag)), "\n")
 round(table(compare_matches$single_stem, compare_matches$all_equal_trajectories) /
     nrow(comparison_dt) * 100, 4)
 #                 Match Mismatch
-#   Multi-stem  18.9621  11.7191
+#   Multi-stem  18.9487  11.7325
 #   Single-stem 69.3172   0.0000
 #
 # Interpretation:
 #   - All single-stem tags match exactly (0% mismatch), we did not reconstructed
 #     single-stem trees—not needed..
-#   - ~18.5% of multi-stem tags match the Dryad reference; the remaining ~11%
+#   - ~19% of multi-stem tags match the Dryad reference; the remaining ~12%
 #     diverge and are the focus of the diagnostic PDFs generated below.
 
 # Collect the Tags whose reconstructed trajectories do not match Dryad.
@@ -404,9 +404,9 @@ cat(
 # Cap each sample at 100 tags so the resulting PDFs remain tractable in size
 # and review time.  set.seed() is omitted intentionally so that re-runs produce
 # different samples, broadening the coverage of manual inspections over time.
-sample_differences_tags_prob <- sample(differences_tags_prob, min(200, length(differences_tags_prob)))
-sample_differences_tags_dp <- sample(differences_tags_dp, min(200, length(differences_tags_dp)))
-sample_differences_tags_dp_prob <- sample(differences_tags_dp_prob, min(200, length(differences_tags_dp_prob)))
+sample_differences_tags_prob <- sample(differences_tags_prob, min(300, length(differences_tags_prob)))
+sample_differences_tags_dp <- sample(differences_tags_dp, min(300, length(differences_tags_dp)))
+sample_differences_tags_dp_prob <- sample(differences_tags_dp_prob, min(300, length(differences_tags_dp_prob)))
 
 ## create a data frame in long format with two columns, one the sample difference type and the tags in the other
 explore_tags_long <- rbind(
@@ -422,15 +422,15 @@ explore_tags_long <- rbind(
 # to its render function.
 render_comparison_pdf(
     differences_tags_dp[match(sample_differences_tags_dp, differences_tags_dp)],
-    "./2_STEM_IDENTIFICATION/differences_using_dp.pdf", indat_c8, dryad_c8
+    "./BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/differences_using_dp.pdf", indat_c8, dryad_c8
 )
 render_comparison_pdf(
     differences_tags_prob[match(sample_differences_tags_prob, differences_tags_prob)],
-    "./2_STEM_IDENTIFICATION/differences_using_probabilistic.pdf", indat_c8, dryad_c8
+    "./BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/differences_using_probabilistic.pdf", indat_c8, dryad_c8
 )
 render_comparison_pdf(
     differences_tags_dp_prob[match(sample_differences_tags_dp_prob, differences_tags_dp_prob)],
-    "./2_STEM_IDENTIFICATION/differences_using_both_methods.pdf", indat_c8, dryad_c8
+    "./BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/differences_using_both_methods.pdf", indat_c8, dryad_c8
 )
 
 cat("\nDone. Diagnostic PDFs written to: 2_STEM_IDENTIFICATION/\n")
@@ -449,22 +449,4 @@ tags_comparison <- merge(
 )
 tags_comparison[, Tag_count_difference := N_tags_indat - N_tags_dryad]
 
-
-broken_below <- unique(indat[grep("broken below", Status), Tag])
-
-head(indat, 2)
-
-broken_below_dt <- indat[Tag %in% broken_below, .(CensusID, ListOfTSM, Status, DBH, StemID, ReconstructedStemID, SweepAuditOverride, ReconstructedStemID_PreSweep, SweepRollbackToPreSweep, Tag, StemTag, ReconstructionMethod)]
-
-library(ggplot2)
-
-# fwrite(broken_below_dt, "./2_STEM_IDENTIFICATION/broken_below_tags.csv")
-
-inc <- sample(broken_below, 1)
-broken_below_dt[Tag %in% inc]
-ggplot(broken_below_dt[Tag %in% inc], aes(x = as.factor(CensusID), y = DBH, group = ReconstructedStemID, color = ReconstructedStemID)) +
-    geom_line() +
-    geom_point() +
-    labs(title = "Growth trajectories for tags with 'broken below' status") +
-    theme_minimal() +
-    theme(legend.position = "bottom")
+tags_comparison
