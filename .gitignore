@@ -29,4 +29,6 @@ BCI_stem_reconstruction/1_DATA_PREPARATION/compare_tables1_and_tables2.R
 BCI_stem_reconstruction/DATA/RAW/ViewFullTable_census2022-23.txt
 BCI_stem_reconstruction/DATA/
 
-/BCI_stem_reconstruction/output
+BCI_stem_reconstruction/output
+
+BCI_stem_reconstruction/3_PREPARE_R_TABLES/CHECKS
