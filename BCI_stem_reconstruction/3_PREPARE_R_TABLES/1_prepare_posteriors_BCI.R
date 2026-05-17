@@ -23,7 +23,7 @@
 # =============================================================================
 # SETUP
 # =============================================================================
-# 7_complete_dataset_with_reconstructed_stemids_check.rds
+# complete_dataset_with_reconstructed_stemids_check.rds
 
 rm(list = ls())
 
@@ -40,7 +40,7 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Select the run subfolder by index from the list of directories in `home_dir`.
 # Run list.files(home_dir) interactively to inspect available runs and confirm
 # the correct index BEFORE executing the rest of this script.
-run_code <- list.files(home_dir)[3]
+run_code <- list.files(home_dir)[2]
 
 # Directory containing posterior feather files from the stem identification run
 # (expand tilde to user home directory for portability)
@@ -53,14 +53,7 @@ post_dir <- path.expand(
 )
 
 # Output directory where consolidated posteriors will be saved
-output_dir <- "DATA/POSTERIORS"
-
-# Ensure output directory exists
-if (!dir.exists(output_dir)) {
-    dir.create(output_dir, recursive = TRUE, showWarnings = TRUE)
-}
-
-output_dir_posteriors <- file.path(output_dir, run_code)
+output_dir_posteriors <- "./BCI_stem_reconstruction/DATA/POSTERIORS"
 
 # Ensure run-specific output directory exists
 if (!dir.exists(output_dir_posteriors)) {
@@ -133,7 +126,6 @@ cat("Found", length(post_files), "posterior files\n")
 
 # Read and bind all posterior files into a single data.table
 dt_posteriors <- read_and_bind_feathers(post_files)
-beepr::beep(1) # Play a sound to indicate completion of reading and binding
 
 ## check size in mb for dt_posteriors
 dt_size_mb <- object.size(dt_posteriors) / (1024^2)
@@ -154,7 +146,7 @@ cat(
 # =============================================================================
 
 # Save consolidated posteriors to RDS for fast loading and downstream analysis
-output_file <- file.path(output_dir_posteriors, "bci_posterior_samples_paths.rds")
+output_file <- file.path(output_dir_posteriors, "posterior_sampled_paths.rds")
 saveRDS(dt_posteriors, file = output_file)
 
 cat("Posterior samples saved to:", output_file, "\n")
