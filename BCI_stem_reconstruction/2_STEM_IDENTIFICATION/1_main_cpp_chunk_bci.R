@@ -1259,90 +1259,6 @@ run_main_chunked <- function() {
         out
     }
 
-    # ## ---- Diagnostic: sweep parameter grid for species coverage ----------------
-    # # For each growth_form group, sweep over candidate values of min_tags,
-    # # min_pairs, n_bins, and min_per_bin.  Returns a data.table with one row
-    # # per parameter combination showing how many (and which fraction of)
-    # # species pass all filters.
-    # sweep_bio_thresholds <- function(dt,
-    #                                  growth_forms,
-    #                                  min_tags_vals = c(5L, 10L, 15L, 20L, 30L, 50L),
-    #                                  min_pairs_vals = c(3L, 5L, 10L, 15L, 20L),
-    #                                  n_bins_vals = c(3L, 4L, 5L),
-    #                                  min_per_bin_vals = c(3L, 4L, 5L, 8L)) {
-    #     sub <- dt[growth_form %in% growth_forms]
-    #     if (nrow(sub) == 0L) {
-    #         warning("No rows match growth_forms: ", paste(growth_forms, collapse = ", "))
-    #         return(data.table())
-    #     }
-
-    #     mnemonics <- unique(sub$Mnemonic)
-    #     n_total <- length(mnemonics)
-
-    #     # Pre-compute per-species scalars (these don't depend on n_bins / min_per_bin)
-    #     sp_stats <- sub[, .(
-    #         n_tags              = first(n_tags),
-    #         n_valid_growth_pair = first(n_valid_growth_pair)
-    #     ), by = Mnemonic]
-
-    #     # Pre-compute has_dbh_coverage for every (species, n_bins, min_per_bin) combo
-    #     coverage_grid <- CJ(
-    #         Mnemonic = mnemonics,
-    #         n_bins = n_bins_vals,
-    #         min_per_bin = min_per_bin_vals,
-    #         sorted = FALSE
-    #     )
-
-    #     coverage_grid[, passes_coverage := {
-    #         has_dbh_coverage(sub[Mnemonic == .BY$Mnemonic],
-    #             n_bins = .BY$n_bins,
-    #             min_per_bin = .BY$min_per_bin
-    #         )
-    #     }, by = .(Mnemonic, n_bins, min_per_bin)]
-
-    #     # Full parameter grid
-    #     param_grid <- CJ(
-    #         min_tags = min_tags_vals,
-    #         min_pairs = min_pairs_vals,
-    #         n_bins = n_bins_vals,
-    #         min_per_bin = min_per_bin_vals,
-    #         sorted = FALSE
-    #     )
-
-    #     # For each parameter combo, count passing species
-    #     results <- param_grid[,
-    #         {
-    #             cov <- coverage_grid[n_bins == .BY$n_bins & min_per_bin == .BY$min_per_bin]
-    #             merged <- sp_stats[cov, on = "Mnemonic"]
-    #             pass <- merged[n_tags >= .BY$min_tags &
-    #                 n_valid_growth_pair >= .BY$min_pairs &
-    #                 passes_coverage == TRUE, Mnemonic]
-    #             .(
-    #                 n_species = length(pass),
-    #                 pct_species = round(100 * length(pass) / n_total, 1),
-    #                 species_list = list(pass)
-    #             )
-    #         },
-    #         by = .(min_tags, min_pairs, n_bins, min_per_bin)
-    #     ]
-
-    #     setattr(results, "n_total_species", n_total)
-    #     setattr(results, "growth_forms", growth_forms)
-    #     setorder(results, -n_species, min_tags, min_pairs, n_bins, min_per_bin)
-    #     results
-    # }
-
-    # # Sweep for trees
-    # sweep_ts <- sweep_bio_thresholds(to_do, growth_forms = "shrub")
-    # # Sweep for palms
-    # sweep_palm <- sweep_bio_thresholds(to_do, growth_forms = "palm")
-    # # Sweep for figs
-    # sweep_fig <- sweep_bio_thresholds(to_do, growth_forms = "fig")
-    # # Sweep for strangler figs
-    # sweep_strangler_fig <- sweep_bio_thresholds(to_do, growth_forms = "strangler_fig")
-    # # Sweep for all growth forms combined
-    # sweep_all <- sweep_bio_thresholds(to_do, growth_forms = unique(to_do$growth_form))
-
     min_tags <- 20
     min_pairs <- 20
     n_bins <- 4
@@ -1585,10 +1501,7 @@ run_main_chunked <- function() {
         DBH_mm_original_backup = DBH,
         DBH = dbh_with_best_candidate_taper_corrected / 10,
         CensusID = as.integer(CensusID),
-        StemID = as.integer(as.character(StemID)) # ,
-        # TrueStemID = as.integer(as.character(fifelse(CensusID >= ANCHOR_START_CENSUS & !is.na(DBH), StemID, NA)))
-        # NOTE: this gives truestemid to NA dbh, which is fine, i have safeguards. but I dont want that now
-        # TrueStemID = as.character(fifelse(CensusID >= 7, StemID, NA))
+        StemID = as.integer(as.character(StemID))
     )]
 
     # ---- TrueStemID reconstruction ----
@@ -1602,10 +1515,10 @@ run_main_chunked <- function() {
     # -----------------------------------------------------------------------
     #
     #   (a) StemTag: any row where the field crew physically tagged the stem.
-    #       The OriginalStemID is unambiguous at any census, including pre-C7.
+    #       The StemID is unambiguous at any census, including pre-C7.
     #
     #   (b) CensusID >= 7 (year 2010 onward): from C7 the BCI database assigned
-    #       OriginalStemIDs via a systematic re-tagging campaign. Every stem
+    #       StemIDs via a systematic re-tagging campaign. Every stem
     #       present at C7+ has a trustworthy, reliable database ID.
     #
     #   All other rows are left as NA — the DP resolves them.
@@ -1614,21 +1527,21 @@ run_main_chunked <- function() {
     # STEP 2 — Conservative terminal propagation (post-last-DBH zone only)
     # -----------------------------------------------------------------------
     #
-    #   Within each (Tag, OriginalStemID) group, once a stem has made its last
+    #   Within each (Tag, StemID) group, once a stem has made its last
     #   live measurement (last non-NA DBH), all subsequent rows are in the
     #   terminal phase: they can only record death, resprout, or missing status.
-    #   In that zone the OriginalStemID is unambiguous — the database does not
+    #   In that zone the StemID is unambiguous — the database does not
     #   reassign IDs for simple death / carry-forward records.
     #
     #   2a. Identify the boundary: the last census with a non-NA DBH per
-    #       (Tag, OriginalStemID). Rows strictly after this are the terminal
+    #       (Tag, StemID). Rows strictly after this are the terminal
     #       phase. Stems that never recorded a DBH get NA and are excluded
     #       from all propagation by the guards in 2b and 2c.
     #
-    #   2b. DIRECT ANCHOR terminal-event rows to their own OriginalStemID.
+    #   2b. DIRECT ANCHOR terminal-event rows to their own StemID.
     #       Any post-last-DBH row carrying an explicit death, broken-below, or
     #       R-family resprout code is safe to anchor. No prior Step-1 anchor is
-    #       required — a death/resprout record for a given OriginalStemID is
+    #       required — a death/resprout record for a given StemID is
     #       unambiguously about that biological individual.
     #       Handles:
     #         • Pure pre-C7 stems with no StemTag (Case 1): e.g. last DBH at C1,
@@ -2001,11 +1914,6 @@ run_main_chunked <- function() {
 
     setnames(xrun, "species", "parameter_set_for_species")
     xrun[, Species := Mnemonic]
-
-    # # unique(xrun[growth_form == "strangler"]$Species)
-    # ## FIXME: START - ADD TEST TAGS
-    # xrun <- xrun[Tag %in% "002371"] # for testing
-    # ## FIXME: END - ADD TEST TAGS
 
     # 5.4 DP meta settings
     dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)

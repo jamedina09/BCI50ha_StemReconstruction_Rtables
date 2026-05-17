@@ -208,7 +208,6 @@ render_comparison_pdf <- function(tags, file_name, indat, dryad, n_rows = NULL) 
     }
     pdf(file_name, width = 16, height = 10)
     for (tag in tags) {
-        # tag <- "150664"
         tab_dryad <- dryad[
             Tag == tag & status != "P" & status != "V" & (!is.na(DBH) | !is.na(codes)),
             .(CensusID, sp, Tag, StemTag, stemID, DBH, codes, status, DFstatus)
@@ -238,23 +237,11 @@ render_comparison_pdf <- function(tags, file_name, indat, dryad, n_rows = NULL) 
 # Step 1: Load input datasets ---------------------------------------------------
 
 # Reconstructed dataset produced by 2_merge_chunks_to_datatable.R.
-# DBH is stored in millimetres in the pipeline output; convert to centimetres
-# here so that it is on the same scale as the Dryad reference data.
+# Pipeline stores DBH in mm; convert to cm to match Dryad reference scale.
 indat <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_with_reconstructed_stemids.rds"))
 
-# Check the DBH distribution to confirm the expected scale (mm) before conversion.
-quantile(indat$DBH, probs = seq(0, 1, 0.25), na.rm = TRUE)
-
-# can it be centimetres already?
-quantile(indat$DBH, probs = seq(0, 1, 0.25), na.rm = TRUE) / 100 # to make them meters
-# 35 meters? nope
-# half about 23 cm? nope
-
-quantile(indat$DBH, probs = seq(0, 1, 0.25), na.rm = TRUE) / 10 # to make them meters
-# this "cm" makes sense
-
 indat[, DBH := as.numeric(as.character(DBH)) / 10] # mm → cm
-quantile(indat$DBH, probs = seq(0, 1, 0.25), na.rm = TRUE) # confirm the new scale (cm)
+quantile(indat$DBH, probs = seq(0, 1, 0.25), na.rm = TRUE) # confirm cm scale
 
 # Dryad/Condit reference data, loaded and pre-processed by load_dryad().
 dryad <- load_dryad()
@@ -339,18 +326,11 @@ compare_matches <- comparison_dt[
 cat("Total unique tags in Dryad reference:", length(unique(dryad$Tag)), "\n")
 # Expected: ~423617 (multi-census BCI tags as of Condit et al. Dryad release)
 
-# Match-rate breakdown as percentage of all comparison tags:
+# Match-rate breakdown: single-stem tags match by construction (no
+# reconstruction needed); multi-stem tags split between Match and Mismatch —
+# the mismatched subset feeds the diagnostic PDFs below.
 round(table(compare_matches$single_stem, compare_matches$all_equal_trajectories) /
     nrow(comparison_dt) * 100, 4)
-#                 Match Mismatch
-#   Multi-stem  18.9487  11.7325
-#   Single-stem 69.3172   0.0000
-#
-# Interpretation:
-#   - All single-stem tags match exactly (0% mismatch), we did not reconstructed
-#     single-stem trees—not needed..
-#   - ~19% of multi-stem tags match the Dryad reference; the remaining ~12%
-#     diverge and are the focus of the diagnostic PDFs generated below.
 
 # Collect the Tags whose reconstructed trajectories do not match Dryad.
 differences_tags <- comparison_dt[all_equal_trajectories == FALSE]$Tag
@@ -358,18 +338,8 @@ cat("Number of mismatched tags:", length(differences_tags), "\n")
 
 # Step 6: Classify mismatched tags by reconstruction method --------------------
 # For each tag, determine which reconstruction method(s) were used across its
-# records.  A tag can have rows processed by the dynamic-programming (DP)
-# algorithm, the probabilistic algorithm, both, or neither (e.g. single-stem
-# pass-throughs that should not appear in differences_tags).
-#
-# method_type levels:
-#   "only_dp"                   : all reconstructed rows used the DP branch.
-#   "only_probabilistic"        : all reconstructed rows used the probabilistic branch.
-#   "both_probabilistic_and_dp" : tag has rows from both branches (common when
-#                                  the DP succeeded for some censuses and fell
-#                                  back to probabilistic for others).
-#   NA                          : tag has no rows matching either method pattern
-#                                  (unexpected for multi-stem tags; investigate).
+# records: only_dp, only_probabilistic, both_probabilistic_and_dp, or NA
+# (NA is unexpected for multi-stem tags and warrants investigation).
 indat[, method_type := {
     has_prob <- any(grepl("probabilistic", ReconstructionMethod, fixed = TRUE))
     has_dp <- any(grepl("dp", ReconstructionMethod, fixed = TRUE))
