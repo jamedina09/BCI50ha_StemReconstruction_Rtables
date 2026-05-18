@@ -3574,6 +3574,7 @@ for (census in seq_along(ViewFullTable_split)) {
   cat(sprintf("  Processing census %d...\n", census))
   # Extract current census data and ensure it's a data.table
   X <- as.data.table(ViewFullTable_split[[census]])
+  setorder(X, Tag, StemID, CensusID)
   # Validate that every required column is present BEFORE subsetting,
   # so a missing column produces a clear error rather than a cryptic
   # data.table failure deep inside the export loop.
