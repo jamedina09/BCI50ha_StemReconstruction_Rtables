@@ -1253,7 +1253,6 @@ p_net_size <- ggplot(
   aes(x = CensusYear + dT_mean / 2, y = net_mean, colour = size, fill = size)
 ) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
-  # geom_errorbar(aes(ymin = net_lwr, ymax = net_upr), width = 0.1, alpha = 0.5) +
   geom_ribbon(aes(ymin = net_lwr, ymax = net_upr), alpha = 0.2, colour = NA) +
   geom_line(linewidth = 0.7) +
   geom_point(size = 1.5) +
