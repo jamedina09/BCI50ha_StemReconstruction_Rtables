@@ -3461,9 +3461,6 @@ if (dir.exists("./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECK
 
 fwrite(check_coordinates, "./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/repeated_coordinates.csv")
 
-
-
-
 impute_tree_dates <- function(split_list,
                               id_cols = c("TreeID", "Tag"),
                               date_col = "ExactDate",
@@ -3549,6 +3546,11 @@ ViewFullTable_split <- impute_tree_dates(
   quadrat_col = "QuadratName",
   strict = FALSE
 )
+
+# df_stem[treeID == "99995", .(treeID, stemID, CensusID, ExactDate, prev_ExactDate, Rstatus, dbh)]
+# df_stem[treeID == "243042", .(treeID, stemID, CensusID, ExactDate, prev_ExactDate, Rstatus, dbh)]
+
+
 cat("✓ Dates imputation complete.\n\n")
 
 cat("💾 Exporting census tables to .Rdata files...\n")
@@ -3566,7 +3568,7 @@ check_dates[, c("n_dates") :=
 by = .(CensusID, TreeID)
 ]
 
-inc <- unique(check_dates[n_dates > 1L]$TreeID)
+fwrite(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)], "./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/repeated_dates.csv")
 
 for (census in seq_along(ViewFullTable_split)) {
   cat(sprintf("  Processing census %d...\n", census))
