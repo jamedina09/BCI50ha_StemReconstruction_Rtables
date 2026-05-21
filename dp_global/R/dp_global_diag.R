@@ -154,7 +154,7 @@ plot_tag_to_pdf <- function(out, pdf_file, include_reference = FALSE, tag = NULL
     ## ---- Required columns ----
     # Plot 2 (reconstructed IDs) always requires these.
     required_cols <- c(
-        "Tag", "CensusID", "DBH", "species",
+        "Tag", "CensusID", "DBH", # "species",
         "ReconstructedStemID", "ReconstructionMethod", "ConstraintViolation"
     )
     # Plot 1 (reference/original IDs) is optional.
@@ -167,6 +167,16 @@ plot_tag_to_pdf <- function(out, pdf_file, include_reference = FALSE, tag = NULL
     if (length(missing_cols) > 0) {
         stop("Missing columns: ", paste(missing_cols, collapse = ", "), call. = FALSE)
     }
+
+# Check for species column (case-insensitive)
+if (!("species" %in% names(out)) && !("Species" %in% names(out))) {
+    stop("Missing column: species (or Species)", call. = FALSE)
+}
+
+# Optionally, standardize the column name to lowercase
+if ("Species" %in% names(out) && !("species" %in% names(out))) {
+    names(out)[names(out) == "Species"] <- "species"
+}
 
     # Get out_dir for subtitle if available
     out_dir_value <- if ("out_dir" %in% names(out)) unique(out$out_dir) else NULL

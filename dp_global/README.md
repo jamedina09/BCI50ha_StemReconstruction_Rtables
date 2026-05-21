@@ -1,6 +1,6 @@
 # Global Dynamic Programming Stem-ID Reconstruction with Biological Costs
 
-**Date:** 2026-04-06  
+**Date:** 2026-04-06
 **Author:** José A. Medina-Vega
 
 ---
@@ -44,26 +44,30 @@ Reconstruct stable stem identities across censuses using a biologically informed
 
 ### Prerequisites
 
-R (packages: `data.table`, `Rcpp`; optional: `ggplot2`, `cowplot`, `arrow`) 
+R (packages: `data.table`, `Rcpp`; optional: `ggplot2`, `cowplot`, `arrow`)
 
 ### Running the Code
 
 **Interactive (single-tag or small datasets):**
+
 ```r
 source("dp_global/scripts/main_cpp.R")
 ```
 
 **Command line (single-tag or small datasets):**
+
 ```bash
 Rscript dp_global/scripts/main_cpp.R
 ```
 
 **Command line (large datasets — chunked incremental output):**
+
 ```bash
 Rscript dp_global/scripts/main_cpp_chunk.R
 ```
 
 Notes:
+
 - For large datasets prefer `main_cpp_chunk.R` which processes groups (Tag + species) in configurable chunks, writes incremental CSV/RDS output, and supports resume (`DP_CHUNK_RESUME=TRUE`).
 - To specify census timing, pass `interval_years` (scalar) or ensure a per-row interval column (e.g., `Bio_IntervalYears`) is present and set `interval_years = NULL` to enable automatic per-pair interval detection.
 - Request `.rds` outputs by passing `--WRITE_DP_RDS=TRUE`.
@@ -78,6 +82,7 @@ dp_global/
 │   ├── dp_global_bio.R               # Biological parameter estimation (estimate_bio_pars)
 │   ├── dp_global_dp.R                # Core DP solver (match_stems_dp_global_backward_marginals_batch)
 │   ├── dp_global_states.R            # State enumeration and track-DBH helpers
+│   ├── dp_global_matchers.R          # Fallback stepwise matching (igraph-based bipartite)
 │   ├── dp_probabilistic_matching.R   # Probabilistic greedy matching fallback (match_stems_probabilistic)
 │   ├── dp_global_utils.R             # Shared utilities (interval resolution, etc.)
 │   ├── dp_global_diag.R              # Diagnostics and PDF plotting
@@ -97,7 +102,7 @@ dp_global/
 ├── scripts/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
 │   ├── main_cpp_chunk.R              # Chunked driver for large runs
-│   ├── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, withr bundle sourcing)
+│   ├── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, sources main_cpp.R for helpers)
 │   └── basal_area_uncertainty.R      # Posterior-based basal area uncertainty quantification
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
@@ -123,11 +128,13 @@ Forest census measurements track multiple stems per tree over time:
 ### The Challenge
 
 **Goal:** Assign earlier observations to anchor identities such that:
+
 1. DBH trajectories are biologically plausible
 2. Identity assignments are globally optimal
 3. Life-cycle constraints are respected (no resurrection)
 
 **Why it's hard:**
+
 - Multiple stems per tag creates combinatorial assignment space
 - Missing observations require handling of recruitment/mortality
 - Measurement error complicates growth assessment
@@ -239,6 +246,7 @@ Each track maintains a phase variable:
 ### Choosing K (Number of Tracks)
 
 K must accommodate:
+
 1. Number of unique anchor stem IDs
 2. Maximum observed stems in any census
 3. Births needed to explain stem count increases
@@ -258,6 +266,7 @@ Minimize total cost across all transitions:
 $$\text{TotalCost} = \sum_{t=1}^{\text{anchor}-1} \text{TransitionCost}(t \to t+1)$$
 
 Subject to:
+
 - Injective assignments at each census
 - Valid phase transitions per track
 - Fixed assignments at anchor census (from `TrueStemID`)
@@ -281,24 +290,29 @@ Subject to:
 All parameters must be present in the dataset before running DP. These are typically added by calling `estimate_bio_pars()` and joining results:
 
 #### Growth Parameters
+
 - `Bio_Mu_Growth` ($\mu_{\text{const}}$): Intercept of mean annual growth (cm/year)
 - `Bio_Gamma_Growth` ($\mu_{\gamma}$): Log-DBH slope in mean growth model (cm/year)
 - `Bio_Sigma0_Growth` ($\sigma_0$): Baseline growth process SD (cm/year)
 - `Bio_Sigma1_Growth` ($\sigma_1$): Growth SD slope vs DBH ((cm/year)/cm)
 
 #### Shrinkage Penalties
+
 - `Bio_Max_Shrink` (`max_shrink`): Hard lower bound on annual growth (cm/year, negative)
 - `Bio_K_Shrink` ($k_{\text{shrink}}$): Soft shrinkage penalty weight (1/cm²)
 
 #### Extreme Growth Penalties
+
 - `Bio_Max_Growth` (`max_growth`): Hard upper bound on annual growth (cm/year)
 - `Bio_K_Growth` ($k_{\text{growth}}$): Soft extreme growth penalty weight (1/cm²)
 
 #### Mortality Parameters
+
 - `Bio_H0_Mortality` ($h_0$): Baseline hazard parameter
 - `Bio_Beta_Mortality` ($\beta$): Size effect on mortality hazard
 
 #### Recruitment Parameters
+
 - `Bio_Recruit_Meanlog`: LogNormal meanlog for recruit size
 - `Bio_Recruit_Sdlog`: LogNormal sdlog for recruit size
 - `Bio_Recruit_MaxDBH_unit`: Maximum plausible recruit DBH (cm)
@@ -309,16 +323,19 @@ All parameters must be present in the dataset before running DP. These are typic
 | Column | Description |
 |--------|-------------|
 | `ReconstructedStemID` | Assigned stem identity |
-| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"provisional_dp"`, `"dp_mf_inferred"`, `"none_after_anchor"`, `"skipped_no_data"` — see notes below |
+| `ReconstructionMethod` | One of: `"given"`, `"dp"`, `"probabilistic"`, `"provisional_dp"`, `"dp_mf_inferred"`, `"carried_terminal"`, `"given_orphan"`, `"bb_split"`, `"bb_split_carry"`, `"bb_post_terminator_split"`, `"bb_post_terminator_split_carry"`, `"none_after_anchor"`, `"skipped_no_data"` — see notes below |
 | `ConstraintViolation` | Post-hoc diagnostic flag |
 | `DP_KUsed` | Number of tracks used |
 | `DP_MaxStatesPerCensus` | Largest state space encountered |
 | `DP_MaxStatesCensusID` | Census with largest state space |
+| `SweepAuditOverride` | `TRUE` on rows where the hard-invariant sweep in `finalize_out()` (and the equivalent sweep in the probabilistic matcher / driver scripts) overrode an engine-assigned `ReconstructedStemID` to match a known `TrueStemID`. Use to surface engine-vs-pin disagreements that would otherwise be silently corrected. See the *Hard-invariant sweep and the `SweepAuditOverride` audit column* section in the top-level `README.md`. |
+| `ReconstructedStemID_PreSweep` | Snapshot of the engine's `ReconstructedStemID` *before* the hard-invariant sweep ran. Identical to `ReconstructedStemID` on rows where `SweepAuditOverride == FALSE`; differs from it (and equals the engine's original choice) on rows where `SweepAuditOverride == TRUE`. The column is populated once by the first sweep that fires (engine `finalize_out` → probabilistic matcher → script-level backstop) and preserved unchanged by later sweeps. |
 
 Notes on post-anchor output semantics:
-- When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that matches an anchor-census stem ID (used as a DP constraint) will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
-- Remaining post-anchor rows without a DP assignment are labeled `ReconstructionMethod = "none_after_anchor"` and keep `ReconstructedStemID = NA`.
-- Pre-anchor rows (censuses before the anchor) with non-NA `TrueStemID` are processed by the solver and can receive different identity assignments — they are not automatically treated as `"given"`.
+
+- When DP is scoped to pre-anchor censuses (because there are observations after the requested anchor), post-anchor rows are preserved and appended to the DP output. Post-anchor rows with non-NA `DBH` and a non-NA `TrueStemID` will have `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`.
+- Remaining post-anchor rows without a non-NA `TrueStemID` (or with `DBH = NA`) are labeled `ReconstructionMethod = "none_after_anchor"` and keep `ReconstructedStemID = NA`.
+- Pre-anchor rows (censuses before the anchor) with non-NA `TrueStemID` are processed by the solver and can receive different identity assignments — they are not automatically treated as `"given"`. However, when `pin_truestemid = TRUE` (default), the solver constrains those observations to their field-observed identity.
 - If no anchored census with `TrueStemID` exists, and `allow_provisional_anchor = TRUE` (default), the DP can assign provisional anchor IDs at the last observed DBH census; those anchor rows are labeled `"provisional_dp"` and treated as anchors for the reconstruction.
 
 ### Posterior Uncertainty Columns (Optional)
@@ -350,7 +367,6 @@ Each row represents a **unique reconstruction** (unique identity assignment acro
 ### MAP vs posterior-sampled paths 🔀
 
 **What these two outputs represent**
-
 
 - **`ReconstructedStemID` (main output)** is the *MAP joint assignment* (MAP — Maximum a posteriori) decoded by the DP (a deterministic Viterbi-style backtrace of the most probable full path). This is written per-observation in the main `stem_reconstruction_*.csv` as the best joint reconstruction under the model.
 
@@ -385,6 +401,7 @@ paths[path_sig == sig]  # empty => MAP path wasn't sampled
 $\mu(D) = \alpha + \gamma \log(D)$
 
 Where:
+
 - $\alpha$ = `Bio_Mu_Growth` (intercept, cm/year)
 - $\gamma$ = `Bio_Gamma_Growth` (slope on log-DBH, cm/year)
 - If $\gamma = 0$, reduces to constant mean growth
@@ -393,6 +410,7 @@ Where:
 $\sigma(D) = \sigma_0 + \sigma_1 D$
 
 Where:
+
 - $\sigma_0$ = `Bio_Sigma0_Growth` (baseline SD, cm/year)
 - $\sigma_1$ = `Bio_Sigma1_Growth` (SD slope vs DBH, (cm/year)/cm)
 
@@ -405,6 +423,7 @@ $\text{hazard}(D) = h_0 \exp(\beta D)$
 $P_{\text{death}}(D, \Delta t) = 1 - \exp(-\text{hazard}(D) \cdot \Delta t)$
 
 Where:
+
 - $h_0$ = `Bio_H0_Mortality` (baseline hazard)
 - $\beta$ = `Bio_Beta_Mortality` (size effect parameter)
 - Probability clamped to $[10^{-12}, 1-10^{-12}]$ for numerical stability
@@ -418,6 +437,7 @@ $D_{\text{recruit}} \sim \text{LogNormal}(\text{meanlog}, \text{sdlog})$
 $P_{\text{recruit}}(\Delta t) = 1 - \exp(-\lambda_{\text{recruit}} \cdot \Delta t)$
 
 Where:
+
 - `Bio_Recruit_Meanlog`, `Bio_Recruit_Sdlog`: LogNormal parameters
 - $\lambda_{\text{recruit}}$ = `Bio_Recruitment_lambda` (rate per year)
 - Probability clamped to $[10^{-12}, 1-10^{-12}]$ for numerical stability
@@ -435,6 +455,7 @@ where:
 $$\text{SD1}(D) = a \cdot D + b$$
 
 **Parameters:**
+
 - `meas_sd1_a`: Small-error slope (a)
 - `meas_sd1_b`: Small-error intercept (b)
 - `meas_sd2`: Large-error SD (constant)
@@ -453,6 +474,7 @@ $$\text{SD1}(D) = a \cdot D + b$$
 **Key principle:** Each track contributes independently to the total cost. The function processes all K tracks sequentially.
 
 **Inputs:**
+
 - `track_dbh_t`: length-K numeric vector (DBH per track at census t, NA if unoccupied)
 - `track_dbh_tp1`: length-K numeric vector (DBH per track at census t+1, NA if unoccupied)
 - `interval_years`: $\Delta t$ between censuses
@@ -540,6 +562,7 @@ Component parameters:
 $\text{SD}_{\text{meas},i} = \frac{\sqrt{\text{SD}_a^2 + \text{SD}_b^2}}{\Delta t}$
 
 where $({\text{SD}_a, \text{SD}_b})$ from:
+
 1. Small-small: (SD1($D_0$), SD1($D_1$))
 2. Small-big: (SD1($D_0$), SD2)
 3. Big-small: (SD2, SD1($D_1$))
@@ -566,7 +589,7 @@ $\text{if } D_1 < D_0: \quad \text{cost} += k_{\text{shrink}} (D_0 - D_1)^2$
 **Units:** $(D_0 - D_1)$ in cm, $k_{\text{shrink}}$ in 1/cm²
 
 **D7. Soft extreme growth penalty:**
-d_{1,cap} = D_0 + `max_growth_soft` * Δt  
+d_{1,cap} = D_0 + `max_growth_soft` * Δt
 If D_1 > d_{1,cap}: `cost += k_growth * (D_1 - d_{1,cap})^2`
 
 **Units:** Excess in cm, $k_{\text{growth}}$ in 1/cm²
@@ -589,6 +612,7 @@ Default: $\varepsilon_{\text{tiebreak}} = 10^{-6}$
 **Initialization:** Anchor census assignments fixed by `TrueStemID`
 
 **Backward loop:** For each census from anchor-1 down to 1:
+
 1. Enumerate all valid injective states at current census
 2. For each state, iterate over valid next states (from census t+1)
 3. Derive valid phase transitions (enforce life-cycle constraints)
@@ -612,12 +636,14 @@ The probabilistic solver defines a Gibbs-like posterior:
 $$P(\text{path}) \propto \exp\left(-\frac{\text{TotalCost}(\text{path})}{\tau}\right)$$
 
 where $\tau$ is the temperature parameter:
+
 - $\tau < 1$: Sharper posterior (more confident, concentrates on near-MAP paths)
 - $\tau > 1$: Flatter posterior (less confident, spreads mass across alternatives)
 
 ### Marginal Computation
 
 `match_stems_dp_global_backward_marginals_batch()` computes exact marginals via:
+
 1. **Backward pass:** Log-sum-exp recursion computing log partition function
 2. **Forward pass:** Normalization to obtain marginal probabilities
 3. **Per-observation summaries:** Probability of assignment to each anchor ID
@@ -632,6 +658,7 @@ where $\tau$ is the temperature parameter:
 ### Posterior Binning
 
 `add_dp_posterior_bins()` creates categorical labels:
+
 - **confident:** High probability on single ID
 - **ambiguous:** Probability split across multiple IDs
 - **unlinked-likely:** High probability of being unlinked
@@ -643,10 +670,23 @@ where $\tau$ is the temperature parameter:
 ### Primary Outputs
 
 1. **ReconstructedStemID:** Assigned identity for each observation
-2. **ReconstructionMethod:**
-   - `"given"`: From input `TrueStemID`
-   - `"dp"`: Assigned by DP solver
-   - `"probabilistic"`: Assigned by probabilistic greedy matching fallback
+2. **ReconstructionMethod:** One of:
+   - `"given"`: identity copied from `TrueStemID` (anchor row, post-anchor row with known `TrueStemID`, or row corrected by the hard-invariant sweep)
+   - `"dp"`: Assigned by the exact DP solver
+   - `"probabilistic"`: Assigned by the probabilistic greedy matching fallback
+   - `"provisional_dp"`: Provisional anchor assigned by the DP at the last observed DBH census when the requested anchor lacked `TrueStemID` (`allow_provisional_anchor = TRUE`)
+   - `"dp_mf_inferred"`: Identity carried across an inferred missing-from-field census
+   - `"carried_terminal"`: Orphan terminal-event row (`Status` ∈ {`dead`, `stem dead`, `broken below`} with `DBH = NA`) that the engine could not match. The post-engine helper `apply_carried_terminal_backfill()` (defined in `dp_global/R/dp_global_main.R` and invoked by all three driver scripts) copies the most recent prior `ReconstructedStemID` from the same `(Tag, OriginalStemID)` group via LOCF. Biologically these rows close out the trajectory of the most recent prior identity carrying that `OriginalStemID`.
+   - `"given_orphan"`: "Born-orphan" stem row that the engine could not match. The source identifier (`StemID` in production, `OriginalStemID` in this test repo) is non-NA, but `DBH`, `TrueStemID`, and the engine's `ReconstructedStemID` are all NA — typically a brand-new stem id first recorded as broken-below at C7+ with no DBH and no upstream `TrueStemID`. The post-engine helper `apply_orphan_stem_backfill()` (defined in `dp_global/R/dp_global_main.R` and invoked after `apply_carried_terminal_backfill()` by all three driver scripts) copies the source identifier into `ReconstructedStemID`. Collision risk is zero because the DP never reached these rows.
+   - `"bb_split"`: Broken-below row that violated the **R1 (split-at-resurrection)** invariant — a per-(Tag, series-key) trajectory contained at least one alive+DBH row *after* a `broken below` event with no DBH. The post-engine helper `apply_broken_below_invariants()` (defined in `dp_global/R/dp_global_main.R`) relabels every row from the BB event up to but not including the next alive+DBH row to a fresh `ReconstructedStemID` (the smallest non-colliding integer at the relevant `(Tag, CensusID)` cells). The series resumes its previous identity at the resurrection census. Series key precedence: `StemTag` → `OriginalStemID` → `StemID`.
+   - `"bb_split_carry"`: Continuation rows of a BB-split run (subsequent BB or terminal rows carrying the new identity assigned at the splitting BB row). Same `apply_broken_below_invariants()` pass; method tag distinguishes the carry rows from the splitting BB row itself for downstream filtering.
+   - `"bb_post_terminator_split"`: Row that violated the **R2 (post-terminator)** invariant — an alive+DBH row appearing after a hard terminator (`dead`, `stem dead`, or any BB run preceding a non-resurrection census) within the same series. Re-identified to a fresh `ReconstructedStemID` by `apply_broken_below_invariants()`.
+   - `"bb_post_terminator_split_carry"`: Continuation rows of a post-terminator split run.
+   - `"none_after_anchor"`: Post-anchor row with no `TrueStemID` and no DP assignment
+   - `"skipped_no_data"`: Tag/segment skipped because there were no usable observations
+3. **SweepAuditOverride:** Boolean — `TRUE` flags rows where the hard-invariant sweep overrode an engine-assigned `ReconstructedStemID` to enforce a known `TrueStemID`. See the top-level `README.md` for downstream-uncertainty implications.
+4. **ReconstructedStemID_PreSweep:** Snapshot of the engine's `ReconstructedStemID` before the sweep. Equals `ReconstructedStemID` everywhere `SweepAuditOverride == FALSE`; on `SweepAuditOverride == TRUE` rows it carries the original engine choice that the sweep overrode (or, when `SweepRollbackToPreSweep == TRUE`, the value that the sweep rolled back *to*).
+5. **SweepRollbackToPreSweep:** Boolean — `TRUE` flags rows where the script-level sweep refused to pin `ReconstructedStemID := TrueStemID` because doing so would have produced a duplicate `ReconstructedStemID` at the same `(Tag, CensusID)`, and the engine's `ReconstructedStemID_PreSweep` value was retained instead. `SweepAuditOverride` will also be `TRUE` on those rows (the disagreement was detected); `SweepRollbackToPreSweep` records the chosen resolution. `ReconstructionMethod` is left untouched on a rollback so it still reflects the engine's original assignment path.
 
 ### Diagnostic Outputs
 
@@ -655,24 +695,44 @@ where $\tau$ is the temperature parameter:
 - **DP_MaxStatesPerCensus:** Worst-case state space size
 - **DP_MaxStatesCensusID:** Census achieving maximum states
 
+### Broken-Below Invariants (Post-Engine Pass)
+
+Two life-cycle invariants are enforced **after** the DP / probabilistic engine and **after** `apply_carried_terminal_backfill()` / `apply_orphan_stem_backfill()`, by `apply_broken_below_invariants()` (defined in `dp_global/R/dp_global_main.R`). The pass is deterministic, idempotent, and operates per `(Tag, series_key)` group with series-key precedence `StemTag` → `OriginalStemID` → `StemID`.
+
+- **R1 (split-at-resurrection):** Within one series, a `broken below` row with `DBH = NA` *cannot* be followed by an alive+DBH row carrying the same `ReconstructedStemID`. A BB stem that is later observed alive must be a *new* physical stem (resprout / coppice ingrowth) and therefore a different identity.
+- **R2 (post-terminator):** Within one series, no row may appear after a hard terminator (`dead`, `stem dead`, or any BB run preceding a non-resurrection census) carrying the same `ReconstructedStemID` as the terminator block.
+
+When a violation is detected, every row of the violating run (from the BB / terminator event up to but not including the next alive+DBH row, if any) is relabeled to a fresh `ReconstructedStemID` — the smallest non-colliding integer at the relevant `(Tag, CensusID)` cells — and the trajectory resumes its previous identity at the resurrection census. The splitting row itself is tagged `"bb_split"` (R1) or `"bb_post_terminator_split"` (R2); subsequent rows in the same run are tagged `"bb_split_carry"` / `"bb_post_terminator_split_carry"`.
+
+**Pin-override semantics.** `apply_broken_below_invariants()` may modify rows where the engine had set `ReconstructedStemID = TrueStemID` (e.g. BCI Step 3a pre-stamps `TrueStemID = OriginalStemID` on BB+DBH rows). The post-engine pass treats the R1/R2 invariants as harder than the `TrueStemID` pin and overrides the pin where the contract is violated. The pre-sweep value is preserved in `ReconstructedStemID_PreSweep`. (The script-level `TrueStemID` backstop sweep is intentionally **not** re-run after the BB pass.)
+
+**Posterior writers.** The same operator is applied per posterior sample inside `match_stems_dp_global_backward_marginals_batch()` (`dp_global/R/dp_global_dp.R`) and `export_probabilistic_posteriors()` (`dp_global/R/dp_probabilistic_matching.R`), via the helper `apply_bb_invariants_to_samples()`. The path-signature aggregation (`paste0(ReconstructedStemID, collapse = "-")` grouped by sample) is computed *after* per-sample relabel, so identical post-relabel paths collapse correctly and `sum(path_prob) == 1` is preserved.
+
+**Tests.** Eight fixtures (A–H) covering simple BB, multi-BB-at-one-census, post-terminator, multi-tracker, idempotence, integer-id collision, and orphan interaction are at `dp_global/tests/test_broken_below_invariants.R`. Run with `make test-bb` or `Rscript dp_global/tests/test_broken_below_invariants.R`. All 22 assertions pass.
+
+**Audit.** `dp_global/scripts/bb_audit.R` reports R1/R2 violation counts on any reconstruction CSV. Expected to print `R1: 0/N, R2: 0/N` after `apply_broken_below_invariants()` has been applied.
+
 ### Visualization
 
 **Plot reconstructed trajectories:**
+
 ```r
 plot_tag_to_pdf(
-  out, 
+  out,
   pdf_file = "output/trajectories.pdf",
   include_reference = TRUE
 )
 ```
 
 **Sensitivity analysis:**
+
 ```r
 source("dp_global/R/sensitivity_transition_cost_bio.R")
 # Run parameter sweeps
 ```
 
 **Realism calibration:**
+
 ```r
 source("dp_global/R/realism_calibration.R")
 # Analyze reconstruction quality
@@ -699,6 +759,7 @@ Note: enabling `--WRITE_DP_RDS=TRUE` is recommended when you plan to post-proces
 ### Overview
 
 `estimate_bio_pars()` derives biological parameters from known `TrueStemID` data. Supports two modes:
+
 - **data mode:** Estimates from empirical observations
 - **fixed mode:** Uses user-specified constants
 
@@ -718,6 +779,7 @@ When per-census intervals vary across tags or measurement pairs you can enable p
 **Data filtering:** Keep rows with non-NA `DBH > 0` and non-NA `TrueStemID`
 
 **Wide format conversion:**
+
 ```r
 dw <- dcast(Tag + TrueStemID + species ~ CensusID, value.var = "DBH")
 ```
@@ -730,6 +792,7 @@ $g = \frac{D_1 - D_0}{T_i}$ where $T_i$ is the interval (years) for that specifi
 $\mu(D) = \alpha + \gamma \log(D)$
 
 Fits `lm(g ~ log(d0))` when:
+
 - At least 10 valid observations exist
 - Variance of `log(d0)` > 0
 
@@ -766,6 +829,7 @@ $\hat{\sigma}_{\text{proc},i} = \max(\hat{\sigma}_{\text{total},i}, 10^{-6})$
 
 **Linear model for heteroskedasticity:**
 Fits `lm(sd_proc_hat ~ d0_all)` with constraints:
+
 - $\sigma_0 \geq 10^{-4}$
 - $\sigma_1 \geq 0$
 
@@ -773,12 +837,14 @@ Final model:
 $\sigma(D_0) = \sigma_0 + \sigma_1 D_0$
 
 ### Optional enforcement: user-specified growth bounds
+
 You can optionally enforce user-specified annual growth bounds in `estimate_bio_pars()` to remove extreme increments prior to parameter estimation. These options are independent of the guardrails returned by the function and affect only the *data used to fit* the growth mean and variance.
 
 - `enforce_growth_bounds` (logical, default `FALSE`): when `TRUE`, observations with annualized growth $g$ (cm/year) outside the provided bounds will be dropped before fitting the mean and variance models.
 - `growth_min_fixed`, `growth_max_fixed` (numeric, cm/year): one-sided bounds are allowed (set one of them to `NA` to have only a single-sided filter).
 
 Behavior:
+
 - Dropped observations produce a warning stating how many points were removed.
 - If enforcing the bounds causes too few growth observations to remain (the function requires at least 5 total growth observations), `estimate_bio_pars()` will raise an error.
 
@@ -787,7 +853,6 @@ Example (enforce growth between -0.5 and 7.5 cm/year):
 ```r
 estimate_bio_pars(x, enforce_growth_bounds = TRUE, growth_min_fixed = -0.5, growth_max_fixed = 7.5)
 ```
-
 
 ### Penalty Parameter Estimation
 
@@ -814,6 +879,7 @@ $k_{\text{shrink}} = \frac{1}{2 \cdot \text{Var}(\Delta D_{\text{shrink}})}$
 Otherwise defaults to 50.
 
 **Fixed mode:**
+
 ```r
 k_shrink_source = "fixed"
 k_shrink_fixed = 50  # or 0 to disable
@@ -827,7 +893,7 @@ Example: K=50 corresponds to $s \approx \sqrt{1/(2 \times 50)} = 0.1$ cm
 **Application in cost function:**
 $\text{cost} += k_{\text{shrink}} (D_0 - D_1)^2 \quad \text{when } D_1 < D_0$
 
-#### Hard Shrinkage Guardrail (`max_shrink`) 
+#### Hard Shrinkage Guardrail (`max_shrink`)
 
 **Data mode:**
 
@@ -851,9 +917,11 @@ CDF(x) = sum_{i=1}^4 w_i Phi(x; 0, SD_meas_i)
 using typical diameter D_typ = median(D_0)
 
 **Final value:**
+
 - With measurement error: `max_shrink` = min(`max_shrink_data`, `max_shrink_meas`)
 - Without: `max_shrink` = `max_shrink_data`
 **Fixed mode:**
+
 ```r
 max_shrink_source = "fixed"
 max_shrink_fixed = -0.5  # cm/year, must be negative
@@ -880,6 +948,7 @@ $k_{\text{growth}} = \frac{1}{2 \cdot \text{Var}(\Delta D_{\text{pos}})}$
 Otherwise defaults to 50.
 
 **Fixed mode:**
+
 ```r
 k_growth_source = "fixed"
 k_growth_fixed = 50  # or 0 to disable
@@ -903,6 +972,7 @@ Empirical upper quantile (default 99.9%):
 Uses same four-component mixture as shrinkage, solving for upper quantile $q = 1 - 10^{-4}$ (99.99th percentile).
 
 **Final value:**
+
 - With measurement error: `max_growth` = max(`max_growth_data`, `max_growth_meas`)
 - Without: `max_growth` = `max_growth_data`
 
@@ -910,6 +980,7 @@ Uses same four-component mixture as shrinkage, solving for upper quantile $q = 1
 `max_growth_soft` = min(`max_growth`, Q_{0.99}(g_all))
 
 **Fixed mode:**
+
 ```r
 max_growth_source = "fixed"
 max_growth_fixed = 7.5  # cm/year
@@ -922,6 +993,7 @@ If g > `max_growth`: `cost += 10^6`
 
 **Data preparation:**
 For each adjacent census pair $(t_0, t_1)$:
+
 - At-risk stems: observed at census $t_0$ (non-NA DBH)
 - Died indicator: 1 if NA at $t_1$, 0 if still observed
 
@@ -937,6 +1009,7 @@ Negative log-likelihood:
 $-\sum_i \left[\text{died}_i \cdot \log P_{\text{death}}(D_{0,i}) + (1-\text{died}_i) \cdot \log(1-P_{\text{death}}(D_{0,i}))\right]$
 
 Optimization on unconstrained scale:
+
 - Parameter vector: $[\log(h_0), \beta]$
 - Starting values: `mortality_start = c(log(0.01), 0)`
 - Method: BFGS
@@ -947,6 +1020,7 @@ Optimization on unconstrained scale:
 
 **Identifying recruitment events:**
 For each adjacent census pair:
+
 - At-risk tracks: NA at $t_0$
 - Recruited: NA at $t_0$ AND observed positive DBH at $t_1$
 
@@ -981,6 +1055,7 @@ Poisson rate per empty slot per year:
 $\lambda_{\text{recruit}} = \frac{n_{\text{recruits}}}{n_{\text{at-risk}} \cdot \sum_{\text{intervals}} \Delta t}$
 
 where:
+
 - $n_{\text{recruits}}$: total recruitment events across all intervals
 - $n_{\text{at-risk}}$: total empty-slot census-years
 
@@ -1012,7 +1087,6 @@ one row whose `growth_form` value matches the vector will immediately fall back
 with reason `growth_form_forced`.  The CLI flag accepts comma‑ or
 semicolon‑separated lists, which are split automatically by the DP loader.
 
-
 The DP solver automatically falls back to the probabilistic greedy matcher when:
 
 1. Anchor census missing or has no observed stems
@@ -1022,7 +1096,7 @@ The DP solver automatically falls back to the probabilistic greedy matcher when:
 5. DP recursion yields no feasible keys
 6. Growth form or species forced to probabilistic
 
-**Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints. After the probabilistic matcher returns, `do_fallback()` applies **R-boundary splitting**: for each census with live R-coded stems, identity tracks crossing the boundary are severed by assigning new IDs to the pre-boundary rows. This mirrors the DP solver's resprout segment split and prevents the probabilistic matcher from chaining identities across resprout events.
+**Fallback routing:** The `do_fallback()` helper routes all fallback reasons to `match_stems_probabilistic()` (probabilistic greedy matching). The probabilistic matcher receives the same hard pruning bounds (`prune_min_growth`, `prune_max_growth`, `prune_recruit_max_dbh`) as the DP solver, ensuring both paths apply identical biological constraints. It also receives the `use_bio_hard_shrink_in_prob` and `use_bio_hard_growth_in_prob` flags (propagated from `USE_BIO_HARD_SHRINK_IN_PROB` and `USE_BIO_HARD_GROWTH_IN_PROB`), which control whether the bio hard gates and ME cumulative-shrinkage check are active in the probabilistic matcher. After the probabilistic matcher returns, `do_fallback()` applies **R-boundary splitting**: for each census with live R-coded stems, identity tracks crossing the boundary are severed by assigning new IDs to the pre-boundary rows. This mirrors the DP solver's resprout segment split and prevents the probabilistic matcher from chaining identities across resprout events.
 
 **Error fallback:** `run_dp_one_group()` (in both `main_cpp.R` and `main_cpp_chunk.R`) wraps the DP call in a `tryCatch` block. If the solver throws a runtime error (e.g., memory exhaustion), the error handler falls back to the probabilistic matcher with R-boundary splitting rather than returning `NA` or crashing the run. The error message is logged via `log_msg()` for diagnostics.
 
@@ -1037,9 +1111,11 @@ When a tag is split into sub-problems at an R-event boundary (resprout segment s
 However, when the whole-tag check passes, each sub-segment is solved **independently** with the original `max_states` and computes its own K from its sub-segment anchor and stem counts. It is therefore possible for the pre-resprout and post-resprout segments to use **different algorithms** — for example, the post-resprout segment (anchored at the known census with fewer stems) solving cleanly with the exact DP while the pre-resprout segment (anchored at an earlier census with more stems and a larger K) falls back to the probabilistic matcher. Both segments' outputs are combined into a single reconstruction for the tag with their respective `ReconstructionMethod` labels.
 
 #### Anchor fallback behavior
+
 If the user requests an `anchor_start` that exists in the dataset but **all rows at that census have NA for both `DBH` and `TrueStemID`**, the algorithm will search backwards and select the most recent earlier census that has at least one row with a non-NA `DBH` and a non-NA `TrueStemID` and use that census as the anchor instead of immediately falling back. If no such earlier census exists, the algorithm falls back to the probabilistic matcher.
 
 #### Anchor extension (forward search)
+
 When the nominal anchor census has 0 living stems (all DBH values are `NA`), the algorithm extends the anchor search **forward** to post-anchor censuses. It selects the first census after the anchor that has at least one living stem with a non-NA `TrueStemID`. This prevents tags where the anchor census happens to have only dead stems from unnecessarily falling back when a later census has reliable identity information.
 
 Note: In addition, when the requested anchor census contains DBH observations but lacks `TrueStemID` values, setting the `ALLOW_PROVISIONAL_DP_ANCHOR` flag (default: `TRUE` in the chunk runner and the DP function) allows the DP to assign provisional `TrueStemID`/`ReconstructedStemID` values at the last-observed DBH census (marked with `ReconstructionMethod = "provisional_dp"`) and proceed with the DP instead of falling back.
@@ -1104,15 +1180,15 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 6. **Sample-level growth violation repair** (`repair_stitched_growth_violations()`): Before computing marginals, each sample's trajectories are walked and links violating growth constraints are severed. This ensures that `compute_marginals_from_samples()` only counts biologically valid paths, so posterior probabilities reflect post-constraint uncertainty. Two layers of defense:
 
    - **Hard-rate check:** Annualised growth outside `[min_rate, max_rate]` is severed immediately.
-   - **ME-informed cumulative-shrinkage check:** Tracks cumulative shrinkage along each trajectory. Even when each consecutive pair passes the hard rate, a long run of small decreases can accumulate more shrinkage than measurement error can explain. The threshold is derived from the small-error component of the BCI measurement-error model: $\text{SD}(D) = 0.0062 \times D + 0.0904$ cm. When cumulative shrinkage exceeds $n_\sigma \times \sqrt{\text{SD}(d_\text{start})^2 + \text{SD}(d_\text{curr})^2}$ (default $n_\sigma = 3$), the link at the start of the shrinkage run is severed.
+   - **ME-informed cumulative-shrinkage check** (active when `use_bio_hard_shrink_in_prob = TRUE`): Tracks cumulative shrinkage along each trajectory. Even when each consecutive pair passes the hard rate, a long run of small decreases can accumulate more shrinkage than measurement error can explain. The threshold is derived from the small-error component of the BCI measurement-error model: $\text{SD}(D) = 0.0062 \times D + 0.0904$ cm. When cumulative shrinkage exceeds $n_\sigma \times \sqrt{\text{SD}(d_\text{start})^2 + \text{SD}(d_\text{curr})^2}$ (default $n_\sigma = 1$), the link at the start of the shrinkage run is severed. Set `USE_BIO_HARD_SHRINK_IN_PROB=FALSE` to disable this check and allow confirmed large-shrinkage events without forced splitting.
 
    **Relationship to DP:** The exact DP solver does not need explicit trajectory repair because its global cost minimisation naturally penalises consecutive shrinkage — each per-step growth likelihood accumulates across the entire trajectory, so a run-of-decreases pays a compounding cost even when each individual step is within hard bounds. The probabilistic matcher, being a per-pair greedy approach, lacks this global cost accumulation. The ME cumulative-shrinkage check provides an analogous trajectory-level constraint adapted for the greedy matching context.
 
 7. **Marginal posterior computation**: Two-pass approach:
    - **Pass 1**: Computes the full marginal posterior distribution for every observation by counting track assignments across samples.
-   - **Pass 2**: Per-census greedy conflict resolution — within each census, observations are sorted by confidence (descending), each observation gets its MAP track ID unless it conflicts with an already-assigned ID, in which case it falls back to the next-best posterior alternative.
+   - **Pass 2**: Growth-aware greedy conflict resolution — censuses are processed from the anchor outward (anchor first, then ±1, ±2, …). Within each census, observations are sorted by confidence (descending); each observation gets its MAP track ID unless it conflicts with an already-assigned ID **or** it would create a growth-rate violation against the nearest already-resolved adjacent census. When a candidate ID is rejected (by conflict or growth check), the next-best posterior alternative is tried. This prevents the greedy resolver from assembling trajectories that never existed in any individual sample. When `intervals`, `min_rate`, and `max_rate` are passed (the default), growth checking is active; when they are `NULL`, the resolver falls back to sequential census ordering (backward compatible).
 
-8. **Safety-net post-marginal repair**: `repair_marginal_growth_violations()` walks each reconstructed stem's trajectory and breaks tracks (assigns new unique IDs) at any point where the annualised growth rate violates hard bounds. This is a safety net — ideally it fires 0 breaks because step 6 already cleaned the samples. If it does fire, a warning is logged because the affected rows' posterior probabilities are stale (they were computed from pre-repair assignments).
+8. **Diagnostic growth-violation check**: After the growth-aware resolver, a diagnostic scan walks each reconstructed stem trajectory and counts residual hard-rate violations. With the growth-aware resolver, pin-consistent sample filtering, and sample-level repair, this count is expected to be 0. The check is diagnostic only — it does not modify `tree_data` or posteriors, which remain pristine after Pass 1. Any violations are logged as warnings.
 
 9. **TrueStemID re-stamping (anchor census only)**: After all repairs, rows at the anchor census carrying a known `TrueStemID` have their `ReconstructedStemID` restored to match `TrueStemID`, `DP_PosteriorReconstructedProb` set to 1.0, and `ReconstructionMethod` set to `"given"`. Pre-anchor rows with `TrueStemID` retain the identity assigned by the stochastic matcher.
 
@@ -1129,6 +1205,8 @@ When the DP state space is too large (triggered by `enum_exceeded` or `edge_coun
 | `me_sd1_a` | `0.0062` | ME model small-error slope: SD(D) = me_sd1_a × D + me_sd1_b |
 | `me_sd1_b` | `0.0904` | ME model small-error intercept (cm) |
 | `n_sigma_me` | `3` | Number of ME standard deviations for cumulative shrinkage threshold |
+| `use_bio_hard_shrink_in_prob` | `TRUE` | Apply `Bio_Max_Shrink` hard gate in pairwise edge construction and ME cumulative-shrinkage check in trajectory repair. When `FALSE`, edges with growth below `Bio_Max_Shrink` are allowed (penalised by soft `k_shrink` only) and the Layer 2 cumulative-shrinkage check is skipped. Propagated from `USE_BIO_HARD_SHRINK_IN_PROB`. |
+| `use_bio_hard_growth_in_prob` | `TRUE` | Apply `Bio_Max_Growth` hard gate in pairwise edge construction. When `FALSE`, edges exceeding `Bio_Max_Growth_Bio` are allowed (penalised by soft `k_growth` only). Propagated from `USE_BIO_HARD_GROWTH_IN_PROB`. |
 
 **Output columns:** The probabilistic matcher produces the same output schema as the DP solver (including `DP_PosteriorTop1ID`, `DP_PosteriorTop1Prob`, `DP_PosteriorEntropy`, etc.) with `ReconstructionMethod = "probabilistic"`. Anchor-census rows with known `TrueStemID` are marked `ReconstructionMethod = "given"` with `DP_PosteriorReconstructedProb = 1.0`.
 
@@ -1139,10 +1217,11 @@ Both pathways enforce the same hard growth bounds (`MAX_SHRINK_FIXED`, `MAX_GROW
 | Aspect | DP (global) | Probabilistic (greedy) |
 |--------|-------------|----------------------|
 | **Scope** | Minimises total cost over the entire trajectory | Greedy per census-pair assignment |
-| **Shrinkage defence** | Global cost accumulation: each step's growth likelihood compounds across the trajectory, naturally penalising runs of decreases | Explicit trajectory repair: ME cumulative-shrinkage check severs runs exceeding the measurement-error threshold |
-| **Hard bounds** | Enforced in state enumeration (infeasible transitions pruned) | Enforced in hard-rate check during sample-level repair |
-| **Soft penalty** | Optional `k_shrink` quadratic penalty (currently 0) | Not applicable — uses ME threshold instead |
-| **Measurement error** | 4-component mixture model when `USE_MEASUREMENT_ERROR=TRUE` | ME coefficients (sd1_a, sd1_b) used as a ruler for the cumulative threshold regardless of `USE_MEASUREMENT_ERROR` |
+| **Shrinkage defence** | Global cost accumulation: each step's growth likelihood compounds across the trajectory, naturally penalising runs of decreases | Explicit trajectory repair: ME cumulative-shrinkage check severs runs exceeding the measurement-error threshold (when `use_bio_hard_shrink_in_prob = TRUE`) |
+| **Hard bounds** | Always enforced in state enumeration (infeasible transitions pruned) — unaffected by `USE_BIO_HARD_SHRINK_IN_PROB` | Enforced in hard-rate check during sample-level repair; bio gates in pairwise edge construction and Layer 2 ME check are conditional on `use_bio_hard_shrink_in_prob` / `use_bio_hard_growth_in_prob` |
+| **Soft penalty** | Optional `k_shrink` quadratic penalty (currently 0) | Applied to edges below `Bio_Max_Shrink` when the hard gate is disabled (`use_bio_hard_shrink_in_prob = FALSE`) |
+| **Measurement error** | 4-component mixture model when `USE_MEASUREMENT_ERROR=TRUE` | ME coefficients (sd1_a, sd1_b) used as a ruler for the cumulative threshold regardless of `USE_MEASUREMENT_ERROR`; threshold check skipped when `use_bio_hard_shrink_in_prob = FALSE` |
+| **Asymmetry** | Always applies bio bounds as hard constraints | With `use_bio_hard_shrink_in_prob = FALSE`, probabilistic is **more permissive** than the DP for the same tree; use with care |
 
 ---
 
@@ -1150,9 +1229,9 @@ Both pathways enforce the same hard growth bounds (`MAX_SHRINK_FIXED`, `MAX_GROW
 
 The DP solver recognizes ForestGEO stem status codes that encode field-recorded events. These codes influence state enumeration, transition feasibility, and segment splitting.
 
-### Resprout Codes (R, OR)
+### Resprout Codes (R, RP, RF, RT, QR, OR)
 
-**Recognized codes:** `R` (resprout from main stem) and `OR` (other breakage resprout).
+**Recognized codes:** `R` (resprout from main stem), `RP` (resprout from main stem prior), `RF` (resprout from main stem following), `RT` (resprout from trunk), `QR` (questionable resprout), and `OR` (other breakage resprout).
 
 When the DP encounters an R code at any census before the anchor, two mechanisms activate:
 
@@ -1188,6 +1267,7 @@ The constraint is implemented as a hard filter in the backward transition loop: 
 **M-pin constraint:** At censuses where the stem count increases going forward in time ($n_{obs,t+1} > n_{obs,t}$), any observation carrying an M code at $t+1$ must be on a track that was already occupied at $t$ — it cannot appear as a new recruit going backward. The M code marks the main stem in a branching event; since the main stem existed before branching, it must continue an existing track.
 
 The constraint is applied only when:
+
 - The prior census has at least one observed stem ($n_{obs,t} > 0$)
 - Stem count increases ($n_{obs,t+1} > n_{obs,t}$)
 - No R code is present at $t+1$ (in a resprout event, all stems are new recruits and M-pin is suppressed)
@@ -1203,14 +1283,15 @@ The DP detects implicit "missing from field" events: censuses where all stems ha
 All ForestGEO code matching uses `grepl()` with `perl = TRUE` to ensure `\b` word-boundary anchors work correctly. The resprout regex pattern is:
 
 ```r
-"\\b(R|OR)\\b"
+"\\b(R|RP|RF|RT|QR|OR)\\b"
 ```
 
-This matches whole-word `R` or `OR` codes in fields that may contain multiple semicolon-separated codes (e.g., `"R;B"` matches, `"NORMAL"` does not).
+This matches whole-word `R`, `RP`, `RF`, `RT`, `QR`, or `OR` codes in fields that may contain multiple semicolon-separated codes (e.g., `"R;B"` matches, `"NORMAL"` does not).
 
 ## Pruning & Conservative Guards
 
 ### Motivation — factorial growth of the state space
+
 The DP enumerates injective assignment states per census. For a census with `n_obs` observed stems and `K` tracks the number of assignment states is the falling-permutation
 
 ```
@@ -1222,10 +1303,12 @@ The total number of full-paths (and candidate transitions between adjacent censu
 These filters are intentionally conservative: they are meant to remove clearly impossible candidates (hard physical/biological limits) while preserving borderline cases for the full cost evaluation.
 
 ### Where pruning runs
+
 - Pruning happens in the backward recursion immediately *before* calling `transition_cost_tracks_bio_batch_rcpp` for a candidate transition. This avoids the costly likelihood evaluation for obviously impossible transitions.
 - Pruning is only applied when `prune_hard = TRUE` (default). If `prune_hard = FALSE`, no pre-filtering is performed and all candidate transitions are passed to the cost routine (slower but conservative).
 
 ### Parameters & exact semantics
+
 We separate pruning thresholds from the biological (`Bio_*`) parameters so you can control pruning behaviour without changing the biological model used in the transition-cost calculations.
 
 - `prune_min_growth` (numeric | NULL): explicit lower bound (cm/year) used for pruning. If `NULL` the value `min_growth` passed to the DP is used.
@@ -1272,6 +1355,7 @@ For these reasons, the non-taper-corrected override **replaces** the general eff
 **Note on the default driver configuration:** The driver scripts (`main_cpp_chunk.R`, `main_cpp.R`) pass `prune_min_growth = 1.25 × MAX_SHRINK_FIXED` and `prune_max_growth = 1.25 × MAX_GROWTH_FIXED` with `prune_use_bio_bounds = FALSE`. This means the general bounds already match the non-taper defaults, so in the default configuration the non-taper override at step 3 is a no-op — all trees (taper-corrected or not) receive the same base prune window of `[-0.625, 6.25]`. The effective differentiation for non-taper forms comes from step 4 (HOM widening), and the non-taper override provides an independent lever when users tighten the general bounds (e.g. via `prune_use_bio_bounds = TRUE` or narrower `prune_min/max_growth`).
 
 Notes:
+
 - These pruning parameters affect only the *pre-filtering* step (they do not change the transition cost function or post-hoc diagnostics beyond recording the effective prune values).
 - If interval length between censuses is invalid or not finite for a pair, growth-based pruning is skipped for that pair and only recruit-size pruning (if applicable) is used.
 - You can always define extra margins for these parameters. For example:
@@ -1285,6 +1369,7 @@ prune_use_bio_recruit = FALSE# use fixed prune bounds instead of biological ones
 ```
 
 ### Diagnostics & reproducibility
+
 - The DP exposes `attr(out, "DP_PruneInfo")` with:
   - `total_examined`, `total_pruned` (counts)
   - `per_census` (count per census pair)
@@ -1292,12 +1377,14 @@ prune_use_bio_recruit = FALSE# use fixed prune bounds instead of biological ones
 - The effective prune bounds are also `vcat`-logged at the start of the backward pass for transparency.
 
 ### Practical guidance and examples
+
 - Default behaviour (safe): leave `prune_min_growth = NULL` and `prune_max_growth = NULL`. The code will use `user_min = min_growth`, `user_max = max_growth` and intersect them with `Bio_*` values. This preserves biological hard limits while letting you set study-level `min_growth`/`max_growth` to narrow behaviour across the run.
 - To apply *wider* pruning (less aggressive rejection) than the biological bounds allow (for example, when the DP cost model is trusted to handle extreme cases), set `prune_use_bio_bounds = FALSE` and set `prune_min_growth`/`prune_max_growth` to the desired wide range (e.g., `-10`..`25`).
 - To apply *stricter* recruit-size pruning, provide a small `prune_recruit_max_dbh` (and set `prune_use_bio_recruit = FALSE` to use it without intersecting the biological bound).
 - Beware of overly tight pruning: if pruning removes all feasible transitions at a census the DP will fall back to the probabilistic matcher (or produce no DP states). If you see frequent fallbacks for reasonable data, relax the prune bounds or set `prune_hard = FALSE` for a diagnostic run.
 
 ### Why this approach?
+
 - The combinatorial nature of injective assignments makes per-census state counts grow factorially with `n_obs`. Pruning cheaply removes impossibilities and reduces the number of pairwise assignment evaluations from `O(n_states_cc × n_states_{cc+1})` to a manageable number while retaining feasible candidates for the full probabilistic scoring.
 - Because pruning is conservative and logged, it is auditable: you can use `DP_PruneInfo` to quantify how many candidate transitions were removed and where.
 
@@ -1343,6 +1430,7 @@ source("dp_global/R/sensitivity_transition_cost_bio.R")
 ```
 
 ### Example: enforce growth/recruit bounds
+
 Units: growth bounds are **cm/year**; recruit caps are **cm**.
 
 ```r
@@ -1357,7 +1445,6 @@ bio <- estimate_bio_pars(
   recruit_max_fixed = 37.5
 )
 ```
-
 
 ### Realism Report Only
 
@@ -1526,18 +1613,27 @@ Key computations and helpers:
       eff_max_grow = user_max
 
     # Non-taper-corrected override: replace effective bounds with wide
+
     # base values so palms/strangler figs/tree ferns are not spuriously
+
     # pruned. This step matters when prune_use_bio_bounds=TRUE (which
+
     # would tighten the general bounds); in the default driver config
+
     # (prune_use_bio_bounds=FALSE, general bounds already 1.25×) it is
-    # a no-op because the values are the same.
+
+    # a no-op because the values are the same
+
     if growth_form in non_taper_corrected_growth_forms:
       eff_min_grow = non_taper_corrected_prune_min_growth  (override)
       eff_max_grow = non_taper_corrected_prune_max_growth  (override)
 
     # HOM widening: per census pair, widen bounds symmetrically by the
+
     # worst-case HOM deviation across both censuses. This is the main
-    # source of differentiation for non-taper forms in the default config.
+
+    # source of differentiation for non-taper forms in the default config
+
     Per census pair, if HOM column present and hom_tolerance_scale > 0:
       hom_tol = hom_tolerance_scale × max(|HOM − 1.3|) / interval_years
       eff_min_grow_pair = eff_min_grow − hom_tol
@@ -1569,6 +1665,7 @@ Key computations and helpers:
   - `attr(out, "DP_PruneInfo")` contains pruning diagnostics (counts and effective thresholds). The function falls back to `match_stems_probabilistic()` on anchor failures, enumeration exhaustion, K insufficiency or if DP produces no feasible states after pruning. These fallback return values always include `DP_PruneInfo`.
 
 Notes:
+
 - `min_growth`/`max_growth` are passed to the probabilistic matcher as base growth bounds. The wider `prune_min_growth`/`prune_max_growth`/`prune_recruit_max_dbh` are also forwarded for hard pruning. These parameters also control post-hoc `ConstraintViolation` checks.
 
 ---
@@ -1580,6 +1677,7 @@ Notes:
 **Large penalties:** `1e6` encodes hard constraints (impossible transitions)
 
 **Measurement error:** Controlled by `use_measurement_error` flag, affects:
+
 - Likelihood computation (4-component mixture)
 - Parameter estimation (variance subtraction, quantile selection)
 
@@ -1590,6 +1688,7 @@ Notes:
 ### Debugging Tools
 
 **Transition cost breakdown:**
+
 ```r
 components <- transition_cost_tracks_bio_components(
   track_dbh_t, track_dbh_tp1, interval_years, ...
@@ -1598,6 +1697,7 @@ components <- transition_cost_tracks_bio_components(
 ```
 
 **Posterior analysis:**
+
 ```r
 # After running marginal solver:
 high_uncertainty <- out[DP_PosteriorEntropy > 1.5]
@@ -1609,17 +1709,20 @@ ambiguous <- out[DP_PosteriorBin == "ambiguous"]
 The DP algorithm's computational complexity depends on the number of observations per census and the resulting state space size. Use the complexity estimator to identify which tags will take the longest to process before running the full workflow.
 
 **Load the complexity estimation functions:**
+
 ```r
 source("R/estimate_dp_complexity_function.R")
 ```
 
 **Estimate complexity for all tags:**
+
 ```r
 complexity <- estimate_dp_complexity("../data_simulation/data/simulated_data_1.csv")
 print(complexity)
 ```
 
 **Get detailed analysis for a specific tag:**
+
 ```r
 details <- get_tag_complexity_details("../data_simulation/data/simulated_data_1.csv", tag = 11)
 print(details$observations_per_census)  # Observations per census
@@ -1628,8 +1731,9 @@ cat("Total transition computations:", format(details$transition_computations, bi
 ```
 
 **Output columns:**
+
 - `Tag`: The tag identifier
-- `Species`: Species name  
+- `Species`: Species name
 - `MaxObs`: Maximum number of observations in any single census
 - `K`: Number of tracks used by the DP algorithm
 - `TotalStates`: Total number of states across all censuses
@@ -1637,6 +1741,7 @@ cat("Total transition computations:", format(details$transition_computations, bi
 - `TransitionComputations`: Estimated number of transition cost calculations (proxy for runtime)
 
 **How it works:**
+
 1. **Number of tracks (K)**: Determined by the maximum observations per census plus slack tracks
 2. **States per census**: P(K, n_obs) = K! / (K - n_obs)! where n_obs is observations in that census
 3. **Transitions**: For each pair of consecutive censuses, all pairs of states must be evaluated
@@ -1700,22 +1805,22 @@ Complete table of all quantiles used in parameter estimation:
 
 ### Common Confusions
 
-1. **"Why huge penalties?"** 
+1. **"Why huge penalties?"**
    - $10^6$ encodes hard biological impossibilities
    - Makes infeasible transitions effectively infinite cost
    - DP will never choose these paths unless no alternative exists
 
-2. **"Why track-based?"** 
+2. **"Why track-based?"**
    - Allows global optimization over entire history
    - Prevents local greedy decisions from causing global ID swaps
    - Enables exact life-cycle constraint enforcement
 
-3. **"Data vs fixed mode?"** 
+3. **"Data vs fixed mode?"**
    - **Data mode:** Use when you have reliable known IDs for parameter estimation
    - **Fixed mode:** Use for literature values or when data is too sparse
    - Can mix (e.g., data hard, fixed soft)
 
-4. **"Measurement error impact?"** 
+4. **"Measurement error impact?"**
    - Makes penalties more conservative (won't over-penalize measurement noise)
    - Adds 4-component mixture to growth likelihood (more robust)
    - Separates process from measurement variance in estimation
@@ -1759,6 +1864,7 @@ Complete table of all quantiles used in parameter estimation:
 Chave, J., Condit, R., Aguilar, S., Hernandez, A., Lao, S., & Perez, R. (2004). Error propagation and scaling for tropical forest biomass estimates. *Philosophical Transactions of the Royal Society of London. Series B: Biological Sciences*, 359(1443), 409-420.
 
 **Additional documentation:**
+
 - Sensitivity analysis: `dp_global/R/sensitivity_transition_cost_bio.R`
 - Realism calibration: `dp_global/R/realism_calibration.R`
 - Basal area uncertainty: `dp_global/scripts/basal_area_uncertainty.R`
@@ -1772,7 +1878,7 @@ The `basal_area_uncertainty.R` script uses posterior path samples to quantify ho
 
 ### Key Insight
 
-**Tag-level BA per census is invariant to identity assignment** — the total BA (sum of $\pi/4 \cdot \text{DBH}^2$ across all living stems) does not change because the same DBH observations are always present regardless of which stem identity they are assigned to. Identity uncertainty affects:
+**Tag-level BA per census is invariant to identity assignment** — the total BA (sum of $\pi/4 \cdot (\text{DBH}/100)^2$ across all living stems, in m²) does not change because the same DBH observations are always present regardless of which stem identity they are assigned to. Identity uncertainty affects:
 
 1. **Per-stem BA trajectories**: Different identity assignments allocate different DBH values to each stem across censuses
 2. **BA growth rates**: Different trajectories produce different consecutive BA differences and thus different growth rates
@@ -1787,40 +1893,44 @@ Rscript dp_global/scripts/basal_area_uncertainty.R \
 
 ### Outputs
 
-Three CSV files are written to the run directory:
+Two CSV files and one PDF are written to the run directory:
 
 | File | Contents |
 |------|----------|
-| `basal_area_uncertainty_tag.csv` | Per-tag × census total BA: mean, SD, 95% CI (verifies invariance) |
-| `basal_area_uncertainty_stem.csv` | Per-stem × census BA posterior: weighted mean, SD, median, 95% CI, MAP value |
-| `basal_area_uncertainty_growth.csv` | Per-stem BA growth rate ($\Delta\text{BA}/\Delta t$) posterior: mean, SD, 95% CI |
+| `basal_area_tag_census.csv` | Per-tag × census: total BA (m²), stem count, year |
+| `basal_area_tag_change.csv` | Per-tag BA change between consecutive censuses: MAP decomposition into growth (surviving stems), loss (mortality), and gain (recruitment), plus posterior mean, SD, and 95% CI for each component |
+| `basal_area_figures.pdf` | Multi-page PDF with summary pages, per-tag detail panels (BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), uncertainty histograms, and **posterior density plots** (kernel densities of Growth/Loss/Gain/DeltaBA with weighted-mean vertical lines — one page pooled across all census intervals, then one page per interval) |
 
 ### Column Reference
 
-**Tag-level** (`basal_area_uncertainty_tag.csv`):
+**Tag census** (`basal_area_tag_census.csv`):
 
 | Column | Description |
 |--------|-------------|
-| `BA_total_mean` | Probability-weighted mean total BA (cm²) |
-| `BA_total_sd` | SD across posterior paths (should be ~0 when all paths include same observations) |
-| `BA_total_q025`, `BA_total_q975` | 95% credible interval |
-| `BA_total_map` | Total BA from the MAP reconstruction |
+| `Tag` | Individual tree identifier |
+| `CensusID` | Census identifier |
+| `Year` | Calendar year (from mean ExactDate) |
+| `TotalBA_m2` | Total basal area = Σ(π/4 × (DBH/100)²) across all stems (m²) |
+| `NumStems` | Number of stems with non-NA DBH |
 
-**Stem-level** (`basal_area_uncertainty_stem.csv`):
-
-| Column | Description |
-|--------|-------------|
-| `BA_mean`, `BA_sd` | Posterior mean and SD of BA for this stem × census |
-| `BA_median`, `BA_q025`, `BA_q975` | Posterior median and 95% CI |
-| `n_unique_dbh` | Number of distinct DBH values assigned to this stem across paths (1 = certain) |
-| `BA_map` | BA from the MAP reconstruction |
-
-**Growth rates** (`basal_area_uncertainty_growth.csv`):
+**Tag change** (`basal_area_tag_change.csv`):
 
 | Column | Description |
 |--------|-------------|
-| `dBA_rate_mean`, `dBA_rate_sd` | Posterior mean and SD of annualised BA change (cm²/yr) |
-| `dBA_rate_q025`, `dBA_rate_q975` | 95% CI of BA growth rate |
+| `Tag` | Individual tree identifier |
+| `CensusID_from`, `CensusID_to` | Census pair defining the interval |
+| `Interval_yr` | Interval length in years (from mean ExactDate) |
+| `Growth_BA` | MAP: BA change attributable to surviving stems (m²) |
+| `Loss_BA` | MAP: BA removed by stem mortality (negative, m²) |
+| `Gain_BA` | MAP: BA added by stem recruitment (m²) |
+| `DeltaBA_total` | Total BA change = Growth + Loss + Gain (invariant to identity) |
+| `NumSurvivors`, `NumDeaths`, `NumRecruits` | MAP stem counts per demographic category |
+| `Growth_mean`, `Growth_sd`, `Growth_q025`, `Growth_q975` | Posterior summary of growth component |
+| `Loss_mean`, `Loss_sd`, `Loss_q025`, `Loss_q975` | Posterior summary of loss component |
+| `Gain_mean`, `Gain_sd`, `Gain_q025`, `Gain_q975` | Posterior summary of gain component |
+| `DeltaBA_check` | Posterior weighted mean of total BA change (should match `DeltaBA_total`) |
+| `NumSurvivors_mean`, `NumDeaths_mean`, `NumRecruits_mean` | Posterior weighted mean stem counts per demographic category |
+| `NumPaths` | Number of posterior paths used for uncertainty estimation |
 
 ---
 

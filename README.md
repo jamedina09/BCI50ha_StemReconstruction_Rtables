@@ -22,7 +22,7 @@ Because it examines every possibility, the DP always finds the mathematically op
 
 When there are too many stems for the DP to try every combination, the probabilistic matcher takes over. Instead of exhaustive enumeration, it uses a **sampling strategy**: it generates hundreds of plausible random assignments (using Gumbel-noise perturbations of the same biological scores), stitches each sample backward from the anchor to build full identity histories, removes any links that violate growth constraints, and then **takes a vote** across all surviving samples. The identity that wins the most votes for each observation becomes the final assignment, and the vote share becomes the posterior probability.
 
-To compensate for its greedy per-pair nature (which lacks the DP's global cost accumulation), the probabilistic matcher applies two extra safeguards: a hard-rate bound check and a measurement-error-informed cumulative-shrinkage detector that severs runs of small decreases that collectively exceed what measurement noise could plausibly explain.
+To compensate for its greedy per-pair nature (which lacks the DP's global cost accumulation), the probabilistic matcher applies two extra safeguards: a hard-rate bound check and a measurement-error-informed cumulative-shrinkage detector that severs runs of small decreases that collectively exceed what measurement noise could plausibly explain. Both the bio hard gates (`Bio_Max_Shrink`, `Bio_Max_Growth`) in pairwise edge construction and the ME cumulative-shrinkage check in trajectory repair can be selectively disabled via the `USE_BIO_HARD_SHRINK_IN_PROB` and `USE_BIO_HARD_GROWTH_IN_PROB` flags — useful when a known large-shrinkage or large-growth event (e.g., storm damage) would otherwise cause the matcher to artificially split a continuous stem.
 
 ### When Each Algorithm Runs
 
@@ -93,8 +93,10 @@ Key CLI parameters for controlling solver behavior:
 |------|---------|---------|
 | `--DP_MAX_STATES` | `40000` | Max injective states per census before probabilistic fallback |
 | `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching |
-| `--PROB_LOOKAHEAD_WEIGHT` | `0.5` | Sequential backward conditioning weight (0 = disabled) |
+| `--PROB_LOOKAHEAD_WEIGHT` | `1` | Sequential backward conditioning weight (0 = disabled) |
 | `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
+| `--USE_BIO_HARD_SHRINK_IN_PROB` | `TRUE` | Apply `Bio_Max_Shrink` hard gate and ME cumulative-shrinkage check in probabilistic matcher. Set `FALSE` to allow shrinkage beyond the bio bound (soft penalty only; useful for confirmed large-shrinkage events) |
+| `--USE_BIO_HARD_GROWTH_IN_PROB` | `TRUE` | Apply `Bio_Max_Growth` hard gate in probabilistic matcher. Set `FALSE` to allow growth beyond the bio bound (soft penalty only) |
 
 ### Understanding `DP_MAX_STATES`
 
@@ -194,17 +196,31 @@ Each observation in the output receives a `ReconstructionMethod` label indicatin
 
 | Method | Description |
 |--------|-------------|
-| `given` | Identity known from input `TrueStemID` (anchor census) |
+| `given` | Identity known from input `TrueStemID` (anchor, pre-anchor pin, post-anchor row, or hard-invariant sweep) |
 | `dp` | Assigned by the exact DP solver |
 | `probabilistic` | Assigned by the probabilistic greedy matching fallback |
 | `provisional_dp` | Provisional anchor assigned by DP |
 | `dp_mf_inferred` | Missing-from-field census identity inferred from flanking DP assignments |
+| `carried_terminal` | Orphan terminal-event row (`Status` ∈ {`dead`, `stem dead`, `broken below`}, `DBH = NA`, engine returned `NA`) backfilled by post-engine LOCF from the most recent prior `ReconstructedStemID` in the same `(Tag, OriginalStemID)` group. Applied uniformly across all driver scripts via `apply_carried_terminal_backfill()` in `dp_global/R/dp_global_main.R`. |
+| `given_orphan` | "Born-orphan" stem row — the source identifier (`StemID` in production, `OriginalStemID` in this test repo) is non-NA, but `DBH`, `TrueStemID`, and the engine's `ReconstructedStemID` are all NA (e.g. a brand-new StemID first recorded as broken-below at C7+ with no measurement). The post-engine helper `apply_orphan_stem_backfill()` in `dp_global/R/dp_global_main.R` copies the source identifier into `ReconstructedStemID`. Runs after `apply_carried_terminal_backfill()` in every driver. |
 | `none_after_anchor` | Post-anchor row without assignment |
 | `skipped_no_data` | Tag had no usable data for reconstruction |
 
+### Hard-invariant sweep and the `SweepAuditOverride` audit column
+
+When `PIN_TRUESTEMID = TRUE` (default), every output row with a non-NA `TrueStemID` is forced to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"` by an idempotent sweep that runs at three sites: inside `finalize_out()` (DP path), inside `match_stems_probabilistic()` (probabilistic fallback), and at the script level in `run_dp_one_group()`. This sweep guarantees the invariant even on rows the DP never visits (NA-DBH terminal rows anchored by the pre-DP propagation in `main_cpp_bci.R` Steps 2/3, MF re-insertion edge cases, and probabilistic-fallback leaks).
+
+In the rare case where the DP or probabilistic engine had already assigned a non-NA `ReconstructedStemID` that disagrees with `TrueStemID`, the sweep silently overrides it. Those rows are flagged in the **`SweepAuditOverride`** logical column. Downstream consumers that propagate posterior uncertainty should treat any row where `SweepAuditOverride == TRUE` as observed (P=1, entropy=0) — the values in the `DP_PosteriorTop*` / `DP_PosteriorReconstructedProb` columns describe the *engine's* (overridden) choice, not the final `ReconstructedStemID`. For all other `given` rows the posterior collapses naturally to the pinned ID and the posterior columns are consistent with the final assignment.
+
+The engine's pre-sweep choice is preserved alongside the final value in the **`ReconstructedStemID_PreSweep`** column. It equals `ReconstructedStemID` everywhere `SweepAuditOverride == FALSE` and carries the original engine-assigned ID where `SweepAuditOverride == TRUE`. The column is populated once by the first sweep layer that fires (engine `finalize_out` → probabilistic matcher → script-level backstop) and preserved unchanged by later sweeps, so it always reflects the pre-sweep state regardless of which code path produced the row.
+
+### Duplicate-aware sweep and the `SweepRollbackToPreSweep` column
+
+The script-level sweep in `main_cpp.R` and `main_cpp_chunk.R` will refuse to pin `ReconstructedStemID := TrueStemID` when doing so would create two rows with the same `ReconstructedStemID` at the same `(Tag, CensusID)` (the canonical case is BCI tag `258411` C6, where retag-campaign reuse of an `OriginalStemID` would force two stems onto the same id). Pins are processed in deterministic row order; if the candidate value already appears on another row at the same `(Tag, CensusID)` in the working `ReconstructedStemID` column, the row is **rolled back to its `ReconstructedStemID_PreSweep` value** (respecting the engine's reconstruction), `ReconstructionMethod` is left untouched, and the row is flagged in the **`SweepRollbackToPreSweep`** boolean column (FALSE elsewhere). `SweepAuditOverride` continues to record the original disagreement; the rollback flag records the chosen resolution.
+
 ## Conventions
 
-- Driver scripts: `dp_global/scripts/` — `main_cpp.R` (single-tag/small), `main_cpp_chunk.R` (large chunked), `main_cpp_bci.R` (BCI-specific with `withr` bundle sourcing), `basal_area_uncertainty.R` (posterior BA uncertainty).
+- Driver scripts: `dp_global/scripts/` — `main_cpp.R` (single-tag/small), `main_cpp_chunk.R` (large chunked), `main_cpp_bci.R` (BCI-specific, sources `main_cpp.R` for helpers and adds pre-DP TrueStemID propagation), `basal_area_uncertainty.R` (posterior BA uncertainty).
 - Module internals: `dp_global/R/` — sourced in order by `dp_global_main.R`.
 - Output directories: auto-created under `dp_global/output/` (not tracked by git).
 
@@ -221,4 +237,10 @@ Rscript dp_global/scripts/basal_area_uncertainty.R \
   --RUN_DIR=dp_global/output/<run_dir>
 ```
 
-The BA uncertainty script reads the main reconstruction and the `posteriors/` directory, then produces three summary CSVs (tag-level BA, stem-level BA, and BA growth rates) with posterior means, standard deviations, and 95% credible intervals. See `dp_global/scripts/README.md` for details.
+The BA uncertainty script reads the main reconstruction and the `posteriors/` directory, then produces two summary CSVs and a multi-page PDF of diagnostic figures:
+
+- `basal_area_tag_census.csv` — per-tag per-census total BA (m²) and stem count.
+- `basal_area_tag_change.csv` — per-tag BA change between consecutive censuses, decomposed into **growth** (survivors), **loss** (mortality), and **gain** (recruitment), with posterior means, SDs, and 95% credible intervals. All BA values in m².
+- `basal_area_figures.pdf` — per-tag panels (BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), uncertainty histograms, and posterior density plots (kernel densities of Growth/Loss/Gain/DeltaBA pooled across all intervals and per census interval, with weighted-mean vertical lines).
+
+Tag-level total BA per census is **invariant** to identity assignment — the same DBH values sum identically regardless of which stem they are assigned to. The decomposition into growth, loss, and gain components **is** identity-dependent and is where posterior uncertainty manifests. See `dp_global/scripts/README.md` for details.

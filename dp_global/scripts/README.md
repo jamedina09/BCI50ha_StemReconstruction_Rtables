@@ -58,14 +58,17 @@ DP / reconstruction option
 - `ANCHOR_START_CENSUS` — default: `7L`.
 - `ALLOW_PROVISIONAL_DP_ANCHOR` — default: `TRUE` — when `TRUE` the DP can assign provisional anchor IDs at the last observed DBH census if the requested anchor census lacks `TrueStemID` but has DBH; set to `FALSE` to require an explicit anchored census or to fall back to the probabilistic matcher.
 - `DP_VERBOSE` — default: `TRUE`.
-- `DP_POSTERIOR_TOP_K` — default: `2L` - top=k posterior reconstructions to track. 
+- `DP_POSTERIOR_TOP_K` — default: `2L` - top=k posterior reconstructions to track.
 - `DP_MAX_TRACKS` — default: `NULL` (auto-computed per data when `NULL`) — optionally force max tracks; if `NULL` auto-computed.
 - `DP_MAX_STATES` — default: `40000L`. Maximum number of injective assignment states allowed per census. Also controls the inter-census transition limit (`max_edges = max_states²`). The number of states at a census with $n$ observed stems and $K$ tracks is $P(K,n) = K!/(K-n)!$. When any census exceeds `max_states`, or when the cross-product of states between two adjacent censuses exceeds `max_states²`, the solver falls back to the probabilistic matcher. **Practical limits with default 40,000:** DP handles up to 6 observed stems per census exactly (P(7,6) = 5,040 < 40,000); 7+ stems trigger fallback (P(8,7) = 40,320 > 40,000). With `DP_MAX_STATES = 1,000`: max 5 stems. With `DP_MAX_STATES = 20,000`: max 6 stems. See `dp_global/README.md` for detailed tables and how to choose a value.
 - `DP_SLACK_TRACKS` — default: `1L` - slack (additional) tracks allowed for DP.
 - `DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE` — default: `TRUE` - require anchor to be recruitable (if DBH less than max recruitment size) before granting slack.
 - `DP_SLACK_REQUIRE_ANCHOR_EPS` — default: `1e-6`.
 - `PROB_N_SAMPLES` — default: `200L`. Number of Gumbel-noise stochastic samples drawn by the probabilistic greedy matching fallback. Higher values produce more accurate posterior estimates at the cost of computation time.
-- `PROB_LOOKAHEAD_WEIGHT` — default: `0.5`. Weight for sequential backward conditioning in the probabilistic matcher. When > 0 and $K \geq 4$, the cost matrix for each census pair is conditioned on the already-resolved forward assignment, improving path continuity. Set to `0` to disable conditioning.
+- `PROB_LOOKAHEAD_WEIGHT` — default: `1`. Weight for sequential backward conditioning in the probabilistic matcher. When > 0 and $K \geq 4$, the cost matrix for each census pair is conditioned on the already-resolved forward assignment, improving path continuity. Set to `0` to disable conditioning.
+- `USE_BIO_HARD_SHRINK_IN_PROB` — default: `TRUE`. Controls two hard constraints in the probabilistic matcher: (1) the bio shrink gate in pairwise edge construction (`g < Bio_Max_Shrink` → edge log-likelihood set to `-Inf`), and (2) the Layer 2 ME cumulative-shrinkage repair check in `repair_stitched_growth_violations()`. When `FALSE`, both are disabled — edges with growth below `Bio_Max_Shrink` are allowed (penalised by the soft `k_shrink` quadratic term only) and the ME cumulative check does not sever trajectories. Use `FALSE` to allow confirmed large-shrinkage events (e.g., storm damage) without forcing the matcher to split a continuous stem. **Note:** The exact DP solver is unaffected — it always applies `Bio_Max_Shrink` as a hard pruning bound regardless of this flag.
+- `USE_BIO_HARD_GROWTH_IN_PROB` — default: `TRUE`. Controls the bio growth gate in pairwise edge construction in the probabilistic matcher (`g > Bio_Max_Growth_Bio` → edge log-likelihood set to `-Inf`). When `FALSE`, edges exceeding the biological growth maximum are allowed (penalised by the soft `k_growth` quadratic term only). The exact DP solver is unaffected by this flag.
+- `PIN_TRUESTEMID` — default: `TRUE`. When `TRUE`, observations with a known `TrueStemID` at non-anchor censuses are pinned to their field-observed identity track in the probabilistic matcher, reducing effective state space and preventing re-identification of labelled stems.
 - `DP_FALLBACK_GROWTH_FORMS` — default: `character(0)`; comma- or
   semicolon-separated list of values in the `growth_form` column that should
   trigger an immediate probabilistic fallback and prevent the DP solver from running
@@ -97,7 +100,7 @@ DP / reconstruction option
   are treated as 1.3 (zero contribution). Set to `0` to disable
   HOM widening while keeping the wide base bounds.
 
-**Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a `TrueStemID` that matches an anchor-census stem ID (used as a DP constraint) are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows without DP assignments receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and anchor-census `TrueStemID` values are treated as `"given"` while other rows are labeled `"none_after_anchor"`. **Note:** Pre-anchor rows (censuses before the anchor) with non-NA `TrueStemID` are processed by the solver and can receive different identity assignments based on biological likelihood — they are not automatically treated as `"given"`.
+**Anchor scoping and post-anchor preservation:** If observations exist after the requested `ANCHOR_START_CENSUS`, the DP is scoped to censuses <= `ANCHOR_START_CENSUS` and post-anchor rows are preserved and appended to the output. Post-anchor rows with non-NA `DBH` and a non-NA `TrueStemID` are set to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. Remaining post-anchor rows (missing `TrueStemID` or `DBH`) receive `ReconstructionMethod = "none_after_anchor"`. If scoping removes all pre-anchor observations, the original rows are returned and anchor-census `TrueStemID` values are treated as `"given"` while other rows are labeled `"none_after_anchor"`. **Note:** Pre-anchor rows (censuses before the anchor) with non-NA `TrueStemID` are processed by the solver and can receive different identity assignments based on biological likelihood — however, when `PIN_TRUESTEMID=TRUE` (default), they are constrained to their field-observed identity.
 
 **Provisional anchor behavior:** When a requested anchor census lacks `TrueStemID` but contains DBH observations and `ALLOW_PROVISIONAL_DP_ANCHOR=TRUE`, the DP will assign provisional anchor IDs at the last-observed DBH census and mark those anchor rows with `ReconstructionMethod = "provisional_dp"`.
 
@@ -219,26 +222,88 @@ Runner integration
 
 At the anchor census (`CensusID == ANCHOR_START_CENSUS`), `TrueStemID` values serve as hard constraints and `ReconstructedStemID` will equal `TrueStemID` for those rows (`ReconstructionMethod = "given"`). Pre-anchor rows with `TrueStemID` are processed by the solver (DP or probabilistic) and can receive different identity assignments based on biological likelihood.
 
-**Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, safety-net repair warnings) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
+### Hard-invariant sweep and the `SweepAuditOverride` column
+
+When `PIN_TRUESTEMID = TRUE` (default), an idempotent **hard-invariant sweep** runs at three sites — inside `finalize_out()` (DP path), inside `match_stems_probabilistic()` (probabilistic fallback), and at the script-level inside `run_dp_one_group()` — forcing every row with a non-NA `TrueStemID` to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"`. This guarantees the invariant on rows the engines never visit (NA-DBH terminal rows anchored by the BCI driver's Steps 2/3, MF re-insertion edge cases, and probabilistic-fallback leaks).
+
+In the rare case where the engine had already assigned a non-NA `ReconstructedStemID` that disagrees with `TrueStemID`, the sweep silently overrides it. Each such row is flagged `TRUE` in the **`SweepAuditOverride`** boolean column (FALSE elsewhere) and a `[audit]` log line is emitted naming the tag and override count. Downstream uncertainty consumers should treat any `SweepAuditOverride == TRUE` row as observed (P=1, entropy=0); the `DP_PosteriorTop*` columns on those rows describe the engine's overridden choice, not the final `ReconstructedStemID`.
+
+The engine's pre-sweep `ReconstructedStemID` is preserved in the **`ReconstructedStemID_PreSweep`** column (snapshot taken once by the first sweep layer that fires). On `SweepAuditOverride == FALSE` rows it equals `ReconstructedStemID`; on `SweepAuditOverride == TRUE` rows it carries the engine's original (overridden) ID, allowing direct comparison without re-running the engine.
+
+#### Duplicate-aware pinning and `SweepRollbackToPreSweep`
+
+The script-level sweep additionally enforces `ReconstructedStemID` uniqueness within each `(Tag, CensusID)`. Pins are processed in stable row order; before applying `ReconstructedStemID := TrueStemID` on a row, the sweep checks whether that integer value is already present on another row at the same `(Tag, CensusID)` in the working `ReconstructedStemID` column (engine baseline + any pins committed earlier in this pass). If a collision would result, the sweep **respects the engine's reconstruction**: the row's `ReconstructedStemID` is restored to its `ReconstructedStemID_PreSweep` value, `ReconstructionMethod` is left untouched, and the row is flagged in the new **`SweepRollbackToPreSweep`** boolean column (FALSE elsewhere). A `[audit]` log line is emitted naming the tag and rollback count.
+
+`SweepAuditOverride` continues to mark the disagreement; `SweepRollbackToPreSweep` records the chosen resolution. The canonical case is BCI tag `258411` C6, where retag-campaign reuse of `OriginalStemID = 995110` would otherwise put two distinct stems on the same `ReconstructedStemID` at C6; the engine's fresh id (`995113`) is retained instead.
+
+### Post-engine `carried_terminal` backfill (all drivers)
+
+After the DP/probabilistic engine returns and `maybe_add_posterior_bins()` has run, **every driver** (`main_cpp.R`, `main_cpp_chunk.R`, `main_cpp_bci.R`) calls the shared helper `apply_carried_terminal_backfill()` defined in `dp_global/R/dp_global_main.R`.
+
+The helper finds rows where **all three** conditions hold:
+
+- `is.na(ReconstructedStemID)` (engine produced no assignment),
+- `is.na(DBH)` (no measurement to match against), and
+- `Status %in% c("dead", "stem dead", "broken below")` (a terminal event for the stem).
+
+For each such row, after sorting by `(Tag, OriginalStemID, CensusID)`, it copies the most recent prior non-NA `ReconstructedStemID` from the same `(Tag, OriginalStemID)` group (LOCF) and sets `ReconstructionMethod = "carried_terminal"`. Biologically, a death/break row ends the trajectory of the most recent prior identity that shared the `OriginalStemID` — without this fill those rows would be dropped from any downstream trajectory.
+
+Where it fires:
+
+- `main_cpp.R` — Step 5.5b, immediately after `maybe_add_posterior_bins(out)`.
+- `main_cpp_chunk.R` — inside the per-chunk parallel block, applied to each `out_chunk` with `verbose = FALSE` to keep multi-tag chunked logs quiet.
+- `main_cpp_bci.R` — Step 9b. The BCI driver also performs an upstream pre-DP `TrueStemID` propagation (Steps 1–3, see the BCI section below) that is *not* applicable to non-BCI inputs; the post-engine `carried_terminal` step is the only piece that is universal across all three drivers.
+
+### Post-engine `given_orphan` backfill (all drivers)
+
+Immediately after `apply_carried_terminal_backfill()`, every driver also calls `apply_orphan_stem_backfill()` (defined alongside it in `dp_global/R/dp_global_main.R`). The helper finds rows where **all four** conditions hold:
+
+- `is.na(ReconstructedStemID)` (engine produced no assignment, and `apply_carried_terminal_backfill()` did not fill it either),
+- `is.na(TrueStemID)` (no upstream anchor),
+- `is.na(DBH)` (no measurement to match against), and
+- the source-id column (`StemID` if present, otherwise `OriginalStemID`) is non-NA.
+
+For each such row it copies the source id into `ReconstructedStemID` and sets `ReconstructionMethod = "given_orphan"`. This handles "born-orphan" stems whose source identifier first appears with no DBH and no upstream anchor (e.g. a brand-new stem id first recorded as broken-below at C7+). The source id is unambiguous, the DP has no signal to disambiguate without DBH, and there is no collision risk because the DP never reached these rows. Where it fires:
+
+- `main_cpp.R` — Step 5.5c, immediately after `apply_carried_terminal_backfill()`.
+- `main_cpp_chunk.R` — inside the per-chunk parallel block, applied with `verbose = FALSE` immediately after the chunk's `carried_terminal` backfill.
+- `main_cpp_bci.R` — Step 9c, immediately after Step 9b.
+
+**Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, growth-aware resolver diagnostics) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
 
 
 ---
 
 ## BCI Debug Driver (`main_cpp_bci.R`)
 
-`main_cpp_bci.R` is a lightweight wrapper around `main_cpp.R` designed for debugging single tags from the BCI (Barro Colorado Island) multi-stem census dataset. It:
+`main_cpp_bci.R` is a debug driver for single-tag runs on BCI (Barro Colorado Island) multi-stem census data. It sources `main_cpp.R` to inherit all helper functions and CLI handling, then overrides the input file and a few BCI-specific defaults, and adds a **pre-DP `TrueStemID` reconstruction** step that is specific to BCI's identity conventions.
 
-1. Sources `main_cpp.R` to load all helper functions and infrastructure modules.
-2. Loads `bci_data/bci_multistem_xrun_debug.rds` (an RDS file, not tracked by git) as input.
-3. Maps BCI-specific column names to the standard DP schema (e.g., `stemID` → `TrueStemID`, `dbh` → `DBH`, `censusID` → `CensusID`).
-4. Runs the full DP pipeline for a single tag (default or `--WHICH_TAG=<id>`).
+### Pre-DP TrueStemID propagation (BCI-specific, Steps 1–3)
+
+Before calling the DP, the BCI driver writes `TrueStemID` on every row whose biological identity is unambiguous from the BCI database conventions:
+
+- **Step 1a** — any row with a non-NA `StemTag` (the field crew physically tagged the stem) gets `TrueStemID = OriginalStemID`.
+- **Step 1b** — any row at `CensusID >= 7` (BCI's systematic re-tagging campaign from 2010 onward) gets `TrueStemID = OriginalStemID`.
+- **Step 2a/b/c** — within each `(Tag, OriginalStemID)` group, after the last live DBH measurement, terminal-event rows (`Status %in% c("dead", "stem dead", "broken below")` or R-family resprout codes in `ListOfTSM`) are anchored to their own `OriginalStemID`; remaining post-last-DBH gaps are filled by bidirectional LOCF/NOCB.
+- **Step 3a** — same direct anchoring of any remaining terminal-event rows, dropping the post-last-DBH guard.
+- **Step 3a.5** — same-`OriginalStemID` continuity anchor. Within each `(Tag, OriginalStemID)` group, if (a) every row is currently still unanchored (no non-NA `TrueStemID`), (b) there is at least one alive DBH-bearing row, and (c) there is at least one NA-DBH terminal row (`Status ∈ {"dead", "stem dead", "broken below"}`), then the alive DBH-bearing rows of the group are anchored to their own `OriginalStemID`. Empirical evidence (`bci_data/dead_pattern.qmd`, `bci_data/broken_below_pattern.qmd`) shows that ~99.8% of dead/stem-dead NA-DBH terminals and ~60% of broken-below NA-DBH terminals continue the same `OriginalStemID`'s trajectory. Without this step, an unanchored alive history can be reassigned by the DP to a competing newly-born stem and produce duplicate `ReconstructedStemID` values at later censuses (BCI tags `060145`, `233660`, `606162`, `639010`, `739002`).
+- **Step 3b** — within each `(Tag, OriginalStemID)` group, if all non-NA `TrueStemID` values agree, fill remaining NAs with that value; conflicting groups are left alone and counted in a diagnostic message.
+
+Pre-anchor rows without an unambiguous identity remain NA and are resolved by the DP. The combination of this pre-DP propagation and the DP/probabilistic engines' hard-invariant sweep (see below) guarantees `ReconstructedStemID == TrueStemID` on every row that Steps 1–3 anchored.
+
+### Post-DP carried_terminal backfill (Step 9b)
+
+After `run_dp_one_group()` returns and `maybe_add_posterior_bins()` has been applied, the BCI driver invokes the shared helper `apply_carried_terminal_backfill()` (Step 9b), then immediately calls `apply_orphan_stem_backfill()` (Step 9c). These are the same helpers called by `main_cpp.R` (Steps 5.5b/5.5c) and `main_cpp_chunk.R`; see the *Post-engine `carried_terminal` backfill* and *Post-engine `given_orphan` backfill* sections above for the rules and rationale. Together with the script-level hard-invariant + duplicate-aware sweep (which also runs in this driver via the inherited `run_dp_one_group()`), these are the only post-engine pieces that are identical across all three drivers — the upstream Steps 1–3 above are BCI-input-specific and have no analogue in the simulator (which already ships `TrueStemID`).
 
 ### BCI-specific defaults
 
-- Input: `bci_data/bci_multistem_xrun_debug.rds` (loaded via `readRDS()`)
-- Output: written to `dp_global/output/` under a BCI-specific run directory
-- Uses `withr::with_dir()` for bundle sourcing compatibility
-- `ANCHOR_START_CENSUS` defaults per the script configuration
+- `INPUT_FILE`: `bci_data/multistem_tags.rds` (loaded via `readRDS()`; not tracked by git)
+- `WHICH_TAG`: `"115203"` (a multi-stem debugging tag)
+- `FORCE_ONE_SPECIES_PARAMETERS`: `FALSE` (use real BCI species)
+- `MAX_GROWTH_FIXED`: `5.0`, `MAX_SHRINK_FIXED`: `-0.5`, `DP_MAX_STATES`: `1039L`
+- `ANCHOR_START_CENSUS`: `7L`
+- `PIN_TRUESTEMID`: `TRUE`
+- Output written to `dp_global/output/<timestamp>_BCI_tag<WHICH_TAG>_*` under the BCI-specific run directory naming scheme
 
 ### Example invocations
 
@@ -251,12 +316,15 @@ Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 
 # Quiet mode
 Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=187064 --DP_VERBOSE=FALSE
+
+# Tight state-space cap (force probabilistic fallback for testing)
+Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000184 --DP_MAX_STATES=2
 ```
 
 ### Prerequisites
 
-- R packages: `data.table`, `here`, `withr` (in addition to standard DP prerequisites)
-- `bci_data/bci_multistem_xrun_debug.rds` must exist (not tracked by git; prepared separately)
+- R packages: `data.table`, `here` (in addition to the standard DP prerequisites)
+- `bci_data/multistem_tags.rds` (or whichever `INPUT_FILE` is set to) must exist; not tracked by git
 
 ---
 
@@ -302,7 +370,7 @@ all <- rbindlist(lapply(chunk_files, readRDS), use.names = TRUE, fill = TRUE)
 
 ## Basal Area Uncertainty (`basal_area_uncertainty.R`)
 
-Post-processing script that uses posterior path samples from a completed run to quantify how identity uncertainty propagates into basal area (BA) estimates.
+Post-processing script that uses posterior path samples from a completed run to quantify how identity uncertainty propagates into individual-level basal area (BA) estimates.
 
 ### Usage
 
@@ -317,16 +385,16 @@ The script reads:
 
 ### Outputs
 
-Three CSV files written to `<RUN_DIR>/`:
+Two CSV files and one PDF written to `<RUN_DIR>/`:
 
 | File | Rows | Description |
 |------|------|-------------|
-| `basal_area_uncertainty_tag.csv` | Tag × Census | Total BA with posterior mean, SD, 95% CI |
-| `basal_area_uncertainty_stem.csv` | Stem × Census | Per-stem BA posterior: mean, SD, median, 95% CI, MAP |
-| `basal_area_uncertainty_growth.csv` | Stem × Census pair | BA growth rate ($\Delta$BA/$\Delta t$) posterior |
+| `basal_area_tag_census.csv` | Tag × Census | Total BA (m²), stem count, year |
+| `basal_area_tag_change.csv` | Tag × Census interval | BA change decomposed into survivor growth, mortality loss, and recruitment gain — MAP values plus posterior mean, SD, and 95% CI for each component (all in m²) |
+| `basal_area_figures.pdf` | — | Multi-page PDF: summary page (all tags), per-tag detail pages (2×2 panels: BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), posterior uncertainty histograms, and **posterior density plots** (kernel densities of Growth/Loss/Gain/DeltaBA with weighted-mean vertical lines — one page pooled across all census intervals, then one page per interval) |
 
 ### Key insight
 
-Tag-level total BA per census is **invariant** to identity assignment — the same DBH values are summed regardless of which stem identity each observation receives. All uncertainty is at the **per-stem level**: different identity assignments allocate different DBH values to each stem, producing different BA trajectories and growth rates.
+Tag-level total BA per census is **invariant** to identity assignment — the same DBH values are summed regardless of which stem identity each observation receives. The **decomposition** of BA change into growth (surviving stems), loss (mortality), and gain (recruitment) **is** identity-dependent. Different posterior path samples assign different stems as survivors vs. deaths vs. recruits, producing uncertainty in the attribution of BA change to these demographic components.
 
 ---

@@ -1972,6 +1972,160 @@ tag_EC45 <- data.table(
     DBH = c(10.0, 11.0, 12.0, 3.0)
 )
 
+# Add another example
+
+#     Species  Tag  OriginalStemID.  TrueStemID CensusID   DBH ListOfTSM       Status.   ExactDate
+#     <fctr> <fctr>     <fctr>    .      <int>    <int> <num>    <char>       <char> .     <IDat>
+#  1: sp1    000378        391    .         NA        1   490      <NA>        alive . 1981-04-22
+#  2: sp1    000378        391    .         NA        2   450      <NA>        alive . 1985-08-24
+#  3: sp1    000378     491025    .         NA        3   491  M;B;cylY        alive . 1991-02-16
+#  4: sp1    000378     619374    .         NA        3    40      <NA>        alive . 1991-02-16
+#  5: sp1    000378     695366    .         NA        4   546  M;B;cylY        alive . 1995-09-27
+#  6: sp1    000378     754928    .         NA        4    34      <NA>        alive . 1995-09-27
+#  7: sp1    000378     801945    .         NA        4    11      <NA>        alive . 1995-09-27
+#  8: sp1    000378     839366    .         NA        5   571    B;cylY        alive . 2000-09-27
+#  9: sp1    000378     869100    .         NA        6   595  M;B;cylN        alive . 2005-10-17
+# 10: sp1    000378     893101    .         NA        6   190      <NA>        alive . 2005-10-17
+# 11: sp1    000378     893101    .      893101       7    NA       D;C         dead . 2010-09-14
+# 12: sp1    000378     893101    .      893101       8    NA         R broken below . 2015-11-26
+# 13: sp1    000378    1077577    .     1077577       8   271      <NA>        alive . 2015-11-26
+# 14: sp1    000378     893101    .      893101       9    NA        OR broken below . 2023-05-30
+# 15: sp1    000378    1077577    .     1077577       9   383         A        alive . 2023-05-30
+
+tag_EC46 <- data.table(
+    Species = "sp1", Tag = 000378L,
+    OriginalStemID = c(391L, 391L, 491025L, 619374L, 695366L, 754928L, 801945L, 839366L, 869100L, 893101L, 893101L, 893101L, 1077577L, 893101L, 1077577L),
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, 893101L, 893101L, 1077577L, 893101L, 1077577L),
+    CensusID = c(1L, 2L, 3L, 3L, 4L, 4L, 4L, 5L, 6L, 6L, 7L, 8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c(
+        "1981-04-22", "1985-08-24", "1991-02-16", "1991-02-16",
+        "1995-09-27", "1995-09-27", "1995-09-27", "2000-09-27", "2005-10-17", "2005-10-17", "2010-09-14", "2015-11-26", "2015-11-26", "2023-05-30", "2023-05-30"
+    )),
+    DBH = c(490, 450, 491, 40, 546, 34, 11, 571, 595, 190, NA, NA, 271, NA, 383),
+    ListOfTSM = c(NA_character_, NA_character_, "M;B;cylY", NA_character_, "M;B;cylY", NA_character_, NA_character_, "B;cylY", "M;B;cylN", NA_character_, "D;C", "R", NA_character_, "OR", "A"),
+    Status = c("alive", "alive", "alive", "alive", "alive", "alive", "alive", "alive", "alive", "alive", "dead", "broken below", "alive", "broken below", "alive")
+)
+
+#     Species    Tag  OriginalStemID TrueStemID CensusID   DBH    ListOfTSM       Status  ExactDate
+#     <fctr> <fctr>     <fctr>    .      <int>    <int> <num>    <char>       <char> .     <IDat>
+#  1: sp1     060145      48596       <NA>        1         25      <NA>        alive 1981-06-13
+#  2: sp1     060145      48596       <NA>        2         35      <NA>        alive 1985-06-14
+#  3: sp1     060145      48596       <NA>        3         35      <NA>        alive 1990-10-20
+#  4: sp1     060145      48596       <NA>        4         37      <NA>        alive 1995-06-27
+#  5: sp1     060145      48596       <NA>        5         37      <NA>        alive 2000-06-20
+#  6: sp1     060145      48596       <NA>        6         39      <NA>        alive 2005-06-30
+#  7: sp1     060145      48596      48596        7         NA       D;N         dead 2010-06-21
+#  8: sp1     060145      48596       48596        8         NA         R broken below 2015-09-15
+#  9: sp1     060145    1077157    1077157        8         23      <NA>        alive 2015-09-15
+# 10: sp1     060145      48596     48596        9         NA        OR broken below 2023-03-21
+# 11: sp1     060145    1077157    1077157        9         32      <NA>        alive 2023-03-21
+
+tag_EC47 <- data.table(
+    Species = "sp1", Tag = 060145L,
+    OriginalStemID = c(48596L, 48596L, 48596L, 48596L, 48596L, 48596L, 48596L, 48596L, 1077157L, 48596L, 1077157L),
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, 48596L, 48596L, 1077157L, 48596L, 1077157L),
+    CensusID = c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c(
+        "1981-06-13", "1985-06-14", "1990-10-20", "1995-06-27", "2000-06-20", "2005-06-30", "2010-06-21", "2015-09-15", "2015-09-15", "2023-03-21", "2023-03-21"
+    )),
+    DBH = c(25, 35, 35, 37, 37, 39, NA, NA, 23, NA, 32),
+    ListOfTSM = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, NA_character_, "D;N", "R", NA_character_, "OR", NA_character_),
+    Status = c("alive", "alive", "alive", "alive", "alive", "alive", "dead", "broken below", "alive", "broken below", "alive")
+)
+
+#    Species    Tag OriginalStemID TrueStemID CensusID   DBH ListOfTSM       Status  ExactDate
+#    <fctr>  <char>     <char>     <char>    <num>    <num>    <char>       <char>     <Date>
+# 1: sp1     606162     328837       <NA>        5       12      <NA>        alive 2000-02-18
+# 2: sp1     606162     328837       <NA>        6       13      <NA>        alive 2005-02-17
+# 3: sp1     606162     328837      328837        7       NA       D;N         dead 2010-02-19
+# 4: sp1     606162     328837      328837        8       NA         R broken below 2015-03-24
+# 5: sp1     606162    1075846    1075846        8       19      <NA>        alive 2015-03-24
+# 6: sp1     606162     328837       328837        9       NA         D         dead 2022-12-08
+# 7: sp1     606162    1075846      1075846        9       NA        Ns    stem dead 2022-12-08
+
+tag_EC48 <- data.table(
+    Species = "sp1", Tag = 606162L,
+    OriginalStemID = c(328837L, 328837L, 328837L, 328837L, 1075846L, 328837L, 1075846L),
+    TrueStemID = c(NA_integer_, NA_integer_, 328837L, 328837L, 1075846L, 328837L, 1075846L),
+    CensusID = c(5L, 6L, 7L, 8L, 8L, 9L, 9L),
+    ExactDate = as.Date(c(
+        "2000-02-18", "2005-02-17", "2010-02-19", "2015-03-24", "2015-03-24", "2022-12-08", "2022-12-08"
+    )),
+    DBH = c(12, 13, NA, NA, 19, NA, NA),
+    ListOfTSM = c(NA_character_, NA_character_, "D;N", "R", NA_character_, "D", "Ns"),
+    Status = c("alive", "alive", "dead", "broken below", "alive", "dead", "stem dead")
+)
+
+#    Species    Tag OriginalStemID TrueStemID CensusID   DBH ListOfTSM       Status  ExactDate
+#    <fctr>  <char>     <char>     <char>    <num>    <num>    <char>       <char>     <Date>
+# 1: sp1     606162     328837       <NA>        1       12      <NA>        alive 1981-06-13
+# 2: sp1     606162     328837       <NA>        2       13      <NA>        alive 1985-08-24
+# 3: sp1     606162     328837      328837        3       NA       D;N         dead 1990-10-20
+# 4: sp1     606162     328837      328837        4       NA         R broken below 1995-06-27
+# 5: sp1     606162    1075846    1075846        4       19      <NA>        alive 1995-06-27
+# 6: sp1     606162     328837       328837        5       NA         D         dead 2000-02-18
+# 7: sp1     606162    1075846      1075846        5       NA        Ns    stem dead 2000-02-18
+
+tag_EC49 <- data.table(
+    Species = "sp1", Tag = 606163L,
+    OriginalStemID = c(328837L, 328837L, 328837L, 328837L, 1075846L, 328837L, 1075846L),
+    TrueStemID = c(NA_integer_, NA_integer_, NA_integer_, 328837L, 1075846L, 328837L, 1075846L),
+    CensusID = c(1L, 2L, 3L, 4L, 4L, 5L, 5L),
+    ExactDate = as.Date(c(
+        "1981-06-13", "1985-08-24", "1990-10-20", "1995-06-27", "1995-06-27", "2000-02-18", "2000-02-18"
+    )),
+    DBH = c(12, 13, NA, NA, 19, NA, NA),
+    ListOfTSM = c(NA_character_, NA_character_, "D;N", "R", NA_character_, "D", "Ns"),
+    Status = c("alive", "alive", "dead", "broken below", "alive", "dead", "stem dead")
+)
+
+
+#    Species    Tag  OriginalStemID TrueStemID CensusID   DBH ListOfTSM          Status.    ExactDate
+#    <fctr>  <char>      <char>     <char>    <num>     <num>    <char>          <char>.       <Date>
+# 1: sp1     011099        9173       <NA>        1        25      <NA>           alive.   1981-04-04
+# 2: sp1     011099        9173       9173        2        30      <NA>           alive.   1985-09-12
+# 3: sp1     011099      491932       <NA>        3        NA         R    broken below.   1990-12-18
+# 4: sp1     011099      491932       <NA>        4        NA         R    broken below.   1995-09-14
+# 5: sp1     011099      491932       <NA>        5        NA        OR    broken below.   2000-09-07
+# 6: sp1     011099      491932       <NA>        6        NA        OR    broken below.   2005-09-28
+# 7: sp1     011099      491932       <NA>        7        NA        OR    broken below.   2010-08-17
+# 8: sp1     011099      491932       <NA>        8        NA        OR    broken below.   2015-11-26
+# 9: sp1     011099      491932       <NA>        9        NA        OR    broken below.   2023-06-01
+
+tag_EC50 <- data.table(
+    Species = "sp1", Tag = 011099L,
+    OriginalStemID = c(9173L, 9173L, 491932L, 491932L, 491932L, 491932L, 491932L, 491932L, 491932L),
+    TrueStemID = c(NA_integer_, 9173L, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    CensusID = c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L),
+    ExactDate = as.Date(c(
+        "1981-04-04", "1985-09-12", "1990-12-18", "1995-09-14", "2000-09-07", "2005-09-28", "2010-08-17", "2015-11-26", "2023-06-01"
+    )),
+    DBH = c(25, 30, NA, NA, NA, NA, NA, NA, NA),
+    ListOfTSM = c(NA_character_, NA_character_, "R", "R", "OR", "OR", "OR", "OR", "OR"),
+    Status = c("alive", "alive", "broken below", "broken below", "broken below", "broken below", "broken below", "broken below", "broken below")
+)
+
+#    Species   Tag OriginalStemID TrueStemID CensusID     DBH ListOfTSM Status  ExactDate
+#    <fctr> <char>     <char>     <char>    <num>       <num>    <char> <char>     <Date>
+# 1: sp1    011180       9251       <NA>        1          30      <NA>  alive 1981-04-04
+# 2: sp1    011180       9251       <NA>        2          35      <NA>  alive 1985-09-12
+# 3: sp1    011180     491944          491944        3          33         M  alive 1990-12-18
+# 4: sp1    011180     620130          620130        3          23      <NA>  alive 1990-12-18
+# 5: sp1    011180     491944       <NA>        4          NA       D;S   dead 1995-09-14
+
+tag_EC51 <- data.table(
+    Species = "sp1", Tag = 011180L,
+    OriginalStemID = c(9251L, 9251L, 491944L, 620130L, 491944L),
+    TrueStemID = c(NA_integer_, NA_integer_, 491944L, 620130L, 491944L),
+    CensusID = c(1L, 2L, 3L, 3L, 4L),
+    ExactDate = as.Date(c(
+        "1981-04-04", "1985-09-12", "1990-12-18", "1990-12-18", "1995-09-14"
+    )),
+    DBH = c(30, 35, 33, 23, NA),
+    ListOfTSM = c(NA_character_, NA_character_, "M", NA_character_, "D;S"),
+    Status = c("alive", "alive", "alive", "alive", "dead")
+)
+
 dt_complete_extra <- rbindlist(list(
     dt_complete_extra,
     tag_EC1, tag_EC2, tag_EC3, tag_EC4, tag_EC5, tag_EC6,
@@ -1981,7 +2135,9 @@ dt_complete_extra <- rbindlist(list(
     tag_EC25, tag_EC26, tag_EC27, tag_EC28, tag_EC29, tag_EC30,
     tag_EC31, tag_EC32, tag_EC33, tag_EC34, tag_EC35, tag_EC36,
     tag_EC37, tag_EC38, tag_EC39, tag_EC40, tag_EC41, tag_EC42,
-    tag_EC43, tag_EC44, tag_EC45
+    tag_EC43, tag_EC44, tag_EC45,
+    tag_EC46, tag_EC47, tag_EC48, 
+    tag_EC49, tag_EC50, tag_EC51
 ), use.names = TRUE, fill = TRUE)
 
 # Include additional information about growth forms, trees, vs figs
@@ -2096,3 +2252,5 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
 # - Variable census intervals with random noise
 # - Stem identity masking for early censuses
 # - Diagnostic plots for validation
+
+unique(dt_complete_extra$Tag)
