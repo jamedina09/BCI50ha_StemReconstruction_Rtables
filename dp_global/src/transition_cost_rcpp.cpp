@@ -597,9 +597,9 @@ Rcpp::List derive_phase_prev_batch_rcpp(
 
                 if (alive1) {
                     if (resp) {
-                        // Resprout barrier: track was unborn at t.
-                        if (alive0) { feasible = false; break; }
-                        phase_t_buf[k] = 0;
+                        // R-coded row at t+1 is old stem's last record: track must be alive at t.
+                        if (!alive0) { feasible = false; break; }
+                        phase_t_buf[k] = 1;
                     } else {
                         phase_t_buf[k] = alive0 ? 1 : 0;
                     }

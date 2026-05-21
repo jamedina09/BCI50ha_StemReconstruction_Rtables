@@ -18,3 +18,20 @@ tests/
 .vscode/
 
 bci_data/
+
+baseline_pre_change/
+baseline_pre_greedy_fix/
+
+broken_below_tags.csv
+
+BCI_stem_reconstruction/1_DATA_PREPARATION/compare_tables1_and_tables2.R
+
+BCI_stem_reconstruction/DATA/RAW/ViewFullTable_census2022-23.txt
+BCI_stem_reconstruction/DATA/
+
+BCI_stem_reconstruction/output
+
+BCI_stem_reconstruction/3_PREPARE_R_TABLES/CHECKS
+BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS
+BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons
+BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/wd

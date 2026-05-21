@@ -200,7 +200,24 @@ PROB_SPECIES <- character(0)
 # Lookahead weight for probabilistic matcher: controls how much the
 # cost matrix at pair (i) is influenced by the assignment at pair (i+1).
 # 0 = disabled (original independent sampling), 0.5 = default.
-PROB_LOOKAHEAD_WEIGHT <- 0.5
+PROB_LOOKAHEAD_WEIGHT <- 1
+
+# Bio hard bounds control for probabilistic matcher:
+# When TRUE (default), use bio-estimated hard shrink/growth guardrails (strict).
+# When FALSE, rely only on prune bounds (relaxed, for continuity rescue).
+USE_BIO_HARD_SHRINK_IN_PROB <- TRUE
+USE_BIO_HARD_GROWTH_IN_PROB <- TRUE
+
+# ME cumulative-shrinkage threshold for probabilistic matcher (Layer 2 repair).
+# Trajectories where cumulative shrinkage exceeds n_sigma_me * sqrt(SD(d_start)^2 + SD(d_curr)^2)
+# are severed. Lower values = sever sooner (less negative growth). 0 = sever at first decline.
+# Only active when USE_BIO_HARD_SHRINK_IN_PROB = TRUE.
+PROB_N_SIGMA_ME <- 3
+
+# Pin observations with known TrueStemID at non-anchor censuses to their
+# correct track.  Reduces state space and prevents misidentification.
+# Set FALSE to revert to pre-pinning behavior.
+PIN_TRUESTEMID <- TRUE
 
 ############################################################
 ### 3.3) Parallelism settings
@@ -301,7 +318,11 @@ CLI_REFERENCE <- list(
     OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE",
     PROB_N_SAMPLES = "PROB_N_SAMPLES",
     PROB_SPECIES = "PROB_SPECIES",
-    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT"
+    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT",
+    USE_BIO_HARD_SHRINK_IN_PROB = "USE_BIO_HARD_SHRINK_IN_PROB",
+    USE_BIO_HARD_GROWTH_IN_PROB = "USE_BIO_HARD_GROWTH_IN_PROB",
+    PROB_N_SIGMA_ME = "PROB_N_SIGMA_ME",
+    PIN_TRUESTEMID = "PIN_TRUESTEMID"
 )
 
 ############################################################
@@ -738,13 +759,21 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             verbose = isTRUE(DP_VERBOSE),
             prob_n_samples = PROB_N_SAMPLES,
             prob_species = PROB_SPECIES,
-            prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT
+            prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+            use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
+            use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
+            prob_n_sigma_me = as.numeric(PROB_N_SIGMA_ME),
+            pin_truestemid = isTRUE(PIN_TRUESTEMID)
         ),
         error = function(e) {
             msg <- conditionMessage(e)
             log_msg(sprintf("DP error for Tag=%s species=%s: %s — falling back to probabilistic", tag_label, species_label, msg), "WARN")
+            # Scope to pre-anchor rows only — mirrors do_fallback() inside the DP.
+            # Post-anchor rows are appended afterward with proper given/none_after_anchor labels.
+            .pre_anchor_eh <- dtg[CensusID <= ANCHOR_START_CENSUS]
+            .post_anchor_eh <- dtg[CensusID > ANCHOR_START_CENSUS]
             out <- match_stems_probabilistic(
-                tree_data = data.table::copy(dtg),
+                tree_data = data.table::copy(.pre_anchor_eh),
                 min_growth = MAX_SHRINK_FIXED,
                 max_growth = MAX_GROWTH_FIXED,
                 anchor_start = ANCHOR_START_CENSUS,
@@ -757,6 +786,10 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                 prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR,
                 prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR,
                 prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+                use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
+                use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
+                n_sigma_me = as.numeric(PROB_N_SIGMA_ME),
+                pin_truestemid = isTRUE(PIN_TRUESTEMID),
                 verbose = isTRUE(DP_VERBOSE)
             )
             if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
@@ -783,9 +816,159 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                     }
                 }
             }
+            # Append post-anchor rows with proper labeling (mirrors finalize_out / propagate_post_anchor_given)
+            if (nrow(.post_anchor_eh) > 0L) {
+                .post <- data.table::copy(.post_anchor_eh)
+                if (!("ReconstructedStemID" %in% names(.post))) .post[, ReconstructedStemID := NA_integer_]
+                if (!("ReconstructionMethod" %in% names(.post))) .post[, ReconstructionMethod := NA_character_]
+                if (!("ConstraintViolation" %in% names(.post))) .post[, ConstraintViolation := NA]
+                # NOTE: no !is.na(DBH) guard here.  Terminal NA-DBH post-
+                # anchor rows with a known TrueStemID (rows anchored by
+                # the pre-DP terminal-event propagation in main_cpp_bci.R
+                # Step 2 / Step 3) must also be honoured to satisfy the
+                # hard invariant.
+                .post[!is.na(TrueStemID), `:=`(
+                    ReconstructedStemID = as.integer(TrueStemID),
+                    ReconstructionMethod = "given"
+                )]
+                .post[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]
+                .post[, DP_FallbackReason := paste0("error:", substr(msg, 1, 200))]
+                out <- data.table::rbindlist(list(out, .post), use.names = TRUE, fill = TRUE)
+            }
             out
         }
     )
+
+    # ---- TrueStemID HARD-INVARIANT backstop sweep (script-level) ----------
+    # Final, idempotent enforcement of TrueStemID == ReconstructedStemID for
+    # every row with a non-NA TrueStemID, regardless of which engine path
+    # produced this output (DP success, probabilistic fallback, MF
+    # re-insertion).  Mirrors the equivalent backstop in main_cpp_chunk.R
+    # so both single-tag and chunked drivers offer the same guarantee.
+    if (isTRUE(PIN_TRUESTEMID) && !is.null(out) &&
+        all(c("TrueStemID", "ReconstructedStemID", "ReconstructionMethod") %in% names(out))) {
+        .ts_rows <- which(!is.na(out$TrueStemID))
+        if (length(.ts_rows) > 0L) {
+            # ---- Script-level audit: detect engine-vs-pin disagreements ----
+            # Last-line defense.  At this point both finalize_out and the
+            # probabilistic matcher have already run their own audits, so any
+            # override caught here means a row leaked through both inner
+            # sweeps -- worth surfacing loudly.
+            if (!("SweepAuditOverride" %in% names(out))) {
+                out[, SweepAuditOverride := FALSE]
+            } else {
+                # Per-row backfill — mirrors dp_global_dp.R finalize_out.
+                out[is.na(SweepAuditOverride), SweepAuditOverride := FALSE]
+            }
+            # Snapshot the engine's pre-sweep ReconstructedStemID.
+            # Per-row backfill (see dp_global_dp.R::finalize_out): create the
+            # column if absent, otherwise populate only NA cells so rows that
+            # were appended after an inner sweep (post-anchor block, sub-
+            # segment merges) also get their pre-sweep value captured.
+            if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
+                out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+            } else {
+                out[is.na(ReconstructedStemID_PreSweep),
+                    ReconstructedStemID_PreSweep := ReconstructedStemID]
+            }
+            .pre_recon <- out$ReconstructedStemID_PreSweep[.ts_rows]
+            .true_int <- as.integer(out$TrueStemID[.ts_rows])
+            .override_local <- !is.na(.pre_recon) & .pre_recon != .true_int
+            if (any(.override_local)) {
+                out[.ts_rows[.override_local], SweepAuditOverride := TRUE]
+                log_msg(sprintf("[audit] script-level sweep overrode %d engine-assigned ReconstructedStemID value(s) for tag=%s (rows flagged via SweepAuditOverride=TRUE)", sum(.override_local), tag_label), "WARN")
+            }
+
+            # ---- Fix 2: duplicate-aware pinning -------------------------
+            # Per-row decision: tentatively pin Recon := TrueStemID, but
+            # only commit if doing so does NOT create a duplicate
+            # ReconstructedStemID at the same (Tag, CensusID) given the
+            # current state of the column (engine-assigned baseline +
+            # any pins already committed earlier in this pass). If a pin
+            # would collide, RESPECT THE ID GIVEN BY THE FULL ENGINE
+            # RECONSTRUCTION — keep the PreSweep value, flag the row via
+            # SweepRollbackToPreSweep=TRUE, and leave its
+            # ReconstructionMethod untouched. SweepAuditOverride above
+            # already records the disagreement; the rollback flag
+            # records the chosen resolution.
+            #
+            # Rows are processed in stable index order so the outcome is
+            # deterministic. Tag 258411 C6 is the canonical case: a
+            # retag-campaign reuse of OriginalStemID 995110 would force
+            # two rows at (Tag=258411, CensusID=6) onto Recon=995110;
+            # the engine had already given the second row a fresh ID
+            # (995113), which we now retain.
+            if (!("SweepRollbackToPreSweep" %in% names(out))) {
+                out[, SweepRollbackToPreSweep := FALSE]
+            } else {
+                out[is.na(SweepRollbackToPreSweep), SweepRollbackToPreSweep := FALSE]
+            }
+
+            .working_recon <- as.integer(out$ReconstructedStemID)
+            .tag_vec <- out$Tag
+            .cen_vec <- out$CensusID
+            .true_vec_all <- as.integer(out$TrueStemID)
+
+            # Pre-build (Tag, CensusID) -> row index map for fast peer lookup.
+            .grp_key <- paste(.tag_vec, .cen_vec, sep = "\u0001")
+            .grp_map <- split(seq_len(nrow(out)), .grp_key)
+
+            .pin_idx <- integer(0)
+            .rollback_idx <- integer(0)
+            for (.r in .ts_rows) {
+                .v <- .true_vec_all[.r]
+                .peers <- .grp_map[[.grp_key[.r]]]
+                .peers <- .peers[.peers != .r]
+                if (length(.peers) > 0L) {
+                    .peer_vals <- .working_recon[.peers]
+                    if (any(!is.na(.peer_vals) & .peer_vals == .v)) {
+                        # Collision: skip the pin, keep engine's value.
+                        .rollback_idx <- c(.rollback_idx, .r)
+                        next
+                    }
+                }
+                .working_recon[.r] <- .v
+                .pin_idx <- c(.pin_idx, .r)
+            }
+
+            if (length(.pin_idx) > 0L) {
+                out[.pin_idx, `:=`(
+                    ReconstructedStemID  = .true_vec_all[.pin_idx],
+                    ReconstructionMethod = "given"
+                )]
+            }
+            if (length(.rollback_idx) > 0L) {
+                # Revert ReconstructedStemID back to the engine's pre-sweep
+                # value (in case an inner finalize_out sweep already pinned
+                # the row before script-level sweep runs). Leave
+                # ReconstructionMethod untouched — it reflects the engine's
+                # original assignment path.
+                .pre_for_rollback <- out$ReconstructedStemID_PreSweep[.rollback_idx]
+                out[.rollback_idx, `:=`(
+                    ReconstructedStemID = .pre_for_rollback,
+                    SweepRollbackToPreSweep = TRUE
+                )]
+                log_msg(sprintf(
+                    "[audit] script-level sweep skipped %d TrueStemID pin(s) for tag=%s to avoid duplicate ReconstructedStemID at same (Tag,CensusID); engine's PreSweep id retained (rows flagged via SweepRollbackToPreSweep=TRUE)",
+                    length(.rollback_idx), tag_label
+                ), "WARN")
+            }
+        }
+        # Unconditional materialisation of the audit columns: tags with NO
+        # non-NA TrueStemID never enter the .ts_rows branch above, so the
+        # columns would otherwise be missing from their output and downstream
+        # consumers would have to special-case schema differences.  Create
+        # them here with the no-override defaults if absent.
+        if (!("SweepAuditOverride" %in% names(out))) {
+            out[, SweepAuditOverride := FALSE]
+        }
+        if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
+            out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+        }
+        if (!("SweepRollbackToPreSweep" %in% names(out))) {
+            out[, SweepRollbackToPreSweep := FALSE]
+        }
+    }
 
     out
 }
@@ -1008,6 +1191,30 @@ run_main <- function() {
         }
     }
     out <- maybe_add_posterior_bins(out)
+
+    # 5.5b Post-engine backfill of orphan terminal-event rows.
+    #      For rows with Status %in% {"dead","stem dead","broken below"} AND
+    #      NA DBH that the engine could not match (ReconstructedStemID NA),
+    #      copy the ReconstructedStemID from the most recent prior row in the
+    #      same (Tag, OriginalStemID) group (LOCF). Sets
+    #      ReconstructionMethod = "carried_terminal" on filled rows.
+    #      Shared helper defined in dp_global/R/dp_global_main.R; mirrors
+    #      Step 9b in main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
+    out <- apply_carried_terminal_backfill(out)
+
+    # 5.5c Born-orphan stem backfill. Rows with NA Recon, NA TrueStemID,
+    #      NA DBH, and a non-NA source-id (StemID / OriginalStemID) are stems
+    #      whose first appearance had no measurement (e.g. born broken-below
+    #      at C7+); the engine cannot reach them. Fill Recon = source-id and
+    #      tag ReconstructionMethod = "given_orphan". Mirrors Step 9c in
+    #      main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
+    out <- apply_orphan_stem_backfill(out)
+
+    # 5.5d Broken-below invariant pass. Enforce R1 (split-on-break) and R2
+    #      (terminate-on-stump) per `apply_broken_below_invariants` in
+    #      dp_global/R/dp_global_main.R. Mirrors Step 9d in main_cpp_bci.R
+    #      and the per-chunk call in main_cpp_chunk.R.
+    out <- apply_broken_below_invariants(out)
 
     # Record run output directory (basename) in each row to avoid variable/column name collision
     if (!is.null(out)) {
