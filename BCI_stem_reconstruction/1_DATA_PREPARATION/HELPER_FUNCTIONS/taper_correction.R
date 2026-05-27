@@ -1,13 +1,13 @@
-# Improved taper correction utilities
-# - Provide full control over column names (dbh, hom, wsg)
-# - Robust input validation and unit handling
-# - Preserve input object type (data.frame or data.table)
-# - Use message() for logging and optional verbose output
-
 #' Estimate DBH at 1.3 m using a taper model
 #'
 #' This function computes the expected DBH at 1.3 m (DBHc) from a diameter
 #' measured at some other height using published taper parameterizations.
+#'
+#' Equation obtained from:
+#' Cushman, K. C., S. Bunyavejchewin, D. Cárdenas, et al. “Variation in Trunk
+#' Taper of Buttressed Trees within and among Five Lowland Tropical Forests.”
+#' Biotropica 53, no. 5 (2021): 1442–53. Scopus.
+#' https://doi.org/10.1111/btp.12994.
 #'
 #' @param dbh_mm numeric vector of diameters at measurement height in millimetres
 #' @param hom numeric vector of heights of measurement in metres; NA values will be set to common_hom
