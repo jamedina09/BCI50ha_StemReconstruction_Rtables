@@ -92,6 +92,22 @@ ViewFullTable <- fread(
   na.strings = c("NA", "NULL", "")
 )
 
+# ! FIXME:
+# Pterocarpus officinalis no existe en la parcela, yo personalmente revisé todos los Pterocarpus y
+# corresponden a P. rohrii.
+spp_new[especie %in% "rohrii"]
+
+# this needs to be replaced with the correct code
+unique(sp_bci_raw_input[SpeciesName == "officinalis", .(Mnemonic, Family, Genus, SpeciesName)])
+
+# Correct
+sp_bci_raw_input[Mnemonic == "pterro"]
+# Replace with pterro
+sp_bci_raw_input[Mnemonic == "pterof"]
+
+# FIXME: pterof code in BCI data needs to be replaced by pterro.
+# !
+
 # Rename CensusID to CensusID_raw to preserve original labels, then assign
 # standardized sequential CensusID values below.
 setnames(ViewFullTable, "CensusID", "CensusID_raw")
