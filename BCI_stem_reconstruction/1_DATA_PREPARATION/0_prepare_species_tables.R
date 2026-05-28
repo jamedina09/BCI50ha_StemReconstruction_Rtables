@@ -1,7 +1,7 @@
 # =============================================================================
 # 0_prepare_species_tables.R
 #
-# Purpose: Update 50-plot species list.
+# Purpose: Update BCI 50-plot species list.
 #
 # =============================================================================
 rm(list = ls())
@@ -74,14 +74,20 @@ sp_bci_raw <- unique(sp_bci_raw_input[, .(Tag, Mnemonic, CensusID)])
 # =============================================================================
 # 1.1. CHECK DATA QUALITY ISSUES IN THE RAW INPUT
 # =============================================================================
+spp_new[, notes := NA_character_]
+
 # Rolando Pérez comments:
 # El nombre Appunia siebertiii es correcto y actualizado, Morinda siebertii es un sinónimo.
 spp_new[especie == "siebertii"]
+
 # Apeiba "hybrida" murió.
 spp_new[codigo %in% "apeihy"]
-
 # present in census 1:3
 sp_bci_raw[Mnemonic == "apeihy"]
+sp_bci_raw_input[Mnemonic == "apeihy", .(CensusID, ExactDate)]
+
+spp_new[codigo %in% "apeihy", notes := "No longer present; last seen 1990"]
+spp_new[codigo %in% "apeihy"]
 
 # Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una
 # con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla.
@@ -93,10 +99,14 @@ sp_bci_raw[Mnemonic %in% "nects1"]
 
 # present in census 1:3
 sp_bci_raw[Mnemonic %in% "nects3"]
+sp_bci_raw_input[Mnemonic == "nects3", .(CensusID, ExactDate)]
+spp_new[codigo %in% "nects3", notes := "No longer present; last seen 1990"]
 
 # Pterocarpus officinalis no existe en la parcela, yo personalmente revisé todos los Pterocarpus y
 # corresponden a P. rohrii.
 spp_new[especie %in% "rohrii"]
+spp_new[codigo %in% "pterro"]
+spp_new[codigo %in% "pterro", notes := "Previously identified as 'pterof' (Pterocarpus officinalis) are incorrect; those are 'pterro' (Pterocarpus rohrii)"]
 
 # this needs to be replaced with the correct code
 unique(sp_bci_raw_input[SpeciesName == "officinalis", .(Mnemonic, Family, Genus, SpeciesName)])
@@ -122,7 +132,7 @@ unique(sp_bci_raw_input[Genus == "Quararibea", .(Mnemonic, Family, Genus, Specie
 
 spp_new[codigo %in% c("beilpe", "quaras")]
 
-# NOTE: The only required fix is the pterof → pterro code replacement in the BCI inventory. The other discrepancies
+# NOTE: The only required fix is the pterof → pterro code replacement in the BCI inventory.
 
 # ----------
 sp_bci_raw_input[, Mnemonic := ifelse(Mnemonic == "pterof", "pterro", Mnemonic)]
@@ -130,6 +140,7 @@ bci_data_mnemonic <- sort(unique(sp_bci_raw_input[, Mnemonic]))
 
 # mnemonic in BCI plot data not present in the list
 inc <- setdiff(bci_data_mnemonic, spp_new$codigo)
+inc
 # uniden is unidentified
 unique(sp_bci_raw_input[Mnemonic %in% inc, .(Mnemonic, Family, Genus, SpeciesName)])
 
@@ -167,6 +178,9 @@ spp_new[codigo %in% inc[2], `:=`(
     variety = subp_in_old[subspmnemonic %in% inc[2]]$subspecies
 )]
 
+spp_new[codigo %in% inc[1]]
+spp_new[codigo %in% inc[2]]
+
 # Strip non-authority annotations (sensu, auct., nom. dub., ined.) from the
 # authority field; they confuse the TNRS parser
 spp_new[, autoridad := stringr::str_replace_all(
@@ -190,41 +204,6 @@ spp_new[
 # TNRS expects a single string per taxon that may include:
 #   [Family] Genus [species [subsp. subspecies]] [authority]
 # Family is prepended only when it ends in -aceae (TNRS parser requirement).
-
-# build_tnrs_name <- function(family, genus, species, subspecies, authority) {
-#     # Start with genus (minimum required by TNRS)
-#     name <- genus
-#     # Append species epithet when available
-#     name <- ifelse(!is.na(species) & species != "",
-#         paste(name, species),
-#         name
-#     )
-#     # Append infraspecific rank + epithet when available
-#     name <- ifelse(!is.na(subspecies) & subspecies != "",
-#         paste(name, "subsp.", subspecies),
-#         name
-#     )
-#     # Append authority when available
-#     name <- ifelse(!is.na(authority) & authority != "",
-#         paste(name, authority),
-#         name
-#     )
-#     # Prepend family only if it ends in -aceae
-#     name <- ifelse(
-#         !is.na(family) & family != "" & grepl("aceae$", family, ignore.case = TRUE),
-#         paste(family, name),
-#         name
-#     )
-#     return(name)
-# }
-
-# spp_new[, name_string := build_tnrs_name(
-#     family     = familia,
-#     genus      = genero,
-#     species    = especie,
-#     subspecies = subespecie,
-#     authority  = autoridad
-# )]
 
 build_tnrs_name <- function(
   family,
@@ -440,24 +419,12 @@ results_dt[Unmatched_terms != ""]
 cols_tnrs_clean <- c(
     # Join key
     "ID",
-    # Accepted name components (what to correct TO)
     "Accepted_name", # full currently-accepted name
     "Accepted_species", # binomial only, no infraspecific rank
     "Accepted_name_author", # standardised authority
-    # "Accepted_name_rank", # rank (species / subspecies / variety)
     "Accepted_family", # correct family per backbone
     "Infraspecific_rank", # infraspecific rank assigned by TNRS (e.g. subsp., var., f.)
     "Infraspecific_epithet_matched", # infraspecific epithet matched by TNRS (if any)
-    # Name status and match quality
-    # "Taxonomic_status", # Accepted / Synonym / No opinion
-    # "Overall_score", # main quality filter (0–1)
-    # "Genus_score", # pinpoints genus misspelling
-    # "Specific_epithet_score", # pinpoints epithet misspelling
-    # "Family_score", # pinpoints family mismatch (Warnings = 4 cases)
-    # What TNRS matched
-    # "Name_matched", # closest match in backbone (may be a synonym)
-    # "Name_matched_rank",    # rank of the matched name
-    # "Unmatched_terms", # parts TNRS could not parse — non-empty = problem
     # Custom diagnosis
     "problem"
 )
@@ -477,43 +444,20 @@ spp_new <- merge(
     all = TRUE
 )
 
-# Rename TNRS output columns to Spanish to match the rest of the table
-col_translation <- c(
-    "Accepted_name" = "nombre_aceptado",
-    "Accepted_species" = "especie_aceptada",
-    "Accepted_name_author" = "autoridad_aceptada",
-    # "Accepted_name_rank"     = "rango_aceptado",
-    "Accepted_family" = "familia_aceptada",
-    "Infraspecific_rank" = "rango_infraespecífico",
-    "Infraspecific_epithet_matched" = "epíteto_infraespecífico",
-    # "Taxonomic_status"       = "estado_taxonomico",
-    # "Overall_score"          = "puntaje_general",
-    # "Genus_score"            = "puntaje_genero",
-    # "Specific_epithet_score" = "puntaje_especie",
-    # "Family_score"           = "puntaje_familia",
-    # "Name_matched"           = "nombre_coincidente",
-    # "Name_matched_rank"      = "rango_coincidente",
-    # "Unmatched_terms"        = "terminos_no_reconocidos",
-    "problem" = "problema"
-)
-
-# Only rename TNRS columns that are actually present (safe if some were excluded)
-tnrs_cols_present <- intersect(names(col_translation), names(spp_new))
-setnames(spp_new, old = tnrs_cols_present, new = col_translation[tnrs_cols_present])
-
 # =============================================================================
-# 9. APPLY TNRS CORRECTIONS
+# 3. APPLY TNRS CORRECTIONS
 # =============================================================================
-# The `problema` column (populated in section 2f) classifies each species by
+# The `problem` column (populated in section 2f) classifies each species by
 # the type of name issue detected. This section resolves each issue category
-# in turn, updating the relevant name fields in `full_out` and marking the
-# row as "OK" in a working `solution` column.  The checks are applied in
+# in turn, updating the relevant name fields in `spp_new` and marking the
+# row as "OK" in a working `solution` column. The checks are applied in
 # order of increasing complexity:
 #   Check 1 — Species absent from Rolando's list          (mark OK as-is)
 #   Check 2 — Family reclassified in backbone             (update familia)
-#   Check 3 — Synonym: replace with accepted name         (update all name fields)
-#   Check 4 — Morphospecies (sp.)                         (mark OK, no fix needed)
-#   Check 5 — Authority format difference only            (update autoridad)
+#   Check 3 — Morphospecies (sp.)                         (mark OK, no fix needed)
+#   Check 4 — Authority format difference only            (update autoridad)
+# Note: The TNRS synonym flag for Swartzia simplex is a false positive caused by
+# the presence of an intraspecific rank; no synonym fix is applied.
 # After all checks, any remaining authority mismatches are standardised.
 
 # Add a stable row index for reference during curation
@@ -521,7 +465,7 @@ spp_new[, I := .I]
 
 # Create a working copy of the diagnosis column; `solution` will be updated
 # to "OK" as each issue is resolved, leaving unresolved cases visible.
-spp_new[, solution := problema]
+spp_new[, solution := problem]
 
 # Frequency table before corrections — baseline overview
 message("Problem distribution before corrections:")
@@ -531,8 +475,9 @@ print(table(spp_new$solution, useNA = "ifany"))
 # Some BCI mnemonics (e.g. apeihy, nects1, nects3) were not in the new
 # taxonomy and therefore have NA in `problema`. They already carry valid
 # name data from the old taxonomy (prev_* columns); mark them as OK.
+spp_new[is.na(solution)]
+# this species will be checked later
 spp_new[is.na(solution), solution := "OK"]
-message("After Check 1 (absent from Rolando list):")
 print(table(spp_new$solution, useNA = "ifany"))
 
 # --- Check 2: Family reclassified by backbone --------------------------------
@@ -543,7 +488,7 @@ message("Families to update (reclassified in backbone):")
 print(
     spp_new[
         solution == "Familia no está en backbone — reclasificada (verificar familia_aceptada)",
-        .(familia, familia_aceptada)
+        .(familia, Accepted_family)
     ]
 )
 
@@ -560,7 +505,7 @@ sp_bci_raw_input[Family == "Boraginaceae"]
 
 spp_new[
     solution == "Familia no está en backbone — reclasificada (verificar familia_aceptada)",
-    familia := familia_aceptada # overwrite with backbone-accepted family
+    familia := Accepted_family # overwrite with backbone-accepted family
 ]
 spp_new[
     solution == "Familia no está en backbone — reclasificada (verificar familia_aceptada)",
@@ -569,19 +514,18 @@ spp_new[
 message("After Check 2 (family reclassified):")
 print(table(spp_new$solution, useNA = "ifany"))
 
-# --- Check 4: Morphospecies (sp.) -------------------------------------------
+# --- Check 3: Morphospecies (sp.) -------------------------------------------
 # Entries with "sp." cannot be resolved beyond genus level; this is expected
 # behaviour, not an error. No name fields need updating.
 spp_new[solution == "Morfoespecie — solo género, sin resolución a especie posible"]
-
 spp_new[
     solution == "Morfoespecie — solo género, sin resolución a especie posible",
     solution := "OK"
 ]
-message("After Check 4 (morphospecies):")
+message("After Check 3 (morphospecies):")
 print(table(spp_new$solution, useNA = "ifany"))
 
-# --- Check 5: Authority format difference only --------------------------------
+# --- Check 4: Authority format difference only --------------------------------
 # The name and family are correct; only the punctuation/spacing of the
 # authority string differs from the backbone standard. Overwrite with the
 # standardised backbone authority.
@@ -589,62 +533,61 @@ message("Authority differences to standardise:")
 print(
     spp_new[
         solution == "OK — solo formato de autoridad",
-        .(genero, especie, nombre_aceptado, autoridad, autoridad_aceptada)
+        .(genero, especie, Accepted_name, autoridad, Accepted_name_author)
     ]
 )
 
 spp_new[
     solution == "OK — solo formato de autoridad",
     `:=`(
-        autoridad = autoridad_aceptada,
+        autoridad = Accepted_name_author,
         solution  = "OK"
     )
 ]
-message("After Check 5 (authority format):")
+message("After Check 4 (authority format):")
 print(table(spp_new$solution, useNA = "ifany"))
 
 # --- Final authority sweep ---------------------------------------------------
 # Catch any remaining rows where the authority still differs from the backbone
 # value (e.g. minor formatting differences not covered by Check 5).
 message("Remaining authority mismatches after all checks:")
-print(spp_new[autoridad != autoridad_aceptada, .(codigo, autoridad, autoridad_aceptada)])
+print(spp_new[autoridad != Accepted_name_author, .(codigo, autoridad, Accepted_name_author)])
 spp_new[
-    !is.na(autoridad_aceptada) & autoridad != autoridad_aceptada,
-    autoridad := autoridad_aceptada
+    !is.na(Accepted_name_author) & autoridad != Accepted_name_author,
+    autoridad := Accepted_name_author
 ]
 
 spp_new[, texto := NULL] # drop helper column no longer needed
 spp_new[, fotos := NULL] # drop TNRS output column no longer needed
 
-spp_new[autoridad != autoridad_aceptada]
-spp_new[, autoridad_aceptada := NULL]
-spp_new[, nombre_aceptado := NULL]
-spp_new[, especie_aceptada := NULL]
+spp_new[autoridad != Accepted_name_author]
+spp_new[, Accepted_name_author := NULL]
+spp_new[, Accepted_name := NULL]
+spp_new[, Accepted_species := NULL]
 
-spp_new[familia != familia_aceptada]
-spp_new[, familia_aceptada := NULL]
+spp_new[familia != Accepted_family]
+spp_new[, Accepted_family := NULL]
 
-spp_new[, rango_infraespecífico := ifelse(rango_infraespecífico == "", NA_character_, rango_infraespecífico)]
-spp_new[, epíteto_infraespecífico := ifelse(epíteto_infraespecífico == "", NA_character_, epíteto_infraespecífico)]
+spp_new[, Infraspecific_rank := ifelse(Infraspecific_rank == "", NA_character_, Infraspecific_rank)]
+spp_new[, Infraspecific_epithet_matched := ifelse(Infraspecific_epithet_matched == "", NA_character_, Infraspecific_epithet_matched)]
 
-# sinonym is the infraspecific rank
-spp_new[!is.na(rango_infraespecífico) | !is.na(epíteto_infraespecífico)]$codigo
-spp_new[codigo %in% spp_new[!is.na(rango_infraespecífico) | !is.na(epíteto_infraespecífico)]$codigo, sinonimos := NA_character_]
+# Swartzia simplex carries an intraspecific rank (not a true synonym); clear sinonimos for those rows.
+spp_new[!is.na(Infraspecific_rank) | !is.na(Infraspecific_epithet_matched)]$codigo
+spp_new[codigo %in% spp_new[!is.na(Infraspecific_rank) | !is.na(Infraspecific_epithet_matched)]$codigo, sinonimos := NA_character_]
 
-#
 spp_new[, rank := NULL]
 spp_new[, variety := NULL]
 
 table(spp_new$solution)
 
 spp_new[solution == "Sinónimo — reemplazar con nombre_aceptado"]
-# Swartzia simplex is considered synonim because of the rpesence of intraspecific rank
+# Swartzia simplex is flagged as a synonym because of the presence of an intraspecific rank; no fix required.
 
 cols_to_keep <- c(
     "codigo", "orden", "familia", "genero",
-    "especie", "rango_infraespecífico", "epíteto_infraespecífico",
+    "especie", "Infraspecific_rank", "Infraspecific_epithet_matched",
     "autoridad", "sinonimos", "f_de_vida_r_foster", "f_de_vida_r_perez_s_aguilar",
-    "nombre_comum", "herbario"
+    "nombre_comum", "herbario", "notes"
 )
 
 spp_new <- spp_new[, ..cols_to_keep]
@@ -653,7 +596,7 @@ inc <- unique(spp_new[is.na(orden) | is.na(familia) | is.na(genero) | is.na(espe
 
 to_replace <- spp_old[mnemonic %in% inc]
 
-# !
+# Fill missing taxonomy fields from the old ViewTaxonomy for morphospecies
 spp_new[codigo %in% inc[1]]
 spp_new[
     codigo %in% inc[1],
@@ -691,80 +634,83 @@ spp_new[is.na(orden) & familia == "Lauraceae", orden := unique(spp_new[!is.na(or
 
 spp_new[is.na(orden) | is.na(familia) | is.na(genero) | is.na(especie)]
 
-out_check <- spp_new[codigo %in% c(inc, "swars1", "swars2")]
-## remove key for out_check
-data.table::setkey(out_check, NULL)
+spp_new[codigo == "apeihy"]
+spp_new[codigo == "apeihy", f_de_vida_r_perez_s_aguilar := "árbol"]
 
-# export out_check in utf-8 encoding for manual review in Excel
-# fwrite(
-#     out_check,
-#     here("BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "check_missing_names.csv"),
-#     bom = TRUE
-# )
+spp_new[codigo == "nects1"]
+spp_new[codigo == "nects1", f_de_vida_r_perez_s_aguilar := "árbol"]
+
+spp_new[codigo == "nects3"]
+spp_new[codigo == "nects3", f_de_vida_r_perez_s_aguilar := "árbol"]
+
+spp_new[codigo %in% c(inc, "swars1", "swars2")]
 
 # =============================================================================
 # 11. ASSEMBLE FINAL bci.spptable AND EXPORT
 # =============================================================================
 
-# # --- 11c. Select final columns ----------------------------------------------
-# # Retain only the columns needed for the species table; drop all comparison
-# # and curation helper columns.
-# cols_clean <- c(
-#     "codigo", # BCI mnemonic code (primary key)
-#     "familia", # accepted family
-#     "genero", # accepted genus
-#     "especie", # accepted species epithet
-#     "subspecies", # subspecies epithet (NA for full species)
-#     "autoridad", # accepted authority (standardised by TNRS)
-#     "sinonimos", # previous synonymised name where applicable
-#     "f_de_vida_r_foster", # growth form (from Foster's list)
-#     "f_de_vida_r_perez_s_aguilar", # growth form (from Pérez & Aguilar's list)
-#     "nombre_comum", # common name
-#     "herbario" # herbarium voucher reference
-# )
+# Retain only the columns needed for the species table; drop all comparison
+# and curation helper columns.
+cols_clean <- c(
+    "codigo", # BCI mnemonic code (primary key)
+    "orden", # accepted order
+    "familia", # accepted family
+    "genero", # accepted genus
+    "especie", # accepted species epithet
+    "Infraspecific_rank", # infraspecific rank assigned by TNRS (e.g. subsp., var., f.)
+    "Infraspecific_epithet_matched", # infraspecific epithet matched by TNRS (if any)
+    "autoridad", # accepted authority (standardised by TNRS)
+    "sinonimos", # previous synonymised name where applicable
+    "f_de_vida_r_foster", # growth form (from Foster's list)
+    "f_de_vida_r_perez_s_aguilar", # growth form (from Pérez & Aguilar's list)
+    "nombre_comum", # common name
+    "herbario", # herbarium voucher reference
+    "notes"
+)
 
-# full_out <- full_out[, ..cols_clean]
+full_out <- spp_new[, ..cols_clean]
 
-# # Final NA check before renaming
-# print(data.table(inspectdf::inspect_na(full_out)))
+names(full_out)
 
-# # --- 11d. Rename columns to English ------------------------------------------
-# # ForestGEO/CTFS conventions use English column names; rename to match.
-# setnames(
-#     full_out,
-#     old = c(
-#         "codigo", "familia", "genero", "especie", "subspecies",
-#         "autoridad", "sinonimos", "f_de_vida_r_foster", "f_de_vida_r_perez_s_aguilar", "nombre_comum", "herbario"
-#     ),
-#     new = c(
-#         "Mnemonic", "Family", "Genus", "SpeciesName", "Subspecies",
-#         "Authority", "Synonyms", "Lifeform_RFoster", "Lifeform_RPerez_SAguilar", "CommonName", "Herbarium"
-#     )
-# )
+# --- Rename columns to English ------------------------------------------
+# ForestGEO/CTFS conventions use English column names; rename to match.
 
-# table(full_out$Lifeform_RPerez_SAguilar, useNA = "ifany") # check lifeform categories and missing values
+setnames(
+    full_out,
+    old = c(
+        "codigo", "orden", "familia", "genero", "especie", "Infraspecific_rank", "Infraspecific_epithet_matched",
+        "autoridad", "sinonimos", "f_de_vida_r_foster", "f_de_vida_r_perez_s_aguilar", "nombre_comum", "herbario", "notes"
+    ),
+    new = c(
+        "Mnemonic", "Order", "Family", "Genus", "SpeciesName", "InfraspecificRank", "InfraspecificEpithet",
+        "Authority", "Synonyms", "Lifeform_RFoster", "Lifeform_RPerez_SAguilar", "CommonName", "Herbarium", "Notes"
+    )
+)
 
-# unique(full_out[, .(Lifeform_RPerez_SAguilar, Lifeform_RFoster)])
+# count nrows per Lifeform_RPerez_SAguilar
+full_out[, .N, by = Lifeform_RPerez_SAguilar]
 
-# # count nrows per Lifeform_RPerez_SAguilar
-# full_out[, .N, by = Lifeform_RPerez_SAguilar]
+# --- 11e. Export -------------------------------------------------------------
+bci.spptable <- full_out
 
-# # full_out[is.na(Lifeform), Lifeform := "tree"] # replace any remaining NAs with "unknown"
+# Tab-delimited plain text — portable, version-control friendly
+fwrite(
+    bci.spptable,
+    here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.txt"),
+    sep = "\t"
+)
+message("Exported: DATA/SPP_TABLE/bci_spptable.txt")
 
-# # --- 11e. Export -------------------------------------------------------------
-# bci.spptable <- full_out
+# R binary format — for direct use in downstream R scripts
+save(
+    bci.spptable,
+    file = here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.RData")
+)
+message("Exported: DATA/SPP_TABLE/bci_spptable.RData")
 
-# # Tab-delimited plain text — portable, version-control friendly
-# fwrite(
-#     bci.spptable,
-#     here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.txt"),
-#     sep = "\t"
-# )
-# message("Exported: DATA/SPP_TABLE/bci_spptable.txt")
-
-# # R binary format — for direct use in downstream R scripts
-# save(
-#     bci.spptable,
-#     file = here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.RData")
-# )
-# message("Exported: DATA/SPP_TABLE/bci_spptable.RData")
+fwrite(
+    bci.spptable,
+    here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.csv"),
+    sep = "\t"
+)
+message("Exported: DATA/SPP_TABLE/bci_spptable.csv")
