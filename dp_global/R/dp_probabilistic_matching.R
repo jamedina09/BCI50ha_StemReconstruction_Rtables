@@ -1522,8 +1522,10 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
         posterior_samples_format = fmt,
         posterior_samples_path = out_dir_local,
         samples_dt = samples_dt,
-        sampling_profile = list(posterior_samples = n_samples,
-                                started = Sys.time(), finished = Sys.time())
+        sampling_profile = list(
+            posterior_samples = n_samples,
+            started = Sys.time(), finished = Sys.time()
+        )
     ), file = staging_path)
     vcat(prefix, sprintf(
         "Posterior sampling: staged %d samples for tag %s to %s",

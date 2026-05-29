@@ -11,10 +11,10 @@
 # everything — only packages that need to be attached for convenient operators
 # (e.g., data.table's `:=`) are attached below.
 check_pkg <- function(p) {
-  if (!requireNamespace(p, quietly = TRUE)) {
-    stop(sprintf("Package '%s' is required. Install it with install.packages('%s')", p, p), call. = FALSE)
-  }
-  invisible(TRUE)
+    if (!requireNamespace(p, quietly = TRUE)) {
+        stop(sprintf("Package '%s' is required. Install it with install.packages('%s')", p, p), call. = FALSE)
+    }
+    invisible(TRUE)
 }
 
 check_pkg("data.table")
@@ -28,35 +28,38 @@ check_pkg("Rcpp")
 # Use project root rather than here() to construct file paths (CRAN-friendly style)
 root_dir <- getwd()
 sys.source(file.path(root_dir, "dp_global", "src", "transition_cost_rcpp.R"), envir = globalenv())
-tryCatch({
-  Rcpp::sourceCpp(file.path(root_dir, "dp_global", "src", "transition_cost_rcpp.cpp"))
-  message("[dp_global_main.R] C++ acceleration enabled.")
-}, error = function(e) {
-  warning(sprintf("C++ compilation (transition_cost_rcpp.cpp) failed or is unavailable: %s. Continuing without compiled acceleration.", e$message))
-})
+tryCatch(
+    {
+        Rcpp::sourceCpp(file.path(root_dir, "dp_global", "src", "transition_cost_rcpp.cpp"))
+        message("[dp_global_main.R] C++ acceleration enabled.")
+    },
+    error = function(e) {
+        warning(sprintf("C++ compilation (transition_cost_rcpp.cpp) failed or is unavailable: %s. Continuing without compiled acceleration.", e$message))
+    }
+)
 
 ## ---- 3) Module manifest & package requirements --------------------------
 # Ordered list of R modules we expect to load. Order chosen to respect
 # likely dependencies (utils -> bio -> states -> matchers -> dp -> diag).
 r_files <- c(
-  "dp_global_utils.R",
-  "dp_global_bio.R",
-  "dp_global_states.R",
-  "dp_global_matchers.R",
-  "dp_probabilistic_matching.R",
-  "dp_global_dp.R",
-  "dp_global_diag.R"
+    "dp_global_utils.R",
+    "dp_global_bio.R",
+    "dp_global_states.R",
+    "dp_global_matchers.R",
+    "dp_probabilistic_matching.R",
+    "dp_global_dp.R",
+    "dp_global_diag.R"
 )
 
 # Per-file package requirements (checked before sourcing each file)
 required_pkgs_by_file <- list(
-  "dp_global_utils.R" = character(0),
-  "dp_global_bio.R" = c("data.table", "MASS"),
-  "dp_global_states.R" = character(0),
-  "dp_global_matchers.R" = c("data.table", "igraph"),
-  "dp_probabilistic_matching.R" = c("data.table"),
-  "dp_global_dp.R" = c("data.table"),
-  "dp_global_diag.R" = c("data.table")
+    "dp_global_utils.R" = character(0),
+    "dp_global_bio.R" = c("data.table", "MASS"),
+    "dp_global_states.R" = character(0),
+    "dp_global_matchers.R" = c("data.table", "igraph"),
+    "dp_probabilistic_matching.R" = c("data.table"),
+    "dp_global_dp.R" = c("data.table"),
+    "dp_global_diag.R" = c("data.table")
 )
 # Packages that we prefer to attach (library) because the code uses operators
 # or unqualified calls that are convenient when attached.
@@ -64,44 +67,44 @@ attach_pkgs <- c("data.table", "MASS")
 
 ## ---- 4) Source modules with checks -------------------------------------
 for (f in r_files) {
-  fp <- file.path(root_dir, "dp_global", "R", f)
-  if (!file.exists(fp)) {
-    stop(sprintf("Required file not found: %s", fp), call. = FALSE)
-  }
-
-  # Ensure packages required by this file are installed and attach if requested
-  pkgs <- required_pkgs_by_file[[f]]
-  if (!is.null(pkgs) && length(pkgs) > 0) {
-    for (p in pkgs) {
-      check_pkg(p)
-      if (p %in% attach_pkgs && !(p %in% loadedNamespaces())) {
-        message(sprintf("[dp_global_main.R] attaching: %s", p))
-        suppressMessages(suppressPackageStartupMessages(library(p, character.only = TRUE)))
-      }
+    fp <- file.path(root_dir, "dp_global", "R", f)
+    if (!file.exists(fp)) {
+        stop(sprintf("Required file not found: %s", fp), call. = FALSE)
     }
-  }
 
-  message(sprintf("[dp_global_main.R] sourcing: %s", f))
-  tryCatch(
-    sys.source(fp, envir = globalenv()),
-    error = function(e) stop(sprintf("Error sourcing %s: %s", f, e$message), call. = FALSE)
-  )
+    # Ensure packages required by this file are installed and attach if requested
+    pkgs <- required_pkgs_by_file[[f]]
+    if (!is.null(pkgs) && length(pkgs) > 0) {
+        for (p in pkgs) {
+            check_pkg(p)
+            if (p %in% attach_pkgs && !(p %in% loadedNamespaces())) {
+                message(sprintf("[dp_global_main.R] attaching: %s", p))
+                suppressMessages(suppressPackageStartupMessages(library(p, character.only = TRUE)))
+            }
+        }
+    }
+
+    message(sprintf("[dp_global_main.R] sourcing: %s", f))
+    tryCatch(
+        sys.source(fp, envir = globalenv()),
+        error = function(e) stop(sprintf("Error sourcing %s: %s", f, e$message), call. = FALSE)
+    )
 }
 
 ## ---- 5) Post-source sanity checks -------------------------------------
 # Quick verification that a handful of core functions exist after sourcing.
 required_symbols <- c(
-  "estimate_bio_pars",
-  "transition_cost_tracks_bio_components",
-  "match_stems_dp_global_backward_marginals_batch",
-  "match_stems_optimal_backward",
-  "match_stems_probabilistic",
-  "enumerate_states_injective",
-  "add_dp_posterior_bins"
+    "estimate_bio_pars",
+    "transition_cost_tracks_bio_components",
+    "match_stems_dp_global_backward_marginals_batch",
+    "match_stems_optimal_backward",
+    "match_stems_probabilistic",
+    "enumerate_states_injective",
+    "add_dp_posterior_bins"
 )
 missing_symbols <- required_symbols[!vapply(required_symbols, function(s) exists(s, mode = "function", inherits = TRUE), logical(1L))]
 if (length(missing_symbols) > 0L) {
-  stop(sprintf("After sourcing modules, the following expected functions were missing: %s", paste(missing_symbols, collapse = ", ")), call. = FALSE)
+    stop(sprintf("After sourcing modules, the following expected functions were missing: %s", paste(missing_symbols, collapse = ", ")), call. = FALSE)
 }
 message(sprintf("[dp_global_main.R] Sourcing complete; core functions present: %s", paste(required_symbols, collapse = ", ")))
 
@@ -139,8 +142,10 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
     } else {
         return(out)
     }
-    needed <- c("Status", "DBH", src_col, "Tag",
-                "CensusID", "ReconstructedStemID")
+    needed <- c(
+        "Status", "DBH", src_col, "Tag",
+        "CensusID", "ReconstructedStemID"
+    )
     if (!all(needed %in% names(out))) {
         return(out)
     }
@@ -153,7 +158,8 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
         return(out)
     }
     out[, .carried := data.table::nafill(ReconstructedStemID, type = "locf"),
-        by = c("Tag", src_col)]
+        by = c("Tag", src_col)
+    ]
     .fill_mask <- .term_mask & !is.na(out$.carried)
     .n_filled <- sum(.fill_mask)
     if (.n_filled > 0L) {
@@ -301,16 +307,18 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
     next_id <- as.integer(cur_max) + 1L
 
     has_true <- "TrueStemID" %in% names(out)
-    rid    <- as.integer(out$ReconstructedStemID)
-    mth    <- as.character(out$ReconstructionMethod)
-    sts    <- out$Status
-    dbh    <- out$DBH
+    rid <- as.integer(out$ReconstructedStemID)
+    mth <- as.character(out$ReconstructionMethod)
+    sts <- out$Status
+    dbh <- out$DBH
     trueid <- if (has_true) as.integer(out$TrueStemID) else rep(NA_integer_, nrow(out))
 
     # Group row indices by (Tag, series) — preserves the setorderv ordering.
     groups <- out[, .(.idxs = list(.I)), by = c("Tag", series_col)]
 
-    n_r1 <- 0L; n_r2 <- 0L; n_pin_override <- 0L
+    n_r1 <- 0L
+    n_r2 <- 0L
+    n_pin_override <- 0L
 
     for (g in seq_len(nrow(groups))) {
         ix <- groups$.idxs[[g]]
@@ -332,7 +340,8 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
             # also update TrueStemID to keep the two columns consistent.
             if (!is.na(trueid[i])) n_pin_override <- n_pin_override + 1L
             old_id <- rid[i]
-            new_id <- next_id; next_id <- next_id + 1L
+            new_id <- next_id
+            next_id <- next_id + 1L
             for (b in a:n_g) {
                 j <- ix[b]
                 if (is.na(rid[j]) || rid[j] != old_id) break
@@ -357,7 +366,8 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
                 # alive (non-NA DBH) row reusing terminator id — split
                 if (!is.na(trueid[j])) n_pin_override <- n_pin_override + 1L
                 old2 <- rid[j]
-                new2 <- next_id; next_id <- next_id + 1L
+                new2 <- next_id
+                next_id <- next_id + 1L
                 for (k_ in b:n_g) {
                     k <- ix[k_]
                     if (is.na(rid[k]) || rid[k] != old2) break
@@ -412,7 +422,9 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
 # `dp_probabilistic_matching.R`, immediately AFTER samples are sorted and
 # BEFORE `path_sig` / `path_count` aggregation.
 apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE) {
-    if (is.null(samples_dt) || nrow(samples_dt) == 0L) return(samples_dt)
+    if (is.null(samples_dt) || nrow(samples_dt) == 0L) {
+        return(samples_dt)
+    }
     if (!all(c("Sample", "CensusID", "ReconstructedStemID", "ObsRowID") %in% names(samples_dt))) {
         return(samples_dt)
     }
@@ -428,7 +440,9 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
     } else {
         return(samples_dt)
     }
-    if (!all(c("Status", "DBH") %in% names(tree_data))) return(samples_dt)
+    if (!all(c("Status", "DBH") %in% names(tree_data))) {
+        return(samples_dt)
+    }
 
     meta <- as.data.table(tree_data)[, c("obs_row_id", "Status", "DBH", series_col), with = FALSE]
     data.table::setnames(meta, "obs_row_id", "ObsRowID")
@@ -554,7 +568,7 @@ renumber_engine_minted_ids <- function(out,
     has_true <- "TrueStemID" %in% names(out)
 
     # Local copies (single-pass updates avoid repeated data.table writes)
-    rid    <- as.integer(out$ReconstructedStemID)
+    rid <- as.integer(out$ReconstructedStemID)
     trueid <- if (has_true) as.integer(out$TrueStemID) else NULL
     presweep <- if (has_pre_sweep) as.integer(out$ReconstructedStemID_PreSweep) else NULL
     pst_cols <- lapply(posterior_id_cols, function(cn) as.integer(out[[cn]]))
@@ -609,8 +623,9 @@ renumber_engine_minted_ids <- function(out,
             id = rid_g,
             census = census_g
         )[!is.na(id) & id %in% engine_ids,
-          .(first_census = min(census, na.rm = TRUE)),
-          by = id]
+            .(first_census = min(census, na.rm = TRUE)),
+            by = id
+        ]
 
         # ---- Step 5: sort by first_census ascending; tie-break by id ascending ----
         data.table::setorder(eng_dt, first_census, id)
@@ -639,7 +654,9 @@ renumber_engine_minted_ids <- function(out,
         names(map_lookup) <- as.character(eng_dt$id)
 
         translate <- function(v) {
-            if (is.null(v)) return(NULL)
+            if (is.null(v)) {
+                return(NULL)
+            }
             out_v <- v
             hit <- !is.na(v) & as.character(v) %in% names(map_lookup)
             if (any(hit)) {
@@ -687,10 +704,13 @@ renumber_engine_minted_ids <- function(out,
 
     mapping <- if (n_tags_renumbered > 0L) {
         data.table::rbindlist(Filter(Negate(is.null), mapping_list),
-                              use.names = TRUE, fill = TRUE)
+            use.names = TRUE, fill = TRUE
+        )
     } else {
-        data.table::data.table(Tag = integer(0), old_id = integer(0),
-                               new_id = integer(0), first_census = integer(0))
+        data.table::data.table(
+            Tag = integer(0), old_id = integer(0),
+            new_id = integer(0), first_census = integer(0)
+        )
     }
 
     # ---- Step 9: (removed) companion mapping files are no longer written.
@@ -745,21 +765,30 @@ finalize_posterior_paths <- function(out,
                                      posterior_samples_path,
                                      mapping = NULL,
                                      verbose = TRUE) {
-    null_result <- function() invisible(list(
-        n_tags = 0L, n_written = 0L, n_failed = 0L, written_paths = character(0)
-    ))
+    null_result <- function() {
+        invisible(list(
+            n_tags = 0L, n_written = 0L, n_failed = 0L, written_paths = character(0)
+        ))
+    }
     if (is.null(posterior_samples_path) || !nzchar(posterior_samples_path)) {
         return(null_result())
     }
     staging_dir <- file.path(posterior_samples_path, "posteriors", ".staging")
-    if (!dir.exists(staging_dir)) return(null_result())
+    if (!dir.exists(staging_dir)) {
+        return(null_result())
+    }
     staging_files <- list.files(staging_dir,
-                                pattern = "^tag_.*_samples_raw_.*\\.rds$",
-                                full.names = TRUE)
-    if (length(staging_files) == 0L) return(null_result())
+        pattern = "^tag_.*_samples_raw_.*\\.rds$",
+        full.names = TRUE
+    )
+    if (length(staging_files) == 0L) {
+        return(null_result())
+    }
     if (is.null(out) || nrow(out) == 0L) {
-        warning("[finalize_posterior_paths] `out` is empty; cannot finalize ",
-                length(staging_files), " staging file(s).")
+        warning(
+            "[finalize_posterior_paths] `out` is empty; cannot finalize ",
+            length(staging_files), " staging file(s)."
+        )
         return(null_result())
     }
 
@@ -819,12 +848,14 @@ finalize_posterior_paths <- function(out,
 
         # ---- (2) Re-run bb invariants in renumbered ID space ----
         samples_dt <- apply_bb_invariants_to_samples(
-            samples_dt, tree_data_for_tag, verbose = FALSE
+            samples_dt, tree_data_for_tag,
+            verbose = FALSE
         )
 
         # ---- (3) path_sig + paths_summary ----
         sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")),
-                                  by = Sample]
+            by = Sample
+        ]
         path_counts <- sample_sigs[, .N, by = path_sig]
         data.table::setnames(path_counts, "N", "path_count")
         n_samp <- data.table::uniqueN(sample_sigs$Sample)
@@ -836,27 +867,37 @@ finalize_posterior_paths <- function(out,
             sample_logp[, sample_weight := exp(logp - maxlp)]
             sample_logp[, sample_prob := sample_weight / sum(sample_weight)]
             sample_sigs <- merge(sample_sigs, sample_logp[, .(Sample, sample_prob)],
-                                 by = "Sample", all.x = TRUE)
+                by = "Sample", all.x = TRUE
+            )
             path_probs <- sample_sigs[, .(path_prob = sum(sample_prob, na.rm = TRUE)),
-                                      by = path_sig]
+                by = path_sig
+            ]
             paths_summary <- merge(path_counts, path_probs, by = "path_sig", all.x = TRUE)
         } else {
             paths_summary <- path_counts[, .(path_count,
-                                             path_prob = path_count / n_samp),
-                                         by = path_sig]
+                path_prob = path_count / n_samp
+            ),
+            by = path_sig
+            ]
         }
 
         # Compact reconstruction mapping (one row per path_sig)
         sigs_by_sample <- sample_sigs[, .(Sample, path_sig)]
         samples_with_sig <- merge(samples_dt[, .(Sample, ObsRowID, ReconstructedStemID)],
-                                  sigs_by_sample, by = "Sample", all.x = TRUE)
+            sigs_by_sample,
+            by = "Sample", all.x = TRUE
+        )
         recon_by_path <- samples_with_sig[, .(recon = paste0(ObsRowID, ":",
-                                                             ReconstructedStemID,
-                                                             collapse = ";")),
-                                          by = .(path_sig, Sample)]
+            ReconstructedStemID,
+            collapse = ";"
+        )),
+        by = .(path_sig, Sample)
+        ]
         recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
-        paths_summary <- merge(paths_summary, recon_compact, by = "path_sig",
-                               all.x = TRUE)
+        paths_summary <- merge(paths_summary, recon_compact,
+            by = "path_sig",
+            all.x = TRUE
+        )
 
         # ---- (4) Write final paths file ----
         out_dir_post <- file.path(info$posterior_samples_path, "posteriors")
@@ -867,25 +908,28 @@ finalize_posterior_paths <- function(out,
             "tag_", ifelse(is.na(tag_val), "NA", tag_val),
             "_posterior_samples_", ts_local
         ))
-        wrote <- tryCatch({
-            if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
-                p <- paste0(out_path_base, "_paths.feather")
-                arrow::write_feather(paths_summary, p)
-            } else if (fmt == "csv") {
-                p <- paste0(out_path_base, "_paths.csv")
-                data.table::fwrite(paths_summary, p)
-            } else {
-                p <- paste0(out_path_base, "_paths.rds")
-                saveRDS(paths_summary, file = p)
+        wrote <- tryCatch(
+            {
+                if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
+                    p <- paste0(out_path_base, "_paths.feather")
+                    arrow::write_feather(paths_summary, p)
+                } else if (fmt == "csv") {
+                    p <- paste0(out_path_base, "_paths.csv")
+                    data.table::fwrite(paths_summary, p)
+                } else {
+                    p <- paste0(out_path_base, "_paths.rds")
+                    saveRDS(paths_summary, file = p)
+                }
+                p
+            },
+            error = function(e) {
+                warning(sprintf(
+                    "[finalize_posterior_paths] Tag %s: write failed: %s",
+                    as.character(tag_val), e$message
+                ))
+                NA_character_
             }
-            p
-        }, error = function(e) {
-            warning(sprintf(
-                "[finalize_posterior_paths] Tag %s: write failed: %s",
-                as.character(tag_val), e$message
-            ))
-            NA_character_
-        })
+        )
         if (!is.na(wrote)) {
             n_written <- n_written + 1L
             written_paths <- c(written_paths, wrote)
