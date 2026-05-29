@@ -39,7 +39,7 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Select the run subfolder by index from the list of directories in `home_dir`.
 # Run list.files(home_dir) interactively to inspect available runs and confirm
 # the correct index BEFORE executing the rest of this script.
-run_code <- list.files(home_dir)[2]
+run_code <- list.files(home_dir)
 
 # Directory containing posterior feather files from the stem identification run
 # (expand tilde to user home directory for portability)
