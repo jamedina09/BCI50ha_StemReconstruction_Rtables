@@ -1,6 +1,7 @@
 # dp_global/scripts
 
 This document describes the current behavior of the `dp_global` driver scripts:
+
 - `dp_global/scripts/main_cpp.R` — the interactive/CLI driver for single-tag or targeted runs.
 - `dp_global/scripts/main_cpp_chunk.R` — the chunked driver optimized for large runs.
 - `dp_global/scripts/main_cpp_bci.R` — the BCI debug driver for single-tag runs on BCI census data.
@@ -53,6 +54,7 @@ Common flags used by both drivers (case-insensitive, but use capital letters to 
 - `USE_MEASUREMENT_ERROR` — default: `TRUE`.
 
 DP / reconstruction option
+
 - `DP_MODE` — default: `"marginals+bins"`. Allowed: 'none' 'marginals' 'marginals+bins' 'map'
 - `WHICH_TAG` — character; used for single-tag runs (relevant to `main_cpp.R`). Must match the `Tag` column exactly (e.g., `"084555"` preserves leading zeros). The chunked runner processes groups (`Tag`, `species`) and does not rely on `WHICH_TAG`.
 - `ANCHOR_START_CENSUS` — default: `7L`.
@@ -105,6 +107,7 @@ DP / reconstruction option
 **Provisional anchor behavior:** When a requested anchor census lacks `TrueStemID` but contains DBH observations and `ALLOW_PROVISIONAL_DP_ANCHOR=TRUE`, the DP will assign provisional anchor IDs at the last-observed DBH census and mark those anchor rows with `ReconstructionMethod = "provisional_dp"`.
 
 Posterior sampling:
+
 - `POSTERIOR_SAMPLES` — default: `200L` (set to `0` to disable sampling). When `>0`, each engine (DP and probabilistic) draws full-path posterior samples and writes a per-run `posteriors/` subdirectory under `out_dir`.
 - `POSTERIOR_SAMPLES_FORMAT` — default: `"csv"` (options: `rds`, `feather`, `csv`). `feather` requires the `arrow` package; if `arrow` is missing the writer silently falls back to `rds`.
 - `POSTERIOR_SAMPLES_PATH` — default: `NULL`. If `NULL` the run's `out_dir` is used and posteriors are written to `<out_dir>/posteriors/`. If you supply a path that itself ends in `posteriors`, the script strips that suffix to avoid creating nested `posteriors/posteriors` folders (the engine creates the `posteriors/` subdirectory itself).
@@ -126,6 +129,7 @@ A healthy completed run therefore leaves `<out_dir>/posteriors/.staging/` empty 
 Example posterior output file (per tag/run, BCI defaults with `POSTERIOR_SAMPLES_FORMAT="feather"`): `posteriors/tag_11_posterior_samples_20260528_215527_paths.feather`. When `BATCH_TS` is empty (the default for the dp_global scripts), the timestamp segment collapses, e.g. `posteriors/tag_11_posterior_samples__paths.csv`.
 
 Output controls:
+
 - `WRITE_DP_CSV` — default: `TRUE` - write incremental/combined CSV output - memory heavy.
 - `WRITE_DP_RDS` — default: `TRUE` - write per-chunk RDS or combined for non-chunk runs.
 - `WRITE_DP_FEATHER` — default: `FALSE` (requires the `arrow` package) - write per-chunk feather (.feather) files or combined for non-chunk runs.
@@ -134,6 +138,7 @@ Output controls:
 - `WRITE_DP_PDF_PER_CHUNK` — default in `main_cpp_chunk.R`: `TRUE` (controls per-chunk PDFs).
 
 Parallel & chunking controls (chunked runner specific):
+
 - `DP_CHUNK_SIZE` — default in `main_cpp_chunk.R`: `7L` (set `<= 0` to disable chunking behavior when applicable).
 - `DP_CHUNK_RESUME` — default: `TRUE` (skip chunks whose `_done.txt` completion marker exists) — allows stopping and resuming runs. A chunk is considered complete only when its `_done.txt` file is present; partial RDS files from interrupted runs are re-processed.
 - `OUT_DIR_OVERRIDE` — default: `NULL`. When set, bypasses automatic output directory creation and writes into the specified path directly. Use this to resume into an existing output directory (e.g., `--OUT_DIR_OVERRIDE=dp_global/output/<previous_run_dir>`).
@@ -143,9 +148,11 @@ Parallel & chunking controls (chunked runner specific):
 - `MANUAL_CORES` & `MANUAL_CORES_VALUE` — default: `TRUE` and `1L` respectively.
 
 Notes on CLI differences:
+
 - `main_cpp_chunk.R` exposes a reduced `CLI_REFERENCE` relative to `main_cpp.R` (it omits `WHICH_TAG` and leaves sensitivity/realism flags commented out) to reflect the chunked runner's intent; however it still accepts CLI overrides for many run-level parameters when invoked via Rscript.
 
 Helpful post-run utilities:
+
 - Merge chunk RDS/Feather files into a single CSV (run this in R or source the script and call the helper):
 
 ```r
@@ -159,25 +166,30 @@ This streams each chunk file to a single CSV to avoid loading the full dataset i
 `main_cpp.R` runs the non-chunked workflow (single-tag or parallelized tags) and does not perform per-chunk writing.
 
 Misc:
+
 - `USE_MEASUREMENT_ERROR` (default: `TRUE`) — enable measurement-error-aware parameter estimation.
 
 Output directory & naming:
+
 - `PROJECT_ROOT` (default: project root via `here::here()`) — override to set a different project root and thus change where `dp_global/output/` is created.
 - `base_out_dir` (default: `dp_global/output`) — base directory where run-specific output directories are created.
 - `CONFIG_NAME` (default: `NULL`) — optional string used when assembling the run-specific output directory name.
 - The final `out_dir` is automatically constructed from timestamp, config name, DP mode, and other key parameters. The script writes a `run_parameters_full.txt` file into `out_dir` documenting the run configuration.
 
 Files produced as run markers/logs:
+
 - `run_started.txt` and `run_finished.txt` — small timestamp files written at start and finish to allow job watchers to detect progress.
 - `run_parameters_full.txt` — text file capturing all important run-level variables for reproducibility.
 - `run_log.txt` — appended by `log_msg()` throughout the run; writes performed via `maybe_write()` ensure directories exist and the script records success/failure messages here (for example: `Wrote RDS chunk 2: <path>`).
 
 PDF & plotting controls:
+
 - `WRITE_DP_PDF` (default: `TRUE`) — control whether PDFs are generated via `plot_tag_to_pdf()`.
 - `DP_PDF_INCLUDE_REFERENCE` (default: `TRUE`) — include biologically-informed reference lines in PDFs.
 - `PLOT_PDF_ONE_TAG_ONLY` (main: `TRUE` when `RUN_ALL_TAGS=FALSE`; not used by `main_cpp_chunk.R`) — when `TRUE` produce PDFs only for `WHICH_TAG` (useful for single-tag runs).
 
 Sensitivity & realism flags (available in `main_cpp.R`):
+
 - `SENSITIVITY_MODE` (default: `"none"`) — Options: `"none"`, `"run"`, `"run+write"`, `"run+write+pdf"`. Controls whether sensitivity sweeps are executed and if results are written.
 - `WRITE_OUTPUTS` (derived from `SENSITIVITY_MODE`) — internal flag to control writing sensitivity outputs when requested.
 - `MAKE_ALL_SWEEPS_PDF` (derived) — whether to render all sweeps to PDF when `SENSITIVITY_MODE="run+write+pdf"`.
@@ -187,6 +199,7 @@ Sensitivity & realism flags (available in `main_cpp.R`):
 Note: the chunked runner (`main_cpp_chunk.R`) disables or comments out these options because per-chunk processing does not assemble a full `out` object for full-run sensitivity/realism processing.
 
 Biological realism settings (defaults in script):
+
 - `MAX_GROWTH_HARD_SOURCE = "fixed"`, `MAX_GROWTH_FIXED = 7.5` (`main_cpp.R`) / `5` (`main_cpp_chunk.R`)
 - `MAX_SHRINK_HARD_SOURCE = "fixed"`, `MAX_SHRINK_FIXED = -0.5`
 - `K_SHRINK_SOURCE = "fixed"`, `K_SHRINK_FIXED = 0`
@@ -195,6 +208,7 @@ Biological realism settings (defaults in script):
 - `USE_MEASUREMENT_ERROR = TRUE`
 
 Notes about chunking & downstream outputs:
+
 - When chunking is active (`DP_CHUNK_SIZE > 0`), the script processes and writes chunk outputs incrementally and intentionally sets the in-memory `out` object to `NULL` to avoid excessive memory use.
 - Because `out` is not assembled in memory for chunked runs, downstream steps that expect a combined `out` (e.g., writing a single combined RDS `stem_reconstruction_dp_global_rcpp.rds`, generating per-run PDFs from a combined `out`, or creating the realism report from `out`) will be skipped. Instead, you can work with the incremental CSV or per-chunk RDS files produced by the run.
 
@@ -213,6 +227,7 @@ Notes about chunking & downstream outputs:
 - If `WRITE_DP_PDF=TRUE` and `WRITE_DP_PDF_PER_CHUNK=TRUE`, the script will attempt to generate a per-chunk PDF `stem_reconstruction_dp_global_rcpp_chunk_###.pdf` using `plot_tag_to_pdf()`; PDF generation errors are logged but will not abort the run.
 
 Memory-saving recommendations:
+
 - Prefer the chunking + incremental CSV approach for very large datasets (keeps peak RAM low).
 - Keep `WRITE_DP_CSV=TRUE` so you get a single on-disk CSV that grows incrementally (append is memory-friendly).
 - Keep per-chunk RDS files (`WRITE_DP_RDS=TRUE`) as reliable completion markers for resume and for reproducibility. These RDS files contain chunk results and can be merged later using `data.table::rbindlist(lapply(chunk_files, readRDS), use.names=TRUE, fill=TRUE)` on a machine with enough RAM or processed in streaming fashion.
@@ -283,7 +298,6 @@ For each such row it copies the source id into `ReconstructedStemID` and sets `R
 - `main_cpp_bci.R` — Step 9c, immediately after Step 9b.
 
 **Warning messages from the probabilistic matcher** (sample-level repair counts, ME cumulative-shrinkage breaks, growth-aware resolver diagnostics) are emitted via `message()` on stderr and are also printed to stdout via `cat()` when `DP_VERBOSE=TRUE`. To capture all warnings in a log file, redirect both streams: `Rscript ... > log.txt 2>&1`.
-
 
 ---
 
@@ -393,6 +407,7 @@ Rscript dp_global/scripts/basal_area_uncertainty.R \
 ```
 
 The script reads:
+
 - `<RUN_DIR>/stem_reconstruction_dp_global_rcpp.csv` (main reconstruction)
 - `<RUN_DIR>/posteriors/tag_*_posterior_samples_*_paths.<feather|rds|csv>` (posterior paths; loaded by glob so any format produced by the run will match)
 
