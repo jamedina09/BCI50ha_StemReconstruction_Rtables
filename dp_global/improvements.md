@@ -108,6 +108,39 @@ severed by a resprout barrier can carry a `ReconstructedStemID` larger
 than a stem first appearing at census 6 — opposite to the chronological
 convention in `OriginalStemID`.
 
+#### Additional minting sites detected during 3-pass code review
+
+The five sites above are the ones documented in the user-facing pipeline.
+A careful pass over the full engine reveals **four more sites** that
+mint engine IDs the same way (`max + 1L` ascending):
+
+6. **`dp_global_dp.R` ~line 706** — NA-R barrier split inside the DP
+   fallback path (when the constrained DP cannot solve and routes to a
+   simpler enumeration). Same semantics as minting site 3 but in a
+   different code branch.
+7. **`dp_global_dp.R` ~line 755** — live-R-boundary track sever in the
+   same fallback path; severs tracks that continue past a live R-coded
+   row.
+8. **`dp_probabilistic_matching.R` ~line 124** — anchor IDs for the
+   probabilistic matcher (used for `PROB_SPECIES` such as figs, palms,
+   `bactma`, `oenoma`, and as DP fallback). Pads anchor rows with
+   sequential IDs starting above the max known `TrueStemID`.
+8b. **`dp_probabilistic_matching.R` ~line 184** — commits those anchor
+   IDs to `ReconstructedStemID`; also `seq_len(.N)` IDs at line 124 for
+   the single-census fast-path branch.
+9. **`export_probabilistic_posteriors()` in
+   `dp_probabilistic_matching.R`** — writes posterior path files for
+   the probabilistic matcher in exactly the same format as
+   `dp_global_dp.R`, and calls the same `apply_bb_invariants_to_samples()`
+   per-sample bb minter.
+
+All of these are caught automatically by the renumbering algorithm
+because step 3 (`engine_ids ← setdiff(all_recon, known_ids)`) is a
+black-box partition: any ID that is not a real database ID and not a
+`given_orphan` StemID is treated as engine-minted regardless of which
+branch produced it. The algorithm therefore remains correct in the
+presence of the additional sites; no per-site code changes are needed.
+
 ---
 
 ### Columns that reference `ReconstructedStemID`
@@ -399,3 +432,199 @@ Downstream users must:
 - `ReconstructionMethod` labels — unchanged.
 - Audit flags (`SweepAuditOverride`, `SweepRollbackToPreSweep`) — unchanged.
 - The core DP algorithm, cost functions, and minting sites — no changes.
+
+---
+
+### Verification of the plan against the engine code (3-pass review)
+
+The plan was checked against the full engine on three independent passes.
+Findings:
+
+1. **Pass 1 — minting sites.** The five originally enumerated sites plus
+   the four additional ones documented above account for every
+   assignment to `ReconstructedStemID` in `dp_global/R/dp_global_dp.R`,
+   `dp_global/R/dp_global_main.R`, and
+   `dp_global/R/dp_probabilistic_matching.R`. The grep audit found
+   49 assignment expressions; all of them either (a) mint a fresh ID
+   (covered by the partition rule), (b) copy from `TrueStemID` (rows are
+   in `known_ids`), (c) copy from `StemID` via the orphan backfill
+   (rows are explicitly added to `known_ids`), or (d) carry an existing
+   `ReconstructedStemID` to another row (no new ID introduced).
+
+2. **Pass 2 — column coverage.** The grep audit confirmed the only
+   columns holding `ReconstructedStemID`-valued integers are:
+   `ReconstructedStemID`, `ReconstructedStemID_PreSweep`,
+   `DP_PosteriorTop{k}ID` (k = 1..DP_POSTERIOR_TOP_K), and the
+   `ReconstructedStemID` column inside `samples_dt` / posterior path
+   files. The plan renames all four.
+
+3. **Pass 3 — ordering of helpers.** The plan places
+   `renumber_engine_minted_ids()` strictly after
+   `apply_broken_below_invariants()`. Verified against
+   `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R`
+   (`run_main_chunked()` invokes them in the order:
+   `maybe_add_posterior_bins` → `apply_carried_terminal_backfill` →
+   `apply_orphan_stem_backfill` → `apply_broken_below_invariants`).
+   The plan extends this chain by one step.
+
+4. **Pass 3b — single-tag driver.** `dp_global/scripts/main_cpp_bci.R`
+   runs the same chain of helpers (its section 9b). The renumbering
+   call must be added there too, after `apply_broken_below_invariants()`
+   and before the writers in section 10.
+
+No additional changes to the plan were required after the 3-pass review.
+The black-box partition strategy was specifically chosen to be robust
+against undiscovered minting sites; it has now been validated to also
+cover the four sites in `dp_global_dp.R` fallback paths and in
+`dp_probabilistic_matching.R`.
+
+---
+
+### Test plan
+
+The renumbering will be tested in two stages, using the single-tag
+debug driver `dp_global/scripts/main_cpp_bci.R` and the list of
+problematic tags in `bci_data/check_sweep_audit_override_tags.csv`.
+
+#### Inputs
+
+- **Data**: `bci_data/multistem_tags.rds` (the canonical multistem
+  dataset loaded by `main_cpp_bci.R` via `INPUT_FILE`).
+- **Tags**: `bci_data/check_sweep_audit_override_tags.csv` (single column
+  `check_tags`, ~32 349 zero-padded tag strings). These are tags that
+  triggered `SweepAuditOverride = TRUE` in past runs, meaning the engine
+  produced a `ReconstructedStemID` that the script-level sweep had to
+  override against `TrueStemID`. They concentrate the hardest cases:
+  segment-split tags, NA-R barrier crossings, BB pin overrides, and
+  fallback-path tags. If the renumbering survives this set, it will
+  survive the easier tags.
+
+#### Stage 1 — Per-tag invariant tests on a representative subset
+
+Goal: confirm the renumbering preserves all behavioural invariants on a
+tractable sample.
+
+1. Sample ~100 tags from `check_sweep_audit_override_tags.csv` stratified
+   by complexity (a few one-stem tags, several multi-stem, plus 5-10
+   tags from each of: BB pin override, segment-split, NA-R barrier,
+   probabilistic fallback). Save the sampled tag list to
+   `bci_data/test_renumber_tags.csv`.
+
+2. For each tag, run the driver twice with identical settings:
+
+   ```
+   # Baseline (current main):
+   git checkout main
+   Rscript dp_global/scripts/main_cpp_bci.R \
+       --WHICH_TAG=<tag> \
+       --POSTERIOR_SAMPLES=50 \
+       --POSTERIOR_SAMPLE_SEED=42
+
+   # Renumbered (feature branch):
+   git checkout rename_stemids
+   Rscript dp_global/scripts/main_cpp_bci.R \
+       --WHICH_TAG=<tag> \
+       --POSTERIOR_SAMPLES=50 \
+       --POSTERIOR_SAMPLE_SEED=42
+   ```
+
+3. For each tag, load both output RDS files
+   (`stem_reconstruction_dp_global_rcpp.rds` in the run's `out_dir`) and
+   apply the following assertions in a test script (e.g.
+   `dp_global/tests/test_renumber_invariants.R`):
+
+   - **Equal row count and `ObsRowID` set** between baseline and
+     renumbered.
+   - **Identical `TrueStemID`** column (renumbering must not touch real
+     database IDs).
+   - **Identical `ReconstructionMethod`** column.
+   - **Same partition of rows by reconstructed track**: for every pair
+     of rows `(i, j)` with `ObsRowID_i`, `ObsRowID_j`,
+     `baseline$ReconstructedStemID[i] == baseline$ReconstructedStemID[j]`
+     iff `renumbered$ReconstructedStemID[i] == renumbered$ReconstructedStemID[j]`.
+     This is the operationally important invariant: the renumbering must
+     be a pure relabelling, not a re-assignment.
+   - **Chronological monotonicity for engine IDs**: build the renumbered
+     table's `(ReconstructedStemID, first_census)` pairs; restrict to
+     IDs that are not in `TrueStemID` and not `given_orphan`; verify
+     `cor(first_census, ReconstructedStemID, method = "spearman") == 1`
+     within each tag.
+   - **`ReconstructedStemID < min(TrueStemID)`** for all engine-minted
+     IDs in tags that have at least one real `TrueStemID`.
+   - **Posterior consistency**: for each row,
+     `renumbered$DP_PosteriorTop1ID == renumbered$ReconstructedStemID`
+     iff the same was true in the baseline.
+   - **Posterior probabilities unchanged**:
+     `all.equal(baseline$DP_PosteriorTop{k}Prob, renumbered$DP_PosteriorTop{k}Prob)`
+     for k = 1..DP_POSTERIOR_TOP_K; same for `DP_PosteriorEntropy`,
+     `DP_PosteriorReconstructedProb`, `DP_PosteriorUnlinkedProb`.
+   - **Posterior path file**: load
+     `out_dir/posteriors/tag_<tag>_posterior_samples_<ts>_paths.feather`.
+     Apply the renumbering mapping to the `recon` field; verify the
+     translated path probabilities and partition match the baseline.
+   - **Sweep audit unchanged**:
+     `sum(baseline$SweepAuditOverride) == sum(renumbered$SweepAuditOverride)`.
+
+4. Aggregate per-tag pass/fail into a CSV
+   (`dp_global/tests/test_renumber_results.csv`) with columns
+   `tag, n_engine_ids, n_known_ids, all_invariants_passed,
+   failing_invariant`. Investigate any tag where
+   `all_invariants_passed == FALSE`.
+
+#### Stage 2 — Full-set regression with posterior sampling on a hard subset
+
+Goal: confirm the renumbering is stable across the full problematic
+tag list and across reruns with different random seeds.
+
+1. Run the driver across **all** ~32 k tags in
+   `check_sweep_audit_override_tags.csv` with posteriors disabled
+   (`POSTERIOR_SAMPLES = 0`) to keep runtime tractable:
+
+   ```
+   while read tag; do
+       Rscript dp_global/scripts/main_cpp_bci.R \
+           --WHICH_TAG=$tag \
+           --POSTERIOR_SAMPLES=0 \
+           >> logs/renumber_stage2.log 2>&1
+   done < <(tail -n +2 bci_data/check_sweep_audit_override_tags.csv)
+   ```
+
+   (Or use `RUN_ALL_TAGS=TRUE` once the driver supports an explicit tag
+   list — currently it defaults to a single tag.)
+
+2. For each tag, run the same invariant assertions as Stage 1 except
+   the posterior-path file check (skipped because
+   `POSTERIOR_SAMPLES = 0`).
+
+3. Sample 200 of the most complex tags (largest `n_engine_ids`) and
+   re-run with `POSTERIOR_SAMPLES = 200` and two different seeds
+   (`POSTERIOR_SAMPLE_SEED = 42` and `= 7`). For each, verify:
+
+   - The MAP `ReconstructedStemID` is identical across seeds (renumbering
+     is deterministic given the engine output).
+   - The posterior path partition is identical across seeds (different
+     samples may draw different paths but the path *labels* should be
+     stable under the renumbering applied to the same engine output).
+
+#### Stage 3 — Comparison against the Dryad reference table
+
+Goal: confirm the renumbered output still matches the Dryad
+reconstruction at the same rate as the baseline.
+
+1. Run the existing comparison script
+   `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/3_initial_comparisson_dryad_and_me.R`
+   on the renumbered output. The comparison is partition-based (it
+   compares which observations share a reconstructed identity, not the
+   integer values), so the agreement rate with Dryad must be **identical**
+   between baseline and renumbered.
+
+2. If the agreement rate changes by more than ±0.01 percentage points,
+   the renumbering has changed the partition (a bug) — investigate.
+
+#### Exit criteria
+
+All three stages must pass with zero invariant violations before the
+renumbering is merged. Any tag in Stage 2 that fails an invariant must
+be added to a permanent regression-test fixture under
+`dp_global/tests/fixtures/` and a unit test added in
+`dp_global/tests/test_renumber_invariants.R`.
