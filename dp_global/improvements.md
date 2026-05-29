@@ -114,21 +114,21 @@ The five sites above are the ones documented in the user-facing pipeline.
 A careful pass over the full engine reveals **four more sites** that
 mint engine IDs the same way (`max + 1L` ascending):
 
-6. **`dp_global_dp.R` ~line 706** — NA-R barrier split inside the DP
+1. **`dp_global_dp.R` ~line 706** — NA-R barrier split inside the DP
    fallback path (when the constrained DP cannot solve and routes to a
    simpler enumeration). Same semantics as minting site 3 but in a
    different code branch.
-7. **`dp_global_dp.R` ~line 755** — live-R-boundary track sever in the
+2. **`dp_global_dp.R` ~line 755** — live-R-boundary track sever in the
    same fallback path; severs tracks that continue past a live R-coded
    row.
-8. **`dp_probabilistic_matching.R` ~line 124** — anchor IDs for the
+3. **`dp_probabilistic_matching.R` ~line 124** — anchor IDs for the
    probabilistic matcher (used for `PROB_SPECIES` such as figs, palms,
    `bactma`, `oenoma`, and as DP fallback). Pads anchor rows with
    sequential IDs starting above the max known `TrueStemID`.
 8b. **`dp_probabilistic_matching.R` ~line 184** — commits those anchor
    IDs to `ReconstructedStemID`; also `seq_len(.N)` IDs at line 124 for
    the single-census fast-path branch.
-9. **`export_probabilistic_posteriors()` in
+4. **`export_probabilistic_posteriors()` in
    `dp_probabilistic_matching.R`** — writes posterior path files for
    the probabilistic matcher in exactly the same format as
    `dp_global_dp.R`, and calls the same `apply_bb_invariants_to_samples()`
