@@ -1216,6 +1216,27 @@ run_main <- function() {
     #      and the per-chunk call in main_cpp_chunk.R.
     out <- apply_broken_below_invariants(out)
 
+    # 5.5e Reverse the direction of ReconstructedStemID numbering so
+    #      smaller integers correspond to earlier stem appearances.
+    #      Must run AFTER apply_broken_below_invariants(). Writes per-tag
+    #      companion mapping files alongside posterior path files.
+    #      See dp_global/improvements.md for the full algorithm.
+    if (!is.null(out)) {
+        .renum <- renumber_engine_minted_ids(
+            out,
+            posterior_top_k = DP_POSTERIOR_TOP_K,
+            posterior_samples_path = out_dir
+        )
+        out <- .renum$out
+        # Finalize posterior path files in the renumbered ID space
+        # (recommended architecture, see dp_global/improvements.md).
+        finalize_posterior_paths(
+            out,
+            posterior_samples_path = out_dir,
+            mapping = .renum$mapping
+        )
+    }
+
     # Record run output directory (basename) in each row to avoid variable/column name collision
     if (!is.null(out)) {
         out[, run_out_dir := basename(out_dir)]

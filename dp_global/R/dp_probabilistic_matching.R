@@ -1503,41 +1503,30 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
     }
     samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
     samples_dt <- samples_dt[order(Sample, CensusID)]
-    # Strategy A: enforce broken-below R1/R2 invariants per posterior sample
-    # so MAP and posteriors agree on contract-compliant trajectories.
-    samples_dt <- apply_bb_invariants_to_samples(samples_dt, tree_data, verbose = FALSE)
 
-    # Path signatures (same as DP)
-    sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")), by = Sample]
-    path_counts <- sample_sigs[, .N, by = path_sig]
-    data.table::setnames(path_counts, "N", "path_count")
-    sample_sigs <- merge(sample_sigs, path_counts, by = "path_sig")
-
-    n_unique <- data.table::uniqueN(sample_sigs$path_sig)
-    vcat(prefix, "Posterior sampling: ", n_samples, " samples (", n_unique, " unique paths)")
-
-    # Probabilities (uniform weights since greedy sampling doesn't have exact logp)
-    paths_summary <- path_counts[, .(path_count, path_prob = path_count / n_samples), by = path_sig]
-
-    # Compact reconstruction mapping
-    recon_by_path <- samples_dt[, .(recon = paste0(ObsRowID, ":", ReconstructedStemID, collapse = ";")),
-        by = .(path_sig = sample_sigs$path_sig[match(Sample, sample_sigs$Sample)])
-    ]
-    recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
-    paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
-
-    # Export
-    if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
-        p2 <- paste0(out_path_base, "_paths.feather")
-        arrow::write_feather(paths_summary, p2)
-        vcat(prefix, "Wrote posterior paths summary to: ", p2)
-    } else if (fmt == "csv") {
-        p2 <- paste0(out_path_base, "_paths.csv")
-        data.table::fwrite(paths_summary, p2)
-        vcat(prefix, "Wrote posterior paths summary to: ", p2)
-    } else {
-        p1 <- paste0(out_path_base, "_paths.rds")
-        saveRDS(paths_summary, file = p1)
-        vcat(prefix, "Wrote posterior paths summary to: ", p1)
-    }
+    # ---- Recommended architecture (see dp_global/improvements.md) ----
+    # Stage raw samples_dt (engine ID space). The post-engine pipeline will
+    # translate via renumber mapping, re-run apply_bb_invariants_to_samples
+    # in renumbered space, compute path_sig / paths_summary and write the
+    # final paths file. See dp_global_main.R::finalize_posterior_paths().
+    staging_dir <- file.path(out_dir_post, ".staging")
+    if (!dir.exists(staging_dir)) dir.create(staging_dir, recursive = TRUE, showWarnings = FALSE)
+    staging_path <- file.path(staging_dir, paste0(
+        "tag_", ifelse(is.na(tag_val), "NA", tag_val),
+        "_samples_raw_", ts_local, ".rds"
+    ))
+    saveRDS(list(
+        engine = "probabilistic",
+        tag_val = tag_val,
+        batch_ts = ts_local,
+        posterior_samples_format = fmt,
+        posterior_samples_path = out_dir_local,
+        samples_dt = samples_dt,
+        sampling_profile = list(posterior_samples = n_samples,
+                                started = Sys.time(), finished = Sys.time())
+    ), file = staging_path)
+    vcat(prefix, sprintf(
+        "Posterior sampling: staged %d samples for tag %s to %s",
+        n_samples, as.character(tag_val), staging_path
+    ))
 }
