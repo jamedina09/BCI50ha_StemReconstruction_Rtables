@@ -2049,35 +2049,20 @@ run_main_chunked <- function() {
 
                 if (nrow(out_chunk) > 0L) {
                     out_chunk[, DP_Chunk := ci]
+                    # ---- Post-engine helper chain (all helpers in dp_global/R/dp_global_main.R) ----
+                    # 1. Posterior bins: adds DP_PosteriorBin column.
                     out_chunk <- maybe_add_posterior_bins(out_chunk)
-                    # Post-engine backfill of orphan terminal-event rows.
-                    # For rows with Status %in% {"dead","stem dead","broken below"}
-                    # AND NA DBH AND NA ReconstructedStemID, copy the
-                    # ReconstructedStemID from the most recent prior row in the
-                    # same (Tag, StemID) group (LOCF) and set
-                    # ReconstructionMethod = "carried_terminal".
-                    # Shared helper defined in dp_global/R/dp_global_main.R;
-                    # mirrors Step 9b in main_cpp_bci.R / Step 5.5b in main_cpp.R.
-                    # verbose = FALSE keeps multi-tag chunked logs quiet.
+                    # 2. Carried-terminal backfill: LOCF of ReconstructedStemID onto
+                    #    NA-DBH terminal rows (dead/stem dead/broken below).
                     out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
+                    # 3. Orphan-stem backfill: fills NA-DBH, NA-TrueStemID rows from StemID.
                     out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
-                    # Enforce broken-below life-cycle invariants (R1: split-at-
-                    # resurrection; R2: post-terminator). Deterministic and
-                    # idempotent; may override TrueStemID-based pins on rows
-                    # that violate the contract. Tags rows with one of
-                    # bb_split / bb_split_carry / bb_post_terminator_split /
-                    # bb_post_terminator_split_carry. Defined in
-                    # dp_global/R/dp_global_main.R; see also
-                    # `apply_bb_invariants_to_samples()` for posterior writers.
+                    # 4. Broken-below invariants (R1 split-at-resurrection, R2 post-terminator).
+                    #    May mint new ReconstructedStemIDs tagged bb_split / bb_post_terminator_split.
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
-                    # Reverse the direction of ReconstructedStemID numbering so
-                    # smaller integers correspond to earlier stem appearances
-                    # (matching the OriginalStemID chronological convention).
-                    # Must run AFTER apply_broken_below_invariants() because
-                    # bb_* methods are part of the engine-minted partition.
-                    # Returns a Tag/old_id/new_id mapping used by
-                    # finalize_posterior_paths(). Companion mapping files are
-                    # no longer written. See dp_global/improvements.md.
+                    # 5. Renumber engine-minted IDs so smaller integers correspond to earlier
+                    #    stem appearances (matching the OriginalStemID chronological convention).
+                    #    Must run after apply_broken_below_invariants(); returns a mapping table.
                     .renum <- renumber_engine_minted_ids(
                         out_chunk,
                         posterior_top_k = DP_POSTERIOR_TOP_K,
@@ -2085,15 +2070,15 @@ run_main_chunked <- function() {
                         verbose = FALSE
                     )
                     out_chunk <- .renum$out
-                    # Finalize posterior path files in the renumbered ID space
-                    # (recommended architecture, see dp_global/improvements.md).
+                    # 6. Finalize posterior path files: translates staged per-sample
+                    #    ReconstructedStemIDs via the mapping, re-derives per-sample bb IDs,
+                    #    writes posteriors/tag_*_paths.<ext>, and removes staging files.
                     finalize_posterior_paths(
                         out_chunk,
                         posterior_samples_path = out_dir,
                         mapping = .renum$mapping,
                         verbose = FALSE
                     )
-                    # Record run output directory (basename) in each row to avoid variable/column name collision
                     out_chunk[, run_out_dir := basename(out_dir)]
 
                     if (isTRUE(WRITE_DP_CSV)) {
