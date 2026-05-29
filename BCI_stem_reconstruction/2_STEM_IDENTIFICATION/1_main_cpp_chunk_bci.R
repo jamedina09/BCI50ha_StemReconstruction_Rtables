@@ -1841,9 +1841,10 @@ run_main_chunked <- function() {
             stop("TAG_FILTER_FILE not found: ", TAG_FILTER_FILE)
         }
         .tf <- tryCatch(data.table::fread(TAG_FILTER_FILE, colClasses = "character"),
-                        error = function(e) {
-            stop("Failed to read TAG_FILTER_FILE: ", e$message)
-        })
+            error = function(e) {
+                stop("Failed to read TAG_FILTER_FILE: ", e$message)
+            }
+        )
         if (ncol(.tf) < 1L) stop("TAG_FILTER_FILE has no columns: ", TAG_FILTER_FILE)
         .filter_tags <- as.character(.tf[[1L]])
         # Strip whitespace; drop NA/empty
