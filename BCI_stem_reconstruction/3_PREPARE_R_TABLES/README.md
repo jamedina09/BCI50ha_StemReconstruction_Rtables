@@ -15,10 +15,3 @@ diagnostic exports.
   rules), runs the propagation and resurrection fixes, imputes missing
   coordinates and dates per tree/quadrat, and writes one ForestGEO R table
   per census plus quality-control reports.
-
-## Subfolders (gitignored)
-
-- `CHECKS/` — Per-section audit logs and diagnostic CSVs written by
-  `2_create_R_tables_BCI.R`.
-- `VIEWFULLTABLE_CHECKS/` — Pre-export validation outputs (e.g. trees with
-  inconsistent coordinates across censuses).
