@@ -1,3 +1,25 @@
+# Engine improvements — design rationale
+
+> **Status: IMPLEMENTED.** All proposals in this document are implemented in
+> the current codebase. The text is retained as the design rationale and
+> change log for the staging-based posterior architecture and the
+> engine-ID renumbering pass. Sections that originally described pending
+> work (e.g. "Files to modify", "Test plan") are kept for historical
+> reference; the implementation lives in:
+>
+> - `dp_global/R/dp_global_main.R` — `renumber_engine_minted_ids()`,
+>   `finalize_posterior_paths()`, `apply_bb_invariants_to_samples()`.
+> - `dp_global/R/dp_global_dp.R` — engine writer stages raw `samples_dt`
+>   to `posteriors/.staging/`.
+> - `dp_global/R/dp_probabilistic_matching.R` —
+>   `export_probabilistic_posteriors()` stages raw `samples_dt`.
+> - 4 driver callsites (see scripts under `dp_global/scripts/` and
+>   `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R`).
+>
+> Validated on a 2000-tag BCI regression (1271 `*_paths.feather`
+> posterior files written, 0 staging leftovers, 0 companion mapping
+> files, 0 errors).
+
 ## Reverse the direction of `ReconstructedStemID` numbering
 
 ### Background and motivation
