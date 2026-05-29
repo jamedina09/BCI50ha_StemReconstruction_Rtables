@@ -472,17 +472,17 @@ Downstream users must:
    **maintained** because step 8 applies the same mapping to both
    columns on these rows.
 
-2. `new_id < min(known_ids)` for all engine-minted IDs — guaranteed by
+1. `new_id < min(known_ids)` for all engine-minted IDs — guaranteed by
    the base computation in step 6. Note: `known_ids` is the union of
    real-DB `db_ids` and `orphan_ids`; engine-minted IDs that were
    written into `TrueStemID` (`provisional_dp`, `bb_*`) are excluded
    from `db_ids` and therefore correctly classified as engine-minted.
 
-3. The chronological ordering property: if track A first appears at an
+2. The chronological ordering property: if track A first appears at an
    earlier census than track B, then `new_id(A) < new_id(B)` —
    guaranteed by the sort in step 5.
 
-4. `DP_PosteriorTop1ID` reflects the DP-assigned MAP track ID for each
+3. `DP_PosteriorTop1ID` reflects the DP-assigned MAP track ID for each
    row before NA-R barrier splitting. After renumbering, the mapping is
    applied consistently to both `DP_PosteriorTop1ID` and
    `ReconstructedStemID`. Note: for rows that went through barrier
@@ -490,7 +490,7 @@ Downstream users must:
    the barrier split — this is a pre-existing condition, not introduced
    by the renumbering.
 
-5. Posterior path files are consistent with the MAP table: either via
+4. Posterior path files are consistent with the MAP table: either via
    the recommended architecture (path files written after renumbering,
    using re-derived per-sample bb IDs) or via the fallback (companion
    mapping file plus documented limitation on per-sample bb IDs).
@@ -593,7 +593,7 @@ scenario: tags where the engine splits the process (segment split at an
 NA-R / R barrier, or bb-split at the MAP level) and the two halves may
 be handled by different engines (DP vs probabilistic).
 
-8. **Pass 7 — mixed-engine segment splits.** The segment-split branch
+1. **Pass 7 — mixed-engine segment splits.** The segment-split branch
    at `dp_global_dp.R` ~line 1133 recursively calls
    `match_stems_dp_global_backward_marginals_batch()` on the pre- and
    post-resprout halves independently. Each sub-call is free to either
@@ -620,7 +620,7 @@ be handled by different engines (DP vs probabilistic).
      and never written to `TrueStemID`, so they are caught by the
      partition automatically.
 
-9. **Pass 8 — segment-split posterior files.** Confirmed that the
+2. **Pass 8 — segment-split posterior files.** Confirmed that the
    outer engine call returns at the segment-split path early
    (`return(finalize_out(combined))` at `dp_global_dp.R` line ~1281),
    which is *before* the posterior-writing block at line ~2456.
@@ -634,7 +634,7 @@ be handled by different engines (DP vs probabilistic).
    will simply be `NULL` for segment-split tags, and the post-engine
    path-file writer can skip those.
 
-10. **Pass 9 — bb-split at the MAP level on non-segment-split tags.**
+3. **Pass 9 — bb-split at the MAP level on non-segment-split tags.**
     For a tag that runs as a single engine call (no segment split) and
     then has `apply_broken_below_invariants()` mint `bb_split` /
     `bb_post_terminator_split` IDs post-engine, the situation is:
