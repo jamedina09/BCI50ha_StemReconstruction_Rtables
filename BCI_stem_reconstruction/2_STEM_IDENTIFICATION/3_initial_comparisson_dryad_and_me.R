@@ -238,7 +238,17 @@ render_comparison_pdf <- function(tags, file_name, indat, dryad, n_rows = NULL) 
 
 # Reconstructed dataset produced by 2_merge_chunks_to_datatable.R.
 # Pipeline stores DBH in mm; convert to cm to match Dryad reference scale.
-indat <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_with_reconstructed_stemids.rds"))
+indat <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/delete_old/complete_dataset_with_reconstructed_stemids.rds"))
+
+# ! Tags to check renaming
+check_tags <- unique(indat[SweepAuditOverride == "TRUE"]$Tag)
+
+fwrite(
+    data.table(check_tags),
+    "./bci_data/check_sweep_audit_override_tags.csv",
+    sep = "\t"
+)
+# !
 
 indat[, DBH := as.numeric(as.character(DBH)) / 10] # mm → cm
 quantile(indat$DBH, probs = seq(0, 1, 0.25), na.rm = TRUE) # confirm cm scale
