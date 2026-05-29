@@ -502,10 +502,11 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
 #   5. Apply mapping to: ReconstructedStemID, ReconstructedStemID_PreSweep,
 #      DP_PosteriorTop{k}ID columns (always), and TrueStemID ONLY on rows
 #      where ReconstructionMethod %in% ENGINE_MINTED_INTO_TRUESTEMID.
-#   6. (Optional) write companion mapping file alongside posterior path
-#      files so downstream consumers can translate the `recon` / `path_sig`
-#      fields. See improvements.md "Fallback" subsection for the limitation
-#      regarding per-sample bb-invariant IDs.
+#
+# Posterior path files are no longer written by this function. The post-
+# engine driver should call finalize_posterior_paths() afterwards, passing
+# the returned `mapping`, to translate staged per-sample samples_dt into
+# the renumbered ID space and write the final paths file.
 #
 # Inputs:
 #   out                      : data.table (per-chunk or per-tag) with at
@@ -514,11 +515,8 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
 #   posterior_top_k          : (optional) explicit number of
 #                              DP_PosteriorTop{k}ID columns. If NULL,
 #                              auto-detected from column names.
-#   posterior_samples_path   : (optional) directory containing the
-#                              `posteriors/` subdirectory. If non-NULL,
-#                              writes per-tag companion mapping files there.
-#   mapping_format           : "feather" | "rds" | "csv". Default feather
-#                              with rds fallback if arrow is unavailable.
+#   posterior_samples_path   : retained for backward compatibility; no-op.
+#   mapping_format           : retained for backward compatibility; no-op.
 #   verbose                  : log a per-call summary.
 #
 # Returns: list(out = renamed data.table, mapping = combined mapping

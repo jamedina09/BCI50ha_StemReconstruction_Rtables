@@ -1222,8 +1222,9 @@ run_main <- function() {
 
     # 5.5e Reverse the direction of ReconstructedStemID numbering so
     #      smaller integers correspond to earlier stem appearances.
-    #      Must run AFTER apply_broken_below_invariants(). Writes per-tag
-    #      companion mapping files alongside posterior path files.
+    #      Must run AFTER apply_broken_below_invariants(). Returns a
+    #      Tag/old_id/new_id mapping consumed by finalize_posterior_paths();
+    #      companion mapping files are no longer written.
     #      See dp_global/improvements.md for the full algorithm.
     if (!is.null(out)) {
         .renum <- renumber_engine_minted_ids(

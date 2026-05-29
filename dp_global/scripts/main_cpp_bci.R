@@ -490,9 +490,9 @@ out <- apply_carried_terminal_backfill(out)
 out <- apply_orphan_stem_backfill(out)
 out <- apply_broken_below_invariants(out)
 # Reverse the direction of ReconstructedStemID numbering so smaller
-# integers correspond to earlier stem appearances. Writes a per-tag
-# companion mapping file alongside the posterior path file (if any) in
-# out_dir/posteriors/. See dp_global/improvements.md for the algorithm.
+# integers correspond to earlier stem appearances. Returns a Tag/old_id/
+# new_id mapping consumed by finalize_posterior_paths(); companion
+# mapping files are no longer written. See dp_global/improvements.md.
 .renum <- renumber_engine_minted_ids(
     out,
     posterior_top_k = DP_POSTERIOR_TOP_K,

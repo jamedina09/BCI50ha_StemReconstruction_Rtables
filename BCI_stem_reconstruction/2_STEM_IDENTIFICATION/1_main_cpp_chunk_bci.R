@@ -2075,9 +2075,9 @@ run_main_chunked <- function() {
                     # (matching the OriginalStemID chronological convention).
                     # Must run AFTER apply_broken_below_invariants() because
                     # bb_* methods are part of the engine-minted partition.
-                    # Writes per-tag companion mapping files alongside
-                    # posterior path files in out_dir/posteriors/. See
-                    # dp_global/improvements.md for the full algorithm.
+                    # Returns a Tag/old_id/new_id mapping used by
+                    # finalize_posterior_paths(). Companion mapping files are
+                    # no longer written. See dp_global/improvements.md.
                     .renum <- renumber_engine_minted_ids(
                         out_chunk,
                         posterior_top_k = DP_POSTERIOR_TOP_K,
