@@ -10,16 +10,19 @@
 ##     2. Write each batch as an intermediate Parquet part.
 ##     3. Merge all Parquet parts into one final Parquet + RDS output.
 ##     4. Validate the merged multi-stem result against the raw input table.
-##     5. Reattach single-stem records and save the complete dataset.
+##     5. Reattach single-stem records, validate, and save the complete dataset.
 ##
 ## Inputs:
 ##   - Feather chunks       : <home_dir>/<run_code>/
-##   - Raw processed table  : DATA/PROCESSED/6_ViewFullTable_taper_corrected_growth_forms.rds
+##                            (set home_dir and run_code in section 1 below)
+##   - Raw processed table  : BCI_stem_reconstruction/DATA/PROCESSED/
+##                            ViewFullTable_taper_corrected_growth_forms.rds
 ##
 ## Outputs:
-##   - 2_STEM_IDENTIFICATION/output/<run_code>/merged_output.parquet
-##   - 2_STEM_IDENTIFICATION/output/<run_code>/merged_output.rds
-##   - DATA/PROCESSED/7_complete_dataset_with_reconstructed_stemids.rds
+##   - BCI_stem_reconstruction/DATA/<run_code>/merged_output.parquet
+##   - BCI_stem_reconstruction/DATA/<run_code>/merged_output.rds
+##   - BCI_stem_reconstruction/DATA/PROCESSED/
+##     complete_dataset_with_reconstructed_stemids.rds
 ## =============================================================================
 
 # =============================================================================
@@ -46,7 +49,7 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Select the run subfolder by index from the list of directories in `home_dir`.
 # Run list.files(home_dir) interactively to inspect available runs and confirm
 # the correct index BEFORE executing the rest of this script.
-run_code <- list.files(home_dir)[2]
+run_code <- list.files(home_dir)
 
 # Derived paths -----------------------------------------------------------------
 chunks_path <- file.path(home_dir, run_code) # Feather input directory
@@ -222,12 +225,20 @@ setorder(ds_final, RowID)
 #                 the original measurement is preserved in DBH_mm_original_backup
 #                 and will be restored in Section 7.
 #   - ExactDate : missing measurement dates were imputed during the DP run.
+#   - growth_form: the DP algorithms simplified growth form categories for its
+#     internal parameter estimation;
 # Any column other than these two appearing as "Different" warrants investigation
 # before proceeding.
 
 cat("\n--- Validation pass 1: DP output vs. raw multi-stem input ---\n")
 comparison1 <- compare_columns(input_multi_stem_data, ds_final)
 print(comparison1[result == "Different"])
+
+# check growth forms
+unique(merge(unique(input_multi_stem_data[, .(Tag, growth_form)]),
+    unique(ds_final[, .(Tag, growth_form)]),
+    by = "Tag", all = TRUE
+)[, .(growth_form.x, growth_form.y)])
 
 # =============================================================================
 # 7. RESTORE ORIGINAL DBH AND RE-VALIDATE
@@ -386,8 +397,7 @@ complete_dataset[
 # Sanity: skipped tags (no DBH/CensusID data) are expected to have NA obs_row_id.
 complete_dataset[is.na(obs_row_id) & single_stem_tags == FALSE]
 
-# Directory containing posterior feather files from the stem identification run
-# (expand tilde to user home directory for portability)
+# Output directory for the final complete dataset.
 post_dir <- path.expand(
     file.path(
         "./BCI_stem_reconstruction/DATA/PROCESSED"

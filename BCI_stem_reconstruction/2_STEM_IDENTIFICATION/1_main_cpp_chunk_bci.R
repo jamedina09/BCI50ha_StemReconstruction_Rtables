@@ -2,32 +2,23 @@
 ### main_cpp_chunk_bci.R — dp_global BCI chunked driver
 ############################################################
 # Goal
-#   BCI-specific variant of the chunked DP_GLOBAL pipeline. Sources the DP
-#   solver from a self-contained bundle (dp_bundle_path) via withr::with_dir
-#   so bundle-internal relative paths resolve correctly when running from
-#   another directory. Groups (Tag + species) are processed in chunks of
+#   Sources the DP solver from dp_global/R/dp_global_main.R (via here()) within
+#   the project tree. Groups (Tag + species) are processed in parallel chunks of
 #   DP_CHUNK_SIZE and outputs are written incrementally to disk.
 #
-# BCI-specific behaviour (vs. main_cpp_chunk.R)
-# - Loads data from an RDS file (readRDS) instead of a CSV (fread).
-# - Estimates biological parameters from post-anchor census data, separately
-#   for trees/shrubs, palms/tree-ferns, figs, strangler figs, and unknowns.
-# - Splits tags into single-stemmed (bypass) and multi-stemmed (DP) subsets.
-# - FORCE_ONE_SPECIES_PARAMETERS=FALSE — uses real BCI species identities.
-# - Uses withr::with_dir to source dp_global_main.R from the bundle.
+# - Loads data from INPUT_FILE.
+# - Estimates biological parameters from anchor census data, separately for
+#   trees, shrubs, palms/tree-ferns, strangler figs, and unknowns.
+# - Splits tags into single-stem (bypass, ReconstructedStemID = StemID) and
+#   multi-stem (DP reconstruction) subsets before running.
+# - FORCE_ONE_SPECIES_PARAMETERS=FALSE — uses per-species BCI identities.
+# - BCI-specific TrueStemID pre-propagation (Steps 1–3) anchors unambiguous
+#   rows before handing control to the DP solver.
 #
 # Note for orchestrators
 # - This script accepts CLI overrides of internal variables via --KEY=VALUE.
-# - See the `CLI_REFERENCE` variable below for the canonical keys used by
-#   external orchestrators; they should construct flags matching these names
-#   (case-insensitive, '-' or '_' allowed).
-#
-# Differences from main_cpp.R
-# - run_main_chunked() writes each chunk to disk and sets out <- NULL after
-#   each chunk, keeping peak memory proportional to chunk size.
-# - Sensitivity sweeps and realism reports are disabled (require a full out).
-# - PLOT_PDF_ONE_TAG_ONLY is not used; per-chunk PDFs are controlled by
-#   WRITE_DP_PDF_PER_CHUNK.
+# - See the `CLI_REFERENCE` variable below for the canonical keys; they
+#   should construct flags matching these names (case-insensitive, '-' or '_').
 #
 # Table of Contents
 #  0) Housekeeping       — workspace reset guard

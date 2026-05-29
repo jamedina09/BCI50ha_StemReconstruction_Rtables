@@ -1,19 +1,86 @@
-## START
+## =============================================================================
+## run_chunk_bci.txt — BCI stem-identification launch reference
+## =============================================================================
+## All commands are run from the **project root** (the directory that contains
+## dp_global/ and BCI_stem_reconstruction/).
+##
+## Each run creates a timestamped output directory inside BASE_OUT_DIR:
+##   BASE_OUT_DIR/<timestamp_run_code>/
+## where <timestamp_run_code> encodes the start time and key config flags
+## (e.g. 20260516_043718_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp).
+##
+## Per-chunk Feather files land in that directory.  After all chunks finish,
+## run 2_merge_chunks_to_datatable.R to merge them into the final dataset.
+## =============================================================================
+
+
+## -----------------------------------------------------------------------------
+## START — launch a new full run
+## -----------------------------------------------------------------------------
+## Run from the project root (the directory that contains dp_global/ and
+## BCI_stem_reconstruction/).
+
 Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
     --DP_MAX_STATES=10000 \
+    ## Cap on the number of DP state-space entries evaluated per tag.
+    ## Higher = more accuracy, longer runtime.  10000 ≈ 30 min/tag maximum
+    ## on a 2020+ Mac.  Raise to 20000–50000 for stress-tests.
+    \
     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
+    ## Comma-separated Mnemonic codes for species that bypass the DP engine
+    ## and go directly to the probabilistic greedy matcher.  Used for figs and
+    ## other strangler species whose stem topology defeats the DP state space.
+    \
     --DP_FALLBACK_GROWTH_FORMS="strangler" \
+    ## Growth forms for which the DP engine falls back to the probabilistic
+    ## matcher when the state space exceeds DP_MAX_STATES.  "strangler" covers
+    ## strangler figs not already routed by PROB_SPECIES.
+    \
     --POSTERIOR_SAMPLE_SEED=42 \
+    ## Integer seed for reproducible posterior path sampling and probabilistic
+    ## Gumbel-noise draws.  Fix to any integer for regression-comparable runs.
+    \
     --MANUAL_CORES=TRUE \
+    ## When TRUE, use MANUAL_CORES_VALUE instead of auto-detecting CPU count.
+    \
     --MANUAL_CORES_VALUE=18 \
+    ## Number of parallel workers (mclapply forks).  Set to the number of
+    ## physical cores available (18 on the production Mac).
+    \
     --DP_CHUNK_SIZE=18 \
+    ## Number of tags processed in each parallel chunk.  Matching this to
+    ## MANUAL_CORES_VALUE ensures all workers stay busy for most chunks.
+    \
     --USE_MEASUREMENT_ERROR=FALSE \
+    ## When TRUE, the DP solver uses per-census DBH measurement-error SDs to
+    ## widen transition costs.  Set FALSE for a faster, deterministic run.
+    \
     --BASE_OUT_DIR=/Users/medinaja/outputs_bci_stem_identification
+    ## Root directory for all output.  A subdirectory named by timestamp +
+    ## config flags is created automatically on each new run.
+    ## Per-chunk Feather files are written inside that subdirectory.
 
-## CONTINUE — EXAMPLE CHUNK 4501
+
+## -----------------------------------------------------------------------------
+## CONTINUE — resume a partial run
+## -----------------------------------------------------------------------------
+## Use this when a run was interrupted (crash, timeout, power loss).
+## Chunks that already have a _done.txt marker are skipped automatically.
+##
+## Replace the OUT_DIR_OVERRIDE path with the actual timestamped directory
+## from the interrupted run (shown in the startup log or ls BASE_OUT_DIR/).
+## DP_CHUNK_START / DP_CHUNK_END are optional; omit them to let the script
+## determine the remaining range automatically from the _done.txt markers.
+
 Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
     --OUT_DIR_OVERRIDE=/Users/medinaja/outputs_bci_stem_identification/20260507_183832_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp \
+    ## Path to the existing run directory.  Bypasses build_out_dir_name() so
+    ## all output continues into the same directory as the original run.
+    \
     --DP_CHUNK_RESUME=TRUE \
+    ## When TRUE, any chunk with an existing _done.txt marker is skipped.
+    ## Always set this when resuming so completed chunks are not re-run.
+    \
     --DP_MAX_STATES=10000 \
     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
     --DP_FALLBACK_GROWTH_FORMS="strangler" \
@@ -22,12 +89,30 @@ Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
     --MANUAL_CORES_VALUE=18 \
     --DP_CHUNK_SIZE=18 \
     --USE_MEASUREMENT_ERROR=FALSE \
+    ## (same core flags as the original run — must match to keep results consistent)
+    \
     --DP_CHUNK_START=5150 \
+    ## Optional: index of the first tag group to process in this invocation.
+    ## Useful for re-running a specific range without touching other chunks.
+    \
     --DP_CHUNK_END=8266
+    ## Optional: index of the last tag group to process (inclusive).
+    ## Omit both START and END to let the resume logic process all
+    ## remaining (not-done) chunks.
 
-# How many states?
-# 2. Compute states for a specific stem count
-n <- 5   # max observed stems in any census
-K <- n + 2 # (slack + 1 birth)
-states <- prod(K:(K - n + 1))  # P(8, 6) = 20,160
-cat("States:", states, "\n")
+## -----------------------------------------------------------------------------
+## UTILITY — compute maximum DP states for a given stem count
+## -----------------------------------------------------------------------------
+## The DP state space grows as a permutation P(K, n) where:
+##   n = maximum number of simultaneously observed stems in any census
+##   K = n + 2  (slack track + 1 birth slot)
+##
+## Run this snippet in an R console to check whether a tag's stem count will
+## stay within the DP_MAX_STATES budget before committing to a full run.
+
+# n <- 5          # maximum observed stems in any single census for the tag
+# K <- n + 2      # K = n + slack_tracks + 1; default slack = 1
+# states <- prod(K:(K - n + 1))   # permutations P(K, n)
+# cat("Max DP states for n =", n, ":", states, "\n")
+# # Example: n=5  →  P(7,5) = 7*6*5*4*3 = 2,520  (well within 10,000)
+# #          n=6  →  P(8,6) = 8*7*6*5*4*3 = 20,160  (exceeds 10,000 — DP falls back)
