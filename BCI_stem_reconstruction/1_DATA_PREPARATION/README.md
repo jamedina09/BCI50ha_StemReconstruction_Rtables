@@ -7,18 +7,13 @@ DP engine.
 ## Scripts (run in order)
 
 - `0_prepare_species_tables.R` — Build the per-species lookup tables
-  (mnemonics, taxonomy, wood-density references) used by downstream stages.
+  used by downstream stages.
 - `1_prepare_viewfulltable.R.R` — Load the raw ViewFullTable, apply
-  HOM/DBH taper corrections, fix obvious data-entry issues, and write the
+  HOM/DBH taper corrections, fix potential data-entry issues in DBH, and write the
   cleaned long-format census table consumed by `2_STEM_IDENTIFICATION/`.
+  The user will receive the raw data, with corrected stemID identification,
+  but not the 'corrected' potential data entre issues in DBH.
 
 ## Subfolders
 
-- `HELPER_FUNCTIONS/` — Shared utilities sourced by the scripts above
-  (DBH unit conversions, HOM-correction routines, validation checks).
-
-## Notes
-
-`compare_tables1_and_tables2.R` is a local diagnostic (gitignored) used to
-spot-check this stage against a reference build; it is not part of the
-production pipeline.
+- `HELPER_FUNCTIONS/` — Shared utilities sourced by the scripts above.
