@@ -5,8 +5,8 @@ Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
     --DP_FALLBACK_GROWTH_FORMS="strangler" \
     --POSTERIOR_SAMPLE_SEED=42 \
     --MANUAL_CORES=TRUE \
-    --MANUAL_CORES_VALUE=16 \
-    --DP_CHUNK_SIZE=16 \
+    --MANUAL_CORES_VALUE=18 \
+    --DP_CHUNK_SIZE=18 \
     --USE_MEASUREMENT_ERROR=FALSE \
     --BASE_OUT_DIR=/Users/medinaja/outputs_bci_stem_identification
 
@@ -19,8 +19,8 @@ Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
     --DP_FALLBACK_GROWTH_FORMS="strangler" \
     --POSTERIOR_SAMPLE_SEED=42 \
     --MANUAL_CORES=TRUE \
-    --MANUAL_CORES_VALUE=16 \
-    --DP_CHUNK_SIZE=16 \
+    --MANUAL_CORES_VALUE=18 \
+    --DP_CHUNK_SIZE=18 \
     --USE_MEASUREMENT_ERROR=FALSE \
     --DP_CHUNK_START=5150 \
     --DP_CHUNK_END=8266

@@ -247,7 +247,7 @@ PROB_N_SIGMA_ME <- 2.5
 ### 3.3) Chunking & posterior sampling settings
 ############################################################
 # Controls incremental chunk processing and posterior path sampling.
-DP_CHUNK_SIZE <- 16L
+DP_CHUNK_SIZE <- 18L
 DP_CHUNK_RESUME <- TRUE
 DP_CHUNK_OVERWRITE <- FALSE
 # Optional: limit chunks to a specific range for testing (NULL means all)
@@ -259,7 +259,7 @@ DP_CHUNK_END <- NULL
 ############################################################
 RUN_ALL_TAGS <- TRUE
 MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
-MANUAL_CORES_VALUE <- 16L # Number of cores to use if MANUAL_CORES=TRUE
+MANUAL_CORES_VALUE <- 18L # Number of cores to use if MANUAL_CORES=TRUE
 
 ############################################################
 ### 3.5) Output & path settings
