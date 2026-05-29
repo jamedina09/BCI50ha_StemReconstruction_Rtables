@@ -85,7 +85,8 @@ parse_args <- function() {
                 .char_keys <- c(
                     "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
                     "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
-                    "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL"
+                    "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL",
+                    "TAG_FILTER_FILE"
                 )
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
@@ -205,6 +206,14 @@ POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "feather" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
 POSTERIOR_SAMPLE_SEED <- NULL
+
+# Optional: restrict the chunked run to a subset of tags listed in a CSV/TSV
+# file. Useful for regression tests on curated tag subsets. When NULL or
+# empty, all tags in the input data are processed. The file must contain a
+# single column whose values match the Tag column in the input. TAG_FILTER_N
+# (optional) caps the number of tags taken from the file (head).
+TAG_FILTER_FILE <- NULL
+TAG_FILTER_N <- NULL
 # Option: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
 ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 
@@ -1824,6 +1833,45 @@ run_main_chunked <- function() {
 
     xrun <- data.table::copy(xraw_multi_stems)
 
+    # Optional regression-test filter: restrict xrun to tags listed in
+    # TAG_FILTER_FILE (first column). Applied before bio_par estimation
+    # so the species/parameter pool is also reduced when the filter is set.
+    if (exists("TAG_FILTER_FILE") && !is.null(TAG_FILTER_FILE) && nzchar(TAG_FILTER_FILE)) {
+        if (!file.exists(TAG_FILTER_FILE)) {
+            stop("TAG_FILTER_FILE not found: ", TAG_FILTER_FILE)
+        }
+        .tf <- tryCatch(data.table::fread(TAG_FILTER_FILE, colClasses = "character"),
+                        error = function(e) {
+            stop("Failed to read TAG_FILTER_FILE: ", e$message)
+        })
+        if (ncol(.tf) < 1L) stop("TAG_FILTER_FILE has no columns: ", TAG_FILTER_FILE)
+        .filter_tags <- as.character(.tf[[1L]])
+        # Strip whitespace; drop NA/empty
+        .filter_tags <- trimws(.filter_tags)
+        .filter_tags <- .filter_tags[nzchar(.filter_tags) & !is.na(.filter_tags)]
+        if (exists("TAG_FILTER_N") && !is.null(TAG_FILTER_N)) {
+            .n_take <- as.integer(TAG_FILTER_N)
+            if (length(.filter_tags) > .n_take) .filter_tags <- head(.filter_tags, .n_take)
+        }
+        # Match Tag values robustly: accept either the raw string (e.g. "000015")
+        # OR the leading-zero-stripped form (e.g. "15") on either side, so the
+        # filter works regardless of whether xrun$Tag is character or integer.
+        .filter_norm <- sub("^0+", "", .filter_tags)
+        .filter_norm[!nzchar(.filter_norm)] <- "0"
+        .filter_keys <- unique(c(.filter_tags, .filter_norm))
+        .xrun_tag_char <- as.character(xrun$Tag)
+        .xrun_tag_norm <- sub("^0+", "", .xrun_tag_char)
+        .xrun_tag_norm[!nzchar(.xrun_tag_norm)] <- "0"
+        .keep <- (.xrun_tag_char %in% .filter_keys) | (.xrun_tag_norm %in% .filter_keys)
+        .before_n <- data.table::uniqueN(xrun$Tag)
+        xrun <- xrun[.keep]
+        message(sprintf(
+            "[main_cpp_chunk_bci.R] TAG_FILTER_FILE: kept %d of %d tags from %s (file lists %d tags).",
+            data.table::uniqueN(xrun$Tag), .before_n, TAG_FILTER_FILE, length(.filter_tags)
+        ))
+        if (nrow(xrun) == 0L) stop("After applying TAG_FILTER_FILE, xrun is empty.")
+    }
+
     # unique(xrun[Mnemonic != species, .(Mnemonic, species)])
 
     # ------------------------------------------------------------------
@@ -2021,6 +2069,29 @@ run_main_chunked <- function() {
                     # dp_global/R/dp_global_main.R; see also
                     # `apply_bb_invariants_to_samples()` for posterior writers.
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
+                    # Reverse the direction of ReconstructedStemID numbering so
+                    # smaller integers correspond to earlier stem appearances
+                    # (matching the OriginalStemID chronological convention).
+                    # Must run AFTER apply_broken_below_invariants() because
+                    # bb_* methods are part of the engine-minted partition.
+                    # Writes per-tag companion mapping files alongside
+                    # posterior path files in out_dir/posteriors/. See
+                    # dp_global/improvements.md for the full algorithm.
+                    .renum <- renumber_engine_minted_ids(
+                        out_chunk,
+                        posterior_top_k = DP_POSTERIOR_TOP_K,
+                        posterior_samples_path = out_dir,
+                        verbose = FALSE
+                    )
+                    out_chunk <- .renum$out
+                    # Finalize posterior path files in the renumbered ID space
+                    # (recommended architecture, see dp_global/improvements.md).
+                    finalize_posterior_paths(
+                        out_chunk,
+                        posterior_samples_path = out_dir,
+                        mapping = .renum$mapping,
+                        verbose = FALSE
+                    )
                     # Record run output directory (basename) in each row to avoid variable/column name collision
                     out_chunk[, run_out_dir := basename(out_dir)]
 

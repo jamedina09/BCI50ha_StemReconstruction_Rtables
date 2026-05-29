@@ -2536,95 +2536,41 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
         # Ensure rows are ordered for signature construction
         samples_dt <- samples_dt[order(Sample, CensusID)]
-        # Strategy A: enforce broken-below R1/R2 invariants per posterior sample
-        # so MAP and posteriors agree on contract-compliant trajectories.
-        # path_sig is computed AFTER this relabel.
-        samples_dt <- apply_bb_invariants_to_samples(samples_dt, tree_data, verbose = FALSE)
         sampling_profile$samples_dt_size_bytes <- as.numeric(object.size(samples_dt))
         sampling_profile$after_samples_time <- tic() - t_sampling_start
 
-        # Collate per-sample path signature and counts (useful diagnostics)
-        sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")), by = Sample]
-        path_counts <- sample_sigs[, .N, by = path_sig]
-        sample_sigs <- merge(sample_sigs, path_counts, by = "path_sig")
-        setnames(sample_sigs, "N", "path_count")
-        samples_dt <- merge(samples_dt, sample_sigs, by = "Sample", all.x = TRUE)
-
-        # Normalize sample weights from logp using per-Sample unique logp
-        sample_logp <- unique(samples_dt[, .(Sample, logp)])
-        maxlp <- max(sample_logp$logp, na.rm = TRUE)
-        sample_logp[, sample_weight := exp(logp - maxlp)]
-        sample_logp[, sample_prob := sample_weight / sum(sample_weight)]
-        samples_dt <- merge(samples_dt, sample_logp[, .(Sample, sample_weight, sample_prob)], by = "Sample", all.x = TRUE)
-
-        # Diagnostic summary
-        n_unique_paths <- uniqueN(sample_sigs$path_sig)
-        vcat(prefix, sprintf("Posterior sampling: drew %d samples, found %d unique reconstructions (%.0f%% path diversity)", posterior_samples, n_unique_paths, 100 * n_unique_paths / posterior_samples))
-        if (uniqueN(sample_logp$logp) == 1L) {
-            vcat(prefix, sprintf("Warning: all %d samples converged to same log-prob (%.3f); posterior may be concentrated on a single reconstruction", posterior_samples, sample_logp$logp[1]))
-        }
-
-        # Export samples: prefer feather via arrow for speed if available
+        # ---- Recommended architecture (see dp_global/improvements.md) ----
+        # Stage raw samples_dt (in engine ID space) to disk. The post-engine
+        # pipeline will: (1) translate ReconstructedStemID using the
+        # renumber mapping, (2) re-run apply_bb_invariants_to_samples in the
+        # renumbered ID space, (3) compute path_sig / paths_summary, and
+        # (4) write the final paths file. This guarantees per-sample bb-minted
+        # IDs are derived from renumbered track IDs (cf. Fallback limitation
+        # described in improvements.md).
         ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
         out_dir_post <- file.path(out_dir_local, "posteriors")
-        if (!dir.exists(out_dir_post)) dir.create(out_dir_post, recursive = TRUE, showWarnings = FALSE)
-        out_path_base <- file.path(out_dir_post, paste0("tag_", ifelse(is.na(tag_local), "NA", tag_local), "_posterior_samples", "_", ts_local))
-
-        # Prepare summary tables useful for downstream uncertainty propagation
-        # Attach per-sample ObsRowID list when available (semicolon-separated string of ObsRowIDs in sample order)
-        if ("ObsRowID" %in% names(samples_dt)) {
-            sample_obsids <- samples_dt[, .(ObsRowIDs = paste0(ObsRowID, collapse = ";")), by = Sample]
-        } else {
-            sample_obsids <- data.table::data.table(Sample = integer(0), ObsRowIDs = character(0))
-        }
-        samples_summary <- unique(samples_dt[, .(Sample, Tag, logp, path_sig, path_count, sample_weight, sample_prob)])
-        if (nrow(sample_obsids) > 0) samples_summary <- merge(samples_summary, sample_obsids, by = "Sample", all.x = TRUE)
-        # per-path aggregated probabilities
-        paths_summary <- samples_summary[, .(path_count = sum(path_count, na.rm = TRUE), path_prob = sum(sample_prob, na.rm = TRUE)), by = path_sig]
-        # also create a compact per-path reconstruction mapping (one row per path)
-        # Enforce ObsRowID-based reconstructions only.
-        if (!("ObsRowID" %in% names(samples_dt))) {
-            stop("Posterior sampling must include ObsRowID values; regenerate with posterior_samples that preserve observation row identifiers")
-        }
-        recon_by_path <- samples_dt[, .(recon = paste0(ObsRowID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
-        # take first recon per path_sig (they are identical across samples with same path_sig)
-        recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
-        paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
-
-        # Export only the paths summary; skip writing any summary file
-        sampling_profile$export_paths <- character(0)
-        sampling_profile$export_time_seconds <- 0
-        if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
-            p2 <- paste0(out_path_base, "_paths.feather")
-            t0 <- tic()
-            arrow::write_feather(paths_summary, p2)
-            t1 <- tic()
-            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
-            sampling_profile$export_paths <- c(sampling_profile$export_paths, p2)
-            vcat(prefix, "Wrote posterior paths summary to: ", p2)
-        } else if (fmt == "csv") {
-            p2 <- paste0(out_path_base, "_paths.csv")
-            t0 <- tic()
-            data.table::fwrite(paths_summary, p2)
-            t1 <- tic()
-            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
-            sampling_profile$export_paths <- c(sampling_profile$export_paths, p2)
-            vcat(prefix, "Wrote posterior paths summary to: ", p2)
-        } else {
-            # rds variant: save only paths table
-            p1 <- paste0(out_path_base, "_paths.rds")
-            t0 <- tic()
-            saveRDS(paths_summary, file = p1)
-            t1 <- tic()
-            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
-            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1)
-            vcat(prefix, "Wrote posterior paths summary to: ", p1)
-        }
-        sampling_profile$export_total_size_bytes <- if (length(sampling_profile$export_paths) > 0) sum(file.size(sampling_profile$export_paths)) else 0L
+        staging_dir <- file.path(out_dir_post, ".staging")
+        if (!dir.exists(staging_dir)) dir.create(staging_dir, recursive = TRUE, showWarnings = FALSE)
+        staging_path <- file.path(staging_dir, paste0(
+            "tag_", ifelse(is.na(tag_local), "NA", tag_local),
+            "_samples_raw_", ts_local, ".rds"
+        ))
         sampling_profile$finished <- Sys.time()
-
-        # Attach sampling profile to the returned data.table for external inspection
+        saveRDS(list(
+            engine = "dp",
+            tag_val = tag_local,
+            batch_ts = ts_local,
+            posterior_samples_format = fmt,
+            posterior_samples_path = out_dir_local,
+            samples_dt = samples_dt,
+            sampling_profile = sampling_profile
+        ), file = staging_path)
+        vcat(prefix, sprintf(
+            "Posterior sampling: staged %d samples for tag %s to %s",
+            posterior_samples, as.character(tag_local), staging_path
+        ))
         attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
+        attr(tree_data, "DP_Posterior_Staging_File") <- staging_path
     }
 
     # If DP was scoped to pre-anchor only, merge original post-anchor rows back into the returned dataset

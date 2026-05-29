@@ -1273,6 +1273,24 @@ run_main_chunked <- function() {
                     out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
                     out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
+                    # Reverse the direction of ReconstructedStemID numbering so
+                    # smaller integers correspond to earlier stem appearances.
+                    # See dp_global/improvements.md for the full algorithm.
+                    .renum <- renumber_engine_minted_ids(
+                        out_chunk,
+                        posterior_top_k = DP_POSTERIOR_TOP_K,
+                        posterior_samples_path = out_dir,
+                        verbose = FALSE
+                    )
+                    out_chunk <- .renum$out
+                    # Finalize posterior path files in the renumbered ID space
+                    # (recommended architecture, see dp_global/improvements.md).
+                    finalize_posterior_paths(
+                        out_chunk,
+                        posterior_samples_path = out_dir,
+                        mapping = .renum$mapping,
+                        verbose = FALSE
+                    )
                     # Record run output directory (basename) in each row to avoid variable/column name collision
                     out_chunk[, run_out_dir := basename(out_dir)]
 

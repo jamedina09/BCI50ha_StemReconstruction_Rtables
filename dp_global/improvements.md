@@ -390,60 +390,45 @@ the per-sample bb IDs (source 2) cannot be translated by it because they
 were generated independently inside the engine and do not correspond to
 any ID in the mapping.
 
-#### Recommended architecture (correct, requires engine change)
+#### Recommended architecture (correct, requires engine change) — IMPLEMENTED
 
-Instead of writing path files inside the engine, return `samples_dt`
-(the per-sample reconstruction data.table) as part of the engine's
-return value, and write path files *after* the renumbering pass:
+> **Status:** implemented (see `finalize_posterior_paths()` in
+> `dp_global/R/dp_global_main.R` and the engine refactors in
+> `dp_global_dp.R` + `dp_probabilistic_matching.R`). The companion
+> mapping fallback has been removed in favor of this design.
 
-```
-1. match_stems_dp_global_backward_marginals_batch() returns
-     list(out = ..., samples_dt = ...)   # samples_dt instead of writing
-
-2. renumber_engine_minted_ids(out, ...) → produces mapping
-
-3. Apply mapping to samples_dt$ReconstructedStemID
-     (translates DP track IDs; per-sample bb IDs become stale)
-
-4. Re-run apply_bb_invariants_to_samples(samples_dt, renamed_out)
-     (re-derives per-sample bb IDs using renamed track IDs as the base)
-
-5. Recompute path_sig, path_counts, paths_summary
-
-6. Write paths_summary to the posteriors directory
-```
-
-This approach keeps all ID columns — MAP table and path files — in the
-same renumbered space, and avoids the independent-bb-ID inconsistency.
-
-Changes required in `dp_global_dp.R`:
-
-- Remove the path-file writing block at the end of
-  `match_stems_dp_global_backward_marginals_batch()`.
-- Instead, attach `samples_dt` (and `sampling_profile`) to the returned
-  list as `attr(out, "samples_dt")` and `attr(out, "sampling_profile")`.
-- In `1_main_cpp_chunk_bci.R` (and `scripts/main_cpp_chunk.R`), after
-  calling `renumber_engine_minted_ids()`, retrieve `samples_dt`, apply
-  steps 3–6 above, and write the path files.
-
-#### Fallback (simpler, documented limitation)
-
-If the architectural change is not desired, write a companion mapping
-file alongside each path file:
+Instead of writing path files inside the engine, the engines now stage
+the raw per-sample reconstruction data.table (`samples_dt`, in engine ID
+space) to `posteriors/.staging/tag_{Tag}_samples_raw_{ts}.rds`. The
+post-engine driver then:
 
 ```
-post_dir/tag_{Tag}_id_mapping.feather
-  columns: Tag, old_id, new_id
+1. Engine stages raw samples_dt (DP and probabilistic, both engines).
+
+2. renumber_engine_minted_ids(out, ...) → produces mapping (Tag, old_id, new_id).
+
+3. finalize_posterior_paths(out, posterior_samples_path, mapping)
+   reads each staging file and:
+     a. Applies mapping to samples_dt$ReconstructedStemID
+        (translates DP track IDs; per-sample bb IDs become stale).
+     b. Re-runs apply_bb_invariants_to_samples(samples_dt, out_for_tag)
+        — re-derives per-sample bb IDs from the renumbered track IDs.
+     c. Computes path_sig, path_counts, paths_summary
+        (including sample-weight-based path_prob when logp is present).
+     d. Writes the final paths file in the engine-requested format.
+     e. Removes the staging file on success.
 ```
 
-Downstream users must:
+This keeps MAP table and path files in the same renumbered ID space and
+correctly re-derives per-sample bb-minted IDs.
 
-1. Apply `old_id → new_id` to the `recon` field for DP track IDs.
-2. Note that per-sample bb IDs that appear in `recon` but are **absent**
-   from the mapping are internal per-sample integers and are not directly
-   comparable to any ID in the renamed MAP table. Downstream uncertainty
-   quantification that joins paths to the MAP table via `ObsRowID` (not
-   via `ReconstructedStemID`) is unaffected.
+#### Fallback (removed)
+
+The earlier "write a companion mapping file alongside each path file"
+approach has been removed. `renumber_engine_minted_ids()` no longer
+writes `tag_{Tag}_id_mapping_{ts}.{ext}` files; its
+`posterior_samples_path` / `mapping_format` arguments are retained as
+no-ops for backward compatibility with existing call sites.
 
 ---
 

@@ -460,5 +460,460 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
     samples_dt
 }
 
+# -------------------------------------------------------------------------
+# renumber_engine_minted_ids()
+#
+# Post-engine renumbering pass that reverses the direction of
+# ReconstructedStemID numbering so smaller integers correspond to earlier
+# stem appearances (matching the OriginalStemID convention used in BCI /
+# ForestGEO databases).
+#
+# Per-tag algorithm (see dp_global/improvements.md for full design):
+#   1. Identify known_ids = real BCI database IDs that must never be renamed:
+#       - db_ids: unique non-NA TrueStemID on rows whose ReconstructionMethod
+#         is NOT one of ENGINE_MINTED_INTO_TRUESTEMID (provisional_dp,
+#         bb_split, bb_split_carry, bb_post_terminator_split,
+#         bb_post_terminator_split_carry). Those rows hold engine-minted
+#         values in TrueStemID (DP minting site 1; bb pin-overrides in
+#         apply_broken_below_invariants).
+#       - orphan_ids: ReconstructedStemID on rows tagged "given_orphan"
+#         (assigned from StemID by apply_orphan_stem_backfill; real DB IDs
+#         even though TrueStemID is NA there).
+#   2. engine_ids = setdiff(all_recon, known_ids)  -- black-box partition
+#   3. Sort engine_ids by first_census ascending (tie-break by original
+#      ReconstructedStemID value ascending for determinism).
+#   4. Mint new IDs descending from base = min(known_ids) - length(engine_ids)
+#      so engine_ids_sorted[1] (earliest) gets base, and all engine IDs are
+#      strictly < min(known_ids).
+#   5. Apply mapping to: ReconstructedStemID, ReconstructedStemID_PreSweep,
+#      DP_PosteriorTop{k}ID columns (always), and TrueStemID ONLY on rows
+#      where ReconstructionMethod %in% ENGINE_MINTED_INTO_TRUESTEMID.
+#   6. (Optional) write companion mapping file alongside posterior path
+#      files so downstream consumers can translate the `recon` / `path_sig`
+#      fields. See improvements.md "Fallback" subsection for the limitation
+#      regarding per-sample bb-invariant IDs.
+#
+# Inputs:
+#   out                      : data.table (per-chunk or per-tag) with at
+#                              least Tag, CensusID, ReconstructedStemID,
+#                              TrueStemID, ReconstructionMethod.
+#   posterior_top_k          : (optional) explicit number of
+#                              DP_PosteriorTop{k}ID columns. If NULL,
+#                              auto-detected from column names.
+#   posterior_samples_path   : (optional) directory containing the
+#                              `posteriors/` subdirectory. If non-NULL,
+#                              writes per-tag companion mapping files there.
+#   mapping_format           : "feather" | "rds" | "csv". Default feather
+#                              with rds fallback if arrow is unavailable.
+#   verbose                  : log a per-call summary.
+#
+# Returns: list(out = renamed data.table, mapping = combined mapping
+# data.table with columns Tag, old_id, new_id, first_census).
+renumber_engine_minted_ids <- function(out,
+                                       posterior_top_k = NULL,
+                                       posterior_samples_path = NULL,
+                                       mapping_format = c("feather", "rds", "csv"),
+                                       verbose = TRUE) {
+    if (is.null(out) || nrow(out) == 0L) {
+        return(list(out = out, mapping = data.table::data.table(
+            Tag = integer(0), old_id = integer(0), new_id = integer(0),
+            first_census = integer(0)
+        )))
+    }
+    needed <- c("Tag", "CensusID", "ReconstructedStemID", "ReconstructionMethod")
+    if (!all(needed %in% names(out))) {
+        if (isTRUE(verbose)) {
+            message("[renumber_engine_minted_ids] Required columns missing; skipping.")
+        }
+        return(list(out = out, mapping = data.table::data.table(
+            Tag = integer(0), old_id = integer(0), new_id = integer(0),
+            first_census = integer(0)
+        )))
+    }
+    mapping_format <- match.arg(mapping_format)
+
+    # Methods that write engine-minted IDs into TrueStemID (see
+    # improvements.md, Pass 7 fix).
+    ENGINE_MINTED_INTO_TRUESTEMID <- c(
+        "provisional_dp",
+        "bb_split", "bb_split_carry",
+        "bb_post_terminator_split", "bb_post_terminator_split_carry"
+    )
+
+    # Auto-detect DP_PosteriorTop{k}ID columns if not specified
+    posterior_id_cols <- grep("^DP_PosteriorTop\\d+ID$", names(out), value = TRUE)
+    if (is.null(posterior_top_k)) {
+        posterior_top_k <- length(posterior_id_cols)
+    } else {
+        posterior_top_k <- as.integer(posterior_top_k)
+        wanted <- paste0("DP_PosteriorTop", seq_len(posterior_top_k), "ID")
+        posterior_id_cols <- intersect(wanted, names(out))
+    }
+
+    has_pre_sweep <- "ReconstructedStemID_PreSweep" %in% names(out)
+    has_true <- "TrueStemID" %in% names(out)
+
+    # Local copies (single-pass updates avoid repeated data.table writes)
+    rid    <- as.integer(out$ReconstructedStemID)
+    trueid <- if (has_true) as.integer(out$TrueStemID) else NULL
+    presweep <- if (has_pre_sweep) as.integer(out$ReconstructedStemID_PreSweep) else NULL
+    pst_cols <- lapply(posterior_id_cols, function(cn) as.integer(out[[cn]]))
+    names(pst_cols) <- posterior_id_cols
+
+    tag_vec <- out$Tag
+    census_vec <- as.integer(out$CensusID)
+    method_vec <- as.character(out$ReconstructionMethod)
+
+    # Group row indices by Tag (preserves order)
+    tag_groups <- out[, .(.idxs = list(.I)), by = Tag]
+
+    mapping_list <- vector("list", nrow(tag_groups))
+    n_tags_renumbered <- 0L
+    n_tags_no_engine <- 0L
+    n_tags_no_known <- 0L
+    n_engine_ids_total <- 0L
+
+    for (g in seq_len(nrow(tag_groups))) {
+        ix <- tag_groups$.idxs[[g]]
+        if (length(ix) == 0L) next
+        tag_id <- tag_groups$Tag[g]
+
+        rid_g <- rid[ix]
+        method_g <- method_vec[ix]
+        census_g <- census_vec[ix]
+        trueid_g <- if (has_true) trueid[ix] else rep(NA_integer_, length(ix))
+
+        # ---- Step 1a: db_ids (real DB IDs in TrueStemID) ----
+        excl_db <- !is.na(method_g) & (method_g %in% ENGINE_MINTED_INTO_TRUESTEMID)
+        db_mask <- !is.na(trueid_g) & !excl_db
+        db_ids <- unique(trueid_g[db_mask])
+
+        # ---- Step 1b: orphan_ids (real DB IDs from StemID via orphan backfill) ----
+        orph_mask <- !is.na(method_g) & method_g == "given_orphan" & !is.na(rid_g)
+        orphan_ids <- unique(rid_g[orph_mask])
+
+        known_ids <- unique(c(db_ids, orphan_ids))
+
+        # ---- Step 2-3: partition ----
+        all_recon <- unique(rid_g[!is.na(rid_g)])
+        engine_ids <- setdiff(all_recon, known_ids)
+
+        if (length(engine_ids) == 0L) {
+            n_tags_no_engine <- n_tags_no_engine + 1L
+            next
+        }
+
+        # ---- Step 4: first_census per engine_id (within this tag) ----
+        # Build a small data.table for efficient grouping
+        eng_dt <- data.table::data.table(
+            id = rid_g,
+            census = census_g
+        )[!is.na(id) & id %in% engine_ids,
+          .(first_census = min(census, na.rm = TRUE)),
+          by = id]
+
+        # ---- Step 5: sort by first_census ascending; tie-break by id ascending ----
+        data.table::setorder(eng_dt, first_census, id)
+        n_eng <- nrow(eng_dt)
+
+        # ---- Step 6: compute new IDs ----
+        if (length(known_ids) == 0L) {
+            # Edge case: no real DB IDs anchoring the renumber space; use 0L
+            # as base so engine IDs become non-positive sequential integers.
+            # Chronological ordering within the tag is still preserved.
+            n_tags_no_known <- n_tags_no_known + 1L
+            base_id <- 0L - n_eng
+            if (isTRUE(verbose)) {
+                message(sprintf(
+                    "[renumber_engine_minted_ids] Tag %s: known_ids is empty; using base=%d.",
+                    as.character(tag_id), base_id
+                ))
+            }
+        } else {
+            base_id <- as.integer(min(known_ids)) - n_eng
+        }
+        eng_dt[, new_id := base_id + seq_len(.N) - 1L]
+
+        # ---- Step 7: build mapping table ----
+        map_lookup <- eng_dt$new_id
+        names(map_lookup) <- as.character(eng_dt$id)
+
+        translate <- function(v) {
+            if (is.null(v)) return(NULL)
+            out_v <- v
+            hit <- !is.na(v) & as.character(v) %in% names(map_lookup)
+            if (any(hit)) {
+                out_v[hit] <- map_lookup[as.character(v[hit])]
+            }
+            out_v
+        }
+
+        # ---- Step 8: apply mapping to columns ----
+        rid[ix] <- translate(rid_g)
+        if (has_pre_sweep) {
+            presweep[ix] <- translate(presweep[ix])
+        }
+        for (cn in posterior_id_cols) {
+            pst_cols[[cn]][ix] <- translate(pst_cols[[cn]][ix])
+        }
+        # TrueStemID: only on rows whose method indicates engine-minted-into-TrueStemID
+        if (has_true) {
+            engine_minted_rows <- !is.na(method_g) & (method_g %in% ENGINE_MINTED_INTO_TRUESTEMID)
+            if (any(engine_minted_rows)) {
+                trueid_sub <- trueid_g
+                trueid_sub[engine_minted_rows] <- translate(trueid_sub[engine_minted_rows])
+                # Only commit changes on engine_minted_rows (leave other rows alone)
+                trueid[ix[engine_minted_rows]] <- trueid_sub[engine_minted_rows]
+            }
+        }
+
+        mapping_list[[g]] <- data.table::data.table(
+            Tag = rep(tag_id, n_eng),
+            old_id = as.integer(eng_dt$id),
+            new_id = as.integer(eng_dt$new_id),
+            first_census = as.integer(eng_dt$first_census)
+        )
+        n_tags_renumbered <- n_tags_renumbered + 1L
+        n_engine_ids_total <- n_engine_ids_total + n_eng
+    }
+
+    # Commit column changes
+    out[, ReconstructedStemID := rid]
+    if (has_pre_sweep) out[, ReconstructedStemID_PreSweep := presweep]
+    if (has_true) out[, TrueStemID := trueid]
+    for (cn in posterior_id_cols) {
+        out[, (cn) := pst_cols[[cn]]]
+    }
+
+    mapping <- if (n_tags_renumbered > 0L) {
+        data.table::rbindlist(Filter(Negate(is.null), mapping_list),
+                              use.names = TRUE, fill = TRUE)
+    } else {
+        data.table::data.table(Tag = integer(0), old_id = integer(0),
+                               new_id = integer(0), first_census = integer(0))
+    }
+
+    # ---- Step 9: (removed) companion mapping files are no longer written.
+    # The recommended architecture rewrites the full paths file in the
+    # renumbered ID space via finalize_posterior_paths(); see
+    # dp_global/improvements.md. The `posterior_samples_path` and
+    # `mapping_format` arguments are retained for backward compatibility
+    # but are now no-ops.
+    if (!is.null(posterior_samples_path) && isTRUE(verbose)) {
+        # silent no-op; argument kept for backward compatibility
+    }
+
+    if (isTRUE(verbose)) {
+        message(sprintf(
+            "[renumber_engine_minted_ids] Renumbered %d tag(s), %d engine ID(s); %d tag(s) had no engine IDs%s.",
+            n_tags_renumbered, n_engine_ids_total, n_tags_no_engine,
+            if (n_tags_no_known > 0L) sprintf(", %d tag(s) had empty known_ids", n_tags_no_known) else ""
+        ))
+    }
+
+    list(out = out, mapping = mapping)
+}
+
+# -------------------------------------------------------------------------
+# finalize_posterior_paths()
+#
+# Recommended-architecture post-engine step (see dp_global/improvements.md).
+# Reads per-tag raw posterior staging files written by the engines (DP and
+# probabilistic), translates ReconstructedStemID via the renumber mapping,
+# re-runs apply_bb_invariants_to_samples() so per-sample bb-minted IDs are
+# derived from the renumbered track IDs, computes path signatures and
+# probabilities, and writes the final `tag_{Tag}_posterior_samples_{ts}_paths.{ext}`
+# files in the user-requested format. Staging files are deleted on success.
+#
+# Inputs:
+#   out                    : data.table AFTER renumber_engine_minted_ids().
+#                            Must contain at least: Tag, CensusID,
+#                            ReconstructedStemID, Status, DBH, obs_row_id,
+#                            and one of (StemTag | OriginalStemID | StemID).
+#   posterior_samples_path : directory whose `posteriors/.staging/` subdir
+#                            holds raw staging files produced by the engines.
+#                            Must be the SAME path passed to the engines.
+#   mapping                : data.table with cols (Tag, old_id, new_id) as
+#                            returned by renumber_engine_minted_ids(). If
+#                            NULL or empty, ReconstructedStemID values are
+#                            assumed to already be in renumbered space (the
+#                            no-op identity translation).
+#   verbose                : log a per-tag summary message.
+#
+# Returns: invisible list(n_tags, n_written, n_failed, written_paths).
+finalize_posterior_paths <- function(out,
+                                     posterior_samples_path,
+                                     mapping = NULL,
+                                     verbose = TRUE) {
+    null_result <- function() invisible(list(
+        n_tags = 0L, n_written = 0L, n_failed = 0L, written_paths = character(0)
+    ))
+    if (is.null(posterior_samples_path) || !nzchar(posterior_samples_path)) {
+        return(null_result())
+    }
+    staging_dir <- file.path(posterior_samples_path, "posteriors", ".staging")
+    if (!dir.exists(staging_dir)) return(null_result())
+    staging_files <- list.files(staging_dir,
+                                pattern = "^tag_.*_samples_raw_.*\\.rds$",
+                                full.names = TRUE)
+    if (length(staging_files) == 0L) return(null_result())
+    if (is.null(out) || nrow(out) == 0L) {
+        warning("[finalize_posterior_paths] `out` is empty; cannot finalize ",
+                length(staging_files), " staging file(s).")
+        return(null_result())
+    }
+
+    # Build per-tag mapping lookup (tag → named vector old_id_chr → new_id)
+    map_by_tag <- list()
+    if (!is.null(mapping) && nrow(mapping) > 0L) {
+        for (tg in unique(mapping$Tag)) {
+            sub <- mapping[Tag == tg]
+            v <- as.integer(sub$new_id)
+            names(v) <- as.character(sub$old_id)
+            map_by_tag[[as.character(tg)]] <- v
+        }
+    }
+
+    out_dt <- if (data.table::is.data.table(out)) out else data.table::as.data.table(out)
+    n_written <- 0L
+    n_failed <- 0L
+    written_paths <- character(0)
+
+    for (sf in staging_files) {
+        info <- tryCatch(readRDS(sf), error = function(e) NULL)
+        if (is.null(info) || is.null(info$samples_dt) || nrow(info$samples_dt) == 0L) {
+            n_failed <- n_failed + 1L
+            next
+        }
+        tag_val <- info$tag_val
+        samples_dt <- data.table::copy(info$samples_dt)
+        fmt <- info$posterior_samples_format
+        ts_local <- info$batch_ts
+
+        # Subset out to this tag for bb-invariant metadata
+        tree_data_for_tag <- if (is.na(tag_val)) {
+            out_dt[is.na(Tag)]
+        } else {
+            out_dt[Tag == tag_val]
+        }
+        if (nrow(tree_data_for_tag) == 0L) {
+            warning(sprintf(
+                "[finalize_posterior_paths] No rows in `out` for tag %s; skipping %s.",
+                as.character(tag_val), basename(sf)
+            ))
+            n_failed <- n_failed + 1L
+            next
+        }
+
+        # ---- (1) Translate ReconstructedStemID via mapping ----
+        tag_key <- as.character(tag_val)
+        if (!is.null(map_by_tag[[tag_key]])) {
+            lk <- map_by_tag[[tag_key]]
+            v <- samples_dt$ReconstructedStemID
+            hit <- !is.na(v) & as.character(v) %in% names(lk)
+            if (any(hit)) {
+                v[hit] <- lk[as.character(v[hit])]
+                samples_dt[, ReconstructedStemID := as.integer(v)]
+            }
+        }
+
+        # ---- (2) Re-run bb invariants in renumbered ID space ----
+        samples_dt <- apply_bb_invariants_to_samples(
+            samples_dt, tree_data_for_tag, verbose = FALSE
+        )
+
+        # ---- (3) path_sig + paths_summary ----
+        sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")),
+                                  by = Sample]
+        path_counts <- sample_sigs[, .N, by = path_sig]
+        data.table::setnames(path_counts, "N", "path_count")
+        n_samp <- data.table::uniqueN(sample_sigs$Sample)
+
+        has_logp <- "logp" %in% names(samples_dt)
+        if (has_logp) {
+            sample_logp <- unique(samples_dt[, .(Sample, logp)])
+            maxlp <- max(sample_logp$logp, na.rm = TRUE)
+            sample_logp[, sample_weight := exp(logp - maxlp)]
+            sample_logp[, sample_prob := sample_weight / sum(sample_weight)]
+            sample_sigs <- merge(sample_sigs, sample_logp[, .(Sample, sample_prob)],
+                                 by = "Sample", all.x = TRUE)
+            path_probs <- sample_sigs[, .(path_prob = sum(sample_prob, na.rm = TRUE)),
+                                      by = path_sig]
+            paths_summary <- merge(path_counts, path_probs, by = "path_sig", all.x = TRUE)
+        } else {
+            paths_summary <- path_counts[, .(path_count,
+                                             path_prob = path_count / n_samp),
+                                         by = path_sig]
+        }
+
+        # Compact reconstruction mapping (one row per path_sig)
+        sigs_by_sample <- sample_sigs[, .(Sample, path_sig)]
+        samples_with_sig <- merge(samples_dt[, .(Sample, ObsRowID, ReconstructedStemID)],
+                                  sigs_by_sample, by = "Sample", all.x = TRUE)
+        recon_by_path <- samples_with_sig[, .(recon = paste0(ObsRowID, ":",
+                                                             ReconstructedStemID,
+                                                             collapse = ";")),
+                                          by = .(path_sig, Sample)]
+        recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
+        paths_summary <- merge(paths_summary, recon_compact, by = "path_sig",
+                               all.x = TRUE)
+
+        # ---- (4) Write final paths file ----
+        out_dir_post <- file.path(info$posterior_samples_path, "posteriors")
+        if (!dir.exists(out_dir_post)) {
+            dir.create(out_dir_post, recursive = TRUE, showWarnings = FALSE)
+        }
+        out_path_base <- file.path(out_dir_post, paste0(
+            "tag_", ifelse(is.na(tag_val), "NA", tag_val),
+            "_posterior_samples_", ts_local
+        ))
+        wrote <- tryCatch({
+            if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
+                p <- paste0(out_path_base, "_paths.feather")
+                arrow::write_feather(paths_summary, p)
+            } else if (fmt == "csv") {
+                p <- paste0(out_path_base, "_paths.csv")
+                data.table::fwrite(paths_summary, p)
+            } else {
+                p <- paste0(out_path_base, "_paths.rds")
+                saveRDS(paths_summary, file = p)
+            }
+            p
+        }, error = function(e) {
+            warning(sprintf(
+                "[finalize_posterior_paths] Tag %s: write failed: %s",
+                as.character(tag_val), e$message
+            ))
+            NA_character_
+        })
+        if (!is.na(wrote)) {
+            n_written <- n_written + 1L
+            written_paths <- c(written_paths, wrote)
+            file.remove(sf)
+            if (isTRUE(verbose)) {
+                message(sprintf(
+                    "[finalize_posterior_paths] Tag %s: wrote %d unique path(s) to %s",
+                    as.character(tag_val), nrow(paths_summary), wrote
+                ))
+            }
+        } else {
+            n_failed <- n_failed + 1L
+        }
+    }
+
+    if (isTRUE(verbose)) {
+        message(sprintf(
+            "[finalize_posterior_paths] Finalized %d tag(s); %d written, %d failed.",
+            length(staging_files), n_written, n_failed
+        ))
+    }
+    invisible(list(
+        n_tags = length(staging_files),
+        n_written = n_written,
+        n_failed = n_failed,
+        written_paths = written_paths
+    ))
+}
+
 # End of dp_global_main.R
 # -------------------------------------------------------------------------

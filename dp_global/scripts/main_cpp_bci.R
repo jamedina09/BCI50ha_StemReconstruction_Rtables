@@ -489,6 +489,23 @@ out <- maybe_add_posterior_bins(out)
 out <- apply_carried_terminal_backfill(out)
 out <- apply_orphan_stem_backfill(out)
 out <- apply_broken_below_invariants(out)
+# Reverse the direction of ReconstructedStemID numbering so smaller
+# integers correspond to earlier stem appearances. Writes a per-tag
+# companion mapping file alongside the posterior path file (if any) in
+# out_dir/posteriors/. See dp_global/improvements.md for the algorithm.
+.renum <- renumber_engine_minted_ids(
+    out,
+    posterior_top_k = DP_POSTERIOR_TOP_K,
+    posterior_samples_path = out_dir
+)
+out <- .renum$out
+# Finalize posterior path files in the renumbered ID space
+# (recommended architecture, see dp_global/improvements.md).
+finalize_posterior_paths(
+    out,
+    posterior_samples_path = out_dir,
+    mapping = .renum$mapping
+)
 
 if (!is.null(out)) {
     out[, run_out_dir := basename(out_dir)]
