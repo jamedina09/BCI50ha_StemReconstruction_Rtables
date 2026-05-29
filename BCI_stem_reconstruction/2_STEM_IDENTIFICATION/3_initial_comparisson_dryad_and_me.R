@@ -18,8 +18,9 @@
 ##     6. Render diagnostic PDFs with side-by-side growth curves and data tables.
 ##
 ## Inputs:
-##   - Reconstructed dataset : DATA/PROCESSED/7_complete_dataset_with_reconstructed_stemids.rds
-##   - Dryad reference       : DATA/DRYAD_CONDIT/bci_dryad_condit.rds
+##   - Reconstructed dataset : BCI_stem_reconstruction/DATA/PROCESSED/
+##                             complete_dataset_with_reconstructed_stemids.rds
+##   - Dryad reference       : BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds
 ##
 ## Outputs:
 ##   - 2_STEM_IDENTIFICATION/differences_using_dp.pdf
@@ -236,25 +237,16 @@ render_comparison_pdf <- function(tags, file_name, indat, dryad, n_rows = NULL) 
 # =============================================================================
 # Step 1: Load input datasets ---------------------------------------------------
 
-# Reconstructed dataset produced by 2_merge_chunks_to_datatable.R.
-# Pipeline stores DBH in mm; convert to cm to match Dryad reference scale.
-indat <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/delete_old/complete_dataset_with_reconstructed_stemids.rds"))
-
-# ! Tags to check renaming
-check_tags <- unique(indat[SweepAuditOverride == "TRUE"]$Tag)
-
-fwrite(
-    data.table(check_tags),
-    "./bci_data/check_sweep_audit_override_tags.csv",
-    sep = "\t"
-)
-# !
-
-indat[, DBH := as.numeric(as.character(DBH)) / 10] # mm → cm
-quantile(indat$DBH, probs = seq(0, 1, 0.25), na.rm = TRUE) # confirm cm scale
+# Reconstructed dataset produced by 2_merge_chunks_to_datatable.R (section 11).
+# DBH is stored in mm; converted to cm below to match the Dryad reference scale.
+indat <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_with_reconstructed_stemids.rds"))
+indat[, DBH := as.numeric(DBH) / 10]
 
 # Dryad/Condit reference data, loaded and pre-processed by load_dryad().
 dryad <- load_dryad()
+
+indat[Tag == "-05599", .(Tag, DBH)] # sanity check: this tag is single-stem in Dryad, so should have one unique StemID in indat
+dryad[Tag == "-05599", .(Tag, DBH)] # sanity check: this tag is single-stem in Dryad, so should have one unique stemID in dryad
 
 # Restrict both datasets to censuses 1–8: the period covered by the Dryad release.
 # All comparisons (single-stem classification, trajectory matching) are done
@@ -341,6 +333,10 @@ cat("Total unique tags in Dryad reference:", length(unique(dryad$Tag)), "\n")
 # the mismatched subset feeds the diagnostic PDFs below.
 round(table(compare_matches$single_stem, compare_matches$all_equal_trajectories) /
     nrow(comparison_dt) * 100, 4)
+
+#               Match Mismatch
+#   Multi-stem  18.95    11.73
+#   Single-stem 69.32     0.00
 
 # Collect the Tags whose reconstructed trajectories do not match Dryad.
 differences_tags <- comparison_dt[all_equal_trajectories == FALSE]$Tag
