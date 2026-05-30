@@ -554,7 +554,7 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=258411
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=227398
 
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=255814 \
+# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=162037 \
 #     --DP_MAX_STATES=10000 \
 #     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
 #     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
