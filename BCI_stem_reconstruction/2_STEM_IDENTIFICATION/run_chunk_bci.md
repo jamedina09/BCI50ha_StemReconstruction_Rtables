@@ -22,6 +22,7 @@ Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
 ```
 
 **Flag explanations:**
+
 - `DP_MAX_STATES`: Cap on DP state-space size per tag (higher = more accuracy, longer runtime).
 - `PROB_SPECIES`: Comma-separated species codes to force probabilistic fallback (e.g., for strangler figs).
 - `DP_FALLBACK_GROWTH_FORMS`: Growth forms that trigger fallback to the probabilistic matcher.
@@ -53,6 +54,7 @@ Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
   --USE_MEASUREMENT_ERROR=FALSE \
   [--DP_CHUNK_START=<start>] [--DP_CHUNK_END=<end>]
 ```
+
 - Replace `<timestamp_run_code>` with the actual directory name from your interrupted run.
 - Optionally specify `DP_CHUNK_START` and/or `DP_CHUNK_END` to process a specific range of chunks.
 
@@ -74,6 +76,7 @@ cat("Max DP states for n =", n, ":", states, "\n")
 ---
 
 ## Output Structure
+
 - Each run creates a timestamped output directory inside `BASE_OUT_DIR`.
 - Per-chunk Feather files are written to this directory.
 - After all chunks finish, merge them using `2_merge_chunks_to_datatable.R`.
