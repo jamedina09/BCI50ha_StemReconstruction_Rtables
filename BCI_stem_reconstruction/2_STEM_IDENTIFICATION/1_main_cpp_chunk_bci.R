@@ -166,8 +166,7 @@ DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
 DP_MAX_TRACKS <- NULL # auto (computed from data)
 DP_MAX_STATES <- 10000L # maximum 30 minutes of runtime per tag check "./2_STEM_IDENTIFICATION/test_complexity_manual.R"
-DP_SLACK_TRACKS <- 1L
-# NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
+DP_SLACK_TRACKS <- 1L # Optionally require that slack be granted only if an anchor DBH is recruitable
 # (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
@@ -626,10 +625,6 @@ if (!is.null(POSTERIOR_SAMPLE_SEED)) {
 # Load dp_global R modules: DP solver, biological parameter estimation,
 # sensitivity and realism helpers, naming utilities.
 source(here("dp_global", "R", "dp_global_main.R"))
-# NOTE: sensitivity_transition_cost_bio.R, realism_calibration.R, and
-# k_tuning_viz.R are NOT sourced here — they require a fully assembled
-# output object and are not applicable to the chunked runner.
-# naming_helpers.R is already sourced in section 3.5.
 
 ############################################################
 ### 7) Helpers — data-manipulation utilities
@@ -779,7 +774,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
             use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
             # prune controls
-            # NOTE: You can always define very wide based on the parameter data you have.
+            # You can always define very wide based on the parameter data you have.
             prune_hard = TRUE,
             prune_min_growth = MAX_SHRINK_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
             prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
@@ -855,7 +850,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 if (!("ReconstructedStemID" %in% names(.post))) .post[, ReconstructedStemID := NA_integer_]
                 if (!("ReconstructionMethod" %in% names(.post))) .post[, ReconstructionMethod := NA_character_]
                 if (!("ConstraintViolation" %in% names(.post))) .post[, ConstraintViolation := NA]
-                # NOTE: no !is.na(DBH) guard here.  Terminal NA-DBH post-
+                # No !is.na(DBH) guard here.  Terminal NA-DBH post-
                 # anchor rows with a known TrueStemID (rows anchored by
                 # the pre-DP terminal-event propagation in main_cpp_bci.R
                 # Step 2 / Step 3) must also be honoured to satisfy the
@@ -1071,7 +1066,7 @@ run_main_chunked <- function() {
             CensusID,
             TrueStemID = StemID,
             Mnemonic,
-            # NOTE: BCI data is by default in mm
+            # BCI data is by default in mm
             DBH = dbh_with_best_candidate_taper_corrected / 10, # mm → cm
             ExactDate,
             growth_form
