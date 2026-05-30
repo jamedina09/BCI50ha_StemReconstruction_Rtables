@@ -1,26 +1,12 @@
-# ========================================================================
-# SCRIPT: 1_prepare_viewfulltable.R
-# PURPOSE: Load and prepare the BCI ViewFullTable for stem identification.
-#          Builds a complete Tag × CensusID panel, applies HOM/taper handling,
-#          and marks single- vs multiple-stem tags.
+# =============================================================================
+# 1_prepare_viewfulltable.R
 #
-# SECTIONS:
-#   0. Setup
-#   1. Configuration
-#   2. Load input and verify schema
-#   3. Fill missing Tag × CensusID rows
-#   4. HOM correction and QC
-#   5. Detect DBH measurement issues
-#   6. Taper correction and final assembly
-#   7. Single- vs multiple-stem classification
-#
-# Notes:
-#   - Uses data.table for performance.
-#   - Input is `ViewFullTable_bci.csv` from the raw BCI data folder.
-# ========================================================================
+# Purpose: Load and prepare the BCI ViewFullTable for stem identification.
+#          Build a complete Tag × CensusID panel, apply HOM/taper handling,
+#          and label single- vs multiple-stem tags.
+# =============================================================================
 
-# ---- 0. Setup ----
-# Clean workspace to avoid conflicts from previous sessions
+# Clear all objects from the workspace to avoid accidental contamination
 rm(list = ls())
 
 # Load required libraries
@@ -147,9 +133,8 @@ range(ViewFullTable$DBH, na.rm = TRUE)
 
 # Tag and CensusID have no missing values, so they can safely define the complete panel.
 
-# check wether treeid and tag have the same number of unique values
+# Tag and TreeID are redundant; use Tag as the primary identifier for data preparation.
 ViewFullTable[, .(n_tags = uniqueN(Tag), n_treeids = uniqueN(TreeID))]
-# tag and treeid have not the same values, but hold the same information, meaning that they are redundant. We will use tag as the main tree identifier for data preparation.
 
 tag_census_unique <- unique(copy(ViewFullTable[, .(Tag, CensusID)]))
 
@@ -295,10 +280,7 @@ inc_treeid <- ViewFullTable[, .N, by = .(TreeID)]
 all(inc_tag$N == inc_treeid$N)
 
 # ---- Stem ID history and matching context ----
-# BCI stem tags were not consistently assigned before 2010, especially for multi-stem trees.
-# When stem identities were ambiguous, the database sometimes assigned new StemIDs per census.
-# The downstream stem-matching logic relies on HOM selection and taper correction to
-# improve consistency across censuses.
+# StemIDs may change across censuses for some tags, so later matching uses HOM and taper correction.
 
 # Example tags with retroactive StemID reassignment:
 inc <- c("001112", "003036")
@@ -339,17 +321,11 @@ plot_stem <- function(data, tag) {
 
 plot_stem(ViewFullTable, inc)
 
-# Measurement-selection and taper-correction rules used later in stem matching:
-# - If a (Tag, StemID, CensusID) group has multiple records, keep the row with the highest HOM.
-# - StemIDs separate stems within a census and enable HOM-based selection.
-# - Taper correction standardizes DBH to HOM = 1.3 m before matching across censuses.
-# - Correction is applied for buttressed trees (HOM > 1.3 m) and low-HOM measurements.
-# - Original DBH values remain unchanged in the R tables.
+# Measurement selection and taper correction will keep the highest HOM row for each (Tag, StemID, CensusID) group.
+# Taper correction then standardizes DBH to HOM = 1.3 m for downstream matching.
 
-# Some tags retained original StemIDs because the stems were not clearly distinguishable.
-# Example tag with retained IDs:
+# Some tags kept original StemIDs because stems were not clearly distinguishable.
 inc <- c("151991")
-
 plot_stem(ViewFullTable, inc)
 
 ViewFullTable[Tag %in% inc][
@@ -357,9 +333,6 @@ ViewFullTable[Tag %in% inc][
 ][
   , .(Tag, StemTag, TreeID, StemID, CensusID, DBH, HOM, ListOfTSM, Mnemonic)
 ][!is.na(DBH)]
-
-# For buttressed trees with multiple measurements in one census, use the row with highest HOM.
-# This ensures consistent DBH selection for the R tables.
 
 # ---- 4. HOM correction: select max HOM per group ----
 # For groups with multiple DBH/HOM records per (Tag × Stem × CensusID), keep
@@ -786,8 +759,7 @@ valid_DBH[, c("log_DBH", "d_prev", "d_next", "d_span") := NULL]
 # stem_summary[is.infinite(stem_max_error_score), stem_max_error_score := NA_real_]
 
 # ---- 7.2 Stem-level summary & scoring ----
-# Separate stems with single vs. multiple measurements and summarize
-# `entry_error_any` and `stem_max_error_score` to prioritize manual review.
+# Summarize error flags by stem for review and downstream processing.
 row_counts <- valid_DBH[, .N, by = .(Tag, StemTag, TreeID, StemID)]
 
 # Split into single-row and multi-row groups
@@ -851,10 +823,7 @@ table(ViewFullTable_measurement_error_indication$entry_error_any, useNA = "ifany
 # Only stems needing review
 unique(ViewFullTable_measurement_error_indication[stem_has_any_error == TRUE, .(Tag, StemTag, TreeID, StemID)])
 
-# Add candidate DBH values using geometric mean of neighbors
-# Compute geometric mean of previous and next valid DBH when available
-# The stem matching algorithm uses growth, hazard ratios, and ingrowth probability to detect the probability a observation belong to a stem, so, the algorithm requires the 'most' correct DBH value possible to be able to match stems across censuses.
-# The original DBH column with corrected stemIDS will be provided to the user.
+# Add candidate DBH values for likely entry errors using the geometric mean of adjacent valid measurements.
 ViewFullTable_measurement_error_indication[, dbh_candidate := fifelse(
   entry_error_any & !is.na(log_prev) & !is.na(log_next),
   exp((log_prev + log_next) / 2),
@@ -862,10 +831,7 @@ ViewFullTable_measurement_error_indication[, dbh_candidate := fifelse(
 )]
 
 # ---- 8. Prepare DBH candidates (for taper correction) ----
-# Prepare data to correct for possible measurement errors prior to taper
-# correction. For rows flagged `entry_error_any == TRUE`, use `dbh_candidate`
-# when available, otherwise keep original DBH. This produces
-# `dbh_with_best_candidate` used for taper correction.
+# Use the corrected candidate DBH for flagged entries, otherwise keep the original DBH.
 ViewFullTable_measurement_error_indication[, dbh_with_best_candidate := fifelse(
   entry_error_any & !is.na(dbh_candidate),
   dbh_candidate,
@@ -1040,29 +1006,15 @@ tags_info <- round(table(id_single_stem_tags$all_stemtag_na & id_single_stem_tag
 tags_with_one_stemid_no_stemtag <- id_single_stem_tags[all_stemtag_na == TRUE & one_stemid == TRUE, Tag]
 length(tags_with_one_stemid_no_stemtag)
 
-# Two key point to consider:
-# 1) For these Tags, do all NA in stemid have DBH?
+# Check the single-stem tags with missing StemID or DBH values.
 ViewFullTable_taper_corrected[Tag %in% tags_with_one_stemid_no_stemtag & is.na(StemID), .(Tag, CensusID, StemTag, StemID, DBH)]
-# There are 81 cases where StemID is NA and DBH is NA too. This is fine
 
-# 2) count census per stemid for these tags to confirm they are
-# single-stemmed across all censuses. If any have multiple StemIDs across
-# censuses, that would be unexpected and worth investigating.
+# Confirm these tags use at most one StemID across censuses.
 unique(ViewFullTable_taper_corrected[Tag %in% tags_with_one_stemid_no_stemtag, .N, by = .(Tag, StemID, CensusID)]$N)
-# All N are 1, which is consistent with single-stemmed tags having one StemID across all censuses.
 
-# 3) Do all DBH have stemid?
+# Inspect any DBH values without StemID and any NA-DBH rows.
 ViewFullTable_taper_corrected[Tag %in% tags_with_one_stemid_no_stemtag & !is.na(DBH) & is.na(StemID), .(Tag, CensusID, StemTag, StemID, DBH)]
-# aLL DBH have StemID except for 81 cases where both DBH and StemID are NA.
-
-# 4) What about the NA-DBH?
 ViewFullTable_taper_corrected[Tag %in% tags_with_one_stemid_no_stemtag & is.na(DBH) & !is.na(StemID), .(Tag, CensusID, StemTag, StemID, DBH)]
-# 240595 rows with NA-DBH with StemID.
-# There are several cases with NA DBH values and valid StemIDs. The final R tables will
-# correct this, since if there is no DBH recorded in a census (e.g., the last census),
-# that census will be treated as the last observed one, and the individual may be considered dead.
-# Ultimately, the last observation (i.e., death) is determined by the presence of a DBH value,
-# not by the presence of a StemID when DBH is NA.
 
 # Quickly inspect the key variables
 inspectdf::inspect_na(ViewFullTable_taper_corrected[Tag %in% tags_with_one_stemid_no_stemtag, .(Tag, StemTag, TreeID, StemID, CensusID, DBH)])
@@ -1113,7 +1065,7 @@ ViewFullTable_single_vs_multiple_stem_tags[, .N, by = Lifeform][order(-N)]
 unique(ViewFullTable_single_vs_multiple_stem_tags[is.na(Lifeform), .(Mnemonic, Genus, SpeciesName)])
 
 tags_per_growth_form <- unique(ViewFullTable_single_vs_multiple_stem_tags[, .(Tag, single_stem_tags, Lifeform)])
-# check individuals epr growth form with multiple vs single stem
+# Check individuals per growth form by single vs. multiple stem tag
 tags_per_growth_form[
   , .N,
   by = .(single_stem_tags, Lifeform)
