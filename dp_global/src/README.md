@@ -11,7 +11,7 @@ C++ implementation and R wrapper for Rcpp-accelerated transition-cost and phase-
 
 ### Prerequisites
 
-R (packages: `Rcpp`; optional for benchmarking: `microbenchmark`) 
+R (packages: `Rcpp`; optional for benchmarking: `microbenchmark`)
 
 ### Quickstart & API
 
@@ -41,6 +41,10 @@ print(costs)
 See `R/transition_cost_rcpp.R` for detailed parameter descriptions and expected types.
 
 ## Performance
+
+## Stem Identity Renumbering (2024+)
+
+All drivers in the dp_global workflow use a universal post-engine helper chain: `maybe_add_posterior_bins()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. After these steps, all `ReconstructedStemID` values are renumbered **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. **Negative or zero IDs are never produced.**
 
 The C++ implementation is the sole backend for transition-cost computation in the DP workflow. It is substantially faster than an equivalent pure-R loop implementation would be, due to direct C++ iteration, manual statistical functions, and reduced function-call overhead.
 

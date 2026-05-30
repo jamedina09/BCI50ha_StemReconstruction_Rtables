@@ -27,6 +27,12 @@
 
 ## Overview
 
+## Stem Identity Renumbering Workflow (2024+)
+
+All reconstructed stem identities (`ReconstructedStemID`) are assigned **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. This renumbering is always applied after the engine and all post-processing helpers, regardless of which driver or fallback is used. **Negative or zero IDs are never produced.**
+
+All drivers (`main_cpp.R`, `main_cpp_chunk.R`, `main_cpp_bci.R`) use the same post-engine helper chain: `maybe_add_posterior_bins()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. Posterior path files are always written after renumbering, using the staging architecture. All downstream outputs, including posterior path files, use this renumbered ID space.
+
 Reconstruct stable stem identities across censuses using a biologically informed global dynamic programming solver that enforces life-cycle constraints and provides uncertainty quantification.
 
 ### Key Features
