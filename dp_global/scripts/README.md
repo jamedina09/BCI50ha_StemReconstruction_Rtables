@@ -13,6 +13,10 @@ Both `main_cpp.R` and `main_cpp_chunk.R` accept command-line overrides of defaul
 
 ## Overview ✨
 
+## Stem Identity Renumbering (2024+)
+
+All drivers (`main_cpp.R`, `main_cpp_chunk.R`, `main_cpp_bci.R`) use a universal post-engine helper chain: `maybe_add_posterior_bins()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. After these steps, all `ReconstructedStemID` values are renumbered **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. **Negative or zero IDs are never produced.**
+
 `main_cpp.R` is the central driver for the `dp_global` pipeline. It:
 
 - Loads input tree census data (CSV via `input_file`).
