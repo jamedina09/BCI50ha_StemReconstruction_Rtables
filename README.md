@@ -4,7 +4,8 @@
 
 Biologically informed dynamic-programming (DP) solver that reconstructs stem identities across forest censuses backward in time from a known anchor census. Given multi-stem tree measurements and a late-census anchor with trusted `TrueStemID`, the algorithm assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, and recruitment biology. Uncertainty is quantified via forward-backward marginals and optional posterior sampling.
 
-When the exact DP state space is too large (combinatorial explosion from many stems per tree), the solver automatically falls back to a **probabilistic greedy matching** module that uses the same biological cost model and hard pruning bounds with Gumbel-noise stochastic sampling and **sequential backward conditioning** to produce approximate reconstructions with per-observation posterior probabilities. The probabilistic matcher applies a two-layer **sample-level growth repair** before computing marginals: (1) hard-rate bound enforcement and (2) **measurement-error-informed cumulative-shrinkage detection** that severs runs of small decreases exceeding the ME threshold — mirroring the DP's global cost accumulation that naturally penalises consecutive shrinkage, but adapted for the per-pair greedy context. At the anchor census, known `TrueStemID` identities are always preserved as hard constraints; pre-anchor observations with `TrueStemID` are solved by the DP and can receive different identity assignments based on biological likelihood. The posterior path samples from both methods are used downstream for **basal area uncertainty quantification**.
+
+After the engine and all post-processing helpers run, a final renumbering pass assigns `ReconstructedStemID` values sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. This ensures that IDs are always positive, contiguous, and chronologically ordered, matching the `OriginalStemID` convention. All downstream outputs, including posterior path files, use this renumbered ID space.
 
 ## How the Two Algorithms Work (Plain-Language Summary)
 
@@ -35,11 +36,12 @@ The choice is made **per tag** (i.e., per tree) and is controlled by the `DP_MAX
 | Certain species or growth forms (configured via `PROB_SPECIES` / `FALLBACK_GROWTH_FORMS`) | **Probabilistic matcher** | User routes specific groups to the fallback regardless of stem count |
 | DP solver hits a runtime error (e.g., memory) | **Probabilistic matcher** | Automatic error-recovery fallback |
 
+
 ### Can Both Run on the Same Tag?
 
 For a simple tag with no resprout events, **only one** algorithm produces the reconstruction. However, when a tag contains an **R event** (a resprout or breakage code such as R, RP, RF, RT, QR, or OR), the tag is split into a pre-resprout segment and a post-resprout segment, each solved independently. Because the two segments have different stem counts and therefore different state-space sizes, **each segment chooses its algorithm independently** — so it is possible for the post-resprout segment to be solved by the exact DP while the pre-resprout segment falls back to the probabilistic matcher (or vice versa). Both algorithms' outputs are then combined into a single reconstruction for the tag.
 
-Across a full dataset, most tags will use one algorithm throughout; only tags with R events can have mixed-method output rows. The two algorithms use **identical biological models** and hard pruning bounds, so their outputs are directly comparable and mergeable regardless of which segments used which method. Both produce the same output schema including posterior probabilities and optional posterior path samples for downstream uncertainty quantification.
+After all segments are solved and merged, the final renumbering pass ensures that all `ReconstructedStemID` values are assigned in chronological order from 1..N, so the output is always consistent and positive regardless of the engine or segment splits.
 
 ## Directory Layout
 

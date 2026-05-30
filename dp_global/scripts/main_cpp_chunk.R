@@ -1277,9 +1277,10 @@ run_main_chunked <- function() {
                     out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
                     out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
-                    # Reverse the direction of ReconstructedStemID numbering so
-                    # smaller integers correspond to earlier stem appearances.
-                    # See dp_global/improvements.md for the full algorithm.
+                    # Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
+                    # ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
+                    # then by original ID. This matches the OriginalStemID convention and ensures no negative or zero IDs.
+                    # See dp_global/improvements.md for the full algorithm and rationale.
                     .renum <- renumber_engine_minted_ids(
                         out_chunk,
                         posterior_top_k = DP_POSTERIOR_TOP_K,
@@ -1287,8 +1288,7 @@ run_main_chunked <- function() {
                         verbose = FALSE
                     )
                     out_chunk <- .renum$out
-                    # Finalize posterior path files in the renumbered ID space
-                    # (recommended architecture, see dp_global/improvements.md).
+                    # Finalize posterior path files in the renumbered ID space (recommended architecture).
                     finalize_posterior_paths(
                         out_chunk,
                         posterior_samples_path = out_dir,

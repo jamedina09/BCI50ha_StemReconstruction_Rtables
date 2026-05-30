@@ -2051,8 +2051,9 @@ run_main_chunked <- function() {
                     # 4. Broken-below invariants (R1 split-at-resurrection, R2 post-terminator).
                     #    May mint new ReconstructedStemIDs tagged bb_split / bb_post_terminator_split.
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
-                    # 5. Renumber engine-minted IDs so smaller integers correspond to earlier
-                    #    stem appearances (matching the OriginalStemID chronological convention).
+                    # 5. Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
+                    #    ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
+                    #    then by original ID. This matches the OriginalStemID convention and ensures no negative or zero IDs.
                     #    Must run after apply_broken_below_invariants(); returns a mapping table.
                     .renum <- renumber_engine_minted_ids(
                         out_chunk,

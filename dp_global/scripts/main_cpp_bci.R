@@ -489,18 +489,18 @@ out <- maybe_add_posterior_bins(out)
 out <- apply_carried_terminal_backfill(out)
 out <- apply_orphan_stem_backfill(out)
 out <- apply_broken_below_invariants(out)
-# Reverse the direction of ReconstructedStemID numbering so smaller
-# integers correspond to earlier stem appearances. Returns a Tag/old_id/
-# new_id mapping consumed by finalize_posterior_paths(); companion
-# mapping files are no longer written. See dp_global/improvements.md.
+
+# Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
+# ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
+# then by original ID. This matches the OriginalStemID convention and ensures no negative or zero IDs.
+# Returns a Tag/old_id/new_id mapping for finalize_posterior_paths(); see dp_global/improvements.md.
 .renum <- renumber_engine_minted_ids(
     out,
     posterior_top_k = DP_POSTERIOR_TOP_K,
     posterior_samples_path = out_dir
 )
 out <- .renum$out
-# Finalize posterior path files in the renumbered ID space
-# (recommended architecture, see dp_global/improvements.md).
+# Finalize posterior path files in the renumbered ID space (see improvements.md for rationale).
 finalize_posterior_paths(
     out,
     posterior_samples_path = out_dir,
