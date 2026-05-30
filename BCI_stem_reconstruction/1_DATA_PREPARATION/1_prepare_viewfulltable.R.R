@@ -1,39 +1,22 @@
 # ========================================================================
 # SCRIPT: 1_prepare_viewfulltable.R
-# PURPOSE: Load, validate, and prepare the BCI ViewFullTable for stem
-#          identification. Produces a complete Tag × CensusID panel with
-#          HOM-corrected and taper-corrected DBH values, and classifies
-#          tags as single- or multiple-stemmed.
+# PURPOSE: Load and prepare the BCI ViewFullTable for stem identification.
+#          Builds a complete Tag × CensusID panel, applies HOM/taper handling,
+#          and marks single- vs multiple-stem tags.
 #
-# Table of Contents:
-#   0. Setup (deterministic environment)
-#      - Clean workspace, load packages, set data.table threads.
+# SECTIONS:
+#   0. Setup
 #   1. Configuration
-#      - Define site code, input/output paths.
-#   2. Load and verify input
-#      - Load ViewFullTable; enforce schema; standardize missing values.
+#   2. Load input and verify schema
 #   3. Fill missing Tag × CensusID rows
-#      - Build complete Tag × CensusID grid; insert NA rows where missing.
-#   4. HOM correction: select max HOM per group
-#      - Keep one observation per (Tag, Stem, CensusID) using highest HOM.
-#   5. Recompute QC using corrected HOM
-#      - Rerun HOM-based quality-control flags on the deduplicated table.
-#   6. Check missing Tag × CensusID combinations
-#      - Verify no gaps remain after HOM correction.
-#   7. Detect DBH measurement errors
-#     7.1 DBH outlier detection (log-difference method)
-#     7.2 Stem-level summary & scoring
-#   8. Prepare DBH candidates (for taper correction)
-#     8.1 Pre-taper checks
-#     8.2 Apply taper correction (DBH → DBHC)
-#   9. Finalize complete table
-#      - Merge corrected values; add missing rows; final sort.
-#  10. Classify single- vs. multiple-stem tags
-#  11. Check all Tag × CensusID combinations are complete
+#   4. HOM correction and QC
+#   5. Detect DBH measurement issues
+#   6. Taper correction and final assembly
+#   7. Single- vs multiple-stem classification
 #
 # Notes:
-#  - Uses `data.table` for speed and memory efficiency.
-#  - Input: processed `ViewFullTable_bci.csv` (tab-separated, explicit colClasses).
+#   - Uses data.table for performance.
+#   - Input is `ViewFullTable_bci.csv` from the raw BCI data folder.
 # ========================================================================
 
 # ---- 0. Setup ----
@@ -69,9 +52,9 @@ if (!dir.exists(CHECK_folder)) {
 
 # End of configuration (adjust above values as needed for local runs)
 
-# ---- 2. Load, verify input data, and correct Mnemonic for rohrii ----
-# Read the two versions of ViewFullTable. We expect tab-delimited tables with
-# columns such as `ExactDate`, `Tag`, `StemTag`, `TreeID`, `StemID`, `DBH`.
+# ---- 2. Load and verify the input data ----
+# Read the BCI ViewFullTable from the raw data folder. The table must contain
+# measurement columns like `ExactDate`, `Tag`, `StemTag`, `TreeID`, `StemID`, and `DBH`.
 
 file1 <- file.path(INPUT_folder_1, paste0("ViewFullTable_", site, ".csv"))
 
@@ -152,25 +135,17 @@ sort(unique(round(ViewFullTable[!is.na(DBH)]$DBH, 1)))
 
 plot(density(ViewFullTable[!is.na(DBH)]$DBH))
 
-# what are the units?
-# assuming it's mm, convert to cm
+# Explore DBH units by comparing quantiles under different assumptions.
+# The values confirm that DBH is recorded in millimetres.
 quantile(ViewFullTable[!is.na(DBH)]$DBH, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 10
-# assuming it's mm, convert to m
 quantile(ViewFullTable[!is.na(DBH)]$DBH, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 10 / 100
-# seem logical to be mm
-
-# now, assumin it's cm, convert to m
 quantile(ViewFullTable[!is.na(DBH)]$DBH, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 100
-# this suggest that median is 23 cm, and largest 95, 99, and 100 quantiles are 1.42, 4.15, 81.69 m
-# this is incorrect. DBH is in mm
 
-# NOTE: 13 INDIVIDUALS WITH DBH < 10 mm (1cm)
-# NOTE: no individual with zero DBH
+# The DBH distribution confirms the units are millimetres, not centimetres.
 table(ViewFullTable[DBH < 10]$DBH)
 range(ViewFullTable$DBH, na.rm = TRUE)
 
-# sort print(inspectdf::inspect_na(ViewFullTable), n = 50) by tag and censusID
-## NOTE: Tag and CensusID have no NAs, so we can use them to create a complete grid
+# Tag and CensusID have no missing values, so they can safely define the complete panel.
 
 # check wether treeid and tag have the same number of unique values
 ViewFullTable[, .(n_tags = uniqueN(Tag), n_treeids = uniqueN(TreeID))]
@@ -191,11 +166,10 @@ missing_combinations <- complete_grid[!ViewFullTable,
 
 unique(ViewFullTable[, .(Tag, TreeID)])
 
-# NOTE: 141 MISSING TAG-CENSUSID COMBINATIONS TO ADD
+# There are missing Tag × CensusID rows that must be added to complete the panel.
 nrow(missing_combinations)
 
-### LETS GET THE METADATA FOR THE MISSING INFORMATION
-# Get metadata columns (excluding measurements)
+# Build placeholder rows for the missing combinations and fill metadata columns.
 
 diff_names <- setdiff(names(ViewFullTable), names(missing_combinations))
 
@@ -297,7 +271,7 @@ ViewFullTable[, .(CensusID = list(sort(unique(CensusID)))), by = Tag][
   , .N,
   by = complete
 ]
-# NOTE: Yes, all tags have complete observations between their minimum and maximum census.
+# Confirmed: all tags now have complete observations between their first and last census.
 
 # ---- Stem identification: notes & assumptions ----
 # Variables and assumptions used in later stem matching and QC steps:
@@ -320,26 +294,13 @@ inc_treeid <- ViewFullTable[, .N, by = .(TreeID)]
 # Yes, they do
 all(inc_tag$N == inc_treeid$N)
 
-# Note: Suzanne's main comments
-# In the case of BCI, this is complicated by the fact that stem tags were not assigned to the
-# multiple stems of a tree until around 2020. Following are some  observations:
+# ---- Stem ID history and matching context ----
+# BCI stem tags were not consistently assigned before 2010, especially for multi-stem trees.
+# When stem identities were ambiguous, the database sometimes assigned new StemIDs per census.
+# The downstream stem-matching logic relies on HOM selection and taper correction to
+# improve consistency across censuses.
 
-# At BCI, the stems of a tree were not given tags in the first censuses. The stems of
-# trees with multiple stems were tagged starting in 2010.
-
-# Because there was no reliable and unequivocal way to match stems from a census to
-# those in the previous ones for multiple-stemmed trees, new stemids were assigned
-# to each of these multiple stems in each census  in the database.
-
-# For the R stem tables, Rick Condit developed an algorithm to try to match stems
-# across censuses when it was clear which stem was which throughout the censuses.
-
-# When the measurement differences between stems were distinct enough throughout
-# the censuses —like in tags 001112 and 003036— he could confidently match stems
-# from one census to another. Then, the latest stemID was applied retroactively to
-# earlier censuses for consistency.
-
-# Check example tags where stem IDs were reassigned
+# Example tags with retroactive StemID reassignment:
 inc <- c("001112", "003036")
 
 ViewFullTable[Tag %in% inc][
@@ -378,23 +339,15 @@ plot_stem <- function(data, tag) {
 
 plot_stem(ViewFullTable, inc)
 
-# NOTE: Measurement-selection and taper-correction rules used downstream
-#   - When a (Tag, StemID, Census) has multiple observations (e.g. tag 003036,
-#     census 3), select the row with the highest HOM (smallest DBH due to taper).
-#   - StemIDs distinguish stems within a census, enabling the HOM selection step.
-#   - Taper correction is needed because stem matching across censuses requires
-#     all measurements standardized at HOM = 1.3 m (DBH). It is applied to:
-#       (i) HOM > 1.3 m with code "B" (buttressed),
-#       (ii) HOM < 1.3 m (correct upward to 1.3 m),
-#       (iii) HOM > 1.3 m without "B" (e.g. swelling/bifurcation at 1.3 m).
-#   - Correction is used only for stem matching; original DBH values in the R
-#     tables remain unchanged.
-#   - Absence of any stem tag after 2010 implies a single-stemmed tree (at
-#     least across the last three censuses).
+# Measurement-selection and taper-correction rules used later in stem matching:
+# - If a (Tag, StemID, CensusID) group has multiple records, keep the row with the highest HOM.
+# - StemIDs separate stems within a census and enable HOM-based selection.
+# - Taper correction standardizes DBH to HOM = 1.3 m before matching across censuses.
+# - Correction is applied for buttressed trees (HOM > 1.3 m) and low-HOM measurements.
+# - Original DBH values remain unchanged in the R tables.
 
-# When the measurements between stems were not clearly distinguishable throughout
-# In some censuses the original stemIDs were retained, as in the case of tag 151991.
-
+# Some tags retained original StemIDs because the stems were not clearly distinguishable.
+# Example tag with retained IDs:
 inc <- c("151991")
 
 plot_stem(ViewFullTable, inc)
@@ -405,9 +358,8 @@ ViewFullTable[Tag %in% inc][
   , .(Tag, StemTag, TreeID, StemID, CensusID, DBH, HOM, ListOfTSM, Mnemonic)
 ][!is.na(DBH)]
 
-# Note: please make sure to use one measurement for the B (buttressed) trees where
-# more than one measurement per census may occur. The one where the hom is
-# highest should be used for the R tables.
+# For buttressed trees with multiple measurements in one census, use the row with highest HOM.
+# This ensures consistent DBH selection for the R tables.
 
 # ---- 4. HOM correction: select max HOM per group ----
 # For groups with multiple DBH/HOM records per (Tag × Stem × CensusID), keep
@@ -730,11 +682,9 @@ ViewFullTable_hom_corrected_clean
 # Check example tags where stem IDs were reassigned
 inc <- c("001112")
 
-# NOTE: log-DBH-difference checks for data-entry errors are reliable only
-# for stems with a consistent StemID across censuses. Stems whose StemIDs
-# change cannot be tracked confidently and are excluded from that check.
-# This correction feeds the matching algorithm; user-facing DBH values in
-# the R tables are not modified.
+# Log-DBH-difference checks are reliable only for stems with consistent StemIDs.
+# Stems with changing StemIDs are excluded from this error-detection step.
+# This step flags likely entry errors without altering user-facing DBH values.
 
 ViewFullTable_hom_corrected_clean[Tag %in% inc][
   order(Tag, StemID, CensusID)

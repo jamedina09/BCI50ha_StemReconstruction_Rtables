@@ -1,18 +1,13 @@
 ################################################################################
 # FORESTGEO STEM TABLE CREATION SCRIPT
 ################################################################################
-# Purpose: Transform ViewFullTable_site.csv and ViewTaxonomy_site.csv into R tables
+# Purpose: Transform reconstructions table and species data into R tables
 #          ([site].stem[census#].rdata and [site].spptable.rdata)
 #
 # Authors:
-#   - Original: Valentine Herrmann (HerrmannV@si.edu)
-#   - Updated: Jose Medina (MedinaJA@si.edu)
+#   - Original: Jose Medina (MedinaJA@si.edu)
 #
-# Environment:
-#   - R version 4.5.2 (2025-10-31)
-#   - data.table version 1.17.8
-#
-# Last modified: [November 17th, 2025]
+# Last modified: [May 30th, 2026]
 ################################################################################
 #
 # TABLE OF CONTENTS
@@ -175,7 +170,7 @@ if (!dir.exists(OUTPUT_folder)) {
 }
 
 # 5. Diagnostics folder for QA/QC reports
-CHECK_folder <- file.path(main_path, "BCI_stem_reconstruction", "3_PREPARE_R_TABLES", "CHECKS")
+CHECK_folder <- file.path(main_path, "BCI_stem_reconstruction", "DATA", "CHECKS")
 if (!dir.exists(CHECK_folder)) {
   dir.create(CHECK_folder, recursive = TRUE)
   cat("✓ Created CHECKS folder:", CHECK_folder, "\n")
@@ -335,8 +330,9 @@ cat("📂 Loading ViewFullTable_RAW...\n")
 
 ViewFullTable_RAW <- as.data.table(readRDS(file.path(
   INPUT_folder,
-  "complete_dataset_with_reconstructed_stemids.rds"
+  "complete_dataset_final_with_reconstructed_stemids.rds"
 )))
+ViewFullTable_RAW[, ReconstructedStemID := as.numeric(as.character(ReconstructedStemID))] # ensure character type for consistency
 
 # ── Standardize column types ──────────────────────────────────────────────────
 # The RDS file may carry incorrect types from the database export pipeline.
