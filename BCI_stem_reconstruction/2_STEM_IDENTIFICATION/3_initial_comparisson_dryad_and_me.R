@@ -1,28 +1,9 @@
-## 3_initial_comparisson_dryad_and_me.R
-## =============================================================================
-## Purpose: Compare reconstructed BCI stem trajectories against the Dryad/Condit
-##          reference. Identify tags whose reconstructed DBH trajectories
-##          match or mismatch the reference and generate diagnostic PDFs.
-##
-## Sections:
-##   0. Setup
-##   1. Helper functions
-##   2. Load datasets
-##   3. Summarize tag × stem DBH trajectories
-##   4. Compare reconstructed and reference trajectories
-##   5. Classify mismatches by reconstruction method
-##   6. Generate diagnostic plots
-##   7. Compare tag counts per census
-##
-## Inputs:
-##   - BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds
-##   - BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds
-##
-## Outputs:
-##   - 2_STEM_IDENTIFICATION/differences_using_dp.pdf
-##   - 2_STEM_IDENTIFICATION/differences_using_probabilistic.pdf
-##   - 2_STEM_IDENTIFICATION/differences_using_both_methods.pdf
-## =============================================================================
+# =============================================================================
+# 3_initial_comparisson_dryad_and_me.R
+#
+# Purpose: Compare reconstructed BCI stem trajectories to the Condit/Dryad
+#          reference, flag mismatches, and create diagnostic plots.
+# =============================================================================
 
 # =============================================================================
 # 0. SETUP
@@ -309,7 +290,7 @@ sample_differences_tags_dp <- sample(differences_tags_dp, min(300, length(differ
 set.seed(123)
 sample_differences_tags_dp_prob <- sample(differences_tags_dp_prob, min(300, length(differences_tags_dp_prob)))
 
-## create a data frame in long format with two columns, one the sample difference type and the tags in the other
+# Create a long-format data.table with sampled tags by method.
 explore_tags_long <- rbind(
     data.table(method = "sample_differences_tags_dp", Tag = sample_differences_tags_dp),
     data.table(method = "sample_differences_tags_prob", Tag = sample_differences_tags_prob),

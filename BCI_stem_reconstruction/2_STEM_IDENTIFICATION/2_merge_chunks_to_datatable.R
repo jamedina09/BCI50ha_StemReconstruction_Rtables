@@ -1,27 +1,10 @@
-## 2_merge_chunks_to_datatable.R
-## =============================================================================
-## Purpose: Merge chunked Feather outputs from the stem-identification DP run
-##          into final Parquet/RDS datasets and combine them with single-stem
-##          records from the raw input.
-##
-## Workflow:
-##   1. Read Feather chunks in batches.
-##   2. Write intermediate Parquet parts.
-##   3. Merge Parquet parts into final Parquet + RDS output.
-##   4. Validate the merged multi-stem result.
-##   5. Reattach single-stem records and save the complete dataset.
-##
-## Inputs:
-##   - Feather chunks directory: <home_dir>/<run_code>/
-##   - Raw processed table: BCI_stem_reconstruction/DATA/PROCESSED/
-##                          ViewFullTable_taper_corrected_growth_forms.rds
-##
-## Outputs:
-##   - BCI_stem_reconstruction/DATA/<run_code>/merged_output.parquet
-##   - BCI_stem_reconstruction/DATA/<run_code>/merged_output.rds
-##   - BCI_stem_reconstruction/DATA/PROCESSED/
-##     complete_dataset_with_reconstructed_stemids.rds
-## =============================================================================
+# =============================================================================
+# 2_merge_chunks_to_datatable.R
+#
+# Purpose: Merge stem-identification DP Feather chunks into final datasets,
+#          validate the merged multi-stem result, and reassemble the complete
+#          dataset with reconstructed stem IDs.
+# =============================================================================
 
 # =============================================================================
 # 0. SETUP
@@ -39,14 +22,11 @@ library(data.table) # fast in-memory data manipulation
 # 1. CONFIGURATION
 # =============================================================================
 
-# Root directory on the local machine where the Feather chunk files are stored.
-# This folder is outside the project tree; update the path if you relocate the
-# output from a previous DP run.
+# Root directory where the Feather chunk outputs from the DP run are stored.
+# Update this path if the prior run folder has moved.
 home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 
-# Select the run subfolder by index from the list of directories in `home_dir`.
-# Run list.files(home_dir) interactively to inspect available runs and confirm
-# the correct index BEFORE executing the rest of this script.
+# Choose the run subfolder by its directory name.
 run_code <- list.files(home_dir)
 
 # Derived paths -----------------------------------------------------------------
@@ -276,10 +256,7 @@ xraw[, (new_names) := NA]
 # Isolate single-stem records from the raw table
 input_single_stem_data_raw <- xraw[single_stem_tags == TRUE]
 
-## Verify that the single-stem subset is genuinely single-stem:
-## every Tag should have exactly one unique StemID across all censuses.
-## A UniqueStemID > 1 for any tag indicates a mis-classification during
-## the single_stem_tags assignment step and must be investigated.
+# Verify that the single-stem subset contains one StemID per Tag.
 chk_correctness_single <- copy(input_single_stem_data_raw)
 chk_correctness_single[!is.na(CensusID), UniqueCensusIDs := uniqueN(CensusID), by = Tag]
 chk_correctness_single[!is.na(StemID), UniqueStemID := uniqueN(StemID), by = Tag]
@@ -345,7 +322,7 @@ input_single_stem_data[, ReconstructionMethod := "single_stem_tag_no_reconstruct
 # (NA StemID with non-NA DBH would indicate an ambiguous placement).
 unique(input_single_stem_data[is.na(StemID)]$DBH)
 
-## Check reconstructed IDs assigned to single-stem tags.
+# Check reconstructed IDs assigned to single-stem tags.
 input_single_stem_data[ReconstructedStemID > 1]
 table(output_multistem_data$ReconstructedStemID, useNA = "ifany")
 
