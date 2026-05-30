@@ -20,20 +20,15 @@
 > posterior files written, 0 staging leftovers, 0 companion mapping
 > files, 0 errors).
 
-## Reverse the direction of `ReconstructedStemID` numbering
+
+## Chronological renumbering of `ReconstructedStemID`
 
 ### Background and motivation
 
 In the BCI dataset (and in the convention shared by most ForestGEO plots),
-`OriginalStemID` was assigned **forward in time as new stems were
-encountered**: a stem first measured in census 1 received a smaller integer
-than a stem first measured in census 5. The numerical order of
-`OriginalStemID` therefore mirrors the chronological order of stem
-appearance.
+`OriginalStemID` was assigned **forward in time as new stems were encountered**: a stem first measured in census 1 received a smaller integer than a stem first measured in census 5. The numerical order of `OriginalStemID` therefore mirrors the chronological order of stem appearance.
 
-The reconstruction engine works **backward in time** from a late-census
-anchor (default `ANCHOR_START_CENSUS = 7`). Stem identities are derived
-from the anchor and propagated to earlier censuses.
+The reconstruction engine works **backward in time** from a late-census anchor (default `ANCHOR_START_CENSUS = 7`). Stem identities are derived from the anchor and propagated to earlier censuses. To ensure that the output matches the original convention and is easy to interpret, a final renumbering pass assigns `ReconstructedStemID` values from 1..N per tag, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. This guarantees that all IDs are positive, contiguous, and chronologically ordered.
 
 ---
 
@@ -291,17 +286,12 @@ renumber_engine_minted_ids(out, posterior_top_k):
   4. For each engine_id, compute first_census:
        first_census[id] ← min(out$CensusID[out$ReconstructedStemID == id])
 
-  5. Sort engine_ids by first_census ascending.
-     Tie-break by original ReconstructedStemID value ascending for determinism.
-     Result: engine_ids_sorted[1] = track with earliest first appearance.
 
-  6. Compute new ID base:
-       base ← min(known_ids) - length(engine_ids)
-     Assign new IDs:
-       new_id[engine_ids_sorted[i]] ← base + (i - 1)
-     So engine_ids_sorted[1] (earliest) gets the smallest ID (base),
-     engine_ids_sorted[n] (latest) gets base + n - 1, which is still
-     strictly below min(known_ids).
+  5. Sort all unique stem IDs by first_census ascending. For ties (multiple stems first appearing in the same census), sort by DBH at that census descending (largest first), then by original ID ascending for determinism.
+
+  6. Assign new IDs sequentially from 1 to N in this order:
+       new_id[sorted_stems[i]] ← i
+     So the earliest-appearing, largest-DBH stem gets new_id = 1, the next gets 2, and so on. All IDs are positive and contiguous.
 
   7. Build mapping table:
        mapping ← data.table(Tag = tag, old_id = engine_ids,
@@ -328,13 +318,13 @@ renumber_engine_minted_ids(out, posterior_top_k):
        list(out = renamed_out, mapping = mapping)
 ```
 
+
 #### Edge cases
 
 | Case | Handling |
 |---|---|
-| No engine-minted IDs (all rows are `given` or `given_orphan`) | `engine_ids` is empty; mapping is empty; function is a no-op |
-| `known_ids` is empty (tag has no real TrueStemID and no orphan backfill) | use `0L` as the base so new IDs are 1-based sequential negative integers; the `new_id < min(known_ids)` guarantee cannot be made, but the chronological ordering within the tag is preserved; log a warning |
-| Two engine-minted tracks with the same `first_census` | tie-break by original `ReconstructedStemID` value ascending; ensures determinism across re-runs |
+| No stems in tag | mapping is empty; function is a no-op |
+| Two stems with the same `first_census` and DBH | tie-break by original `ReconstructedStemID` value ascending; ensures determinism across re-runs |
 | `ReconstructedStemID_PreSweep` is NA for a row | leave as NA; do not apply mapping to NA cells |
 | `DP_PosteriorTop{k}ID` is NA for a row | leave as NA; only rename non-NA values |
 | Posterior path files are absent (`posterior_samples = 0`) | skip step 9 entirely |

@@ -477,41 +477,41 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
 # -------------------------------------------------------------------------
 # renumber_engine_minted_ids()
 #
-# Post-engine renumbering pass that reverses the direction of
-# ReconstructedStemID numbering so smaller integers correspond to earlier
-# stem appearances (matching the OriginalStemID convention used in BCI /
-# ForestGEO databases).
+# Post-engine renumbering pass that assigns ReconstructedStemID values
+# sequentially from 1 within each Tag, in chronological order of first
+# appearance. Within a tie on first_census, the stem with the largest DBH
+# at that census gets the lower ID. This yields a clean per-tag space
+# 1..N where ID=1 is the earliest-appearing (and, on tie, largest) stem.
 #
-# Per-tag algorithm (see dp_global/improvements.md for full design):
-#   1. Identify known_ids = real BCI database IDs that must never be renamed:
-#       - db_ids: unique non-NA TrueStemID on rows whose ReconstructionMethod
-#         is NOT one of ENGINE_MINTED_INTO_TRUESTEMID (provisional_dp,
-#         bb_split, bb_split_carry, bb_post_terminator_split,
-#         bb_post_terminator_split_carry). Those rows hold engine-minted
-#         values in TrueStemID (DP minting site 1; bb pin-overrides in
-#         apply_broken_below_invariants).
-#       - orphan_ids: ReconstructedStemID on rows tagged "given_orphan"
-#         (assigned from StemID by apply_orphan_stem_backfill; real DB IDs
-#         even though TrueStemID is NA there).
-#   2. engine_ids = setdiff(all_recon, known_ids)  -- black-box partition
-#   3. Sort engine_ids by first_census ascending (tie-break by original
-#      ReconstructedStemID value ascending for determinism).
-#   4. Mint new IDs descending from base = min(known_ids) - length(engine_ids)
-#      so engine_ids_sorted[1] (earliest) gets base, and all engine IDs are
-#      strictly < min(known_ids).
-#   5. Apply mapping to: ReconstructedStemID, ReconstructedStemID_PreSweep,
-#      DP_PosteriorTop{k}ID columns (always), and TrueStemID ONLY on rows
-#      where ReconstructionMethod %in% ENGINE_MINTED_INTO_TRUESTEMID.
+# Per-tag algorithm:
+#   1. Collect all unique non-NA ReconstructedStemID values in the tag.
+#   2. For each stem id, compute:
+#        - first_census = min(CensusID) where ReconstructedStemID == id
+#        - dbh_at_first = max DBH at that (id, first_census) cell
+#                        (NA if all rows there have NA DBH)
+#   3. Sort by (first_census ASC, dbh_at_first DESC, id ASC) so the
+#      earliest-appearing stem with the largest first-census DBH gets
+#      new_id = 1, the next gets 2, and so on through .N.
+#   4. Apply the mapping to: ReconstructedStemID,
+#      ReconstructedStemID_PreSweep, DP_PosteriorTop{k}ID columns
+#      (always), and TrueStemID ONLY on rows whose ReconstructionMethod
+#      %in% ENGINE_MINTED_INTO_TRUESTEMID (provisional_dp, bb_split,
+#      bb_split_carry, bb_post_terminator_split,
+#      bb_post_terminator_split_carry — those rows hold engine-minted
+#      values in TrueStemID and must follow the rename; rows holding
+#      real DB IDs in TrueStemID are left untouched as ground truth).
 #
 # Posterior path files are no longer written by this function. The post-
 # engine driver should call finalize_posterior_paths() afterwards, passing
 # the returned `mapping`, to translate staged per-sample samples_dt into
-# the renumbered ID space and write the final paths file.
+# the renumbered ID space and write the final paths file. Because the
+# mapping interface is unchanged (Tag/old_id/new_id), posterior paths
+# automatically pick up the new 1..N numbering.
 #
 # Inputs:
 #   out                      : data.table (per-chunk or per-tag) with at
-#                              least Tag, CensusID, ReconstructedStemID,
-#                              TrueStemID, ReconstructionMethod.
+#                              least Tag, CensusID, DBH,
+#                              ReconstructedStemID, ReconstructionMethod.
 #   posterior_top_k          : (optional) explicit number of
 #                              DP_PosteriorTop{k}ID columns. If NULL,
 #                              auto-detected from column names.
@@ -544,8 +544,9 @@ renumber_engine_minted_ids <- function(out,
     }
     mapping_format <- match.arg(mapping_format)
 
-    # Methods that write engine-minted IDs into TrueStemID (see
-    # improvements.md, Pass 7 fix).
+    # Methods that write engine-minted IDs into TrueStemID. For these
+    # rows TrueStemID is renumbered alongside ReconstructedStemID;
+    # rows holding real DB IDs in TrueStemID are left untouched.
     ENGINE_MINTED_INTO_TRUESTEMID <- c(
         "provisional_dp",
         "bb_split", "bb_split_carry",
@@ -564,6 +565,7 @@ renumber_engine_minted_ids <- function(out,
 
     has_pre_sweep <- "ReconstructedStemID_PreSweep" %in% names(out)
     has_true <- "TrueStemID" %in% names(out)
+    has_dbh <- "DBH" %in% names(out)
 
     # Local copies (single-pass updates avoid repeated data.table writes)
     rid <- as.integer(out$ReconstructedStemID)
@@ -572,18 +574,17 @@ renumber_engine_minted_ids <- function(out,
     pst_cols <- lapply(posterior_id_cols, function(cn) as.integer(out[[cn]]))
     names(pst_cols) <- posterior_id_cols
 
-    tag_vec <- out$Tag
     census_vec <- as.integer(out$CensusID)
     method_vec <- as.character(out$ReconstructionMethod)
+    dbh_vec <- if (has_dbh) as.numeric(out$DBH) else rep(NA_real_, nrow(out))
 
     # Group row indices by Tag (preserves order)
     tag_groups <- out[, .(.idxs = list(.I)), by = Tag]
 
     mapping_list <- vector("list", nrow(tag_groups))
     n_tags_renumbered <- 0L
-    n_tags_no_engine <- 0L
-    n_tags_no_known <- 0L
-    n_engine_ids_total <- 0L
+    n_tags_no_stems <- 0L
+    n_ids_total <- 0L
 
     for (g in seq_len(nrow(tag_groups))) {
         ix <- tag_groups$.idxs[[g]]
@@ -593,63 +594,42 @@ renumber_engine_minted_ids <- function(out,
         rid_g <- rid[ix]
         method_g <- method_vec[ix]
         census_g <- census_vec[ix]
+        dbh_g <- dbh_vec[ix]
         trueid_g <- if (has_true) trueid[ix] else rep(NA_integer_, length(ix))
 
-        # ---- Step 1a: db_ids (real DB IDs in TrueStemID) ----
-        excl_db <- !is.na(method_g) & (method_g %in% ENGINE_MINTED_INTO_TRUESTEMID)
-        db_mask <- !is.na(trueid_g) & !excl_db
-        db_ids <- unique(trueid_g[db_mask])
-
-        # ---- Step 1b: orphan_ids (real DB IDs from StemID via orphan backfill) ----
-        orph_mask <- !is.na(method_g) & method_g == "given_orphan" & !is.na(rid_g)
-        orphan_ids <- unique(rid_g[orph_mask])
-
-        known_ids <- unique(c(db_ids, orphan_ids))
-
-        # ---- Step 2-3: partition ----
         all_recon <- unique(rid_g[!is.na(rid_g)])
-        engine_ids <- setdiff(all_recon, known_ids)
-
-        if (length(engine_ids) == 0L) {
-            n_tags_no_engine <- n_tags_no_engine + 1L
+        if (length(all_recon) == 0L) {
+            n_tags_no_stems <- n_tags_no_stems + 1L
             next
         }
 
-        # ---- Step 4: first_census per engine_id (within this tag) ----
-        # Build a small data.table for efficient grouping
-        eng_dt <- data.table::data.table(
-            id = rid_g,
-            census = census_g
-        )[!is.na(id) & id %in% engine_ids,
-            .(first_census = min(census, na.rm = TRUE)),
+        # Per-stem first_census and DBH at that first census (max DBH if
+        # multiple rows share the (id, first_census) cell).
+        stem_dt <- data.table::data.table(
+            id = rid_g, census = census_g, dbh = dbh_g
+        )[!is.na(id)]
+        stem_meta <- stem_dt[, .(first_census = min(census, na.rm = TRUE)),
             by = id
         ]
+        stem_meta <- merge(
+            stem_meta,
+            stem_dt[, .(id, census, dbh)],
+            by.x = c("id", "first_census"),
+            by.y = c("id", "census"),
+            all.x = TRUE
+        )[, .(dbh_at_first = suppressWarnings(max(dbh, na.rm = TRUE))),
+            by = .(id, first_census)
+        ]
+        # Replace -Inf from all-NA DBH groups with NA so ordering puts them last
+        stem_meta[!is.finite(dbh_at_first), dbh_at_first := NA_real_]
 
-        # ---- Step 5: sort by first_census ascending; tie-break by id ascending ----
-        data.table::setorder(eng_dt, first_census, id)
-        n_eng <- nrow(eng_dt)
+        # Sort: chronological first, then larger DBH first within same census,
+        # then by original id for determinism. NA dbh sorts last via na.last=TRUE.
+        data.table::setorder(stem_meta, first_census, -dbh_at_first, id, na.last = TRUE)
+        stem_meta[, new_id := seq_len(.N)]
 
-        # ---- Step 6: compute new IDs ----
-        if (length(known_ids) == 0L) {
-            # Edge case: no real DB IDs anchoring the renumber space; use 0L
-            # as base so engine IDs become non-positive sequential integers.
-            # Chronological ordering within the tag is still preserved.
-            n_tags_no_known <- n_tags_no_known + 1L
-            base_id <- 0L - n_eng
-            if (isTRUE(verbose)) {
-                message(sprintf(
-                    "[renumber_engine_minted_ids] Tag %s: known_ids is empty; using base=%d.",
-                    as.character(tag_id), base_id
-                ))
-            }
-        } else {
-            base_id <- as.integer(min(known_ids)) - n_eng
-        }
-        eng_dt[, new_id := base_id + seq_len(.N) - 1L]
-
-        # ---- Step 7: build mapping table ----
-        map_lookup <- eng_dt$new_id
-        names(map_lookup) <- as.character(eng_dt$id)
+        map_lookup <- as.integer(stem_meta$new_id)
+        names(map_lookup) <- as.character(stem_meta$id)
 
         translate <- function(v) {
             if (is.null(v)) {
@@ -663,7 +643,7 @@ renumber_engine_minted_ids <- function(out,
             out_v
         }
 
-        # ---- Step 8: apply mapping to columns ----
+        # Apply mapping
         rid[ix] <- translate(rid_g)
         if (has_pre_sweep) {
             presweep[ix] <- translate(presweep[ix])
@@ -677,19 +657,18 @@ renumber_engine_minted_ids <- function(out,
             if (any(engine_minted_rows)) {
                 trueid_sub <- trueid_g
                 trueid_sub[engine_minted_rows] <- translate(trueid_sub[engine_minted_rows])
-                # Only commit changes on engine_minted_rows (leave other rows alone)
                 trueid[ix[engine_minted_rows]] <- trueid_sub[engine_minted_rows]
             }
         }
 
         mapping_list[[g]] <- data.table::data.table(
-            Tag = rep(tag_id, n_eng),
-            old_id = as.integer(eng_dt$id),
-            new_id = as.integer(eng_dt$new_id),
-            first_census = as.integer(eng_dt$first_census)
+            Tag = rep(tag_id, nrow(stem_meta)),
+            old_id = as.integer(stem_meta$id),
+            new_id = as.integer(stem_meta$new_id),
+            first_census = as.integer(stem_meta$first_census)
         )
         n_tags_renumbered <- n_tags_renumbered + 1L
-        n_engine_ids_total <- n_engine_ids_total + n_eng
+        n_ids_total <- n_ids_total + nrow(stem_meta)
     }
 
     # Commit column changes
@@ -711,21 +690,15 @@ renumber_engine_minted_ids <- function(out,
         )
     }
 
-    # ---- Step 9: (removed) companion mapping files are no longer written.
-    # The recommended architecture rewrites the full paths file in the
-    # renumbered ID space via finalize_posterior_paths(); see
-    # dp_global/improvements.md. The `posterior_samples_path` and
+    # Posterior companion mapping files are no longer written here (see
+    # finalize_posterior_paths()). The `posterior_samples_path` and
     # `mapping_format` arguments are retained for backward compatibility
     # but are now no-ops.
-    if (!is.null(posterior_samples_path) && isTRUE(verbose)) {
-        # silent no-op; argument kept for backward compatibility
-    }
 
     if (isTRUE(verbose)) {
         message(sprintf(
-            "[renumber_engine_minted_ids] Renumbered %d tag(s), %d engine ID(s); %d tag(s) had no engine IDs%s.",
-            n_tags_renumbered, n_engine_ids_total, n_tags_no_engine,
-            if (n_tags_no_known > 0L) sprintf(", %d tag(s) had empty known_ids", n_tags_no_known) else ""
+            "[renumber_engine_minted_ids] Renumbered %d tag(s) to 1..N (%d total IDs); %d tag(s) had no stems.",
+            n_tags_renumbered, n_ids_total, n_tags_no_stems
         ))
     }
 
