@@ -1,22 +1,20 @@
 ## 2_merge_chunks_to_datatable.R
 ## =============================================================================
-## Purpose:
-##   Combine individual Feather chunks produced during the stem-identification
-##   DP (dynamic-programming) run into a single merged dataset and save it as
-##   both Parquet and RDS for downstream analysis.
+## Purpose: Merge chunked Feather outputs from the stem-identification DP run
+##          into final Parquet/RDS datasets and combine them with single-stem
+##          records from the raw input.
 ##
-##   Processing pipeline:
-##     1. Read Feather chunk files in batches to limit peak memory usage.
-##     2. Write each batch as an intermediate Parquet part.
-##     3. Merge all Parquet parts into one final Parquet + RDS output.
-##     4. Validate the merged multi-stem result against the raw input table.
-##     5. Reattach single-stem records, validate, and save the complete dataset.
+## Workflow:
+##   1. Read Feather chunks in batches.
+##   2. Write intermediate Parquet parts.
+##   3. Merge Parquet parts into final Parquet + RDS output.
+##   4. Validate the merged multi-stem result.
+##   5. Reattach single-stem records and save the complete dataset.
 ##
 ## Inputs:
-##   - Feather chunks       : <home_dir>/<run_code>/
-##                            (set home_dir and run_code in section 1 below)
-##   - Raw processed table  : BCI_stem_reconstruction/DATA/PROCESSED/
-##                            ViewFullTable_taper_corrected_growth_forms.rds
+##   - Feather chunks directory: <home_dir>/<run_code>/
+##   - Raw processed table: BCI_stem_reconstruction/DATA/PROCESSED/
+##                          ViewFullTable_taper_corrected_growth_forms.rds
 ##
 ## Outputs:
 ##   - BCI_stem_reconstruction/DATA/<run_code>/merged_output.parquet
@@ -68,15 +66,11 @@ out_file_rds <- here(outputs_path, "merged_output.rds")
 # 2. BATCH-PROCESS FEATHER CHUNKS INTO PARQUET PARTS
 # =============================================================================
 
-# Collect the full list of Feather files produced by the DP run
+# Collect Feather chunk files and verify the expected numeric suffix.
 feathers <- list.files(chunks_path, "\\.feather$", full.names = TRUE)
 cat("Total Feather files found:", length(feathers), "\n")
 
-# Extract the numeric sequence number (1–4 digits) embedded in each file name.
-# This serves two purposes:
-#   (a) Validates that every file matches the expected naming convention.
-#   (b) Provides the sort key so chunks are processed in the correct order,
-#       regardless of how list.files() orders them on the filesystem.
+# Extract the embedded sequence number from each filename for correct ordering.
 feathers_seq <- as.integer(gsub(".*_(\\d{1,4})\\.feather$", "\\1", feathers))
 if (any(is.na(feathers_seq))) {
     stop("Error: Some Feather files do not match the expected naming pattern.")
@@ -120,24 +114,21 @@ for (i in seq_len(n_groups)) {
 # 3. MERGE PARQUET PARTS INTO FINAL DATASET
 # =============================================================================
 
+
 # Open all intermediate parts as one unified Arrow dataset
 temp_files <- list.files(temp_dir, "\\.parquet$", full.names = TRUE)
 ds_final <- open_dataset(temp_files, format = "parquet", unify_schemas = FALSE)
 
-# Persist the merged dataset as Parquet (primary output)
+# Write the merged result to Parquet and also save an RDS copy for R users.
 write_parquet(ds_final, out_file,
     compression = "zstd", compression_level = 3, version = "2.6"
 )
-
-# Also save as RDS so downstream R scripts can load the result without Arrow
 saveRDS(data.table::as.data.table(ds_final), file = out_file_rds)
 
 cat("Merging complete!\n")
 cat("Number of records in merged dataset:", nrow(data.table::as.data.table(ds_final)), "\n")
 
-# Materialise the Arrow dataset into a data.table for all in-memory operations
-# that follow (column inspection, row- binding, validation).  After this point
-# ds_final is a regular data.table and Arrow is no longer needed.
+# Convert the Arrow dataset to a regular data.table for the remaining in-memory checks.
 ds_final <- data.table::as.data.table(ds_final)
 
 # Remove the intermediate Parquet parts — they are no longer needed now that
@@ -186,10 +177,7 @@ xraw <- as.data.table(readRDS(here(
 xraw[, growth_form := Lifeform]
 xraw[, Lifeform := NULL]
 
-# Sanity check: the DP algorithm was run exclusively on multi-stem records
-# (single_stem_tags == FALSE). Therefore ds_final must contain exactly as many
-# rows as there are multi-stem records in xraw.  A mismatch here means some
-# chunks were missing, duplicated, or the wrong run_code was selected above.
+# Validate that the DP output row count matches the multi-stem records in raw input.
 cat("Row count breakdown by stem type in raw data:\n")
 print(table(xraw$single_stem_tags))
 cat("Row count in merged DP output:", nrow(ds_final), "\n")
@@ -198,14 +186,13 @@ cat("Row count in merged DP output:", nrow(ds_final), "\n")
 # which tags the DP algorithm processed and cross-check against ds_final.
 tags_multistem_raw <- xraw[single_stem_tags == FALSE]$Tag
 cat("Number of multi-stem tag-census records in raw data:", length(tags_multistem_raw), "\n")
+rm(tags_multistem_raw)
 
 # Isolate multi-stem input records and sort by RowID for aligned comparison
 input_multi_stem_data <- xraw[single_stem_tags == FALSE]
 setorder(input_multi_stem_data, RowID)
 
-# The DP algorithm stores the species mnemonic in a column named 'species',
-# which duplicates the original 'Mnemonic' column from the raw input.
-# Verify they are identical for every row before dropping the redundant copy.
+# Verify the DP output's duplicate species column matches the original Mnemonic.
 if (isTRUE(unique(ds_final$Mnemonic == ds_final$Species))) {
     cat("OK: 'Mnemonic' and 'species' columns are identical; dropping 'species'.\n")
     ds_final[, Species := NULL]
@@ -220,15 +207,11 @@ setorder(ds_final, RowID)
 # 6. FIRST VALIDATION PASS: DP OUTPUT VS. RAW MULTI-STEM DATA
 # =============================================================================
 
-# Expected columns reported as "Different" after the DP run:
-#   - DBH       : the DP algorithm used a taper-corrected value internally;
-#                 the original measurement is preserved in DBH_mm_original_backup
-#                 and will be restored in Section 7.
-#   - ExactDate : missing measurement dates were imputed during the DP run.
-#   - growth_form: the DP algorithms simplified growth form categories for its
-#     internal parameter estimation;
-# Any column other than these two appearing as "Different" warrants investigation
-# before proceeding.
+# Known differences after DP output:
+#   - DBH: internal taper-corrected values were used; original DBH is preserved in backup.
+#   - ExactDate: some missing dates were imputed.
+#   - growth_form: categories were simplified for internal DP parameter estimation.
+# Any other differences should be investigated.
 
 cat("\n--- Validation pass 1: DP output vs. raw multi-stem input ---\n")
 comparison1 <- compare_columns(input_multi_stem_data, ds_final)
@@ -244,11 +227,7 @@ unique(merge(unique(input_multi_stem_data[, .(Tag, growth_form)]),
 # 7. RESTORE ORIGINAL DBH AND RE-VALIDATE
 # =============================================================================
 
-# Replace the algorithm's internal (taper-corrected) DBH with the original
-# field measurement stored in DBH_mm_original_backup, then discard the backup
-# column.  The chained [:=] calls modify ds_final in place in two steps:
-#   step 1: overwrite DBH with DBH_mm_original_backup values.
-#   step 2: remove the now-redundant DBH_mm_original_backup column.
+# Restore original DBH values from DBH_mm_original_backup and drop the backup column.
 
 if ("DBH_mm_original_backup" %in% names(ds_final)) {
     ds_final[, DBH := DBH_mm_original_backup][, DBH_mm_original_backup := NULL]
@@ -267,12 +246,10 @@ print(comparison2[result == "Different"])
 ds_final
 names(ds_final)
 
-# Column names from the original raw table
+# Keep the original raw table columns plus the DP-specific output columns.
 original_names <- names(xraw)
 
-# Columns added by the DP stem-identification algorithm that do not exist in
-# the original raw table.  Only the four active columns are retained in the
-# final output; posterior-probability columns are excluded to reduce file size.
+# Retain only the active DP output columns; omit posterior-probability diagnostics.
 new_names <- c(
     "TrueStemID", # definitive stem identifier assigned by the DP run
     "ReconstructedStemID", # stem ID reconstructed across historical censuses
@@ -297,22 +274,68 @@ names(ds_final)
 xraw[, (new_names) := NA]
 
 # Isolate single-stem records from the raw table
-input_single_stem_data <- xraw[single_stem_tags == TRUE]
+input_single_stem_data_raw <- xraw[single_stem_tags == TRUE]
 
 ## Verify that the single-stem subset is genuinely single-stem:
 ## every Tag should have exactly one unique StemID across all censuses.
 ## A UniqueStemID > 1 for any tag indicates a mis-classification during
 ## the single_stem_tags assignment step and must be investigated.
-chk_correctness_single <- copy(input_single_stem_data)
+chk_correctness_single <- copy(input_single_stem_data_raw)
 chk_correctness_single[!is.na(CensusID), UniqueCensusIDs := uniqueN(CensusID), by = Tag]
 chk_correctness_single[!is.na(StemID), UniqueStemID := uniqueN(StemID), by = Tag]
 cat("\nDistribution of unique StemIDs per tag in the single-stem subset:\n")
-print(table(chk_correctness_single$UniqueStemID))
+print(table(chk_correctness_single$UniqueStemID, useNA = "ifany"))
 # Expected: all tags have UniqueStemID == 1 (or NA for tags with no recorded StemID)
 
-# For single-stem trees there is only one stem, so StemID from the original
-# data serves directly as the ReconstructedStemID — no reconstruction needed.
-input_single_stem_data[, ReconstructedStemID := StemID]
+unique(chk_correctness_single[is.na(StemID)]$Tag)
+
+# Simplified renumbering for single-stem tags: renames ReconstructedStemID from 1 to N per tag.
+# Emits a warning if a tag has more than one unique stem.
+renumber_single_stem_ids <- function(dt, verbose = TRUE) {
+    if (is.null(dt) || nrow(dt) == 0L) {
+        return(dt)
+    }
+    needed <- c("Tag", "ReconstructedStemID")
+    if (!all(needed %in% names(dt))) {
+        if (isTRUE(verbose)) message("[renumber_single_stem_ids] Required columns missing; skipping.")
+        return(dt)
+    }
+    dt <- copy(dt)
+    # Cast column to integer so assignments don't get coerced to logical
+    dt[, ReconstructedStemID := as.integer(ReconstructedStemID)]
+    # Populate ReconstructedStemID from StemID where it is NA
+    if ("StemID" %in% names(dt)) {
+        dt[
+            is.na(ReconstructedStemID) & !is.na(StemID),
+            ReconstructedStemID := as.integer(factor(StemID))
+        ]
+    }
+    # Renumber sequentially within each Tag
+    dt[!is.na(ReconstructedStemID),
+        ReconstructedStemID := {
+            stem_ids <- unique(ReconstructedStemID)
+            n_stems <- length(stem_ids)
+            if (n_stems > 1 && isTRUE(verbose)) {
+                warning(sprintf(
+                    "[renumber_single_stem_ids] Tag %s has %d unique non-NA stem IDs; expected 1. Renumbering anyway.",
+                    .BY$Tag, n_stems
+                ))
+            }
+            id_map <- setNames(seq_len(n_stems), as.character(stem_ids))
+            as.integer(id_map[as.character(ReconstructedStemID)])
+        },
+        by = Tag
+    ]
+    dt
+}
+
+input_single_stem_data <- renumber_single_stem_ids(input_single_stem_data_raw)
+input_single_stem_data[, .(Tag, CensusID, StemID, ReconstructedStemID)]
+
+input_single_stem_data[is.na(ReconstructedStemID) & !is.na(StemID), .(Tag, CensusID, StemID, ReconstructedStemID)]
+input_single_stem_data[is.na(ReconstructedStemID), .(Tag, CensusID, StemID, ReconstructedStemID)]
+input_single_stem_data[Tag == "528106", .(Tag, CensusID, StemID, ReconstructedStemID)]
+
 # Ensure ReconstructionMethod is character before assigning the label
 # (it may have been read in as a different type if xraw had a factor column).
 input_single_stem_data[, ReconstructionMethod := as.character(ReconstructionMethod)]
@@ -321,6 +344,10 @@ input_single_stem_data[, ReconstructionMethod := "single_stem_tag_no_reconstruct
 # Verify that single-stem records with NA StemID also lack a DBH value
 # (NA StemID with non-NA DBH would indicate an ambiguous placement).
 unique(input_single_stem_data[is.na(StemID)]$DBH)
+
+## Check reconstructed IDs assigned to single-stem tags.
+input_single_stem_data[ReconstructedStemID > 1]
+table(output_multistem_data$ReconstructedStemID, useNA = "ifany")
 
 # Combine single-stem (from raw) and multi-stem (from DP output) into one table
 complete_dataset <- rbind(input_single_stem_data, output_multistem_data)
@@ -346,7 +373,7 @@ cat("\n--- Final validation: complete dataset vs. raw table (shared columns) ---
 comparison_final <- compare_columns(complete_dataset, xraw)
 print(comparison_final[result == "Different"])
 
-# those different values are the new columns I addedd and the exactdate
+# Differences should be limited to the new DP-specific columns and imputed ExactDate values.
 
 # =============================================================================
 # 10. CHECK RECONSTRUCTEDSTEMID ASSIGNMENTS
@@ -362,7 +389,7 @@ check_recstemid[, c("StemID_01", "TrueStemID_01", "ReconstructedStemID_01", "Rec
     ifelse(is.na(ReconstructedStemID_PreSweep), 0, 1)
 )]
 
-# All reconstructed stemid have one value
+# Check that rows with reconstructed IDs also have a stem ID indicator.
 check_recstemid[ReconstructedStemID_01 != StemID_01]
 
 # =============================================================================
@@ -379,8 +406,8 @@ cat("  ReconstructionMethod dist.:\n")
 print(table(complete_dataset$ReconstructionMethod, useNA = "ifany"))
 
 table(complete_dataset$ReconstructionMethod, useNA = "ifany")
-# Fill ReconstructedStemID for skipped_no_data rows (DP had no data to assign);
-# StemID is safe here because these rows had NA ReconstructedStemID but valid StemID.
+# For skipped_no_data rows, use StemID to reconstruct missing ReconstructedStemID values.
+# These rows had no DP assignment but do have valid StemID values.
 
 chk_skipped_no_data_tags <- unique(complete_dataset[ReconstructionMethod == "skipped_no_data"]$Tag)
 complete_dataset[Tag %in% chk_skipped_no_data_tags, .(Tag, CensusID, ReconstructedStemID, StemID, DBH, ReconstructionMethod)][order(Tag, CensusID)]
@@ -389,13 +416,29 @@ complete_dataset[
     Tag %in% chk_skipped_no_data_tags & is.na(ReconstructedStemID)
 ]
 
-complete_dataset[
-    Tag %in% chk_skipped_no_data_tags & is.na(ReconstructedStemID),
-    ReconstructedStemID := StemID
-]
+complete_dataset[is.na(ReconstructedStemID) & !is.na(StemID), .(Tag, CensusID, ReconstructedStemID, StemID, DBH, ReconstructionMethod)]
+
+complete_dataset_final_raw <- complete_dataset[!ReconstructionMethod %in% "skipped_no_data"]
+
+skipped_no_data <- complete_dataset[ReconstructionMethod %in% "skipped_no_data"]
+skipped_no_data <- renumber_single_stem_ids(skipped_no_data)
+
+complete_dataset_final <- rbind(complete_dataset_final_raw, skipped_no_data)
+setorder(complete_dataset_final, RowID)
 
 # Sanity: skipped tags (no DBH/CensusID data) are expected to have NA obs_row_id.
-complete_dataset[is.na(obs_row_id) & single_stem_tags == FALSE]
+complete_dataset_final[is.na(obs_row_id) & single_stem_tags == FALSE]
+
+# Review rows that still lack a ReconstructionMethod.
+table(complete_dataset_final$ReconstructionMethod, useNA = "ifany")
+
+complete_dataset_final[is.na(ReconstructionMethod)]
+# These rows are missing DBH and/or ReconstructionMethod; they require follow-up review.
+
+chk_skipped_full_na <- unique(complete_dataset_final[is.na(ReconstructionMethod)]$Tag)
+print(complete_dataset_final[Tag %in% chk_skipped_full_na, .(Tag, CensusID, ReconstructedStemID, StemID, DBH, ReconstructionMethod, ListOfTSM)][order(Tag, CensusID)], nrows = 200)
+# These rows correspond to dead tags appearing later as R/broken-below.
+# They are expected to be corrected during subsequent RTable reconstruction.
 
 # Output directory for the final complete dataset.
 post_dir <- path.expand(
@@ -410,6 +453,6 @@ if (!dir.exists(post_dir)) {
 }
 
 saveRDS(
-    complete_dataset,
-    here(post_dir, "complete_dataset_with_reconstructed_stemids.rds")
+    complete_dataset_final,
+    here(post_dir, "complete_dataset_final_with_reconstructed_stemids.rds")
 )

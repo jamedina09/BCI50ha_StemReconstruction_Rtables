@@ -1,26 +1,22 @@
-## 3_compare_dryad_and_me.R
+## 3_initial_comparisson_dryad_and_me.R
 ## =============================================================================
-## Purpose:
-##   Evaluate the quality of stem-identity reconstruction by comparing the
-##   dataset produced in step 7 of the pipeline (reconstructed StemIDs) against
-##   the Dryad/Condit reference measurements for BCI.
+## Purpose: Compare reconstructed BCI stem trajectories against the Dryad/Condit
+##          reference. Identify tags whose reconstructed DBH trajectories
+##          match or mismatch the reference and generate diagnostic PDFs.
 ##
-##   The comparison is based on cumulative per-stem DBH trajectories:
-##   if a tag's reconstructed stems rank in the same order and sum to the same
-##   total DBH as in the Dryad data, the reconstruction is considered correct.
-##
-##   Processing pipeline:
-##     1. Load the reconstructed dataset and the Dryad reference table.
-##     2. Summarize total DBH per tag × stem ID for both datasets (censuses 1–8).
-##     3. Compare trajectory summaries to classify each tag as "Match" / "Mismatch".
-##     4. Annotate tags with their reconstruction method (DP, probabilistic, both).
-##     5. Split mismatched tags by method and draw a random 100-tag sample each.
-##     6. Render diagnostic PDFs with side-by-side growth curves and data tables.
+## Sections:
+##   0. Setup
+##   1. Helper functions
+##   2. Load datasets
+##   3. Summarize tag × stem DBH trajectories
+##   4. Compare reconstructed and reference trajectories
+##   5. Classify mismatches by reconstruction method
+##   6. Generate diagnostic plots
+##   7. Compare tag counts per census
 ##
 ## Inputs:
-##   - Reconstructed dataset : BCI_stem_reconstruction/DATA/PROCESSED/
-##                             complete_dataset_with_reconstructed_stemids.rds
-##   - Dryad reference       : BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds
+##   - BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds
+##   - BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds
 ##
 ## Outputs:
 ##   - 2_STEM_IDENTIFICATION/differences_using_dp.pdf
@@ -45,17 +41,8 @@ library(plotrix) # addtable2plot(): embed data tables inside base-R plot panels
 # =============================================================================
 
 # load_dryad() -----------------------------------------------------------------
-# Reads the BCI Dryad/Condit RDS file, converts DBH from mm (as stored) to cm,
-# and harmonises column names to match the reconstructed dataset:
-#   - DBH  : numeric, diameter at breast height in centimetres
-#   - Tag  : character, matching the 'Tag' column in the reconstructed data
-#   - tag  : dropped after renaming to avoid duplicate columns
-#
-# Parameters:
-#   dryad_path : path to the Dryad RDS file.  Falls back to a sibling-directory
-#                path if the default is not found (useful when running from a
-#                different working directory).
-# Returns: data.table with the Dryad measurements ready for comparison.
+# Load the Dryad/Condit reference file and convert DBH from mm to cm.
+# If the default path is missing, fall back to a sibling directory location.
 load_dryad <- function(dryad_path = here("BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds")) {
     if (!file.exists(dryad_path)) {
         candidate <- here("..", "DATA", "DRYAD_CONDIT", "bci_dryad_condit.rds")
@@ -72,21 +59,8 @@ load_dryad <- function(dryad_path = here("BCI_stem_reconstruction/DATA/RAW/bci_d
 }
 
 # plot_stem_growth() -----------------------------------------------------------
-# Draws a base-R scatter/line plot of DBH over census time for all stems
-# belonging to one tree tag.  Each unique stem ID is drawn in a distinct colour
-# so that crossing or merging trajectories stand out visually.
-#
-# Parameters:
-#   tag         : character, the Tag value to filter on.
-#   data        : data.table containing at minimum the columns Tag, CensusID,
-#                 the column named by group_by, and the column named by dbh_var.
-#   group_by    : column name (character) that identifies individual stems;
-#                 defaults to "ReconstructedStemID".
-#   dbh_var     : column name (character) for the DBH values to plot;
-#                 defaults to "DBH".
-#   show_legend : logical; whether to draw the legend (default TRUE).
-#   who         : label prefix for the plot title (e.g. "Dryad" or "Reconstructed").
-# Returns: invisibly NULL; called for its side-effect (drawing a plot).
+# Plot DBH over census time for a single tag, colouring by stem identifier.
+# Supports either Dryad stem IDs or reconstructed stem IDs.
 plot_stem_growth <- function(tag,
                              data,
                              group_by = "ReconstructedStemID",
@@ -128,19 +102,8 @@ plot_stem_growth <- function(tag,
 }
 
 # summarize_trajectories() -----------------------------------------------------
-# Computes the cumulative (total) DBH per tag × stem ID for both the
-# reconstructed dataset and the Dryad reference, restricting to censuses
-# 1 through max_census to keep the comparison within the period covered by
-# the Dryad data.
-#
-# Parameters:
-#   indat      : data.table, the reconstructed dataset (from step 7).
-#   dryad      : data.table, the Dryad reference data (from load_dryad()).
-#   max_census : integer, upper census bound for the comparison (default 8,
-#                the last census included in the Condit Dryad release).
-# Returns: a named list with two data.tables:
-#   $indat_summary : columns Tag, ReconstructedStemID, TotalDBH
-#   $dryad_summary : columns Tag, stemID, TotalDBH_Condit
+# Sum DBH per tag × stem for the reconstructed and Dryad datasets.
+# Only censuses 1–8 are included, matching the Dryad release coverage.
 summarize_trajectories <- function(indat, dryad, max_census = 8) {
     indat_compare <- indat[CensusID <= max_census]
     indat_summary <- indat_compare[!is.na(DBH), .(TotalDBH = sum(DBH, na.rm = TRUE)), by = .(Tag, ReconstructedStemID)]
@@ -149,21 +112,9 @@ summarize_trajectories <- function(indat, dryad, max_census = 8) {
 }
 
 # compare_trajectories() -------------------------------------------------------
-# Determines whether the reconstructed stem trajectories for each tag match the
-# Dryad reference trajectories.  The comparison strategy:
-#   1. Sort both summaries by ascending TotalDBH within each Tag (rank-based
-#      comparison, so stems are aligned by size rather than by ID label).
-#   2. Assign a within-tag sequence number (seq) to each ranked stem.
-#   3. Join on (Tag, seq) and verify that:
-#        (a) the number of stems matches between datasets (N_dryad == N_indat), and
-#        (b) every aligned TotalDBH pair is exactly equal.
-#   4. Use fcase() to consolidate the two checks into a single three-valued
-#      flag: TRUE (match), FALSE (mismatch), or NA (tag absent from indat).
-#
-# Parameters:
-#   indat_summary : data.table, as returned by summarize_trajectories()$indat_summary.
-#   dryad_summary : data.table, as returned by summarize_trajectories()$dryad_summary.
-# Returns: data.table with columns Tag and all_equal_trajectories (logical or NA).
+# Compare reconstructed and Dryad trajectories by ranking stems within each tag
+# and checking whether the total DBH values align.
+# Result: one row per tag with a match/mismatch/NA flag.
 compare_trajectories <- function(indat_summary, dryad_summary) {
     dryad_sorted <- copy(dryad_summary)
     indat_sorted <- copy(indat_summary)
@@ -187,21 +138,8 @@ compare_trajectories <- function(indat_summary, dryad_summary) {
 }
 
 # render_comparison_pdf() ------------------------------------------------------
-# Generates a multi-page PDF with four panels per page, one page per tag:
-#   Panel 1 (top-left)  : Dryad DBH-over-census growth curves, coloured by stemID.
-#   Panel 2 (top-right) : Reconstructed DBH-over-census growth curves, coloured
-#                         by ReconstructedStemID.
-#   Panel 3 (bottom-left)  : Data table of Dryad records for that tag.
-#   Panel 4 (bottom-right) : Data table of reconstructed records for that tag.
-# Tags with no Dryad records (after filtering out P/V status rows) are skipped.
-#
-# Parameters:
-#   tags      : character vector of Tag values to render.
-#   file_name : output PDF path (character).
-#   indat     : data.table, the reconstructed dataset.
-#   dryad     : data.table, the Dryad reference data.
-#   n_rows    : reserved parameter (currently unused); retained for future use.
-# Returns: invisibly NULL; called for its side-effect (writing the PDF to disk).
+# Create a PDF showing Dryad vs reconstructed DBH trajectories and summary tables
+# for a set of tags.
 render_comparison_pdf <- function(tags, file_name, indat, dryad, n_rows = NULL) {
     if (length(tags) == 0) {
         message("Skipping empty tag list for ", file_name)
@@ -235,28 +173,24 @@ render_comparison_pdf <- function(tags, file_name, indat, dryad, n_rows = NULL) 
 # =============================================================================
 # 2. MAIN EXECUTION
 # =============================================================================
-# Step 1: Load input datasets ---------------------------------------------------
+# Step 1: Load datasets -------------------------------------------------------
 
-# Reconstructed dataset produced by 2_merge_chunks_to_datatable.R (section 11).
-# DBH is stored in mm; converted to cm below to match the Dryad reference scale.
-indat <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_with_reconstructed_stemids.rds"))
+# Load reconstructed output and convert DBH from mm to cm.
+indat <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds"))
 indat[, DBH := as.numeric(DBH) / 10]
 
-# Dryad/Condit reference data, loaded and pre-processed by load_dryad().
+# Load the Dryad reference data and prepare it for comparison.
 dryad <- load_dryad()
 
-indat[Tag == "-05599", .(Tag, DBH)] # sanity check: this tag is single-stem in Dryad, so should have one unique StemID in indat
-dryad[Tag == "-05599", .(Tag, DBH)] # sanity check: this tag is single-stem in Dryad, so should have one unique stemID in dryad
+# Quick unit sanity check for a sample tag.
+indat[Tag == "-05599", .(Tag, DBH)]
+dryad[Tag == "-05599", .(Tag, DBH)]
 
-# Restrict both datasets to censuses 1–8: the period covered by the Dryad release.
-# All comparisons (single-stem classification, trajectory matching) are done
-# within this window, matching the Quarto report logic exactly.
+# Restrict both datasets to censuses 1–8, matching the Dryad release window.
 indat_c8 <- indat[CensusID <= 8]
 dryad_c8 <- dryad[CensusID <= 8]
 
-# Classify single vs multi-stem tags using uniqueN(stemID) within census 1–8.
-# A tag is single-stem if it has exactly one unique (non-NA) stem ID across
-# all its records in the comparison window — same logic as the Quarto report.
+# Determine single- vs multi-stem tags in each dataset using unique StemIDs.
 id_single_stem_tags_indat_c8 <- indat_c8[
     , .(one_stemid = uniqueN(StemID[!is.na(StemID)]) == 1),
     by = Tag
@@ -287,9 +221,7 @@ setorder(chk1, Tag, CensusID)
 setorder(chk2, Tag, CensusID)
 
 # Step 2: Summarize cumulative DBH per tag × stem ---------------------------
-# Totals are computed only for censuses 1–8, the period covered by the Dryad
-# release.  Records with NA DBH (dead or missing stems) are excluded from
-# the sum so that trajectory shapes are based on measured values only.
+# Compute total DBH per stem within the comparison window, excluding missing DBH.
 sums <- summarize_trajectories(indat, dryad)
 indat_summary <- sums$indat_summary
 dryad_summary <- sums$dryad_summary
@@ -298,22 +230,16 @@ setorder(indat_summary, Tag)
 setorder(dryad_summary, Tag)
 
 # Step 3: Compare reconstructed trajectories against Dryad reference -----------
-# compare_trajectories() returns one row per tag with all_equal_trajectories:
-#   TRUE  — stem count and cumulative DBH values match exactly.
-#   FALSE — stem counts differ or at least one DBH rank mismatches.
-#   NA    — tag is present in Dryad but absent from the reconstructed data
+# Classify each tag as Match, Mismatch, or NA based on stem count and total DBH.
 comparison_dt <- compare_trajectories(sums$indat_summary, sums$dryad_summary)
 
 # Step 4: Annotate comparison results with stem morphology --------------------
-# Merge single_stem_tags from the reconstructed data so we can examine whether
-# reconstruction accuracy differs between single-stem and multi-stem trees.
-# We expect single-stem trees to have a 100% match rate since no reconstruction
-# was needed — their ReconstructedStemID was copied directly from StemID.
+# Attach single- vs multi-stem labels from the reconstructed data.
 morpho_tag <- unique(indat[, .(Tag, single_stem_tags)])
 comparison_dt <- merge(comparison_dt, morpho_tag, by = "Tag", all.x = TRUE)
 
 # Step 5: Summarise match rates by stem morphology ----------------------------
-# Recode the boolean flags to readable labels for tabulation.
+# Convert comparison flags into readable match/mismatch labels.
 compare_matches <- comparison_dt[
     , .(
         single_stem = ifelse(single_stem_tags, "Single-stem", "Multi-stem"),
@@ -343,9 +269,7 @@ differences_tags <- comparison_dt[all_equal_trajectories == FALSE]$Tag
 cat("Number of mismatched tags:", length(differences_tags), "\n")
 
 # Step 6: Classify mismatched tags by reconstruction method --------------------
-# For each tag, determine which reconstruction method(s) were used across its
-# records: only_dp, only_probabilistic, both_probabilistic_and_dp, or NA
-# (NA is unexpected for multi-stem tags and warrants investigation).
+# Label each tag by whether it used DP, probabilistic, or both methods.
 indat[, method_type := {
     has_prob <- any(grepl("probabilistic", ReconstructionMethod, fixed = TRUE))
     has_dp <- any(grepl("dp", ReconstructionMethod, fixed = TRUE))
@@ -377,11 +301,12 @@ cat(
 )
 
 # Step 7: Draw random samples and generate diagnostic PDFs --------------------
-# Cap each sample at 100 tags so the resulting PDFs remain tractable in size
-# and review time.  set.seed() is omitted intentionally so that re-runs produce
-# different samples, broadening the coverage of manual inspections over time.
+# Sample mismatched tags by method and generate diagnostic reports.
+set.seed(123)
 sample_differences_tags_prob <- sample(differences_tags_prob, min(300, length(differences_tags_prob)))
+set.seed(123)
 sample_differences_tags_dp <- sample(differences_tags_dp, min(300, length(differences_tags_dp)))
+set.seed(123)
 sample_differences_tags_dp_prob <- sample(differences_tags_dp_prob, min(300, length(differences_tags_dp_prob)))
 
 ## create a data frame in long format with two columns, one the sample difference type and the tags in the other
@@ -391,27 +316,25 @@ explore_tags_long <- rbind(
     data.table(method = "sample_differences_tags_dp_prob", Tag = sample_differences_tags_dp_prob)
 )
 
-# render_comparison_pdf() is called with match() to preserve the original ordering
-# from differences_tags_* rather than the random sampling order, making PDFs
-# consistently ordered across re-runs for the same sampled tags.
-# indat_c8 is used (census 1–8 only) to match what the Quarto report passes
-# to its render function.
+# Preserve the original tag ordering when rendering the sampled PDFs.
+# Use the census 1–8 subset to match the Quarto report logic.
+comparissons_path <- "./BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons"
 render_comparison_pdf(
     differences_tags_dp[match(sample_differences_tags_dp, differences_tags_dp)],
-    "./BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/differences_using_dp.pdf", indat_c8, dryad_c8
+    file.path(comparissons_path, "differences_using_dp.pdf"), indat_c8, dryad_c8
 )
 render_comparison_pdf(
     differences_tags_prob[match(sample_differences_tags_prob, differences_tags_prob)],
-    "./BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/differences_using_probabilistic.pdf", indat_c8, dryad_c8
+    file.path(comparissons_path, "differences_using_probabilistic.pdf"), indat_c8, dryad_c8
 )
 render_comparison_pdf(
     differences_tags_dp_prob[match(sample_differences_tags_dp_prob, differences_tags_dp_prob)],
-    "./BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/differences_using_both_methods.pdf", indat_c8, dryad_c8
+    file.path(comparissons_path, "differences_using_both_methods.pdf"), indat_c8, dryad_c8
 )
 
 cat("\nDone. Diagnostic PDFs written to: 2_STEM_IDENTIFICATION/\n")
 
-# Step 8: Compare overall tag-level differences per year --------------------
+# Step 8: Compare overall tag counts by census -------------------------------
 indat_tags_per_census <- indat_c8[!is.na(DBH), .(N_tags = uniqueN(Tag)), by = CensusID]
 dryad_tags_per_census <- dryad_c8[!is.na(DBH), .(N_tags = uniqueN(Tag)), by = CensusID]
 
