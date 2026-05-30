@@ -362,7 +362,7 @@ check_recstemid[, c("StemID_01", "TrueStemID_01", "ReconstructedStemID_01", "Rec
     ifelse(is.na(ReconstructedStemID_PreSweep), 0, 1)
 )]
 
-# NOTE: All reconstructed stemid have one value
+# All reconstructed stemid have one value
 check_recstemid[ReconstructedStemID_01 != StemID_01]
 
 # =============================================================================
