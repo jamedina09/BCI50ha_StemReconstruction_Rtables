@@ -184,7 +184,7 @@ map_quadrat_stock <- tree_census[,
 # SECTION 4: Posterior uncertainty propagation
 # ============================================================
 
-K_realizations <- 10L
+K_realizations <- 100L
 set.seed(42L)
 
 post_full <- as.data.table(readRDS(post_file))
@@ -764,3 +764,5 @@ ggsave(file.path(out_dir, "fig1_stock.pdf"), fig1, width = 8, height = 4.5)
 ggsave(file.path(out_dir, "fig2_fluxes.pdf"), fig2, width = 8, height = 10)
 ggsave(file.path(out_dir, "fig3a_trajectories.pdf"), fig3a, width = 9, height = 8)
 ggsave(file.path(out_dir, "fig3b_growth.pdf"), fig3b, width = 8, height = 4.5)
+
+beepr::beep(2)
