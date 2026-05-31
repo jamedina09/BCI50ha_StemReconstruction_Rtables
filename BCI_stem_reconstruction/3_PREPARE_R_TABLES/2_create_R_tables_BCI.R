@@ -3101,14 +3101,7 @@ check_coordinates <- unique(check_coordinates[
 
 check_coordinates
 
-if (dir.exists("./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS")) {
-  cat("✓ CHECK folder exists: ./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS\n")
-} else {
-  dir.create("./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS", recursive = TRUE)
-  cat("✓ Created CHECK folder: ./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS\n")
-}
-
-fwrite(check_coordinates, "./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/repeated_coordinates.csv")
+fwrite(check_coordinates, file.path(CHECK_folder, "repeated_coordinates.csv"))
 
 impute_tree_dates <- function(split_list,
                               id_cols = c("TreeID", "Tag"),
@@ -3213,7 +3206,7 @@ check_dates[, c("n_dates") :=
 by = .(CensusID, TreeID)
 ]
 
-fwrite(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)], "./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/repeated_dates.csv")
+fwrite(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)], file.path(CHECK_folder, "repeated_dates.csv"))
 
 for (census in seq_along(ViewFullTable_split)) {
   cat(sprintf("  Processing census %d...\n", census))
