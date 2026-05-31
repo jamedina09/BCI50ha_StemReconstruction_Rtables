@@ -1,68 +1,44 @@
 # 2_STEM_IDENTIFICATION
 
-Stage 2 of the BCI stem-reconstruction pipeline. Runs the dp_global DP engine
-on the cleaned ViewFullTable from `1_DATA_PREPARATION/` and assembles the
-per-stem reconstructed identities used downstream in `3_PREPARE_R_TABLES/`.
+Stage 2 of the BCI stem-reconstruction pipeline. This stage runs the DP solver
+on cleaned ViewFullTable input from `1_DATA_PREPARATION/` and produces the
+reconstructed stem dataset used by `3_PREPARE_R_TABLES/`.
 
-## Scripts (run in order)
+## Scripts
 
-### `1_main_cpp_chunk_bci.R` — Chunked DP driver
+### `1_main_cpp_chunk_bci.R`
 
-Loads `DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds`, estimates
-per-species biological parameters, applies a BCI-specific TrueStemID pre-propagation
-(Steps 1–3), then runs the dp_global DP engine across all multi-stem tags in
-parallel chunks.
+Chunked DP driver.
 
-Key behaviours:
+- Loads `BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds`.
+- Estimates per-species parameters and applies BCI-specific preprocessing.
+- Runs `dp_global` on multi-stem tags in parallel chunks.
+- Writes chunk outputs to `BASE_OUT_DIR/<run_timestamp>/`.
+- Supports resuming interrupted runs.
 
-- Tags are split into single-stem (bypass, `ReconstructedStemID = StemID`) and
-  multi-stem (DP reconstruction) subsets before the engine runs.
-- Output is written incrementally: one Feather file per chunk to
-  `BASE_OUT_DIR/<run_timestamp>/`.
-- Post-engine helpers run per chunk in order:
-  `maybe_add_posterior_bins` → `apply_carried_terminal_backfill` →
-  `apply_orphan_stem_backfill` → `apply_broken_below_invariants` →
-  `renumber_engine_minted_ids` → `finalize_posterior_paths`.
-- Resumes partial runs automatically (`DP_CHUNK_RESUME=TRUE`); a chunk is
-  skipped if its `_done.txt` completion marker already exists.
-- All key parameters are overridable via `--KEY=VALUE` CLI flags. See the
-  `CLI_REFERENCE` table inside the script for the full list.
+### `2_merge_chunks_to_datatable.R`
 
-**How to run:** see [`run_chunk_bci.txt`](run_chunk_bci.txt) for the production
-command line and resume example.
+Merges completed chunk outputs into final files.
 
-### `2_merge_chunks_to_datatable.R` — Merge and assemble
+- Reads Feather chunk outputs from `home_dir/run_code`.
+- Converts them to temporary Parquet parts and merges them.
+- Writes `merged_output.parquet` and `merged_output.rds` to
+  `BCI_stem_reconstruction/DATA/<run_code>/`.
 
-Reads all Feather chunk files from a completed DP run directory, batch-converts
-them to intermediate Parquet parts to control peak memory, merges into a single
-dataset, reattaches single-stem records from the raw table, validates row counts
-and column agreement, and saves:
+## Notes
 
-- `DATA/<run_code>/merged_output.parquet` — merged multi-stem DP output
-- `DATA/<run_code>/merged_output.rds` — same as RDS
-- `DATA/PROCESSED/complete_dataset_with_reconstructed_stemids.rds` — full
-  dataset (single-stem + multi-stem) ready for `3_PREPARE_R_TABLES/`
-
-Set `home_dir` and `run_code` at the top of the script to point at the desired
-run directory before executing.
-
-## Other files
-
-- [`run_chunk_bci.txt`](run_chunk_bci.txt) — Production command lines for
-  starting a new run and resuming a partial run, with annotated flag descriptions.
+- Refer to `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_chunk_bci.md`
+  for run and resume commands.
 
 ## Data flow
 
-```
+```text
 DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds
         │
         ▼
-1_main_cpp_chunk_bci.R   →   BASE_OUT_DIR/<run_ts>/*_chunk_NNN.feather
-                              BASE_OUT_DIR/<run_ts>/posteriors/tag_*_paths.feather
-        │
-        ▼
+1_main_cpp_chunk_bci.R
+        └──▶ BASE_OUT_DIR/<run_timestamp>/  (chunk Feather outputs)
+
 2_merge_chunks_to_datatable.R
-        │
-        ├──▶  DATA/<run_code>/merged_output.{parquet,rds}
-        └──▶  DATA/PROCESSED/complete_dataset_with_reconstructed_stemids.rds
+        └──▶ BCI_stem_reconstruction/DATA/<run_code>/merged_output.{parquet,rds}
 ```

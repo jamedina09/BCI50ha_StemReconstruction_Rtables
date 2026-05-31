@@ -1,17 +1,26 @@
 # 3_PREPARE_R_TABLES
 
-Stage 3 (final) of the BCI stem-reconstruction pipeline. Takes the
-reconstructed stem identities from `2_STEM_IDENTIFICATION/` and emits the
-ForestGEO-format per-census R tables (`.Rdata`) along with the posterior /
-diagnostic exports.
+Stage 3 of the BCI stem-reconstruction pipeline. This stage consumes the
+reconstructed stem identities from `2_STEM_IDENTIFICATION/` and generates the
+ForestGEO-format census tables plus QC exports used for downstream analysis.
 
 ## Scripts (run in order)
 
-- `1_prepare_posteriors_BCI.R` — Read the per-chunk arrow/feather outputs
-  from stage 2, assemble the full posterior dataset, and write the
-  reconstructed-StemID table consumed by the table builder.
-- `2_create_R_tables_BCI.R` — Main table builder. Resolves encounter
-  histories (alive / dead / gone / prior / broken-below with DBH-aware
-  rules), runs the propagation and resurrection fixes, imputes missing
-  coordinates and dates per tree/quadrat, and writes one ForestGEO R table
-  per census plus quality-control reports.
+- `1_prepare_posteriors_BCI.R` — Consolidates `_paths.feather` posterior files
+  from a completed stage 2 run into `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`.
+- `2_create_R_tables_BCI.R` — Builds the final census tables and species table.
+  It resolves encounter histories, applies DBH-aware broken-below rules,
+  propagates terminal and prior states, corrects resurrection patterns,
+  performs D/G remapping, imputes missing coordinates/dates, and exports
+  ForestGEO-format `.Rdata` (and supporting `.csv`) tables.
+
+## Outputs
+
+- `BCI_stem_reconstruction/DATA/RTABLES/<site>.stemN.Rdata`
+- `BCI_stem_reconstruction/DATA/RTABLES/<site>.spptable.rdata`
+- `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`
+- QC exports in `BCI_stem_reconstruction/DATA/CHECKS/`
+
+## Notes
+
+- `1_prepare_posteriors_BCI.R` must be run before `2_create_R_tables_BCI.R`.
