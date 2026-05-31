@@ -80,6 +80,29 @@ cat("Found", length(post_files), "posterior files\n")
 # Read and bind all posterior files into a single data.table
 dt_posteriors <- read_and_bind_feathers(post_files)
 
+# link treeid to tag
+tag_treeid_map <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds"))
+tag_treeid_map <- unique(tag_treeid_map[, .(TreeID, Tag)])
+tag_treeid_map[, Tag := as.character(Tag)]
+tag_treeid_map[, TreeID := as.character(TreeID)]
+
+tag_post <- data.table(Tag = unique(dt_posteriors$Tag))
+
+weird_tags <- unique(setdiff(tags_post$Tag, tag_treeid_map$Tag))
+
+dt_posteriors <- merge(
+    dt_posteriors,
+    tag_treeid_map,
+    by = "Tag",
+    all.x = TRUE
+)
+
+col_order <- c("Tag", "TreeID", "path_sig", "path_count", "path_prob", "recon")
+
+dt_posteriors <- dt_posteriors[, ..col_order][!is.na(TreeID)]
+
+# treeID stemID    tag
+
 # Report the consolidated table size and preview the top rows.
 dt_size_mb <- object.size(dt_posteriors) / (1024^2)
 cat("Size of consolidated data.table:", round(dt_size_mb, 2), "MB\n")
