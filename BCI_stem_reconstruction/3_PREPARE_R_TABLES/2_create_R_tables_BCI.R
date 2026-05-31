@@ -200,7 +200,7 @@ ViewFullTable_columns_to_keep <- c(
   "DBHID", "CensusID", "DBH", "HOM", # measurement record
   "ExactDate", "Status", "ListOfTSM", # raw field status + measurement codes
   "Date", "new_status", # date + script-computed corrected status
-  "obs_row_id", "DP_PosteriorReconstructedProb" # DP reconstruction metadata
+  "obs_row_id" # DP reconstruction metadata
 )
 
 # Standardized ForestGEO R-table column names (must match ViewFullTable_columns_to_keep
@@ -211,7 +211,7 @@ new_names_columns_to_keep <- c(
   "MeasureID", "CensusID", "dbh", "hom", # hom = height of measurement
   "ExactDate", "DFstatus", "codes", # DFstatus = raw field status (legacy name)
   "date", "Rstatus", # date + script-computed corrected status
-  "obs_row_id", "PosteriorProb" # DP reconstruction metadata
+  "StemPaths" # DP reconstruction metadata
 )
 
 # ---- Hard guard: the two column vectors must be 1-to-1 -------------------
@@ -398,6 +398,10 @@ ViewFullTable <- copy(ViewFullTable_RAW)
 #   (see analysis above). They carry no DBH and do not affect size or growth analyses.
 ViewFullTable[, Raw_StemID := StemID] # preserve original DB StemID
 
+# unique(ViewFullTable$StemID)
+# unique(ViewFullTable$Raw_StemID)
+# unique(ViewFullTable$ReconstructedStemID)
+
 setkey(ViewFullTable, TreeID)
 setkey(ViewFullTable, Tag)
 
@@ -408,6 +412,7 @@ ViewFullTable[, .(n_treeid = uniqueN(TreeID)), by = Tag][order(-n_treeid)]
 ViewFullTable[is.na(Tag)]
 ViewFullTable[is.na(TreeID)]
 
+# sort(table(ViewFullTable$ReconstructedStemID))
 ViewFullTable[, StemID := paste(TreeID, ReconstructedStemID, sep = "_")] # new stable StemID
 
 # ── DIAGNOSTIC: Report "TreeID_NA" StemIDs ───────────────────────────────────────
@@ -863,16 +868,20 @@ original_status <- gsub("alive", "A", original_status)
 # We'll distinguish between these in Section 6
 original_status[is.na(original_status)] <- "N"
 
+# Step 2b: Raw "missing" values should be treated as no-data, not dead.
+# A raw "missing" observation does not imply the stem was confirmed dead.
+original_status[original_status == "missing"] <- "N"
+
 # BCI rule: "broken below" with DBH → "alive"; without DBH → "dead".
 # Already resolved above before the wide pivot, so this gsub is a defensive
 # no-op kept only for documentation.
 original_status <- gsub("broken below", "G", original_status)
 
 # Step 4: Everything else → "D"
-# This catches: "dead", "stem dead", "missing", and any remaining
-# non-A/N/G statuses.  After Step 3, "broken below" has already been
-# split into "alive"/"dead" using DBH, so the only stems that fall
-# into "D" here are genuine deads (no DBH measurement implied).
+# This catches: "dead", "stem dead", and any remaining non-A/N/G statuses.
+# After Step 3, "broken below" has already been split into "alive"/"dead"
+# using DBH, so the only stems that fall into "D" here are genuine deads
+# or terminal statuses that were not explicitly marked as missing/no-data.
 # The "D" label is treated as REAL unless the same stem reappears as
 # "A" in a later census, in which case fix_resurrections() in Section
 # 9 backfills it (the "death" was a temporary measurement gap).
@@ -1839,7 +1848,7 @@ RES_fix <- fix_resurrections(
 )
 new_status <- RES_fix$status_vec
 
-cat("\n🔍 D→A / G→A patterns AFTER correction (should be empty):\n")
+cat("\n🔍 D→A / G→A patterns AFTER correction (should be empty; if not, next section):\n")
 tbl_sorted_stem <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
 print(tbl_sorted_stem[grepl("DA|GA", tbl_sorted_stem$x), ])
 
@@ -2663,6 +2672,66 @@ cat(sprintf(
   sum(G_to_D_mask), sum(D_to_G_mask)
 ))
 
+# ========================================================================
+# SECTION 11.7: CHECK STEMS WITH G OR D IN FIRST AND LAST CENSUS
+# ========================================================================
+# PURPOSE:
+#   Identify stems whose corrected history begins and ends with the same
+#   terminal code (G or D) after the D/G remap.
+# WHY:
+#   These are cases where the stem is effectively marked gone or dead
+#   across the full observation window, and the check helps distinguish
+#   true terminal stems from potential data/model issues.
+# ========================================================================
+first_code <- corrected_new_status_matrix[, 1]
+last_code <- corrected_new_status_matrix[, n_cens]
+same_first_last_G <- first_code == "G" & last_code == "G"
+same_first_last_D <- first_code == "D" & last_code == "D"
+same_first_last <- same_first_last_G | same_first_last_D
+
+cat(sprintf(
+  "✓ Section 11.7 check: %d stems start and end with the same terminal code.\n",
+  sum(same_first_last)
+))
+cat(sprintf(
+  "   all-G first/last: %d, all-D first/last: %d\n",
+  sum(same_first_last_G), sum(same_first_last_D)
+))
+
+if (sum(same_first_last) > 0L) {
+  first_census_dt <- ViewFullTable_split[[1]][
+    , .(StemID, TreeID,
+      raw_first_status = Status, raw_first_dbh = DBH,
+      raw_first_ListOfTSM = ListOfTSM, raw_first_HOM = HOM
+    )
+  ]
+  idx_first <- match(unique_StemID$StemID, first_census_dt$StemID)
+
+  same_first_last_dt <- data.table(
+    TreeID = unique_StemID$TreeID,
+    StemID = unique_StemID$StemID,
+    first_code = first_code,
+    last_code = last_code,
+    raw_first_status = first_census_dt$raw_first_status[idx_first],
+    raw_first_dbh = first_census_dt$raw_first_dbh[idx_first],
+    raw_first_ListOfTSM = first_census_dt$raw_first_ListOfTSM[idx_first],
+    raw_first_HOM = first_census_dt$raw_first_HOM[idx_first],
+    original_status = original_status,
+    corrected_history = corrected_new_status
+  )[same_first_last]
+
+  fwrite(same_first_last_dt,
+    file.path(CHECK_folder, "section11_7_first_last_terminal_status.csv"),
+    sep = ",",
+    na = "",
+    row.names = FALSE
+  )
+  cat(sprintf(
+    "   details written to: %s\n",
+    file.path(CHECK_folder, "section11_7_first_last_terminal_status.csv")
+  ))
+}
+
 rm(
   tree_dt, AP_in, AP_out, single_stem_row, all_dead_row, some_alive_row,
   G_to_D_mask, D_to_G_mask, last_col, TreeID_vec
@@ -3296,7 +3365,7 @@ for (census in seq_along(ViewFullTable_split)) {
   ViewFullTable_split[[census]]$new_status <- corrected_new_status_matrix[, census]
 }
 
-# table(ViewFullTable_split[[9]][, ..ViewFullTable_columns_to_keep]$new_status, useNA = "ifany")
+# table(ViewFullTable_split[[1]][, ..ViewFullTable_columns_to_keep]$new_status, useNA = "ifany")
 
 # ========================================================================
 # COORDINATE IMPUTATION: fill NA PX / PY across censuses
@@ -3543,10 +3612,6 @@ ViewFullTable_split <- impute_tree_dates(
   strict = FALSE
 )
 
-# df_stem[treeID == "99995", .(treeID, stemID, CensusID, ExactDate, prev_ExactDate, Rstatus, dbh)]
-# df_stem[treeID == "243042", .(treeID, stemID, CensusID, ExactDate, prev_ExactDate, Rstatus, dbh)]
-
-
 cat("✓ Dates imputation complete.\n\n")
 
 cat("💾 Exporting census tables to .Rdata files...\n")
@@ -3693,19 +3758,20 @@ sptable[, Latin := paste(Genus, SpeciesName)]
 # Select columns needed for ForestGEO format
 cols_to_keep <- c(
   "Mnemonic", # Species code (e.g., "ACERUB")
+  "Order", # Taxonomic order
   "Family", # Taxonomic family
-  "Latin", # Full scientific name
   "Genus", # Genus name
   "SpeciesName", # Species epithet
-  "Subspecies", # Subspecies information
-  # "SpeciesID", # Numeric species identifier
+  "Latin", # Full scientific name
+  "InfraspecificRank", # Subspecies/variety rank (if applicable)
+  "InfraspecificEpithet", # Subspecies/variety name (if applicable
   "Authority", # Taxonomic authority
-  # "IDLevel", # Identification confidence level
   "Synonyms", # Historical synonyms
   "Lifeform_RFoster",
   "Lifeform_RPerez_SAguilar",
   "CommonName", # Common name (if available)
-  "Herbarium" # Herbarium voucher information (if available)
+  "Herbarium", # Herbarium voucher information (if available)
+  "Notes"
 )
 
 sptable <- sptable[, ..cols_to_keep]
