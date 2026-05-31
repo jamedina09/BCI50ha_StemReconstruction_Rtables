@@ -88,7 +88,7 @@ tag_treeid_map[, TreeID := as.character(TreeID)]
 
 tag_post <- data.table(Tag = unique(dt_posteriors$Tag))
 
-weird_tags <- unique(setdiff(tags_post$Tag, tag_treeid_map$Tag))
+weird_tags <- unique(setdiff(tag_post$Tag, tag_treeid_map$Tag))
 
 dt_posteriors <- merge(
     dt_posteriors,
@@ -101,7 +101,8 @@ col_order <- c("Tag", "TreeID", "path_sig", "path_count", "path_prob", "recon")
 
 dt_posteriors <- dt_posteriors[, ..col_order][!is.na(TreeID)]
 
-# treeID stemID    tag
+# rename Tag to tag and TreeID to treeID for consistency with the rest of the codebase
+setnames(dt_posteriors, old = c("Tag", "TreeID"), new = c("tag", "treeID"))
 
 # Report the consolidated table size and preview the top rows.
 dt_size_mb <- object.size(dt_posteriors) / (1024^2)
@@ -110,6 +111,8 @@ head(dt_posteriors)
 
 # Deduplicate if duplicate rows were introduced during file binding.
 dt_posteriors <- unique(dt_posteriors)
+
+inspectdf::inspect_na(dt_posteriors)
 
 cat(
     "Consolidated table dimensions:", nrow(dt_posteriors), "rows ×",
