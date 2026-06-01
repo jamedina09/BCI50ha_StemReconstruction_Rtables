@@ -35,9 +35,17 @@ rec[, ExactDate := fifelse(is.na(ExactDate), date_quad_census, ExactDate)]
 rec[is.na(ExactDate), ExactDate := date_plot_census]
 rec[, c("date_quad_census", "date_plot_census") := NULL]
 # FIXME
-rec <- rec[gx <= 200 & gy <= 200]
+# rec <- rec[gx <= 200 & gy <= 200]
 
 post_file <- "./BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds"
+
+# Exclude the first census from all figures and plot summaries.
+# The first census is usually omitted because buttressed trees were measured
+# around the buttress at breast height, which introduces a strong DBH bias.
+first_plot_census <- 2L
+
+# Number of MC realizations to draw from the posterior distribution of paths.
+K_realizations <- 1000L
 
 # ============================================================
 # SECTION 2: Helper functions
@@ -87,13 +95,23 @@ decompose_ba <- function(m, by_cols) {
     m[, .(
         Growth_BA     = fsum((BA_to - BA_from) * (status == "survivor"), na.rm = TRUE),
         Loss_BA       = -fsum(BA_from * (status == "death"), na.rm = TRUE),
-        Gain_BA       = fsum(BA_to * (status == "recruit"), na.rm = TRUE),
-        DeltaBA_total = fsum(BA_to, na.rm = TRUE) - fsum(BA_from, na.rm = TRUE),
-        NumSurvivors  = fsum(status == "survivor"),
-        NumDeaths     = fsum(status == "death"),
-        NumRecruits   = fsum(status == "recruit")
+        Gain_BA       = fsum(BA_to * (status == "recruit"), na.rm = TRUE) # ,
+        # DeltaBA_total = fsum(BA_to, na.rm = TRUE) - fsum(BA_from, na.rm = TRUE),
+        # NumSurvivors  = fsum(status == "survivor"),
+        # NumDeaths     = fsum(status == "death"),
+        # NumRecruits   = fsum(status == "recruit")
     ), by = by_cols]
 }
+
+data.table(
+    BA_from = c(10, 10, NA, 15, NA),
+    BA_to   = c(12, NA, 5, 18, 8)
+)
+
+decompose_ba(data.table(
+    BA_from = c(10, 10, NA, 15, NA),
+    BA_to   = c(12, NA, 5, 18, 8)
+))
 
 # Summarise all four flux columns across realizations: mean, sd, empirical 95 % CI.
 # Applied at both the tree and quadrat levels via the by_cols argument.
@@ -110,9 +128,9 @@ summarise_flux <- function(dt, by_cols) {
                 Loss_mean   = fmean(Loss_BA),       Loss_sd    = fsd(Loss_BA),
                 Loss_lwr    = ql[1L],               Loss_upr   = ql[2L],
                 Gain_mean   = fmean(Gain_BA),       Gain_sd    = fsd(Gain_BA),
-                Gain_lwr    = qa[1L],               Gain_upr   = qa[2L],
-                Delta_mean  = fmean(DeltaBA_total), Delta_sd   = fsd(DeltaBA_total),
-                Delta_lwr   = qd[1L],               Delta_upr  = qd[2L]
+                Gain_lwr    = qa[1L],               Gain_upr   = qa[2L] # ,
+                # Delta_mean  = fmean(DeltaBA_total), Delta_sd   = fsd(DeltaBA_total),
+                # Delta_lwr   = qd[1L],               Delta_upr  = qd[2L]
             )
         },
         by = by_cols
@@ -141,6 +159,7 @@ setorder(tree_census, treeID, CensusID)
 cat("[BA] treeID x census rows:", nrow(tree_census), "\n")
 
 dates <- rec[!is.na(treeID), .(Date = median(ExactDate, na.rm = TRUE)), by = CensusID][order(CensusID)]
+dates[, Year := as.integer(format(Date, "%Y"))]
 stopifnot("Need >= 2 censuses" = nrow(dates) >= 2L)
 census_pairs <- data.table(
     CensusID_from = dates$CensusID[-nrow(dates)],
@@ -148,6 +167,8 @@ census_pairs <- data.table(
     Date_from     = dates$Date[-nrow(dates)],
     Date_to       = dates$Date[-1L]
 )
+census_pairs[, Date_mid := Date_from + (Date_to - Date_from) / 2]
+census_pairs[, Year_mid := as.integer(format(Date_mid, "%Y"))]
 
 stem_dt <- rec[
     !is.na(treeID) & !is.na(stemID),
@@ -156,6 +177,7 @@ stem_dt <- rec[
 
 # MAP census-pair decomposition using shared decompose_ba().
 map_change <- rbindlist(lapply(seq_len(nrow(census_pairs)), function(i) {
+    # i <- 1
     cf <- census_pairs$CensusID_from[i]
     ct <- census_pairs$CensusID_to[i]
     sf <- stem_dt[CensusID == cf, .(quadrat, treeID, StemID, BA_from = BA)]
@@ -170,14 +192,13 @@ map_change <- rbindlist(lapply(seq_len(nrow(census_pairs)), function(i) {
         Date_to = census_pairs$Date_to[i]
     )]
 }))
-map_change[, Interval_yr := as.numeric(difftime(Date_to, Date_from, units = "days")) / 365.25]
-map_change[is.na(Interval_yr) | Interval_yr <= 0, Interval_yr := 5.0]
+
 cat(
     "[BA] MAP decomposition:", nrow(map_change), "intervals across",
     uniqueN(map_change$treeID), "treeIDs\n"
 )
 
-flux_cols <- c("Growth_BA", "Loss_BA", "Gain_BA", "DeltaBA_total")
+flux_cols <- c("Growth_BA", "Loss_BA", "Gain_BA") # , "DeltaBA_total")
 
 # Quadrat-level MAP aggregations (deterministic; no CI needed here).
 map_tree_change <- copy(map_change)
@@ -188,6 +209,7 @@ map_quadrat_change <- map_tree_change[,
     .SDcols = flux_cols,
     by = .(quadrat, CensusID_from, CensusID_to)
 ]
+map_quadrat_change[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
 
 # Stocks: 9 censuses
 map_quadrat_stock <- tree_census[,
@@ -211,10 +233,9 @@ map_quadrat_stock <- tree_census[,
 # and written alongside the MAP outputs to disk.
 # ============================================================
 
-K_realizations <- 100L
 set.seed(42L)
-# mc_center <- "mean"    # choose "mean" or "median"
-mc_center <- "median" # choose "mean" or "median"
+mc_center <- "mean" # choose "mean" or "median"
+# mc_center <- "median" # choose "mean" or "median"
 mc_center <- match.arg(mc_center, c("mean", "median"))
 
 post_full <- as.data.table(readRDS(post_file))
@@ -260,6 +281,15 @@ gc()
 setkey(all_paths, treeID)
 cat("[BA] Parsed path observations:", nrow(all_paths), "\n")
 
+# decompose_ba(
+#     merge(
+#         sf[treeID == "231607"],
+#         st[treeID == "231607"],
+#         by = c("group_id", "quadrat", "treeID", "path_idx", "StemID"), all = TRUE
+#     ),
+#     by_cols = c("group_id", "quadrat", "treeID", "path_idx")
+# )
+
 # Posterior census-pair decomposition — reuses decompose_ba() identically to MAP.
 # path_prob is dropped from sf/st to avoid a suffix collision in the full-outer merge.
 post_decomp <- rbindlist(lapply(seq_len(nrow(census_pairs)), function(i) {
@@ -273,6 +303,7 @@ post_decomp <- rbindlist(lapply(seq_len(nrow(census_pairs)), function(i) {
     )
     d[, `:=`(CensusID_from = cf, CensusID_to = ct)]
 }))
+post_decomp[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
 cat("[BA] Posterior decompositions:", nrow(post_decomp), "rows\n")
 
 # Per-path tree-level BA stocks — used for individual tree trajectory plots.
@@ -374,6 +405,7 @@ if (length(multi_path_groups) > 0L) {
     )
     setkey(sampled_paths, group_id, realization)
 }
+all_quadrat_realizations[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
 
 # ---- MC summary tables: empirical 95 % CI across realizations ---------------
 all_quadrat_summary <- summarise_flux(
@@ -539,12 +571,17 @@ map_stock_boot <- map_quadrat_stock[
     },
     by = CensusID
 ]
+map_stock_boot <- merge(map_stock_boot, dates[, .(CensusID, Year)], by = "CensusID")
+map_stock_boot <- map_stock_boot[CensusID >= first_plot_census]
 
 # MC: per-realization forest-level stock (mean per-ha across all quadrats).
 mc_stock_per_real <- all_stock_realizations[,
     .(TotalBA_ha = fmean(TotalBA_m2 * scale_ha)),
     by = .(CensusID, realization)
 ]
+mc_stock_per_real <- merge(mc_stock_per_real, dates[, .(CensusID, Year)], by = "CensusID")
+mc_stock_per_real <- mc_stock_per_real[CensusID >= first_plot_census]
+
 # MC: collapse 250 realization means to center + 95 % empirical CI.
 mc_stock_ci <- mc_stock_per_real[,
     {
@@ -553,36 +590,38 @@ mc_stock_ci <- mc_stock_per_real[,
     },
     by = CensusID
 ]
+mc_stock_ci <- merge(mc_stock_ci, dates[, .(CensusID, Year)], by = "CensusID")
+mc_stock_ci <- mc_stock_ci[CensusID >= first_plot_census]
 
 fig1 <- ggplot() +
     # MC: spaghetti (one line per realization)
     geom_line(
-        data = mc_stock_per_real[CensusID <= 7L],
-        aes(CensusID, TotalBA_ha, group = realization),
+        data = mc_stock_per_real[CensusID < 7L],
+        aes(Year, TotalBA_ha, group = realization),
         colour = pal["MC"], alpha = 0.12, linewidth = 0.4
     ) +
     # MC: 95 % empirical CI ribbon
     geom_ribbon(
-        data = mc_stock_ci[CensusID <= 7L],
-        aes(CensusID, ymin = lwr, ymax = upr, fill = "MC"),
+        data = mc_stock_ci[CensusID < 7L],
+        aes(Year, ymin = lwr, ymax = upr, fill = "MC"),
         alpha = 0.22
     ) +
     # MC: center line (dashed)
     geom_line(
-        data = mc_stock_ci[CensusID <= 7L],
-        aes(CensusID, center, colour = "MC"),
+        data = mc_stock_ci[CensusID < 7L],
+        aes(Year, center, colour = "MC"),
         linewidth = 0.9, linetype = "dashed"
     ) +
     # MAP: bootstrap 95 % CI ribbon
     geom_ribbon(
         data = map_stock_boot,
-        aes(CensusID, ymin = lwr, ymax = upr, fill = "MAP"),
+        aes(Year, ymin = lwr, ymax = upr, fill = "MAP"),
         alpha = 0.22
     ) +
     # MAP: forest mean (solid, thicker — primary reference)
     geom_line(
         data = map_stock_boot,
-        aes(CensusID, center, colour = "MAP"),
+        aes(Year, center, colour = "MAP"),
         linewidth = 1.4
     ) +
     scale_colour_manual(
@@ -604,7 +643,7 @@ fig1 <- ggplot() +
             "MAP: solid mean + bootstrap 95 %% CI  ·  MC: spaghetti + dashed %s + empirical 95 %% CI",
             mc_center # mc_center governs only the MC dashed line, not the MAP
         ),
-        x = "Census",
+        x = "Year",
         y = expression("BA (m"^2 ~ "ha"^
             {
                 -1
@@ -614,7 +653,7 @@ fig1 <- ggplot() +
 
 print(fig1)
 
-# ── Figure 2: Forest-level BA flux components per hectare ─────────────────────
+# ── Figure 2: Forest-level annual BA flux components per hectare ────────
 
 flux_labels <- c(
     Growth_BA     = "Growth",
@@ -632,28 +671,51 @@ flux_labels <- c(
 # zeros, then center_fun is applied across 250 near-identical means). The result
 # is the MAP line stuck at 0 while the MC ribbon floats above it.
 # Fix: always fmean() for the MAP forest-level flux, matching each MC realization.
-map_flux_center <- map_quadrat_change[,
-    lapply(.SD, fmean, na.rm = TRUE), # FIX: was center_fun (fmedian when mc_center=="median")
-    .SDcols = flux_cols, by = CensusID_from
+# Also annualise interval fluxes so net BA is comparable across intervals.
+census_pairs[, Interval_yr := as.numeric(difftime(Date_to, Date_from, units = "days")) / 365.25]
+map_flux_center <- merge(
+    map_quadrat_change,
+    census_pairs[, .(CensusID_from, Interval_yr)],
+    by = "CensusID_from",
+    all.x = TRUE
+)
+map_flux_center[, (flux_cols) := lapply(.SD, function(x) x / Interval_yr), .SDcols = flux_cols]
+map_flux_center <- map_flux_center[,
+    lapply(.SD, fmean, na.rm = TRUE),
+    .SDcols = flux_cols,
+    by = CensusID_from
 ]
 map_flux_center[, (flux_cols) := lapply(.SD, `*`, scale_ha), .SDcols = flux_cols]
+map_flux_center[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
 map_flux_long <- melt(
     map_flux_center,
     id.vars = "CensusID_from", variable.name = "Component", value.name = "value"
 )
+map_flux_long <- merge(map_flux_long, census_pairs[, .(CensusID_from, Year_mid)], by = "CensusID_from")
+map_flux_long <- map_flux_long[CensusID_from >= first_plot_census]
 
 # MC: per-realization forest-level fluxes (mean across quadrats, then scale).
-mc_flux_mean <- all_quadrat_realizations[,
+mc_flux_mean <- merge(
+    all_quadrat_realizations,
+    census_pairs[, .(CensusID_from, Interval_yr)],
+    by = "CensusID_from",
+    all.x = TRUE
+)
+flux_cols <- c("Growth_BA", "Loss_BA", "Gain_BA", "DeltaBA_total")
+mc_flux_mean[, (flux_cols) := lapply(.SD, function(x) x / Interval_yr), .SDcols = flux_cols]
+mc_flux_mean <- mc_flux_mean[,
     lapply(.SD, fmean, na.rm = TRUE),
     .SDcols = flux_cols,
     by = .(CensusID_from, realization)
 ]
-mc_flux_mean[, (flux_cols) := lapply(.SD, `*`, scale_ha), .SDcols = flux_cols]
+mc_flux_mean[, (flux_cols) := lapply(.SD, `*`, scale_ha), .SDcols = c(flux_cols)]
 mc_flux_long <- melt(
     mc_flux_mean,
     id.vars = c("CensusID_from", "realization"),
     variable.name = "Component", value.name = "value"
 )
+mc_flux_long <- merge(mc_flux_long, census_pairs[, .(CensusID_from, Year_mid)], by = "CensusID_from")
+mc_flux_long <- mc_flux_long[CensusID_from >= first_plot_census]
 
 # MC: collapse to center + 95 % empirical CI across realizations.
 mc_flux_ci <- mc_flux_long[,
@@ -663,33 +725,34 @@ mc_flux_ci <- mc_flux_long[,
     },
     by = .(CensusID_from, Component)
 ]
+mc_flux_ci <- merge(mc_flux_ci, census_pairs[, .(CensusID_from, Year_mid)], by = "CensusID_from")
 
 fig2 <- ggplot() +
     # MC: spaghetti
     geom_line(
-        data = mc_flux_long[CensusID_from <= 7L],
-        aes(CensusID_from, value, group = realization, colour = Component),
-        alpha = 0.12, linewidth = 0.4
+        data = mc_flux_long[CensusID_from < 7L],
+        aes(Year_mid, value, group = realization, colour = Component),
+        alpha = 0.12, linewidth = 0.7
     ) +
     # MC: 95 % ribbon
     geom_ribbon(
-        data = mc_flux_ci[CensusID_from <= 7L],
-        aes(CensusID_from, ymin = lwr, ymax = upr, fill = Component),
-        alpha = 0.22
+        data = mc_flux_ci[CensusID_from < 7L],
+        aes(Year_mid, ymin = lwr, ymax = upr, fill = Component),
+        alpha = 0.7
     ) +
     # MC: center (dashed)
     geom_line(
-        data = mc_flux_ci[CensusID_from <= 7L],
-        aes(CensusID_from, center, colour = Component),
-        linewidth = 0.8, linetype = "dashed"
+        data = mc_flux_ci[CensusID_from < 7L],
+        aes(Year_mid, center, colour = Component),
+        linewidth = 0.7, linetype = "dashed"
     ) +
     # MAP: bold solid — BUG FIX 4: filter to same census range as MC layers
     # Previously map_flux_long had no filter, extending the MAP line one census
     # beyond the MC ribbon and making the last interval incomparable.
     geom_line(
-        data = map_flux_long[CensusID_from <= 7L], # FIX: was map_flux_long (unfiltered)
-        aes(CensusID_from, value, colour = Component),
-        linewidth = 1.4
+        data = map_flux_long[CensusID_from < 7L], # FIX: was map_flux_long (unfiltered)
+        aes(Year_mid, value),
+        linewidth = 1
     ) +
     geom_hline(yintercept = 0, linetype = "dotted", colour = "#bbbbaa", linewidth = 0.4) +
     facet_wrap(
@@ -702,13 +765,15 @@ fig2 <- ggplot() +
     scale_x_continuous(breaks = scales::pretty_breaks(5)) +
     scale_y_continuous(labels = scales::label_comma()) +
     labs(
-        title = "Forest-level BA fluxes per hectare",
+        title = "Forest-level annual BA fluxes per hectare",
         subtitle = sprintf(
             "Bold solid = MAP (mean)  \u00b7  Spaghetti + dashed %s + ribbon = MC uncertainty",
             mc_center
         ),
-        x = "Census (from)",
-        y = expression("BA flux (m"^2 ~ "ha"^
+        x = "Midpoint year between censuses",
+        y = expression("BA flux (m"^2 ~ "ha"^{
+            -1
+        } ~ "yr"^
             {
                 -1
             } * ")")
@@ -766,11 +831,13 @@ path_cols <- setNames(
     c(COL_OBS, mod_pal),
     c(0L, path_ids[path_ids != 0L])
 )
+plot_paths <- merge(plot_paths, dates[, .(CensusID, Year)], by = "CensusID")
+plot_paths <- plot_paths[CensusID >= first_plot_census]
 
-fig3a <- ggplot(
+fig3 <- ggplot(
     plot_paths,
     aes(
-        x      = CensusID,
+        x      = Year,
         y      = BA,
         group  = interaction(StemID, path_idx),
         colour = factor(path_idx)
@@ -807,68 +874,9 @@ fig3a <- ggplot(
     ) +
     theme_forest()
 
-print(fig3a)
-
-# ── Figure 3b: Annualised BA growth rate by census interval ───────────────────
-obs_data <- map_change_ind[path_idx == 0L]
-mod_data <- map_change_ind[path_idx != 0L]
-
-# BUG FIX 5 & 6 — annualise and correct units:
-# Growth_BA was never divided by Interval_yr despite the subtitle/caption
-# claiming "annual rate". Fixed by adding GrowthRate_m2yr = Growth_BA /
-# Interval_yr. Also corrected the y-axis label from cm² to m² (ba_m2()
-# returns m²; cm² appeared throughout Figs 3a and 3b).
-obs_data[, GrowthRate_m2yr := Growth_BA / Interval_yr]
-mod_data[, GrowthRate_m2yr := Growth_BA / Interval_yr]
-
-mod_ribbon <- mod_data[, .(
-    med = median(GrowthRate_m2yr, na.rm = TRUE),
-    lo  = quantile(GrowthRate_m2yr, 0.10, na.rm = TRUE),
-    hi  = quantile(GrowthRate_m2yr, 0.90, na.rm = TRUE)
-), by = .(StemID, CensusID_to = CensusID_from + 1L)]
-
-fig3b <- ggplot(
-    obs_data,
-    aes(x = CensusID_from + 1L, y = GrowthRate_m2yr, group = StemID)
-) +
-    # MC: 80 % interval ribbon
-    geom_ribbon(
-        data = mod_ribbon,
-        aes(x = CensusID_to, ymin = lo, ymax = hi, group = StemID),
-        fill = COL_MOD, alpha = 0.18,
-        inherit.aes = FALSE
-    ) +
-    # MC: median (dashed)
-    geom_line(
-        data = mod_ribbon,
-        aes(x = CensusID_to, y = med, group = StemID),
-        colour = COL_MOD, linewidth = 0.9, linetype = "dashed",
-        inherit.aes = FALSE
-    ) +
-    # Observed: solid + points
-    geom_line(colour = COL_OBS, linewidth = 1.2) +
-    geom_point(size = 2.0, shape = 21, fill = "white", colour = COL_OBS, stroke = 0.9) +
-    geom_hline(yintercept = 0, linetype = "dotted", colour = "#bbbbaa", linewidth = 0.4) +
-    scale_x_continuous(breaks = scales::pretty_breaks(5)) +
-    scale_y_continuous(labels = scales::label_comma()) +
-    labs(
-        title = paste0("Annual BA growth \u00b7 tree ", plot_trees),
-        subtitle = "Charcoal solid = observed (MAP)  \u00b7  Green dashed + ribbon = modelled paths (median \u00b1 80 % interval)",
-        x = "Census",
-        y = expression("Annual BA growth (m"^2 ~ "yr"^
-            {
-                -1
-            } * ")"), # FIX 5: was cm²
-        caption = "Interval length standardised to annual rate"
-    ) +
-    theme_forest()
-
-print(fig3b)
+print(fig3)
 
 # ── Save all four figures ─────────────────────────────────────────────────────
 ggsave(file.path(out_dir, "fig1_stock.pdf"), fig1, width = 8, height = 4.5)
 ggsave(file.path(out_dir, "fig2_fluxes.pdf"), fig2, width = 8, height = 10)
-ggsave(file.path(out_dir, "fig3a_trajectories.pdf"), fig3a, width = 9, height = 8)
-ggsave(file.path(out_dir, "fig3b_growth.pdf"), fig3b, width = 8, height = 4.5)
-
-# beepr::beep(2)
+ggsave(file.path(out_dir, "fig3_trajectories.pdf"), fig3, width = 9, height = 8)
