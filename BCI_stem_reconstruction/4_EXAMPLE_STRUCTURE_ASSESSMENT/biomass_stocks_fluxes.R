@@ -34,7 +34,7 @@
 # All AGB calculations use taper-corrected DBH (dbh_t, _t suffix).
 # [EDGE CASE] notes flag non-trivial boundary conditions throughout.
 #
-# OUTPUTS (written to BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs/)
+# OUTPUTS (written to BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/)
 # --------
 #   plot_agb_dynamics.png   Standing AGB, productivity/mortality, and net change
 #   plot_agb_by_size.png    Same plots stratified by DBH size class
@@ -88,7 +88,7 @@ library(lubridate)
 library(HDInterval)
 
 # Output directory — created if absent; all figures are written here.
-out_dir <- "./BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs"
+out_dir <- "./BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs"
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 # ============================================================
@@ -125,7 +125,7 @@ df_stem[, CensusID := as.integer(CensusID)]
 
 # Download wood density data from Wright & Mulle-Landau 2026 Dryad
 # url: "https://datadryad.org/dataset/doi:10.5061/dryad.5qfttdzn3"
-bci_wd <- fread("./BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/wd/doi_10_5061_dryad_5qfttdzn3__v20260403/WD_species.txt")
+bci_wd <- fread("./BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/wd/doi_10_5061_dryad_5qfttdzn3__v20260403/WD_species.txt")
 bci_wd <- bci_wd[, .(sp = tolower(sp6), wsg = wd100.mean)][!is.na(wsg)]
 
 bci.spptable <- fread("./BCI_stem_reconstruction/DATA/RTABLES/bci.spptable.csv")

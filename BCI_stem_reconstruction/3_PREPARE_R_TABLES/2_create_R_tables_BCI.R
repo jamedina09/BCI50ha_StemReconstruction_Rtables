@@ -105,26 +105,52 @@ if (!dir.exists(CHECK_folder)) {
 #   "DFstatus"                      — legacy ForestGEO column name for the raw field status
 #   "Rstatus"                       — script-computed corrected status (from "new_status")
 
+# # Columns to retain from ViewFullTable (original DB column names)
+# ViewFullTable_columns_to_keep <- c(
+#   "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
+#   "QuadratName", "PX", "PY", # spatial location in plot (meters)
+#   "DBHID", "CensusID", "DBH", "HOM", # measurement record
+#   "ExactDate", "Status", "ListOfTSM", # raw field status + measurement codes
+#   "Date", "new_status", # date + script-computed corrected status
+#   "obs_row_id" # DP reconstruction metadata
+# )
+
+# # Standardized ForestGEO R-table column names (must match ViewFullTable_columns_to_keep
+# # one-to-one: same length and same order)
+# new_names_columns_to_keep <- c(
+#   "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
+#   "quadrat", "gx", "gy", # gx/gy = plot coordinates in meters
+#   "MeasureID", "CensusID", "dbh", "hom", # hom = height of measurement
+#   "ExactDate", "DFstatus", "codes", # DFstatus = raw field status (legacy name)
+#   "date", "Rstatus", # date + script-computed corrected status
+#   "StemPaths" # DP reconstruction metadata
+# )
+
 # Columns to retain from ViewFullTable (original DB column names)
 ViewFullTable_columns_to_keep <- c(
-  "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
+  "CensusID", "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
   "QuadratName", "PX", "PY", # spatial location in plot (meters)
-  "DBHID", "CensusID", "DBH", "HOM", # measurement record
-  "ExactDate", "Status", "ListOfTSM", # raw field status + measurement codes
-  "Date", "new_status", # date + script-computed corrected status
+  "DBH", "HOM",
+  "ExactDate", # "Date",
+  "ListOfTSM",
+  "Status", # raw field status + measurement codes
+  "new_status", # date + script-computed corrected status
   "obs_row_id" # DP reconstruction metadata
 )
 
 # Standardized ForestGEO R-table column names (must match ViewFullTable_columns_to_keep
 # one-to-one: same length and same order)
 new_names_columns_to_keep <- c(
-  "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
+  "CensusID", "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
   "quadrat", "gx", "gy", # gx/gy = plot coordinates in meters
-  "MeasureID", "CensusID", "dbh", "hom", # hom = height of measurement
-  "ExactDate", "DFstatus", "codes", # DFstatus = raw field status (legacy name)
-  "date", "Rstatus", # date + script-computed corrected status
+  "dbh", "hom",
+  "ExactDate", # "date",
+  "codes",
+  "DFstatus", # DFstatus = raw field status (legacy name)
+  "Rstatus", # date + script-computed corrected status
   "StemPaths" # DP reconstruction metadata
 )
+
 
 # ---- Hard guard: the two column vectors must be 1-to-1 -------------------
 # A typo or accidental edit to either vector would silently mis-rename
@@ -3081,6 +3107,19 @@ ViewFullTable_split <- impute_tree_coords(
 )
 cat("✓ Location imputation complete.\n\n")
 
+# [impute_tree_coords] PX              | no data: 86 | single value (fill): 456771 | multiple values (mode): 3354
+# [impute_tree_coords] PY              | no data: 86 | single value (fill): 456775 | multiple values (mode): 3350
+# [impute_tree_coords] QuadratName     | no data: 51 | single value (fill): 460159 | multiple values (mode): 1
+# [impute_tree_coords] census 1: filled 859034 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 2: filled 788036 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 3: filled 729706 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 4: filled 752220 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 5: filled 789214 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 6: filled 811886 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 7: filled 752346 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 8: filled 716396 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 9: filled 645564 NA location cell(s); 275 remain (ambiguous trees)
+
 cat("💾 Exporting census tables to .Rdata files...\n")
 
 ## Format and export each census as ForestGEO R table ####
@@ -3188,6 +3227,16 @@ ViewFullTable_split <- impute_tree_dates(
   quadrat_col = "QuadratName",
   strict = FALSE
 )
+
+# [impute_tree_dates] census 1: filled 134729 from tree-level, 294791 from quadrat-level; 67 remain NA
+# [impute_tree_dates] census 2: filled 149327 from tree-level, 244758 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 3: filled 153347 from tree-level, 211538 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 4: filled 159771 from tree-level, 216420 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 5: filled 156634 from tree-level, 238071 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 6: filled 147502 from tree-level, 258541 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 7: filled 150295 from tree-level, 225915 from quadrat-level; 67 remain NA
+# [impute_tree_dates] census 8: filled 126367 from tree-level, 231868 from quadrat-level; 67 remain NA
+# [impute_tree_dates] census 9: filled 90299 from tree-level, 232520 from quadrat-level; 67 remain NA
 
 cat("✓ Dates imputation complete.\n\n")
 
