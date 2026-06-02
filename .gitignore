@@ -6,7 +6,7 @@ posteriors/
 tests/
 *.log
 *.rds
-*.pdf
+# *.pdf
 .Rproj.user/
 .Rhistory
 .RData
