@@ -5,7 +5,7 @@ dp_global/ForestGEO_codes/
 posteriors/
 tests/
 *.log
-*.rds
+# *.rds
 # *.pdf
 .Rproj.user/
 .Rhistory
