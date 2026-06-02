@@ -2,46 +2,17 @@
 
 ## Overview
 
-Biologically informed dynamic-programming (DP) solver that reconstructs stem identities across forest censuses backward in time from a known anchor census. Given multi-stem tree measurements and a late-census anchor with trusted `TrueStemID`, the algorithm assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, and recruitment biology. Uncertainty is quantified via forward-backward marginals and optional posterior sampling.
+This repository has three components:
 
-After the engine and all post-processing helpers run, a final renumbering pass assigns `ReconstructedStemID` values sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. This ensures that IDs are always positive, contiguous, and chronologically ordered, matching the `OriginalStemID` convention. All downstream outputs, including posterior path files, use this renumbered ID space.
+- **`dp_global/`** — a biologically informed dynamic-programming (DP) engine that reconstructs multi-stem tree identities across forest censuses. Given measurements from a long-term plot and a late "anchor" census with confirmed stem labels, the engine assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, recruitment, and measurement error. Posterior path sampling provides uncertainty estimates on all downstream derived quantities.
 
-## How the Two Algorithms Work (Plain-Language Summary)
+- **`data_simulation/`** — a synthetic forest-census generator used to develop and validate the `dp_global` engine. It produces biologically plausible multi-species, multi-stem datasets with controlled ground truth, including hardcoded edge-case and regression-test tags derived from BCI field data.
 
-### The Problem
+- **`BCI_stem_reconstruction/`** — an end-to-end pipeline that applies `dp_global` to the Barro Colorado Island (BCI) 50-ha permanent plot across nine censuses (1982–2022/3). It covers ForestGEO data preparation, chunked DP stem reconstruction, posterior consolidation, ForestGEO-format R-table assembly, and estimation of aboveground biomass (AGB) stocks and fluxes and basal area (BA) uncertainty.
 
-In long-term forest census plots, individual trees can have multiple stems. Each stem is measured every few years, but **stem identity labels are only reliable at one late census** (the "anchor"). For all earlier censuses, we need to figure out which measurement belongs to which stem — a problem that gets harder when stems die, new ones appear, or measurement errors create confusing size sequences.
+---
 
-### Exact DP (Dynamic Programming) Solver
-
-Think of the DP solver like solving a jigsaw puzzle backward from a finished picture. At the anchor census we know exactly which measurement belongs to which stem. Working backward one census at a time, the DP **evaluates every possible way** to connect earlier measurements to the known stem identities. Each candidate connection is scored using biology: how fast trees actually grow, how likely a stem is to die or a new one to appear, and how noisy the measurement tools are. The algorithm picks the single assignment with the **best overall score** across the entire history — not just one census at a time, but jointly optimised over all censuses at once.
-
-Because it examines every possibility, the DP always finds the mathematically optimal answer. The downside is that the number of possibilities explodes factorially with the number of stems: a tree with 3 stems per census has a manageable puzzle, but a tree with 7+ stems per census has billions of combinations — too many to enumerate.
-
-### Probabilistic Greedy Matcher (Fallback)
-
-When there are too many stems for the DP to try every combination, the probabilistic matcher takes over. Instead of exhaustive enumeration, it uses a **sampling strategy**: it generates hundreds of plausible random assignments (using Gumbel-noise perturbations of the same biological scores), stitches each sample backward from the anchor to build full identity histories, removes any links that violate growth constraints, and then **takes a vote** across all surviving samples. The identity that wins the most votes for each observation becomes the final assignment, and the vote share becomes the posterior probability.
-
-To compensate for its greedy per-pair nature (which lacks the DP's global cost accumulation), the probabilistic matcher applies two extra safeguards: a hard-rate bound check and a measurement-error-informed cumulative-shrinkage detector that severs runs of small decreases that collectively exceed what measurement noise could plausibly explain. Both the bio hard gates (`Bio_Max_Shrink`, `Bio_Max_Growth`) in pairwise edge construction and the ME cumulative-shrinkage check in trajectory repair can be selectively disabled via the `USE_BIO_HARD_SHRINK_IN_PROB` and `USE_BIO_HARD_GROWTH_IN_PROB` flags — useful when a known large-shrinkage or large-growth event (e.g., storm damage) would otherwise cause the matcher to artificially split a continuous stem.
-
-### When Each Algorithm Runs
-
-The choice is made **per tag** (i.e., per tree) and is controlled by the `DP_MAX_STATES` parameter:
-
-| Scenario | Algorithm | Why |
-|----------|-----------|-----|
-| Tree has ≤ 6 stems per census (default settings) | **Exact DP** | State space fits within `DP_MAX_STATES` (40,000) — all combinations are enumerable |
-| Tree has 7+ stems in any census | **Probabilistic matcher** | Factorial explosion exceeds the state budget — DP would run out of memory or time |
-| Certain species or growth forms (configured via `PROB_SPECIES` / `FALLBACK_GROWTH_FORMS`) | **Probabilistic matcher** | User routes specific groups to the fallback regardless of stem count |
-| DP solver hits a runtime error (e.g., memory) | **Probabilistic matcher** | Automatic error-recovery fallback |
-
-### Can Both Run on the Same Tag?
-
-For a simple tag with no resprout events, **only one** algorithm produces the reconstruction. However, when a tag contains an **R event** (a resprout or breakage code such as R, RP, RF, RT, QR, or OR), the tag is split into a pre-resprout segment and a post-resprout segment, each solved independently. Because the two segments have different stem counts and therefore different state-space sizes, **each segment chooses its algorithm independently** — so it is possible for the post-resprout segment to be solved by the exact DP while the pre-resprout segment falls back to the probabilistic matcher (or vice versa). Both algorithms' outputs are then combined into a single reconstruction for the tag.
-
-After all segments are solved and merged, the final renumbering pass ensures that all `ReconstructedStemID` values are assigned in chronological order from 1..N, so the output is always consistent and positive regardless of the engine or segment splits.
-
-## Directory Layout
+## Repository Structure
 
 ```
 ├── dp_global/                 # Core algorithm, drivers, and C++ acceleration
@@ -50,139 +21,173 @@ After all segments are solved and merged, the final renumbering pass ensures tha
 │   │   ├── dp_global_bio.R            # Biological parameter estimation
 │   │   ├── dp_global_states.R         # State enumeration & track-DBH helpers
 │   │   ├── dp_probabilistic_matching.R # Probabilistic greedy matching fallback
-│   │   ├── dp_global_dp.R            # Core DP solver (backward/forward pass, marginals)
-│   │   ├── dp_global_utils.R         # Shared utilities
-│   │   ├── dp_global_diag.R          # Diagnostics & PDF plotting
-│   │   ├── naming_helpers.R          # Output directory naming
-│   │   ├── complexity/               # DP complexity estimator
-│   │   └── dpglobal_bundle/          # Portable deployment bundle builder
-│   ├── scripts/               # CLI driver scripts (main_cpp*.R), basal area uncertainty, and run_bb_sample.sh batch helper
+│   │   ├── dp_global_dp.R             # Core DP solver (backward/forward pass, marginals)
+│   │   ├── dp_global_utils.R          # Shared utilities
+│   │   ├── dp_global_diag.R           # Diagnostics & PDF plotting
+│   │   ├── naming_helpers.R           # Output directory naming
+│   │   ├── complexity/                # DP complexity estimator
+│   │   └── dpglobal_bundle/           # Portable deployment bundle builder
+│   ├── scripts/               # CLI driver scripts, batch runner, and BA uncertainty
 │   └── src/                   # C++ transition cost (Rcpp)
-├── BCI_stem_reconstruction/   # Full BCI 50-ha pipeline (data prep → DP → R-tables → biomass)
-│   ├── 1_DATA_PREPARATION/    # Build species tables and cleaned ViewFullTable
+├── BCI_stem_reconstruction/   # Full BCI 50-ha pipeline
+│   ├── 1_DATA_PREPARATION/    # Species tables and cleaned ViewFullTable
 │   ├── 2_STEM_IDENTIFICATION/ # Chunked DP runner on BCI data + chunk merger
-│   ├── 3_PREPARE_R_TABLES/    # Consolidate posteriors, build ForestGEO-format R tables
-│   └── 4_BIOMASS_STOCKS_AND_FLUXES/  # AGB stocks/fluxes and basal-area uncertainty
+│   ├── 3_PREPARE_R_TABLES/    # Posterior consolidation and ForestGEO-format R tables
+│   └── 4_BIOMASS_STOCKS_AND_FLUXES/  # AGB stocks/fluxes and BA uncertainty
 ├── data_simulation/           # Simulated forest-census data generator
-│   └── data/                  # Generated test datasets (CSV)
+│   └── data/                  # Generated test datasets (CSV + diagnostic PDFs)
 └── Makefile                   # Convenience targets (smoke test)
 ```
 
+---
 
-## Prerequisites
+## `dp_global/` — Stem Reconstruction Engine
+
+### Prerequisites
 
 R ≥ 4.0 with packages: `data.table`, `Rcpp`, `here`.
 Optional: `ggplot2`, `cowplot` (plotting), `arrow` (feather output), `withr` (bundle sourcing).
 
-## Quickstart
+### Quickstart
 
 ```bash
-# Verify modules load
+# Verify all R modules load
 make smoke
 
 # Single-tag run on simulated data
 Rscript dp_global/scripts/main_cpp.R --WHICH_TAG=20
 
-# Full run (all tags, chunked output with resume support)
+# Full run — chunked, with resume support
 Rscript dp_global/scripts/main_cpp_chunk.R --RUN_ALL_TAGS=TRUE --DP_CHUNK_SIZE=7
 
-# BCI data (single tag)
+# BCI single-tag debug run
 Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 ```
 
-Key CLI parameters for controlling solver behavior:
+### Key CLI flags
 
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--DP_MAX_STATES` | `40000` | Max injective states per census before probabilistic fallback |
-| `--PROB_N_SAMPLES` | `200` | Number of Gumbel-noise samples for probabilistic matching |
+| `--PROB_N_SAMPLES` | `200` | Gumbel-noise samples for probabilistic matching |
 | `--PROB_LOOKAHEAD_WEIGHT` | `1` | Sequential backward conditioning weight (0 = disabled) |
-| `--POSTERIOR_SAMPLES` | `200` | Number of posterior path samples (0 to disable) |
-| `--USE_BIO_HARD_SHRINK_IN_PROB` | `TRUE` | Apply `Bio_Max_Shrink` hard gate and ME cumulative-shrinkage check in probabilistic matcher. Set `FALSE` to allow shrinkage beyond the bio bound (soft penalty only; useful for confirmed large-shrinkage events) |
-| `--USE_BIO_HARD_GROWTH_IN_PROB` | `TRUE` | Apply `Bio_Max_Growth` hard gate in probabilistic matcher. Set `FALSE` to allow growth beyond the bio bound (soft penalty only) |
+| `--POSTERIOR_SAMPLES` | `200` | Posterior path samples drawn per tag (0 to disable) |
+| `--USE_BIO_HARD_SHRINK_IN_PROB` | `TRUE` | Hard shrink gate in probabilistic matcher; set `FALSE` for confirmed large-shrinkage events |
+| `--USE_BIO_HARD_GROWTH_IN_PROB` | `TRUE` | Hard growth gate in probabilistic matcher; set `FALSE` to allow exceptional growth |
 
-### Understanding `DP_MAX_STATES`
+### How the two algorithms work
 
-`DP_MAX_STATES` controls the maximum number of assignment states the DP solver will enumerate at any single census before falling back to the probabilistic greedy matcher. It also controls the inter-census transition budget: the cross-product of states between any two adjacent censuses must not exceed `DP_MAX_STATES²`.
+#### The problem
 
-#### How states are counted
+In long-term forest census plots, individual trees can have multiple stems measured every few years, but **stem identity labels are only reliable at one late census** (the "anchor"). For all earlier censuses, we need to determine which measurement belongs to which stem — a problem compounded by stem death, new recruitment, and measurement noise.
 
-At each census, the DP enumerates all injective (one-to-one) assignments of $n$ observed stems to $K$ identity tracks. The number of such assignments is the falling factorial:
+#### Exact DP solver
 
-$$P(K, n) = K \times (K-1) \times \cdots \times (K - n + 1) = \frac{K!}{(K-n)!}$$
+The DP solver works backward from the anchor census, evaluating every possible assignment of earlier measurements to known stem identities. Each candidate is scored using biology: size-dependent growth rates, mortality hazard, recruitment probability, and measurement error. The algorithm picks the single jointly optimal assignment across all censuses.
 
-where $K$ is the number of tracks (determined by the anchor stem count, births needed, and slack). Typically $K = n + 1$ (with `slack_tracks = 1` and no births) or $K = n + 2$ (with 1 birth track added).
+Because it examines every possibility, the DP always finds the mathematically optimal answer. The downside is that the number of possibilities grows factorially with stem count: the solver is exact for tags with **≤ 6 stems per census** (with `DP_MAX_STATES = 40,000`), and falls back for tags with 7 or more stems.
 
-This grows **factorially**, so even modest increases in stem count cause explosive growth in the state space.
+#### Probabilistic greedy matcher (fallback)
 
-#### Two fallback triggers
+When the state space is too large for exact enumeration, the probabilistic matcher draws hundreds of Gumbel-noise-perturbed samples, stitches them backward from the anchor, repairs biological constraint violations, and votes across surviving samples. The vote share becomes the posterior probability per observation. The same biological cost model and pruning bounds used by the DP apply here.
 
-1. **Per-census enumeration (`enum_exceeded`):** If $P(K, n)$ exceeds `DP_MAX_STATES` at any single census, the solver cannot enumerate states and falls back.
-2. **Inter-census transitions (`edge_count_exceeded`):** If $P(K, n_1) \times P(K, n_2)$ exceeds `DP_MAX_STATES`² for any pair of adjacent censuses, the transition matrix is too large and the solver falls back.
+#### When each algorithm runs
 
-In practice, the per-census limit is reached first because the state counts grow so rapidly.
+| Scenario | Algorithm |
+|----------|-----------|
+| ≤ 6 observed stems per census | Exact DP |
+| 7+ observed stems in any census | Probabilistic matcher |
+| Species / growth forms in `FALLBACK_GROWTH_FORMS` | Probabilistic matcher |
+| DP hits a runtime error | Probabilistic matcher (automatic fallback) |
 
-#### Fallback thresholds by `DP_MAX_STATES` value
+For tags split by an R-event (resprout/breakage codes R, RP, RF, RT, QR, OR), each segment chooses its algorithm independently. See `dp_global/README.md` for the full algorithm reference including the DP_MAX_STATES state-space tables, biological cost model, measurement error model, and posterior path format.
 
-The tables below show when fallback occurs for different `DP_MAX_STATES` values. "Stems observed" is the number of stems with non-NA DBH in a single census. $K = n + 1$ assumes `slack_tracks = 1` with no birth tracks needed.
+---
 
-**With $K = n + 1$ (minimum realistic tracks):**
+## `data_simulation/` — Test Dataset
 
-| Stems ($n$) | Tracks ($K$) | States $P(K,n)$ | 1,000 | 20,000 | 40,000 |
-|:-:|:-:|--:|:-:|:-:|:-:|
-| 2 | 3 | 6 | DP | DP | DP |
-| 3 | 4 | 24 | DP | DP | DP |
-| 4 | 5 | 120 | DP | DP | DP |
-| 5 | 6 | 720 | DP | DP | DP |
-| 6 | 7 | 5,040 | fallback | DP | DP |
-| 7 | 8 | 40,320 | fallback | fallback | fallback |
-| 8 | 9 | 362,880 | fallback | fallback | fallback |
+`data_simulation/simulate_data.R` generates a synthetic multi-species tropical forest census dataset used to develop and regression-test the `dp_global` engine. The output contains 136 tags:
 
-**With $K = n + 2$ (when 1 birth track is needed):**
+- **42 simulated trees** (Tags 1–42) across 3 species with species-specific growth scaling.
+- **46 hardcoded diagnostic tags** (Tags 43–88) derived from real BCI multi-stem patterns for regression testing.
+- **3 M-code test tags** (Tags 901–903) that validate the M-coded main-stem constraint.
+- **45 row-count invariant edge-case tags** (Tags 9901–9945) covering every combination of census span, stem count, DBH availability, and special flags.
 
-| Stems ($n$) | Tracks ($K$) | States $P(K,n)$ | 1,000 | 20,000 | 40,000 |
-|:-:|:-:|--:|:-:|:-:|:-:|
-| 2 | 4 | 12 | DP | DP | DP |
-| 3 | 5 | 60 | DP | DP | DP |
-| 4 | 6 | 360 | DP | DP | DP |
-| 5 | 7 | 2,520 | DP | DP | DP |
-| 6 | 8 | 20,160 | fallback | DP | DP |
-| 7 | 9 | 181,440 | fallback | fallback | fallback |
-| 8 | 10 | 1,814,400 | fallback | fallback | fallback |
-
-**Summary — maximum stems per census handled by exact DP:**
-
-| `DP_MAX_STATES` | `max_edges` (= `DP_MAX_STATES`²) | Max stems ($K = n+1$) | Max stems ($K = n+2$) |
-|--:|--:|:-:|:-:|
-| 1,000 | 1,000,000 | 5 | 5 |
-| 20,000 | 400,000,000 | 6 | 6 |
-| 40,000 | 1,600,000,000 | 6 | 6 |
-
-**Key insight:** With the default `DP_MAX_STATES = 40,000`, the DP handles tags with up to **6 observed stems per census** exactly. Tags with **7 or more stems** in any census are routed to the probabilistic greedy matcher. Increasing `DP_MAX_STATES` to 50,000 would not help — the next factorial step (40,320 for 7 stems with $K=8$) requires `DP_MAX_STATES ≥ 40,321` AND the inter-census product must fit, which it does since $40{,}320^2 = 1.6 \times 10^9 < 40{,}321^2$.
-
-#### How to choose a value
-
-```r
-# 1. Find the most complex tags in your dataset
-library(data.table)
-dt <- fread("your_data.csv")
-obs_per_census <- dt[!is.na(DBH), .N, by = .(Tag, CensusID)]
-max_obs <- obs_per_census[, .(max_n = max(N)), by = Tag][order(-max_n)]
-head(max_obs, 10)  # top 10 most complex tags
-
-# 2. Compute states for a specific stem count
-n <- 6   # max observed stems in any census
-K <- 8   # n + 2 (slack + 1 birth)
-states <- prod(K:(K - n + 1))  # P(8, 6) = 20,160
-cat("States:", states, "\n")
-
-# 3. Set DP_MAX_STATES above that to guarantee exact DP
-# Rscript dp_global/scripts/main_cpp_chunk.R --DP_MAX_STATES=25000
+```bash
+Rscript data_simulation/simulate_data.R
 ```
 
-**Trade-off:** Higher values → exact DP for more tags (slower, more memory). Lower values → more tags use the probabilistic fallback (faster, approximate but uses the same biological model and pruning bounds).
+Outputs are written to `data_simulation/data/`. See `data_simulation/README.md` for the full simulation parameters and column schema.
 
-See `dp_global/README.md` for the full algorithm description and `dp_global/scripts/README.md` for the CLI flag reference.
+---
+
+## `BCI_stem_reconstruction/` — BCI 50-ha Pipeline
+
+A sequential four-stage pipeline that takes raw BCI ForestGEO exports through to biomass flux estimates.
+
+### Stage 1 — Data Preparation (`1_DATA_PREPARATION/`)
+
+Converts raw ForestGEO census exports into a cleaned, harmonized ViewFullTable. Builds species lookup tables, applies Cushman et al. 2014 taper corrections, fixes common data-entry issues, and assigns growth forms used by the DP engine.
+
+Scripts (run in order): `0_prepare_species_tables.R` → `1_prepare_viewfulltable.R.R`
+
+### Stage 2 — Stem Identification (`2_STEM_IDENTIFICATION/`)
+
+Runs `dp_global` on the cleaned ViewFullTable in parallel chunks and merges outputs.
+
+- `1_main_cpp_chunk_bci.R` — chunked DP driver for BCI data; writes feather chunk outputs with resume support.
+- `2_merge_chunks_to_datatable.R` — merges chunk feathers into `merged_output.parquet` and `.rds`.
+
+See `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_chunk_bci.md` for run and resume commands.
+
+### Stage 3 — Prepare R Tables (`3_PREPARE_R_TABLES/`)
+
+Consolidates posterior path files and builds ForestGEO-format census and species R tables.
+
+- `1_prepare_posteriors_BCI.R` — aggregates `_paths.feather` files into `posterior_sampled_paths.rds`.
+- `2_create_R_tables_BCI.R` — resolves encounter histories, applies broken-below rules, imputes missing data, and exports `<site>.stemN.Rdata` and `<site>.spptable.rdata`.
+
+### Stage 4 — Biomass Stocks and Fluxes (`4_BIOMASS_STOCKS_AND_FLUXES/`)
+
+Two independent analysis scripts; all outputs are written to `outputs/`.
+
+**`biomass_stocks_fluxes.R`** — estimates AGB stocks, productivity, mortality, and net AGB change across nine BCI censuses using Chave et al. 2014 allometry with Martinez-Cano et al. 2019 height model (trees) and Goodman et al. 2013 (palms). Applies optional strangler-fig removal, palm DBH correction, taper correction, DBH interpolation, 1985 rounding-bias correction, size-class stratification, and Kohyama et al. 2019 productivity/mortality bias correction. Outputs: `outputs/plot_agb_dynamics.png`, `outputs/plot_agb_by_size.png`.
+
+**`basal_area_uncertainty.R`** — propagates stem-identity uncertainty from `dp_global` posterior paths into basal area stocks and fluxes via Monte Carlo realizations. Reports MAP estimates and empirical 95 % CIs; uncertainty is non-zero only for pre-anchor census intervals. Outputs: `outputs/fig1_BA_stock.pdf`, `outputs/fig2_BA_fluxes.pdf`, `outputs/fig3_BA_trajectories.pdf`, plus MAP and MC feather tables.
+
+---
+
+## Engine Output Reference
+
+After the engine and all post-processing helpers run, `ReconstructedStemID` values are renumbered sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears (ties broken by largest DBH, then original ID). IDs are always positive and contiguous.
+
+### Reconstruction methods
+
+Each output row receives a `ReconstructionMethod` label:
+
+| Method | Description |
+|--------|-------------|
+| `given` | Identity from `TrueStemID` (anchor, pre-anchor pin, post-anchor row, or hard-invariant sweep) |
+| `dp` | Assigned by the exact DP solver |
+| `probabilistic` | Assigned by the probabilistic greedy matcher |
+| `provisional_dp` | Provisional anchor assigned by DP when no `TrueStemID` exists at the anchor census |
+| `dp_mf_inferred` | Missing-from-field census identity inferred from flanking DP assignments |
+| `carried_terminal` | Terminal-event row (`dead`, `stem dead`, `broken below`, `DBH = NA`) backfilled by LOCF from the most recent prior identity in the same `(Tag, OriginalStemID)` group |
+| `given_orphan` | Born-orphan stem: source identifier is non-NA but `DBH`, `TrueStemID`, and engine output are all NA; source identifier is copied directly |
+| `bb_split` / `bb_split_carry` | Row relabeled by the broken-below invariant (R1: resurrection after BB) |
+| `bb_post_terminator_split` / `bb_post_terminator_split_carry` | Row relabeled by the broken-below invariant (R2: continuation after hard terminator) |
+| `none_after_anchor` | Post-anchor row without assignment |
+| `skipped_no_data` | Tag had no usable data for reconstruction |
+
+### Sweep audit columns
+
+**`SweepAuditOverride`** (`logical`) — `TRUE` on rows where the hard-invariant sweep forced `ReconstructedStemID = TrueStemID`, overriding a conflicting engine assignment. Treat these rows as observed (P=1, entropy=0) in downstream uncertainty propagation; the `DP_Posterior*` columns on these rows reflect the engine's pre-sweep choice.
+
+**`ReconstructedStemID_PreSweep`** — snapshot of the engine's assignment before the sweep. Equals `ReconstructedStemID` where `SweepAuditOverride == FALSE`; carries the original engine ID where `SweepAuditOverride == TRUE`.
+
+**`SweepRollbackToPreSweep`** (`logical`) — `TRUE` on rows where the duplicate-aware sweep refused to pin `TrueStemID` because doing so would create two rows with the same `ReconstructedStemID` at the same `(Tag, CensusID)`. The engine's pre-sweep assignment is retained instead.
+
+---
 
 ## Key Documentation
 
@@ -197,58 +202,3 @@ See `dp_global/README.md` for the full algorithm description and `dp_global/scri
 | `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/README.md` | Chunked BCI DP runner and chunk merger |
 | `BCI_stem_reconstruction/3_PREPARE_R_TABLES/README.md` | Consolidate posteriors and build ForestGEO-format R tables |
 | `BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/README.md` | AGB stocks/fluxes and basal-area uncertainty for the BCI 50-ha plot |
-
-## Reconstruction Methods
-
-Each observation in the output receives a `ReconstructionMethod` label indicating how its `ReconstructedStemID` was determined:
-
-| Method | Description |
-|--------|-------------|
-| `given` | Identity known from input `TrueStemID` (anchor, pre-anchor pin, post-anchor row, or hard-invariant sweep) |
-| `dp` | Assigned by the exact DP solver |
-| `probabilistic` | Assigned by the probabilistic greedy matching fallback |
-| `provisional_dp` | Provisional anchor assigned by DP |
-| `dp_mf_inferred` | Missing-from-field census identity inferred from flanking DP assignments |
-| `carried_terminal` | Orphan terminal-event row (`Status` ∈ {`dead`, `stem dead`, `broken below`}, `DBH = NA`, engine returned `NA`) backfilled by post-engine LOCF from the most recent prior `ReconstructedStemID` in the same `(Tag, OriginalStemID)` group. Applied uniformly across all driver scripts via `apply_carried_terminal_backfill()` in `dp_global/R/dp_global_main.R`. |
-| `given_orphan` | "Born-orphan" stem row — the source identifier (`StemID` in production, `OriginalStemID` in this test repo) is non-NA, but `DBH`, `TrueStemID`, and the engine's `ReconstructedStemID` are all NA (e.g. a brand-new StemID first recorded as broken-below at C7+ with no measurement). The post-engine helper `apply_orphan_stem_backfill()` in `dp_global/R/dp_global_main.R` copies the source identifier into `ReconstructedStemID`. Runs after `apply_carried_terminal_backfill()` in every driver. |
-| `none_after_anchor` | Post-anchor row without assignment |
-| `skipped_no_data` | Tag had no usable data for reconstruction |
-
-### Hard-invariant sweep and the `SweepAuditOverride` audit column
-
-When `PIN_TRUESTEMID = TRUE` (default), every output row with a non-NA `TrueStemID` is forced to `ReconstructedStemID = TrueStemID` and `ReconstructionMethod = "given"` by an idempotent sweep that runs at three sites: inside `finalize_out()` (DP path), inside `match_stems_probabilistic()` (probabilistic fallback), and at the script level in `run_dp_one_group()`. This sweep guarantees the invariant even on rows the DP never visits (NA-DBH terminal rows anchored by the pre-DP propagation in `main_cpp_bci.R` Steps 2/3, MF re-insertion edge cases, and probabilistic-fallback leaks).
-
-In the rare case where the DP or probabilistic engine had already assigned a non-NA `ReconstructedStemID` that disagrees with `TrueStemID`, the sweep silently overrides it. Those rows are flagged in the **`SweepAuditOverride`** logical column. Downstream consumers that propagate posterior uncertainty should treat any row where `SweepAuditOverride == TRUE` as observed (P=1, entropy=0) — the values in the `DP_PosteriorTop*` / `DP_PosteriorReconstructedProb` columns describe the *engine's* (overridden) choice, not the final `ReconstructedStemID`. For all other `given` rows the posterior collapses naturally to the pinned ID and the posterior columns are consistent with the final assignment.
-
-The engine's pre-sweep choice is preserved alongside the final value in the **`ReconstructedStemID_PreSweep`** column. It equals `ReconstructedStemID` everywhere `SweepAuditOverride == FALSE` and carries the original engine-assigned ID where `SweepAuditOverride == TRUE`. The column is populated once by the first sweep layer that fires (engine `finalize_out` → probabilistic matcher → script-level backstop) and preserved unchanged by later sweeps, so it always reflects the pre-sweep state regardless of which code path produced the row.
-
-### Duplicate-aware sweep and the `SweepRollbackToPreSweep` column
-
-The script-level sweep in `main_cpp.R` and `main_cpp_chunk.R` will refuse to pin `ReconstructedStemID := TrueStemID` when doing so would create two rows with the same `ReconstructedStemID` at the same `(Tag, CensusID)` (the canonical case is BCI tag `258411` C6, where retag-campaign reuse of an `OriginalStemID` would force two stems onto the same id). Pins are processed in deterministic row order; if the candidate value already appears on another row at the same `(Tag, CensusID)` in the working `ReconstructedStemID` column, the row is **rolled back to its `ReconstructedStemID_PreSweep` value** (respecting the engine's reconstruction), `ReconstructionMethod` is left untouched, and the row is flagged in the **`SweepRollbackToPreSweep`** boolean column (FALSE elsewhere). `SweepAuditOverride` continues to record the original disagreement; the rollback flag records the chosen resolution.
-
-## Conventions
-
-- Driver scripts: `dp_global/scripts/` — `main_cpp.R` (single-tag/small), `main_cpp_chunk.R` (large chunked), `main_cpp_bci.R` (BCI-specific, sources `main_cpp.R` for helpers and adds pre-DP TrueStemID propagation), `basal_area_uncertainty.R` (posterior BA uncertainty).
-- Module internals: `dp_global/R/` — sourced in order by `dp_global_main.R`.
-- Output directories: auto-created under `dp_global/output/` (not tracked by git).
-
-## Uncertainty Estimation Workflow
-
-After running the reconstruction pipeline, posterior path samples can be used to quantify uncertainty in derived quantities such as basal area:
-
-```bash
-# 1. Run reconstruction pipeline
-Rscript dp_global/scripts/main_cpp_chunk.R --POSTERIOR_SAMPLES=250
-
-# 2. Quantify basal area uncertainty from posterior paths
-Rscript dp_global/scripts/basal_area_uncertainty.R \
-  --RUN_DIR=dp_global/output/<run_dir>
-```
-
-The BA uncertainty script reads the main reconstruction and the `posteriors/` directory, then produces two summary CSVs and a multi-page PDF of diagnostic figures:
-
-- `basal_area_tag_census.csv` — per-tag per-census total BA (m²) and stem count.
-- `basal_area_tag_change.csv` — per-tag BA change between consecutive censuses, decomposed into **growth** (survivors), **loss** (mortality), and **gain** (recruitment), with posterior means, SDs, and 95% credible intervals. All BA values in m².
-- `basal_area_figures.pdf` — per-tag panels (BA trajectory, stem count, decomposition bars with uncertainty whiskers, stem demographics), uncertainty histograms, and posterior density plots (kernel densities of Growth/Loss/Gain/DeltaBA pooled across all intervals and per census interval, with weighted-mean vertical lines).
-
-Tag-level total BA per census is **invariant** to identity assignment — the same DBH values sum identically regardless of which stem they are assigned to. The decomposition into growth, loss, and gain components **is** identity-dependent and is where posterior uncertainty manifests. See `dp_global/scripts/README.md` for details.
