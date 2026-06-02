@@ -1,31 +1,69 @@
-## ============================================================
-## BCI Aboveground Biomass Dynamics
-## ============================================================
-##
-## Purpose: Estimate aboveground biomass (AGB) stock, productivity,
-## mortality, and net change for the BCI 50-ha forest plot across
-## 9 censuses (1982–2020).
-##
-## Key intermediate datasets:
-##   df_stem_status  – standing AGB per alive stem per census
-##   df_stem_prod    – AGB productivity per stem per census interval
-##   df_stem_mort    – AGB mortality flux per stem at last alive census
-##   df_stem_demo    – aggregated demographics per quadrat × size × interval
-##   df_stem_demo_quadrat – same, all size classes pooled
-##
-## Indexing convention:
-##   CensusID = c  is the INITIAL census of the interval  c → c+1.
-##   Dagb  is lag-differenced at c+1 but re-indexed to c in df_stem_demo
-##         so that Dagb, DagbM, and stock all share the same starting census.
-##   DagbM is assigned at c (the last alive census before the stem dies).
-##
-## All AGB calculations use taper-corrected DBH (dbh_t, _t suffix).
-## [EDGE CASE] notes flag non-trivial boundary conditions in the code.
-## ============================================================
+# ==============================================================================
+# BCI Stem Reconstruction — Aboveground Biomass Stocks and Fluxes
+# ==============================================================================
+#
+# PURPOSE
+# -------
+# Estimates aboveground biomass (AGB) stocks, productivity, mortality, and net
+# AGB change for the BCI 50-ha forest plot across nine stem censuses
+# (1982–2022/3). Allometric corrections follow Chave et al. 2014 (AGB) and
+# Martinez-Cano et al. 2019 (height), with Cushman et al. 2014 taper correction
+# and Goodman et al. 2013 for palms. Productivity and mortality estimators are
+# bias-corrected after Kohyama et al. 2019.
+#
+# DESIGN OVERVIEW
+# ---------------
+# For each census interval c → c+1 the script computes three flux components:
+#   Growth     — lag-difference AGB gain for stems alive at both endpoints.
+#                Outlier DBH growth rates (outside [lower_ddbh_threshold,
+#                upper_ddbh_threshold] cm yr⁻¹) or HOM shifts > hom_change_threshold
+#                are replaced by the size-class mean growth rate (Dagb_t_s).
+#   Recruitment — first-appearance AGB gain: agb / dT at the recruitment census.
+#   Mortality  — AGB loss rate: agb / dT_mort at the last alive census (c).
+# All three are aggregated per quadrat × census-interval and optionally
+# bias-corrected with the Kohyama et al. 2019 estimator before plotting.
+#
+# INDEXING CONVENTION
+# -------------------
+#   CensusID = c  is the INITIAL census of the interval c → c+1.
+#   df_stem_prod  stores productivity at c+1; re-indexed to c in build_demo()
+#                 (CensusID := CensusID - 1L) so that stock, productivity, and
+#                 mortality all share the same starting census index.
+#   df_stem_mort  stores mortality at c (last alive census) — no re-indexing needed.
+#
+# All AGB calculations use taper-corrected DBH (dbh_t, _t suffix).
+# [EDGE CASE] notes flag non-trivial boundary conditions throughout.
+#
+# OUTPUTS (written to BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs/)
+# --------
+#   plot_agb_dynamics.png   Standing AGB, productivity/mortality, and net change
+#   plot_agb_by_size.png    Same plots stratified by DBH size class
+#
+# NOTES
+# --------
+# This script was developed using the following work as reference:
+# Piponiot, C., Condit, R., Hubbell, S. P., Pérez, R., Lao, S., Aguilar, S., &
+# Muller-Landau, H. (2024). Woody Biomass Stocks and Fluxes in the Barro
+# Colorado Island 50-ha Plot.
+# ==============================================================================
 
 rm(list = ls())
 
-## --- 0. Parameters -----------------------------------------------------------
+# ============================================================
+# Section 1 — Parameters
+# ============================================================
+#
+# All user-facing settings are centralised here. Change values and re-run;
+# downstream sections reference these names directly.
+#
+# remove_strangler_figs       — exclude large Ficus strangler spp. (Rutishauser 2020)
+# use_median_palm_dbh         — replace palm DBH with species median (except Socratea)
+# biomass_allometry           — "chave14" (default) or "chave05"
+# use_local_height_allometry  — TRUE: Martinez-Cano 2019; FALSE: Chave pantropical
+# use_kohyama19_correction    — TRUE: apply Kohyama et al. 2019 bias correction
+# lower/upper_ddbh_threshold  — plausible annualised DBH growth bounds (cm yr⁻¹)
+# hom_change_threshold        — POM shift (m) above which a row is flagged as outlier
+# dbh_interp_method           — "linear", "locf", or "mean" (DBH NA-fill method)
 
 remove_strangler_figs <- TRUE # exclude all Ficus strangler spp. (Rutishauser 2020)
 use_median_palm_dbh <- TRUE # replace palm DBH with species median (except Socratea)
@@ -47,11 +85,19 @@ dbh_interp_method <- "linear"
 library(data.table)
 library(truncnorm)
 library(lubridate)
+library(HDInterval)
 
-## --- 1. Load raw census data -------------------------------------------------
+# Output directory — created if absent; all figures are written here.
+out_dir <- "./BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-# Load all 9 census Rdata files and stack into one long table.
-# idcol = "censusID" records which file each row came from.
+# ============================================================
+# Section 2 — Load raw census data
+# ============================================================
+#
+# Load all 9 RTABLE Rdata files and stack into a single long data.table.
+# `idcol = "censusID"` records the source file for each row.
+# CensusID is cast to integer immediately (required for arithmetic and ordering).
 bci_stem_nums <- as.character(1:9)
 
 census_list <- lapply(bci_stem_nums, function(num) {
@@ -68,9 +114,16 @@ rm(census_list, bci_stem_nums)
 # CensusID as integer — essential for ordering and arithmetic (e.g. CensusID - 1L)
 df_stem[, CensusID := as.integer(CensusID)]
 
-## --- 2. Merge species taxonomy and wood density data ------------------------
+# ============================================================
+# Section 3 — Merge species taxonomy and wood density
+# ============================================================
+#
+# Join the BCI species table (Family, Genus, Species) and WSG from
+# Wright & Mulle-Landau 2026 Dryad. Missing WSG is filled hierarchically:
+#   1st: genus-level mean  2nd: family-level mean  3rd: global mean (~0.58 g/cm³).
+# [EDGE CASE] Species whose entire family has no WSG receive the global mean.
 
-# ## Download wood density data from Wright & Mulle-Landau 2026 Dryad
+# Download wood density data from Wright & Mulle-Landau 2026 Dryad
 # url: "https://datadryad.org/dataset/doi:10.5061/dryad.5qfttdzn3"
 bci_wd <- fread("./BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/wd/doi_10_5061_dryad_5qfttdzn3__v20260403/WD_species.txt")
 bci_wd <- bci_wd[, .(sp = tolower(sp6), wsg = wd100.mean)][!is.na(wsg)]
@@ -99,10 +152,13 @@ df_stem[, Genus := ifelse(is.na(Genus), "Unknown", Genus)]
 df_stem[, Species := ifelse(is.na(Species), "Unknown", Species)]
 df_stem[, Latin := ifelse(is.na(Latin), "Unknown", Latin)]
 
-## --- 3. Strangler fig removal ------------------------------------------------
+# ============================================================
+# Section 4 — Strangler fig removal
+# ============================================================
+#
 # Giant strangler Ficus (> 500 mm DBH = > 50 cm; raw BCI units before /10 conversion)
-# are excluded following Rutishauser et al. 2020. They violate the standard
-# allometric assumptions and inflate plot-level AGB disproportionately.
+# are excluded following Rutishauser et al. 2020. They violate standard allometric
+# assumptions and inflate plot-level AGB disproportionately.
 # Exclusion applies to ALL censuses of affected trees/stems.
 large_strangler_figs <- df_stem[
   dbh > 500 &
@@ -115,16 +171,22 @@ if (remove_strangler_figs) {
     !treeID %in% large_strangler_figs$treeID &
       !stemID %in% large_strangler_figs$stemID
   ]
-  message(sprintf("[STRANGLER] Removed %d trees / %d stems.",
-    uniqueN(large_strangler_figs$treeID), uniqueN(large_strangler_figs$stemID)))
+  message(sprintf(
+    "[STRANGLER] Removed %d trees / %d stems.",
+    uniqueN(large_strangler_figs$treeID), uniqueN(large_strangler_figs$stemID)
+  ))
 }
 rm(large_strangler_figs)
 
-## --- 4. DBH unit conversion: mm → cm ----------------------------------------
+# ============================================================
+# Section 5 — DBH unit conversion: mm to cm
+# ============================================================
 # Raw BCI RTABLE DBH is in mm. All allometric equations expect cm.
 df_stem[, dbh := dbh / 10]
 
-## --- 5. Palm DBH correction --------------------------------------------------
+# ============================================================
+# Section 6 — Palm DBH correction
+# ============================================================
 # Non-Socratea palms do not grow in diameter; observed DBH changes are measurement
 # error. Replace each species' DBH with the species median across all censuses
 # (Rutishauser et al. 2020).
@@ -132,7 +194,9 @@ if (use_median_palm_dbh) {
   df_stem[Family == "Arecaceae" & Genus != "Socratea", dbh := median(dbh, na.rm = TRUE), .(Latin)]
 }
 
-## --- 6. Taper correction -----------------------------------------------------
+# ============================================================
+# Section 7 — Taper correction
+# ============================================================
 # DBH is corrected for taper using Cushman et al. 2014.
 # Taper adjusts DBH to what it would be at 1.3 m when measured higher (e.g., above
 # buttresses). The corrected value is stored as `dbh_t`; all downstream AGB uses _t.
@@ -149,11 +213,13 @@ df_stem[, b := exp(-2.0205 - 0.5053 * log(dbh) + 0.3748 * log(hom))]
 df_stem[!is.na(hom), dbh_t := dbh * exp(b * (hom - 1.3))]
 df_stem[, b := NULL] # intermediate taper coefficient — no longer needed
 
-## --- 7. Interpolate DBH for unmeasured-but-alive stems ---------------------
+# ============================================================
+# Section 8 — Interpolate DBH for unmeasured-but-alive stems
+# ============================================================
 
 # Some stems have Rstatus == "A" (alive) but dbh == NA — they were assumed alive
-# in the field and not re-measured (common in BCI between full re-censuses).
-# These rows would otherwise produce NA growth / NA AGB and be silently dropped.
+# in the field and not re-measured. These rows would otherwise produce NA growth
+# / NA AGB and be silently dropped.
 #
 # We provide three interpolation methods. Set `dbh_interp_method` at the top of
 # the script and re-run to assess sensitivity:
@@ -237,13 +303,14 @@ if (length(inc) > 0L) {
   message(sprintf("[INTERP] %d stems remain with NA dbh_t after interpolation.", length(inc)))
 }
 
-## --- 8. Allometric functions -------------------------------------------------
-
+# ============================================================
+# Section 9 — Allometric functions
+# ============================================================
+#
 # Two supported allometries: Chave et al. 2014 and Chave et al. 2005.
 # Height is estimated with the multi-species model of Martinez-Cano et al. 2019
-# (h = 58.0 * dbh^0.73 / (21.8 + dbh^0.73); asymptote ~58 m at BCI).
 # Palms use the Goodman et al. 2013 palm-specific allometry.
-# Results in Mg of dry biomass per stem.
+# Results in Mg.
 agb_bci <- function(dbh, # dbh, in cm
                     wsg, # wood specific gravity values
                     palms = NULL, # logical: is the individual a palm?
@@ -281,8 +348,9 @@ agb_bci <- function(dbh, # dbh, in cm
   return(agb)
 }
 
-## --- 9. Estimate AGB (taper-corrected) --------------------------------------
-
+# ============================================================
+# Section 10 — Estimate AGB (taper-corrected)
+# ============================================================
 # AGB (Mg dry mass) from taper-corrected DBH (`dbh_t`) only.
 # Allometry: Chave et al. 2014 (eq. 4) + Martinez-Cano et al. 2019 height model.
 # Palms use the Goodman et al. 2013 palm-specific allometry.
@@ -294,7 +362,9 @@ df_stem[, agb_t := agb_bci(
   palms = (Family == "Arecaceae")
 )]
 
-## --- Correction for 1985 DBH rounding bias ---------------------------------
+# ============================================================
+# Section 10b — Correction for 1985 DBH rounding bias
+# ============================================================
 #
 # In the 1985 census (CensusID 2), stems with DBH < 5.5 cm were recorded in
 # 5-mm intervals (rounded down to the nearest 5 mm). This compresses AGB at
@@ -360,8 +430,9 @@ df_stem[!is.na(agb_t_m) & CensusID %in% c(2L, 3L), agb_t := agb_t_m]
 df_stem[, agb_t_m := NULL]
 rm(small_stems_1985, dbh_r_lut, mean_agb, subst_lut, n_missing_class)
 
-## --- 10. Sort rows and assign DBH size classes -----------------------------
-
+# ============================================================
+# Section 11 — Sort rows and assign DBH size classes
+# ============================================================
 # Sort by stem and census — required for all lag/lead operations below.
 data.table::setorder(df_stem, treeID, stemID, CensusID)
 
@@ -374,7 +445,9 @@ df_stem[, size := cut(dbh_t,
   include.lowest = TRUE, right = FALSE
 )]
 
-## --- 11. Annualised growth rates (recruits explicitly handled) -------------
+# ============================================================
+# Section 12 — Annualised growth rates (recruits explicitly handled)
+# ============================================================
 
 # Convention: Ddbh and Dagb represent the annualised change from census c to
 # c+1 of the SAME stem. The value is stored on the row of census c+1 (the END
@@ -473,7 +546,9 @@ df_stem[, c(
   "prev_dbh_t", "prev_agb_t"
 ) := NULL]
 
-## --- 12. HOM change detection -----------------------------------------------
+# ============================================================
+# Section 13 — HOM change detection
+# ============================================================
 # Flag observations where the height of measurement (HOM/POM) shifted by more
 # than `hom_change_threshold` (default: 1 m) between consecutive censuses.
 # Such shifts produce unreliable DBH growth estimates and are treated as outliers
@@ -485,7 +560,9 @@ df_stem[, prev_hom := shift(hom), .(treeID, stemID)]
 df_stem[, hom_change := !is.na(prev_hom) & abs(hom - prev_hom) > hom_change_threshold]
 df_stem[, prev_hom := NULL]
 
-## --- 13. Outlier detection and growth substitution -------------------------
+# ============================================================
+# Section 14 — Outlier detection and growth substitution
+# ============================================================
 
 # A growth interval is flagged as an outlier when:
 #   (a) DBH growth exceeds the plausible range [lower_ddbh_threshold, upper_ddbh_threshold], OR
@@ -520,7 +597,9 @@ df_stem[, Dagb_t_s := ifelse(outlier, tot_rawp_t * agb_t, Dagb_t)]
 # Remove substitution rate temporaries
 df_stem[, c("tot_rawp_t") := NULL]
 
-## --- 14. Mortality flux assignment ------------------------------------------
+# ============================================================
+# Section 15 — Mortality flux assignment
+# ============================================================
 
 # A stem contributes a MORTALITY FLUX in the interval c → c+1 when:
 #   (1) at census c the stem is ALIVE with a valid DBH (Rstatus == "A"), AND
@@ -538,7 +617,7 @@ df_stem[, c("tot_rawp_t") := NULL]
 #             interval → dT_mort = NA → DagbM = NA. Correctly NOT counted as dead.
 # [EDGE CASE] "Zombie" stems (A → D → A) have last_census_alive set to the
 #             LAST alive census. Intermediate dead intervals are not tracked
-#             as separate events here.
+#             as separate events here. (This is not an issue here; comment left for record.)
 # [EDGE CASE] A stem alive in only one census is counted as a mortality
 #             if its next census is D or G — ecologically correct.
 # [EDGE CASE] Stem-level next_date can be NA if the stem has no row at c+1.
@@ -577,14 +656,15 @@ df_stem[
   )
 ]
 
-## ============================================================
-## Dataset 1: Current Status
-## ============================================================
-##
-## One row per ALIVE stem per census.
-## Represents standing AGB at each measured census (the "stock").
-## Use this to compute AGB at any given census snapshot.
-##
+# ============================================================
+# Section 16 — Intermediate datasets
+# ============================================================
+#
+# Dataset 1: df_stem_status — Current Status
+#
+# One row per ALIVE stem per census.
+# Represents standing AGB at each measured census (the "stock").
+# Use this to compute AGB at any given census snapshot.
 # Filter on dbh_t (taper-corrected) rather than raw dbh so that only rows with
 # a valid corrected measurement are included as "standing stock".
 df_stem_status <- df_stem[
@@ -596,20 +676,17 @@ df_stem_status <- df_stem[
   )
 ]
 
-## ============================================================
-## Dataset 2: Productivity (growth + recruits)
-## ============================================================
-##
-## One row per stem per census interval where AGB GAIN can be computed.
-## CensusID here is c+1 (the END of the interval c → c+1).
-## `is_recruit == TRUE` rows are first appearances; their Dagb = agb / dT_plot.
-## `is_recruit == FALSE` rows are ongoing-stem growth (lag-difference).
-##
-## All growth values are taper-corrected (`_t` suffix):
-##   Dagb_t   — raw lag-difference growth (before outlier substitution)
-##   Dagb_t_s — outlier-substituted growth  ← USE THIS for analyses
-##   Ddbh_t   — annualised taper-corrected DBH growth (cm yr⁻¹; diagnostics)
-##
+# Dataset 2: df_stem_prod — Productivity (growth + recruits)
+#
+# One row per stem per census interval where AGB GAIN can be computed.
+# CensusID here is c+1 (the END of the interval c → c+1).
+# `is_recruit == TRUE` rows are first appearances; their Dagb = agb / dT_plot.
+# `is_recruit == FALSE` rows are ongoing-stem growth (lag-difference).
+#
+# All growth values are taper-corrected (`_t` suffix):
+#   Dagb_t   — raw lag-difference growth (before outlier substitution)
+#   Dagb_t_s — outlier-substituted growth  <- USE THIS for analyses
+#   Ddbh_t   — annualised taper-corrected DBH growth (cm yr⁻¹; diagnostics)
 df_stem_prod <- df_stem[
   !is.na(Dagb_t_s) & !is.na(dT) & dT > 0,
   .(
@@ -620,17 +697,14 @@ df_stem_prod <- df_stem[
   )
 ]
 
-## ============================================================
-## Dataset 3: Mortality
-## ============================================================
-##
-## One row per stem at its LAST alive census (census c).
-## DagbM = AGB / dT_mort = annualised biomass loss for the c → c+1 interval.
-## CensusID here is c (the census at the START of the mortality interval).
-##
-## [EDGE CASE] Stems alive through census 9 are NOT in this dataset
-##             (DagbM = NA because dT_mort = NA — correctly excluded).
-##
+# Dataset 3: df_stem_mort — Mortality
+#
+# One row per stem at its LAST alive census (census c).
+# DagbM = AGB / dT_mort = annualised biomass loss for the c → c+1 interval.
+# CensusID here is c (the census at the START of the mortality interval).
+#
+# [EDGE CASE] Stems alive through census 9 are NOT in this dataset
+#             (DagbM = NA because dT_mort = NA — correctly excluded).
 df_stem_mort <- df_stem[
   !is.na(DagbM_t),
   .(
@@ -640,28 +714,25 @@ df_stem_mort <- df_stem[
   )
 ]
 
-## ============================================================
-## Dataset 4a: df_stem_demo  (per quadrat × size class × interval)
-## Dataset 4b: df_stem_demo_quadrat (per quadrat × interval, all sizes pooled)
-## ============================================================
-##
-## Row definition: quadrat q [× size class s], INITIAL census c of interval c→c+1.
-## All components are indexed at c:
-##   ntrees  — alive stems in census c  (stock)
-##   agb     — total standing AGB at census c  (Mg)
-##   dT      — mean interval length in years
-##   Dagb    — total AGB productivity for the interval (Mg yr⁻¹; growth + recruits)
-##   Dagb_growth  — productivity from growth of standing stems only
-##   Dagb_recruit — productivity from new (recruit) stems only
-##   DagbM   — total AGB mortality loss for the interval (Mg yr⁻¹)
-##
-## Productivity is stored at c+1 in df_stem_prod → subtract 1 to re-index to c.
-## Mortality is already stored at c in df_stem_mort.
-##
-## [EDGE CASE] Census 9 has no forward interval → no Dagb / dT; rows dropped.
-## [EDGE CASE] Stems with NA or empty quadrat are excluded from spatial aggregation.
-## [EDGE CASE] size = NA (NA DBH) are excluded from df_stem_demo (size-stratified)
-##             but ARE included in df_stem_demo_quadrat (pooled).
+# Datasets 4a/4b: df_stem_demo / df_stem_demo_quadrat
+#
+# Row definition: quadrat q [x size class s], INITIAL census c of interval c→c+1.
+# All components are indexed at c:
+#   ntrees       — alive stems in census c  (stock)
+#   agb          — total standing AGB at census c  (Mg)
+#   dT           — mean interval length in years
+#   Dagb         — total AGB productivity for the interval (Mg yr⁻¹; growth + recruits)
+#   Dagb_growth  — productivity from growth of standing stems only
+#   Dagb_recruit — productivity from new (recruit) stems only
+#   DagbM        — total AGB mortality loss for the interval (Mg yr⁻¹)
+#
+# Productivity is stored at c+1 in df_stem_prod → subtract 1 to re-index to c.
+# Mortality is already stored at c in df_stem_mort.
+#
+# [EDGE CASE] Census 9 has no forward interval → no Dagb / dT; rows dropped.
+# [EDGE CASE] Stems with NA or empty quadrat are excluded from spatial aggregation.
+# [EDGE CASE] size = NA (NA DBH) are excluded from df_stem_demo (size-stratified)
+#             but ARE included in df_stem_demo_quadrat (pooled).
 
 build_demo <- function(group_cols) {
   # Aggregate productivity at the INITIAL census (re-index by CensusID - 1).
@@ -717,34 +788,34 @@ data.table::setorder(df_stem_demo, quadrat, size, CensusID)
 df_stem_demo_quadrat <- build_demo(c("quadrat", "CensusID"))
 data.table::setorder(df_stem_demo_quadrat, quadrat, CensusID)
 
-## ============================================================
-## Kohyama et al. 2019 correction for unrecorded growth
-## ============================================================
-##
-## Stems that grow and die *between* two censuses contribute biomass gain
-## that is never recorded. Kohyama et al. 2019
-## derive bias-corrected productivity (G*) and mortality (M*) estimators.
-##
-## Notation (per quadrat × census-interval row):
-##   B0  = agb_t  — stand AGB at the START of the interval (Mg per quadrat)
-##   BT  = B0 + (Dagb − DagbM) × dT  — estimated AGB at END of interval
-##   BS0 = B0 − DagbM × dT            — AGB of SURVIVING stems at the start
-##
-## Corrected fluxes (eqs. 7–8 in Kohyama et al. 2019):
-##   G* = log(BT / BS0) × (BT − B0) / (dT × log(BT / B0))
-##   M* = log(B0 / BS0) × (BT − B0) / (dT × log(BT / B0))
-##
-## Applied at the AGGREGATED quadrat level (NOT at stem level) to both
-## df_stem_demo_quadrat and df_stem_demo.  Corrected values are stored in
-## Dagb_k and DagbM_k.  Where the formula is undefined (BT == B0, or
-## BS0 / BT ≤ 0) we fall back to the uncorrected value and log a count.
-## When use_kohyama19_correction = FALSE the _k columns are plain aliases
-## of Dagb / DagbM so all downstream code can always reference _k columns.
+# ============================================================
+# Section 17 — Kohyama et al. 2019 correction
+# ============================================================
+#
+# Stems that grow and die *between* two censuses contribute biomass gain
+# that is never recorded. Kohyama et al. 2019 derive bias-corrected
+# productivity (G*) and mortality (M*) estimators.
+#
+# Notation (per quadrat × census-interval row):
+#   B0  = agb_t  — stand AGB at the START of the interval (Mg per quadrat)
+#   BT  = B0 + (Dagb − DagbM) × dT  — estimated AGB at END of interval
+#   BS0 = B0 − DagbM × dT            — AGB of SURVIVING stems at the start
+#
+# Corrected fluxes (eqs. 7–8 in Kohyama et al. 2019):
+#   G* = log(BT / BS0) × (BT − B0) / (dT × log(BT / B0))
+#   M* = log(B0 / BS0) × (BT − B0) / (dT × log(BT / B0))
+#
+# Applied at the AGGREGATED quadrat level (NOT at stem level) to both
+# df_stem_demo_quadrat and df_stem_demo. Corrected values are stored in
+# Dagb_k and DagbM_k. Where the formula is undefined (BT == B0, or
+# BS0 / BT <= 0) we fall back to the uncorrected value and log a count.
+# When use_kohyama19_correction = FALSE the _k columns are plain aliases
+# of Dagb / DagbM so all downstream code can always reference _k columns.
 
 kohyama_correction <- function(stock, gain, loss, dT, output = "prod") {
-  B0  <- stock
-  BS0 <- B0 - loss * dT            # surviving AGB at interval start
-  BT  <- B0 + (gain - loss) * dT   # estimated AGB at interval end
+  B0 <- stock
+  BS0 <- B0 - loss * dT # surviving AGB at interval start
+  BT <- B0 + (gain - loss) * dT # estimated AGB at interval end
   denom <- dT * log(BT / B0)
   if (output == "prod") {
     log(BT / BS0) * (BT - B0) / denom
@@ -758,11 +829,11 @@ kohyama_correction <- function(stock, gain, loss, dT, output = "prod") {
 # Internal helper: applies the correction in-place; counts and replaces any
 # undefined results (NaN / Inf) with the uncorrected value.
 apply_kohyama <- function(dt, tag = "") {
-  dt[, Dagb_k  := kohyama_correction(agb_t, Dagb, DagbM, dT, output = "prod")]
+  dt[, Dagb_k := kohyama_correction(agb_t, Dagb, DagbM, dT, output = "prod")]
   dt[, DagbM_k := kohyama_correction(agb_t, Dagb, DagbM, dT, output = "mort")]
-  n_bad_prod <- dt[!is.finite(Dagb_k)  | is.na(Dagb_k),  .N]
+  n_bad_prod <- dt[!is.finite(Dagb_k) | is.na(Dagb_k), .N]
   n_bad_mort <- dt[!is.finite(DagbM_k) | is.na(DagbM_k), .N]
-  dt[!is.finite(Dagb_k)  | is.na(Dagb_k),  Dagb_k  := Dagb]
+  dt[!is.finite(Dagb_k) | is.na(Dagb_k), Dagb_k := Dagb]
   dt[!is.finite(DagbM_k) | is.na(DagbM_k), DagbM_k := DagbM]
   if (n_bad_prod + n_bad_mort > 0L) {
     message(sprintf(
@@ -775,20 +846,20 @@ apply_kohyama <- function(dt, tag = "") {
 
 if (use_kohyama19_correction) {
   apply_kohyama(df_stem_demo_quadrat, tag = " (quadrat)")
-  apply_kohyama(df_stem_demo,         tag = " (quadrat×size)")
+  apply_kohyama(df_stem_demo, tag = " (quadrat×size)")
   message("[KOHYAMA] Corrected fluxes stored in Dagb_k / DagbM_k.")
 } else {
   # Alias _k columns to uncorrected values so downstream code is uniform.
   df_stem_demo_quadrat[, `:=`(Dagb_k = Dagb, DagbM_k = DagbM)]
-  df_stem_demo[,         `:=`(Dagb_k = Dagb, DagbM_k = DagbM)]
+  df_stem_demo[, `:=`(Dagb_k = Dagb, DagbM_k = DagbM)]
   message("[KOHYAMA] Skipped (use_kohyama19_correction = FALSE). _k columns alias uncorrected values.")
 }
 
-## ============================================================
-## TESTS — sanity checks for recruits, mortality, interpolation, conservation
-## ============================================================
-## Each test prints PASS / FAIL with a short message. Failures do NOT halt
-## execution — they are diagnostic. Run them after every change to the pipeline.
+# ============================================================
+# Section 18 — Sanity checks
+# ============================================================
+# Each test prints PASS / FAIL with a short message. Failures do NOT halt
+# execution — they are diagnostic. Run them after every change to the pipeline.
 
 run_tests <- function() {
   cat("\n========== PIPELINE SANITY TESTS ==========\n")
@@ -898,22 +969,20 @@ run_tests <- function() {
 
 run_tests()
 
-## ============================================================
-## Plot-level summary: Mg ha-1 (stock) and Mg ha-1 yr-1 (fluxes)
-## ============================================================
-##
-## Design:
-##   Stock  — aggregated directly from df_stem_status for ALL 9 censuses
-##            (every census with alive stems is included naturally).
-##   Fluxes — aggregated from df_stem_demo_quadrat, which covers intervals
-##            c → c+1 indexed at c. Census 1 (interval 1→2) is excluded
-##            at user request; the final interval (8→9) is included.
-##
-## Spatial replication: 1250 quadrats of 20×20 m (400 m2).
-## ha⁻¹ conversion: multiply by 10000/400 = 25.
-##
-## Summary per census: plot mean ± 95% CI across quadrats.
-## ============================================================
+# ============================================================
+# Section 19 — Plot-level summary (Mg ha⁻¹ stock, Mg ha⁻¹ yr⁻¹ fluxes)
+# ============================================================
+#
+# Design:
+#   Stock  — aggregated directly from df_stem_status for ALL 9 censuses
+#            (every census with alive stems is included naturally).
+#   Fluxes — aggregated from df_stem_demo_quadrat, which covers intervals
+#            c → c+1 indexed at c. Census 1 (interval 1→2) is excluded
+#            at user request; the final interval (8→9) is included.
+#
+# Spatial replication: 1250 quadrats of 20×20 m (400 m²).
+# ha⁻¹ conversion: multiply by 10000/400 = 25.
+# Summary per census: plot mean ± 95% CI across quadrats (percentile bootstrap).
 
 ha_factor <- 10000 / 400 # 400 m2 to ha-1
 
@@ -927,8 +996,17 @@ census_yr_lut <- df_stem_status[
   by = CensusID
 ]
 
-## Bootstrap CI helper (percentile method, resampling quadrats with replacement)
-## Uses .SD[[col]] (not get(col)) to ensure group-restricted access in data.table.
+# Bootstrap CI helper (HDI method, resampling quadrats with replacement).
+# Uses .SD[[col]] (not get(col)) to ensure group-restricted access in data.table.
+
+hdi_low <- function(x, cred_mass = 0.95) {
+  HDInterval::hdi(x, credMass = cred_mass)[1]
+}
+
+hdi_high <- function(x, cred_mass = 0.95) {
+  HDInterval::hdi(x, credMass = cred_mass)[2]
+}
+
 bootstrap_ci <- function(data,
                          group_cols,
                          value_cols,
@@ -936,24 +1014,20 @@ bootstrap_ci <- function(data,
                          ci_level = 0.95,
                          seed = NULL) {
   if (!is.null(seed)) set.seed(seed)
-  alpha <- 1 - ci_level
-  lower_q <- alpha / 2
-  upper_q <- 1 - alpha / 2
-
   result <- data[
     ,
     {
       out <- list()
       for (col in value_cols) {
-        vals <- na.omit(.SD[[col]]) # group-restricted via .SD
+        vals <- na.omit(.SD[[col]])
         col_mean <- mean(.SD[[col]], na.rm = TRUE)
         if (length(vals) >= 2L) {
           boots <- replicate(
             n_boot,
             mean(sample(vals, size = length(vals), replace = TRUE))
           )
-          col_lwr <- quantile(boots, probs = lower_q, names = FALSE)
-          col_upr <- quantile(boots, probs = upper_q, names = FALSE)
+          col_lwr <- hdi_low(boots, cred_mass = ci_level)
+          col_upr <- hdi_high(boots, cred_mass = ci_level)
         } else {
           col_lwr <- NA_real_
           col_upr <- NA_real_
@@ -971,7 +1045,7 @@ bootstrap_ci <- function(data,
   return(result)
 }
 
-## --- Stock: all 9 censuses (CensusID 2–9) ----------
+# --- Stock: all 9 censuses (CensusID 2–9) ---
 
 stock_q <- df_stem_status[
   !is.na(quadrat) & quadrat != "",
@@ -995,7 +1069,7 @@ setnames(
 )
 data.table::setorder(stock_summary, CensusID)
 
-## --- Fluxes: intervals 2→3 through 8→9 (CensusID 2–8) ----------------------
+# --- Fluxes: intervals 2→3 through 8→9 (CensusID 2–8) ---
 
 flux_q <- merge(
   df_stem_demo_quadrat[CensusID >= 2L & !is.na(quadrat) & quadrat != ""],
@@ -1006,7 +1080,7 @@ flux_q <- merge(
 # Net AGB change = productivity - mortality: positive = biomass sink, negative = source.
 flux_q[, prod_ha := Dagb_k * ha_factor]
 flux_q[, mort_ha := DagbM_k * ha_factor]
-flux_q[, net_ha  := prod_ha - mort_ha]
+flux_q[, net_ha := prod_ha - mort_ha]
 
 flux_summary <- bootstrap_ci(
   flux_q,
@@ -1031,7 +1105,7 @@ setnames(
 )
 data.table::setorder(flux_summary, CensusID)
 
-## --- Print summary table -----------------------------------------------------
+# --- Print summary table ---
 # Fluxes use the Kohyama et al. 2019 correction when use_kohyama19_correction = TRUE.
 # Net = productivity - mortality (Mg ha-1 yr-1)
 
@@ -1044,7 +1118,7 @@ summary_tbl <- merge(
   flux_summary[, .(CensusID, CensusYear,
     prod_mean = round(prod_mean, 3),
     mort_mean = round(mort_mean, 3),
-    net_mean  = round(net_mean,  3)
+    net_mean  = round(net_mean, 3)
   )],
   by = c("CensusID", "CensusYear"), all = TRUE
 )
@@ -1052,14 +1126,17 @@ cat("\n========== PLOT SUMMARY (Mg ha\u207b\u00b9 | Mg ha\u207b\u00b9 yr\u207b\u
 print(summary_tbl)
 cat("Expected: AGB ~220 Mg ha\u207b\u00b9 | productivity 2\u20138 | mortality comparable | net \u00b11\u20132\n")
 
-## --- Figure A: Standing AGB stock (Mg ha⁻¹) ---------------------------------
+# --- Figure A: Standing AGB stock (Mg ha⁻¹) ---
 
 library(ggplot2)
+library(scales)
 
 p_stock <- ggplot(stock_summary, aes(x = CensusYear, y = agb_mean)) +
-  geom_ribbon(aes(ymin = agb_lwr, ymax = agb_upr), fill = "grey70", alpha = 0.4) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 2) +
+  geom_ribbon(aes(ymin = agb_lwr, ymax = agb_upr), fill = "#bfd3e6", alpha = 0.35) +
+  geom_line(colour = "#2c7fb8", linewidth = 1.1) +
+  geom_point(shape = 21, fill = "white", colour = "#2c7fb8", size = 3, stroke = 0.9) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.05))) +
+  scale_x_continuous(breaks = stock_summary$CensusYear) +
   labs(
     x = NULL,
     y = expression("AGB (Mg ha"^
@@ -1068,9 +1145,18 @@ p_stock <- ggplot(stock_summary, aes(x = CensusYear, y = agb_mean)) +
       } * ")"),
     title = "Standing AGB  (mean \u00b1 95% CI across quadrats)"
   ) +
-  theme_bw()
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major = element_line(colour = "grey90"),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "grey40"),
+    axis.ticks = element_line(colour = "grey40"),
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(colour = "grey30"),
+    axis.title = element_text(colour = "grey30")
+  )
 
-## --- Figure B: Productivity & mortality (Mg ha⁻¹ yr⁻¹) ---------------------
+# --- Figure B: Productivity and mortality (Mg ha⁻¹ yr⁻¹) ---
 # Fluxes are plotted at the midpoint of each interval c → c+1.
 
 df_flux_long <- rbind(
@@ -1087,11 +1173,11 @@ df_flux_long <- rbind(
 )
 
 p_flux <- ggplot(df_flux_long, aes(x = x, y = mean, colour = flux, fill = flux)) +
-  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.25, colour = NA) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 2) +
-  scale_colour_manual(values = c(Productivity = "steelblue", Mortality = "firebrick")) +
-  scale_fill_manual(values = c(Productivity = "steelblue", Mortality = "firebrick")) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.22, colour = NA) +
+  geom_line(linewidth = 1.1) +
+  geom_point(shape = 21, size = 3, stroke = 0.9) +
+  scale_colour_manual(values = c(Productivity = "#2a9d8f", Mortality = "#e76f51")) +
+  scale_fill_manual(values = c(Productivity = alpha("#2a9d8f", 0.35), Mortality = alpha("#e76f51", 0.35))) +
   labs(
     x = "Census year",
     y = expression("Flux (Mg ha"^{
@@ -1101,41 +1187,63 @@ p_flux <- ggplot(df_flux_long, aes(x = x, y = mean, colour = flux, fill = flux))
         -1
       } * ")"),
     colour = NULL, fill = NULL,
-    title = "AGB fluxes  (mean \u00b1 95% CI across quadrats)"
+    title = "AGB fluxes  (mean ± 95% CI across quadrats)"
   ) +
-  theme_bw()
-
-## --- Figure C: Net AGB change (Mg ha⁻¹ yr⁻¹) --------------------------------
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major = element_line(colour = "grey92"),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "grey40"),
+    axis.ticks = element_line(colour = "grey40"),
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "top",
+    legend.text = element_text(size = 11),
+    axis.text = element_text(colour = "grey30")
+  )
+# --- Figure C: Net AGB change (Mg ha⁻¹ yr⁻¹) ---
 # Net change = productivity - mortality. Positive = biomass sink; negative = source.
 # Plotted at the midpoint of each census interval (same x convention as Figure B).
 
 p_net <- ggplot(flux_summary, aes(x = CensusYear + dT_mean / 2, y = net_mean)) +
-  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
-  geom_ribbon(aes(ymin = net_lwr, ymax = net_upr), fill = "forestgreen", alpha = 0.25) +
-  geom_line(linewidth = 0.8, colour = "forestgreen") +
-  geom_point(size = 2, colour = "forestgreen") +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
+  geom_ribbon(aes(ymin = net_lwr, ymax = net_upr), fill = "#7fc97f", alpha = 0.22) +
+  geom_line(linewidth = 1.1, colour = "#386cb0") +
+  geom_point(shape = 21, size = 3, fill = "white", colour = "#386cb0", stroke = 0.9) +
   labs(
     x = "Census year",
-    y = expression("Net AGB change (Mg ha"^{-1} ~ "yr"^{-1} * ")"),
-    title = "Net AGB change  (productivity \u2212 mortality, mean \u00b1 95% CI)"
+    y = expression("Net AGB change (Mg ha"^{
+      -1
+    } ~ "yr"^
+      {
+        -1
+      } * ")"),
+    title = "Net AGB change  (productivity − mortality, mean ± 95% CI)"
   ) +
-  theme_bw()
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major = element_line(colour = "grey92"),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "grey40"),
+    axis.ticks = element_line(colour = "grey40"),
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(colour = "grey30")
+  )
 
 library(cowplot)
 plots <- plot_grid(p_stock, p_flux, p_net, ncol = 1, align = "v", labels = c("A", "B", "C"))
 
 ggsave(
   plot = plots,
-  filename = "./BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/plot_agb_dynamics.png",
+  filename = file.path(out_dir, "plot_agb_dynamics.png"),
   width = 9, height = 12, units = "in", dpi = 300
 )
 
-## ============================================================
-## Figure C: AGB stock and fluxes by size class
-## ============================================================
-## Uses df_stem_demo (per quadrat × size × CensusID) — already built.
-## Size classes: [0,10), [10,20), [20,50), [50,500) cm DBH.
-## ha⁻¹ conversion and bootstrap CIs identical to the plot-level summaries.
+# ============================================================
+# Section 16 — Figure D: AGB stock and fluxes by size class
+# ============================================================
+# Uses df_stem_demo (per quadrat × size × CensusID) — already built.
+# Size classes: [0,10), [10,20), [20,50), [50,500) cm DBH.
+# ha⁻¹ conversion and bootstrap CIs identical to the plot-level summaries.
 
 size_stock_q <- df_stem_status[
   !is.na(quadrat) & quadrat != "" & !is.na(size),
@@ -1163,9 +1271,11 @@ p_stock_size <- ggplot(
   size_stock_summary,
   aes(x = CensusYear, y = agb_mean, colour = size, fill = size)
 ) +
-  geom_ribbon(aes(ymin = agb_lwr, ymax = agb_upr), alpha = 0.2, colour = NA) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 2) +
+  geom_ribbon(aes(ymin = agb_lwr, ymax = agb_upr), alpha = 0.18, colour = NA) +
+  geom_line(linewidth = 0.9) +
+  geom_point(shape = 21, size = 2.5, stroke = 0.8) +
+  scale_colour_manual(values = c("[0,10)" = "#2c7fb8", "[10,20)" = "#7fc97f", "[20,50)" = "#fdae61", "[50,500]" = "#d95f02")) +
+  scale_fill_manual(values = c("[0,10)" = alpha("#2c7fb8", 0.35), "[10,20)" = alpha("#7fc97f", 0.35), "[20,50)" = alpha("#fdae61", 0.35), "[50,500]" = alpha("#d95f02", 0.35))) +
   labs(
     x = NULL,
     y = expression("AGB (Mg ha"^
@@ -1175,17 +1285,25 @@ p_stock_size <- ggplot(
     colour = "DBH class (cm)", fill = "DBH class (cm)",
     title = "Standing AGB by size class  (mean \u00b1 95% CI)"
   ) +
-  theme_bw() +
-  theme(legend.position = "right")
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "right",
+    panel.grid.major = element_line(colour = "grey92"),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "grey40"),
+    axis.ticks = element_line(colour = "grey40"),
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(colour = "grey30")
+  )
 
-## --- Flux summary by size class ------------------------------------------
+# --- Flux summary by size class ---
 size_flux_q <- df_stem_demo[
   !is.na(quadrat) & quadrat != "" & !is.na(size) & CensusID >= 2L
 ]
 size_flux_q <- merge(size_flux_q, census_yr_lut, by = "CensusID")
 size_flux_q[, prod_ha := Dagb_k * ha_factor]
 size_flux_q[, mort_ha := DagbM_k * ha_factor]
-size_flux_q[, net_ha  := prod_ha - mort_ha]
+size_flux_q[, net_ha := prod_ha - mort_ha]
 
 size_flux_summary <- bootstrap_ci(
   size_flux_q,
@@ -1211,6 +1329,7 @@ setnames(
 data.table::setorder(size_flux_summary, size, CensusID)
 
 # Flux midpoint on the real year axis (CensusYear, not CensusID).
+# Flux midpoint on the real year axis (CensusYear, not CensusID).
 df_size_flux_long <- rbind(
   size_flux_summary[, .(CensusID, CensusYear, size,
     x = CensusYear + dT_mean / 2,
@@ -1228,12 +1347,12 @@ p_flux_size <- ggplot(
   df_size_flux_long,
   aes(x = x, y = mean, colour = flux, fill = flux)
 ) +
-  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2, colour = NA) +
-  geom_line(linewidth = 0.7) +
-  geom_point(size = 1.5) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.22, colour = NA) +
+  geom_line(linewidth = 0.9) +
+  geom_point(shape = 21, size = 2, stroke = 0.8) +
   facet_wrap(~size, scales = "free_y", ncol = 2) +
-  scale_colour_manual(values = c(Productivity = "steelblue", Mortality = "firebrick")) +
-  scale_fill_manual(values = c(Productivity = "steelblue", Mortality = "firebrick")) +
+  scale_colour_manual(values = c(Productivity = "#2a9d8f", Mortality = "#e76f51")) +
+  scale_fill_manual(values = c(Productivity = alpha("#2a9d8f", 0.35), Mortality = alpha("#e76f51", 0.35))) +
   labs(
     x = "Census year",
     y = expression("Flux (Mg ha"^{
@@ -1243,27 +1362,53 @@ p_flux_size <- ggplot(
         -1
       } * ")"),
     colour = NULL, fill = NULL,
-    title = "AGB fluxes by size class  (mean \u00b1 95% CI)"
+    title = "AGB fluxes by size class  (mean ± 95% CI)"
   ) +
-  theme_bw()
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.major = element_line(colour = "grey92"),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey97", colour = NA),
+    strip.text = element_text(face = "bold", size = 11),
+    legend.position = "top",
+    axis.line = element_line(colour = "grey40"),
+    axis.ticks = element_line(colour = "grey40"),
+    axis.text = element_text(colour = "grey30")
+  )
 
-## --- Figure D4: Net AGB change by size class ---------------------------------
+# --- Figure D4: Net AGB change by size class ---
 p_net_size <- ggplot(
   size_flux_summary,
   aes(x = CensusYear + dT_mean / 2, y = net_mean, colour = size, fill = size)
 ) +
-  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
-  geom_ribbon(aes(ymin = net_lwr, ymax = net_upr), alpha = 0.2, colour = NA) +
-  geom_line(linewidth = 0.7) +
-  geom_point(size = 1.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
+  geom_ribbon(aes(ymin = net_lwr, ymax = net_upr), alpha = 0.22, colour = NA) +
+  geom_line(linewidth = 0.9) +
+  geom_point(shape = 21, size = 2, stroke = 0.8) +
   facet_wrap(~size, scales = "free_y", ncol = 2) +
+  scale_colour_manual(values = c("[0,10)" = "#2c7fb8", "[10,20)" = "#7fc97f", "[20,50)" = "#fdae61", "[50,500]" = "#d95f02")) +
+  scale_fill_manual(values = c("[0,10)" = alpha("#2c7fb8", 0.35), "[10,20)" = alpha("#7fc97f", 0.35), "[20,50)" = alpha("#fdae61", 0.35), "[50,500]" = alpha("#d95f02", 0.35))) +
   labs(
     x = "Census year",
-    y = expression("Net AGB change (Mg ha"^{-1} ~ "yr"^{-1} * ")"),
+    y = expression("Net AGB change (Mg ha"^{
+      -1
+    } ~ "yr"^
+      {
+        -1
+      } * ")"),
     colour = "DBH class (cm)", fill = "DBH class (cm)",
-    title = "Net AGB change by size class  (mean \u00b1 95% CI)"
+    title = "Net AGB change by size class  (mean ± 95% CI)"
   ) +
-  theme_bw()
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.major = element_line(colour = "grey92"),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey97", colour = NA),
+    strip.text = element_text(face = "bold", size = 11),
+    axis.line = element_line(colour = "grey40"),
+    axis.ticks = element_line(colour = "grey40"),
+    axis.text = element_text(colour = "grey30")
+  )
 
 size_plots <- plot_grid(
   p_stock_size, p_flux_size, p_net_size,
@@ -1271,6 +1416,6 @@ size_plots <- plot_grid(
 )
 ggsave(
   plot = size_plots,
-  filename = "./BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/plot_agb_by_size.png",
+  filename = file.path(out_dir, "plot_agb_by_size.png"),
   width = 9, height = 14, units = "in", dpi = 300
 )
