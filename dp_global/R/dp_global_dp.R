@@ -90,7 +90,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            prob_lookahead_weight = 0.5, # backward conditioning weight [0,1]
                                                            use_bio_hard_shrink_in_prob = TRUE, # use bio hard shrink gate in probabilistic
                                                            use_bio_hard_growth_in_prob = TRUE, # use bio hard growth gate in probabilistic
-                                                           prob_n_sigma_me = 3,            # ME cumulative-shrinkage threshold for probabilistic matcher
+                                                           prob_n_sigma_me = 3, # ME cumulative-shrinkage threshold for probabilistic matcher
                                                            # --- TrueStemID pinning at non-anchor censuses ---
                                                            pin_truestemid = TRUE) # pin obs with known TrueStemID to their track
 {
@@ -354,12 +354,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 # not a measurement gap, and must not be stashed as MF
                 has_resprout_code <- (
                     "ListOfTSM" %in% names(tree_data) &&
-                    any(!is.na(tree_data$ListOfTSM[rows_at_cc]) &
-                        grepl(resprout_regex_mf, tree_data$ListOfTSM[rows_at_cc], perl = TRUE))
+                        any(!is.na(tree_data$ListOfTSM[rows_at_cc]) &
+                            grepl(resprout_regex_mf, tree_data$ListOfTSM[rows_at_cc], perl = TRUE))
                 ) | (
                     "Status" %in% names(tree_data) &&
-                    any(!is.na(tree_data$Status[rows_at_cc]) &
-                        tree_data$Status[rows_at_cc] == "broken below")
+                        any(!is.na(tree_data$Status[rows_at_cc]) &
+                            tree_data$Status[rows_at_cc] == "broken below")
                 )
                 if (has_resprout_code) next
                 # Sandwiched all-NA census with no resprout code → implicit MF
@@ -483,13 +483,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         )]
         # Also assign broken-below / stump rows with known TrueStemID (NA-DBH R-coded rows)
         .has_status_pa <- "Status" %in% names(post)
-        .has_tsm_pa    <- "ListOfTSM" %in% names(post)
+        .has_tsm_pa <- "ListOfTSM" %in% names(post)
         if (.has_status_pa || .has_tsm_pa) {
             .resprout_re_pa <- "\\b(R|RP|RF|RT|OR)\\b"
-            .is_bb_pa    <- if (.has_status_pa) !is.na(post$Status) & post$Status == "broken below" else rep(FALSE, nrow(post))
+            .is_bb_pa <- if (.has_status_pa) !is.na(post$Status) & post$Status == "broken below" else rep(FALSE, nrow(post))
             .is_r_tsm_pa <- if (.has_tsm_pa) !is.na(post$ListOfTSM) & grepl(.resprout_re_pa, post$ListOfTSM, perl = TRUE) else rep(FALSE, nrow(post))
             .stump_rows_pa <- which(is.na(post$ReconstructionMethod) & is.na(post$DBH) &
-                                    !is.na(post$TrueStemID) & (.is_bb_pa | .is_r_tsm_pa))
+                !is.na(post$TrueStemID) & (.is_bb_pa | .is_r_tsm_pa))
             if (length(.stump_rows_pa) > 0L) {
                 post[.stump_rows_pa, `:=`(
                     ReconstructedStemID = as.integer(TrueStemID),
@@ -587,8 +587,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
                     out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
                 } else {
-                    out[is.na(ReconstructedStemID_PreSweep),
-                        ReconstructedStemID_PreSweep := ReconstructedStemID]
+                    out[
+                        is.na(ReconstructedStemID_PreSweep),
+                        ReconstructedStemID_PreSweep := ReconstructedStemID
+                    ]
                 }
                 # Compute audit flag against the FIRST-EVER engine output
                 # (the PreSweep snapshot), not the current ReconstructedStemID.
@@ -675,7 +677,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # rows. Must run BEFORE finalize_out() so MF reinsertion sees the
         # correct flanking IDs.
         .resprout_regex_fb <- "\\b(R|RP|RF|RT|QR|OR)\\b"
-        .has_tsm_fb    <- "ListOfTSM" %in% names(out)
+        .has_tsm_fb <- "ListOfTSM" %in% names(out)
         .has_status_fb <- "Status" %in% names(out)
         {
             .pre_censuses_fb <- sort(unique(out$CensusID[out$CensusID <= anchor_start]))
@@ -685,7 +687,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 .na_rows_fb <- which(out$CensusID == .cc_fb & is.na(out$DBH))
                 if (length(.na_rows_fb) == 0L) next
                 .na_tsm_fb <- if (.has_tsm_fb) out$ListOfTSM[.na_rows_fb] else rep(NA_character_, length(.na_rows_fb))
-                .is_r_tsm_fb    <- !is.na(.na_tsm_fb) & grepl(.resprout_regex_fb, .na_tsm_fb, perl = TRUE)
+                .is_r_tsm_fb <- !is.na(.na_tsm_fb) & grepl(.resprout_regex_fb, .na_tsm_fb, perl = TRUE)
                 .is_r_status_fb <- if (.has_status_fb) !is.na(out$Status[.na_rows_fb]) & out$Status[.na_rows_fb] == "broken below" else rep(FALSE, length(.na_rows_fb))
                 .is_r_fb <- .is_r_tsm_fb | .is_r_status_fb
                 if (!any(.is_r_fb)) next
@@ -735,7 +737,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 .live_rows_fb <- which(out$CensusID == .cc_fb & !is.na(out$DBH))
                 if (length(.live_rows_fb) == 0L) next
                 .live_tsm_fb <- if (.has_tsm_fb) out$ListOfTSM[.live_rows_fb] else rep(NA_character_, length(.live_rows_fb))
-                .any_r_live_tsm    <- any(!is.na(.live_tsm_fb) & grepl(.resprout_regex_fb, .live_tsm_fb, perl = TRUE))
+                .any_r_live_tsm <- any(!is.na(.live_tsm_fb) & grepl(.resprout_regex_fb, .live_tsm_fb, perl = TRUE))
                 .any_r_live_status <- if (.has_status_fb) any(!is.na(out$Status[.live_rows_fb]) & out$Status[.live_rows_fb] == "broken below") else FALSE
                 .any_r_live <- .any_r_live_tsm | .any_r_live_status
                 if (!.any_r_live) next
@@ -743,7 +745,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 .cens_before_rfb <- .pre_censuses_fb[.pre_censuses_fb < .cc_fb]
                 if (length(.cens_before_rfb) == 0L) next
                 .ids_before_and_r_rfb <- unique(out$ReconstructedStemID[out$CensusID <= .cc_fb & !is.na(out$ReconstructedStemID)])
-                .ids_after_rfb        <- unique(out$ReconstructedStemID[out$CensusID >  .cc_fb & !is.na(out$ReconstructedStemID)])
+                .ids_after_rfb <- unique(out$ReconstructedStemID[out$CensusID > .cc_fb & !is.na(out$ReconstructedStemID)])
                 .crossing_rfb <- intersect(.ids_before_and_r_rfb, .ids_after_rfb)
                 .cur_max_fb <- suppressWarnings(max(out$ReconstructedStemID, na.rm = TRUE))
                 if (!is.finite(.cur_max_fb)) .cur_max_fb <- 0L
@@ -840,7 +842,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # NOTE: use %in% not != for NA-safe comparison (NA != "x" is NA in R,
     # which data.table treats as FALSE, silently dropping rows).
     tree_data[!is.na(TrueStemID) & CensusID == anchor_start &
-              !ReconstructionMethod %in% "provisional_dp", `:=`(
+        !ReconstructionMethod %in% "provisional_dp", `:=`(
         ReconstructedStemID = as.integer(TrueStemID),
         ReconstructionMethod = "given"
     )]
@@ -1092,10 +1094,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             .tsm_flag0 <- if (.has_tsm) {
                 .tsm0 <- tree_data$ListOfTSM[.idx0]
                 !is.na(.tsm0) & grepl(resprout_regex, .tsm0, perl = TRUE)
-            } else rep(FALSE, length(.idx0))
+            } else {
+                rep(FALSE, length(.idx0))
+            }
             .status_flag0 <- if ("Status" %in% names(tree_data)) {
                 !is.na(tree_data$Status[.idx0]) & tree_data$Status[.idx0] == "broken below"
-            } else rep(FALSE, length(.idx0))
+            } else {
+                rep(FALSE, length(.idx0))
+            }
             .is_resprout_pre[[.p0]] <- .tsm_flag0 | .status_flag0
         } else {
             .is_resprout_pre[[.p0]] <- logical(0L)
@@ -1106,10 +1112,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 .is_bb_tsm0 <- if (.has_tsm) {
                     .na_tsm0 <- tree_data$ListOfTSM[.na_rows]
                     !is.na(.na_tsm0) & grepl(resprout_regex, .na_tsm0, perl = TRUE)
-                } else rep(FALSE, length(.na_rows))
+                } else {
+                    rep(FALSE, length(.na_rows))
+                }
                 .is_bb_status0 <- if ("Status" %in% names(tree_data)) {
                     !is.na(tree_data$Status[.na_rows]) & tree_data$Status[.na_rows] == "broken below"
-                } else rep(FALSE, length(.na_rows))
+                } else {
+                    rep(FALSE, length(.na_rows))
+                }
                 .has_na_r_barrier[.p0] <- any(.is_bb_tsm0 | .is_bb_status0)
             }
         }
@@ -1335,8 +1345,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     .pre_anchor_tsids <- sort(unique(
         tree_data$TrueStemID[
             !is.na(tree_data$TrueStemID) &
-            tree_data$CensusID < anchor_start &
-            !(tree_data$TrueStemID %in% anchor_ids)
+                tree_data$CensusID < anchor_start &
+                !(tree_data$TrueStemID %in% anchor_ids)
         ]
     ))
     # Make sure K is large enough to host every anchor + pre-anchor pin.
@@ -1414,7 +1424,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     pin_tidx_at_census <- vector("list", n_census)
     if (isTRUE(pin_truestemid)) {
         for (p in seq_len(n_census)) {
-            if (p == n_census) next  # anchor census handled separately
+            if (p == n_census) next # anchor census handled separately
             idx <- obs_row_idx[[p]]
             if (length(idx) == 0L) next
             tsid <- tree_data$TrueStemID[idx]
@@ -1426,9 +1436,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             for (.j in seq_along(tidx)) {
                 if (is.na(tidx[.j])) next
                 if (tidx[.j] %in% .seen_tracks) {
-                    vcat(prefix, "WARNING: duplicate TrueStemID pin at C",
-                         census_range[p], " for track ", track_ids[tidx[.j]],
-                         "; keeping first, releasing obs ", .j)
+                    vcat(
+                        prefix, "WARNING: duplicate TrueStemID pin at C",
+                        census_range[p], " for track ", track_ids[tidx[.j]],
+                        "; keeping first, releasing obs ", .j
+                    )
                     tidx[.j] <- NA_integer_
                 } else {
                     .seen_tracks <- c(.seen_tracks, tidx[.j])
@@ -1550,8 +1562,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             do.call(paste, c(lapply(seq_len(ncol(mat)), function(j) mat[, j]), list(sep = ",")))
         }
 
-        vcat(prefix, "  State enum C", cc, ": ", n_obs, " stem(s) -> ", format(nrow(mat), big.mark = ","), " assignment states",
-            if (n_obs > 0L && any(!is.na(obs_dbh[[p]]))) paste0(" (DBH ", round(min(obs_dbh[[p]], na.rm = TRUE), 1), "-", round(max(obs_dbh[[p]], na.rm = TRUE), 1), " cm)") else "")
+        vcat(
+            prefix, "  State enum C", cc, ": ", n_obs, " stem(s) -> ", format(nrow(mat), big.mark = ","), " assignment states",
+            if (n_obs > 0L && any(!is.na(obs_dbh[[p]]))) paste0(" (DBH ", round(min(obs_dbh[[p]], na.rm = TRUE), 1), "-", round(max(obs_dbh[[p]], na.rm = TRUE), 1), " cm)") else ""
+        )
     }
 
     # Anchor state assignment (pins endpoint)
@@ -2161,7 +2175,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         #   - Anchor census rows with TrueStemID keep "given" (set by pre-stamp)
         #   - All other rows get "dp" (the solver determined their identity)
         obs_to_mark <- obs_idx[is.na(tree_data$TrueStemID[obs_idx]) |
-                               tree_data$CensusID[obs_idx] != anchor_start]
+            tree_data$CensusID[obs_idx] != anchor_start]
         if (length(obs_to_mark) > 0L) {
             tree_data[obs_to_mark, ReconstructionMethod := "dp"]
         }
@@ -2173,16 +2187,16 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # were forced by the pin constraint.
     if (isTRUE(pin_truestemid)) {
         .pinned_pre <- which(!is.na(tree_data$TrueStemID) &
-                             tree_data$CensusID != anchor_start &
-                             !tree_data$ReconstructionMethod %in% "provisional_dp")
+            tree_data$CensusID != anchor_start &
+            !tree_data$ReconstructionMethod %in% "provisional_dp")
         if (length(.pinned_pre) > 0L) {
             tree_data[.pinned_pre, ReconstructionMethod := "given"]
         }
         # For post-anchor rows that were never visited by the DP (CensusID > anchor_start,
         # dp_scoped_to_pre_anchor=FALSE), also copy TrueStemID into ReconstructedStemID.
         .pinned_post_unassigned <- which(!is.na(tree_data$TrueStemID) &
-                                         tree_data$CensusID > anchor_start &
-                                         is.na(tree_data$ReconstructedStemID))
+            tree_data$CensusID > anchor_start &
+            is.na(tree_data$ReconstructedStemID))
         if (length(.pinned_post_unassigned) > 0L) {
             tree_data[.pinned_post_unassigned, ReconstructedStemID := as.integer(TrueStemID)]
         }
@@ -2195,8 +2209,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # processing below, so the existing barrier guards (which test
         # !is.na(TrueStemID)) see these rows already labelled.
         .pinned_pre_unassigned <- which(!is.na(tree_data$TrueStemID) &
-                                        tree_data$CensusID < anchor_start &
-                                        is.na(tree_data$ReconstructedStemID))
+            tree_data$CensusID < anchor_start &
+            is.na(tree_data$ReconstructedStemID))
         if (length(.pinned_pre_unassigned) > 0L) {
             tree_data[.pinned_pre_unassigned, `:=`(
                 ReconstructedStemID = as.integer(TrueStemID),
@@ -2236,21 +2250,25 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 .n_cross_before <- length(.crossing)
                 .crossing <- Filter(function(.cid) {
                     # Keep (sever) if this ID is not a known post-barrier anchor identity
-                    if (!(.cid %in% .known_post_tsids)) return(TRUE)
+                    if (!(.cid %in% .known_post_tsids)) {
+                        return(TRUE)
+                    }
                     # Keep (sever) if any pre-barrier row with this reconstructed ID
                     # has a known TrueStemID that differs (i.e. DP connected two distinct plants)
                     .pre_tsids <- tree_data$TrueStemID[
                         tree_data$CensusID %in% .cens_before &
-                        tree_data$ReconstructedStemID == .cid &
-                        !is.na(tree_data$TrueStemID)
+                            tree_data$ReconstructedStemID == .cid &
+                            !is.na(tree_data$TrueStemID)
                     ]
                     any(.pre_tsids != .cid)
                 }, .crossing)
                 .n_skip <- .n_cross_before - length(.crossing)
                 if (.n_skip > 0L) {
-                    vcat(prefix, "NA-R barrier at C", .cc_bar, ": ", .n_skip,
-                         " anchor-validated track(s) excluded from sever",
-                         " (DP correctly traced known post-barrier TrueStemID backward)")
+                    vcat(
+                        prefix, "NA-R barrier at C", .cc_bar, ": ", .n_skip,
+                        " anchor-validated track(s) excluded from sever",
+                        " (DP correctly traced known post-barrier TrueStemID backward)"
+                    )
                 }
             }
             if (length(.crossing) > 0L) {
@@ -2265,20 +2283,22 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     # TrueStemID (provisional counts as non-pinned).
                     .pinned_crossing <- tree_data[
                         CensusID %in% .cens_before &
-                        ReconstructedStemID == .old_id &
-                        !is.na(TrueStemID) &
-                        !ReconstructionMethod %in% "provisional_dp"
+                            ReconstructedStemID == .old_id &
+                            !is.na(TrueStemID) &
+                            !ReconstructionMethod %in% "provisional_dp"
                     ]
                     if (nrow(.pinned_crossing) > 0L) {
-                        vcat(prefix, "WARNING: pinned TrueStemID ",
-                             paste(unique(.pinned_crossing$TrueStemID), collapse = ","),
-                             " crosses NA-R barrier at C", .cc_bar,
-                             " — respecting pin (not reassigning)")
+                        vcat(
+                            prefix, "WARNING: pinned TrueStemID ",
+                            paste(unique(.pinned_crossing$TrueStemID), collapse = ","),
+                            " crosses NA-R barrier at C", .cc_bar,
+                            " — respecting pin (not reassigning)"
+                        )
                     }
                     tree_data[
                         CensusID %in% .cens_before &
-                        ReconstructedStemID == .old_id &
-                        (is.na(TrueStemID) | ReconstructionMethod %in% "provisional_dp"),
+                            ReconstructedStemID == .old_id &
+                            (is.na(TrueStemID) | ReconstructionMethod %in% "provisional_dp"),
                         ReconstructedStemID := .new_id
                     ]
                     tree_data[CensusID %in% .cens_before & ReconstructedStemID == .new_id &
@@ -2536,95 +2556,41 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
         # Ensure rows are ordered for signature construction
         samples_dt <- samples_dt[order(Sample, CensusID)]
-        # Strategy A: enforce broken-below R1/R2 invariants per posterior sample
-        # so MAP and posteriors agree on contract-compliant trajectories.
-        # path_sig is computed AFTER this relabel.
-        samples_dt <- apply_bb_invariants_to_samples(samples_dt, tree_data, verbose = FALSE)
         sampling_profile$samples_dt_size_bytes <- as.numeric(object.size(samples_dt))
         sampling_profile$after_samples_time <- tic() - t_sampling_start
 
-        # Collate per-sample path signature and counts (useful diagnostics)
-        sample_sigs <- samples_dt[, .(path_sig = paste0(ReconstructedStemID, collapse = "-")), by = Sample]
-        path_counts <- sample_sigs[, .N, by = path_sig]
-        sample_sigs <- merge(sample_sigs, path_counts, by = "path_sig")
-        setnames(sample_sigs, "N", "path_count")
-        samples_dt <- merge(samples_dt, sample_sigs, by = "Sample", all.x = TRUE)
-
-        # Normalize sample weights from logp using per-Sample unique logp
-        sample_logp <- unique(samples_dt[, .(Sample, logp)])
-        maxlp <- max(sample_logp$logp, na.rm = TRUE)
-        sample_logp[, sample_weight := exp(logp - maxlp)]
-        sample_logp[, sample_prob := sample_weight / sum(sample_weight)]
-        samples_dt <- merge(samples_dt, sample_logp[, .(Sample, sample_weight, sample_prob)], by = "Sample", all.x = TRUE)
-
-        # Diagnostic summary
-        n_unique_paths <- uniqueN(sample_sigs$path_sig)
-        vcat(prefix, sprintf("Posterior sampling: drew %d samples, found %d unique reconstructions (%.0f%% path diversity)", posterior_samples, n_unique_paths, 100 * n_unique_paths / posterior_samples))
-        if (uniqueN(sample_logp$logp) == 1L) {
-            vcat(prefix, sprintf("Warning: all %d samples converged to same log-prob (%.3f); posterior may be concentrated on a single reconstruction", posterior_samples, sample_logp$logp[1]))
-        }
-
-        # Export samples: prefer feather via arrow for speed if available
+        # ---- Recommended architecture (see dp_global/improvements.md) ----
+        # Stage raw samples_dt (in engine ID space) to disk. The post-engine
+        # pipeline will: (1) translate ReconstructedStemID using the
+        # renumber mapping, (2) re-run apply_bb_invariants_to_samples in the
+        # renumbered ID space, (3) compute path_sig / paths_summary, and
+        # (4) write the final paths file. This guarantees per-sample bb-minted
+        # IDs are derived from renumbered track IDs (cf. Fallback limitation
+        # described in improvements.md).
         ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
         out_dir_post <- file.path(out_dir_local, "posteriors")
-        if (!dir.exists(out_dir_post)) dir.create(out_dir_post, recursive = TRUE, showWarnings = FALSE)
-        out_path_base <- file.path(out_dir_post, paste0("tag_", ifelse(is.na(tag_local), "NA", tag_local), "_posterior_samples", "_", ts_local))
-
-        # Prepare summary tables useful for downstream uncertainty propagation
-        # Attach per-sample ObsRowID list when available (semicolon-separated string of ObsRowIDs in sample order)
-        if ("ObsRowID" %in% names(samples_dt)) {
-            sample_obsids <- samples_dt[, .(ObsRowIDs = paste0(ObsRowID, collapse = ";")), by = Sample]
-        } else {
-            sample_obsids <- data.table::data.table(Sample = integer(0), ObsRowIDs = character(0))
-        }
-        samples_summary <- unique(samples_dt[, .(Sample, Tag, logp, path_sig, path_count, sample_weight, sample_prob)])
-        if (nrow(sample_obsids) > 0) samples_summary <- merge(samples_summary, sample_obsids, by = "Sample", all.x = TRUE)
-        # per-path aggregated probabilities
-        paths_summary <- samples_summary[, .(path_count = sum(path_count, na.rm = TRUE), path_prob = sum(sample_prob, na.rm = TRUE)), by = path_sig]
-        # also create a compact per-path reconstruction mapping (one row per path)
-        # Enforce ObsRowID-based reconstructions only.
-        if (!("ObsRowID" %in% names(samples_dt))) {
-            stop("Posterior sampling must include ObsRowID values; regenerate with posterior_samples that preserve observation row identifiers")
-        }
-        recon_by_path <- samples_dt[, .(recon = paste0(ObsRowID, ":", ReconstructedStemID, collapse = ";")), by = .(path_sig, Sample)]
-        # take first recon per path_sig (they are identical across samples with same path_sig)
-        recon_compact <- recon_by_path[, .SD[1], by = path_sig, .SDcols = "recon"]
-        paths_summary <- merge(paths_summary, recon_compact, by = "path_sig", all.x = TRUE)
-
-        # Export only the paths summary; skip writing any summary file
-        sampling_profile$export_paths <- character(0)
-        sampling_profile$export_time_seconds <- 0
-        if (fmt == "feather" && requireNamespace("arrow", quietly = TRUE)) {
-            p2 <- paste0(out_path_base, "_paths.feather")
-            t0 <- tic()
-            arrow::write_feather(paths_summary, p2)
-            t1 <- tic()
-            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
-            sampling_profile$export_paths <- c(sampling_profile$export_paths, p2)
-            vcat(prefix, "Wrote posterior paths summary to: ", p2)
-        } else if (fmt == "csv") {
-            p2 <- paste0(out_path_base, "_paths.csv")
-            t0 <- tic()
-            data.table::fwrite(paths_summary, p2)
-            t1 <- tic()
-            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
-            sampling_profile$export_paths <- c(sampling_profile$export_paths, p2)
-            vcat(prefix, "Wrote posterior paths summary to: ", p2)
-        } else {
-            # rds variant: save only paths table
-            p1 <- paste0(out_path_base, "_paths.rds")
-            t0 <- tic()
-            saveRDS(paths_summary, file = p1)
-            t1 <- tic()
-            sampling_profile$export_time_seconds <- sampling_profile$export_time_seconds + (t1 - t0)
-            sampling_profile$export_paths <- c(sampling_profile$export_paths, p1)
-            vcat(prefix, "Wrote posterior paths summary to: ", p1)
-        }
-        sampling_profile$export_total_size_bytes <- if (length(sampling_profile$export_paths) > 0) sum(file.size(sampling_profile$export_paths)) else 0L
+        staging_dir <- file.path(out_dir_post, ".staging")
+        if (!dir.exists(staging_dir)) dir.create(staging_dir, recursive = TRUE, showWarnings = FALSE)
+        staging_path <- file.path(staging_dir, paste0(
+            "tag_", ifelse(is.na(tag_local), "NA", tag_local),
+            "_samples_raw_", ts_local, ".rds"
+        ))
         sampling_profile$finished <- Sys.time()
-
-        # Attach sampling profile to the returned data.table for external inspection
+        saveRDS(list(
+            engine = "dp",
+            tag_val = tag_local,
+            batch_ts = ts_local,
+            posterior_samples_format = fmt,
+            posterior_samples_path = out_dir_local,
+            samples_dt = samples_dt,
+            sampling_profile = sampling_profile
+        ), file = staging_path)
+        vcat(prefix, sprintf(
+            "Posterior sampling: staged %d samples for tag %s to %s",
+            posterior_samples, as.character(tag_local), staging_path
+        ))
         attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
+        attr(tree_data, "DP_Posterior_Staging_File") <- staging_path
     }
 
     # If DP was scoped to pre-anchor only, merge original post-anchor rows back into the returned dataset
@@ -2650,13 +2616,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # R-coded rows are the old stem's last record and must be assigned the same identity.
         {
             .has_status_pa2 <- "Status" %in% names(post_rows)
-            .has_tsm_pa2    <- "ListOfTSM" %in% names(post_rows)
+            .has_tsm_pa2 <- "ListOfTSM" %in% names(post_rows)
             if (.has_status_pa2 || .has_tsm_pa2) {
                 .resprout_re_pa2 <- "\\b(R|RP|RF|RT|OR)\\b"
-                .is_bb_pa2    <- if (.has_status_pa2) !is.na(post_rows$Status) & post_rows$Status == "broken below" else rep(FALSE, nrow(post_rows))
+                .is_bb_pa2 <- if (.has_status_pa2) !is.na(post_rows$Status) & post_rows$Status == "broken below" else rep(FALSE, nrow(post_rows))
                 .is_r_tsm_pa2 <- if (.has_tsm_pa2) !is.na(post_rows$ListOfTSM) & grepl(.resprout_re_pa2, post_rows$ListOfTSM, perl = TRUE) else rep(FALSE, nrow(post_rows))
                 .stump_rows_pa2 <- which(is.na(post_rows$ReconstructionMethod) & is.na(post_rows$DBH) &
-                                         !is.na(post_rows$TrueStemID) & (.is_bb_pa2 | .is_r_tsm_pa2))
+                    !is.na(post_rows$TrueStemID) & (.is_bb_pa2 | .is_r_tsm_pa2))
                 if (length(.stump_rows_pa2) > 0L) {
                     post_rows[.stump_rows_pa2, `:=`(
                         ReconstructedStemID = as.integer(TrueStemID),
@@ -2671,12 +2637,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # contains no live stems (so the continued identity is unambiguous).
         {
             .has_status_chain <- "Status" %in% names(post_rows)
-            .has_tsm_chain    <- "ListOfTSM" %in% names(post_rows)
+            .has_tsm_chain <- "ListOfTSM" %in% names(post_rows)
             if ((.has_status_chain || .has_tsm_chain) && "CensusID" %in% names(post_rows)) {
                 .resprout_re_ch <- "\\b(R|RP|RF|RT|OR)\\b"
-                .is_bb_ch    <- if (.has_status_chain) !is.na(post_rows$Status) & post_rows$Status == "broken below" else rep(FALSE, nrow(post_rows))
+                .is_bb_ch <- if (.has_status_chain) !is.na(post_rows$Status) & post_rows$Status == "broken below" else rep(FALSE, nrow(post_rows))
                 .is_r_tsm_ch <- if (.has_tsm_chain) !is.na(post_rows$ListOfTSM) & grepl(.resprout_re_ch, post_rows$ListOfTSM, perl = TRUE) else rep(FALSE, nrow(post_rows))
-                .is_live_ch  <- !is.na(post_rows$DBH)
+                .is_live_ch <- !is.na(post_rows$DBH)
                 # Unassigned stump rows: broken-below, NA DBH, NA TrueStemID, not yet assigned
                 .is_stump_ch <- (.is_bb_ch | .is_r_tsm_ch) & !.is_live_ch & is.na(post_rows$TrueStemID) & is.na(post_rows$ReconstructionMethod)
                 if (any(.is_stump_ch)) {
@@ -2691,7 +2657,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                         .chain_cens <- integer(0L)
                         for (.cc in .post_cens_ord) {
                             .rows_cc <- which(post_rows$CensusID == .cc)
-                            if (any(.is_live_ch[.rows_cc])) break  # Live stem → stop propagation
+                            if (any(.is_live_ch[.rows_cc])) break # Live stem → stop propagation
                             if (any(.is_stump_ch[.rows_cc])) .chain_cens <- c(.chain_cens, .cc)
                         }
                         if (length(.chain_cens) > 0L) {
@@ -2727,12 +2693,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # never processed by the DP (they had no DBH rows to assign).
     {
         .has_status_fp <- "Status" %in% names(tree_data)
-        .has_tsm_fp    <- "ListOfTSM" %in% names(tree_data)
+        .has_tsm_fp <- "ListOfTSM" %in% names(tree_data)
         if ((.has_status_fp || .has_tsm_fp) && "CensusID" %in% names(tree_data)) {
             .resprout_re_fp <- "\\b(R|RP|RF|RT|OR)\\b"
-            .is_bb_fp    <- if (.has_status_fp) !is.na(tree_data$Status) & tree_data$Status == "broken below" else rep(FALSE, nrow(tree_data))
+            .is_bb_fp <- if (.has_status_fp) !is.na(tree_data$Status) & tree_data$Status == "broken below" else rep(FALSE, nrow(tree_data))
             .is_r_tsm_fp <- if (.has_tsm_fp) !is.na(tree_data$ListOfTSM) & grepl(.resprout_re_fp, tree_data$ListOfTSM, perl = TRUE) else rep(FALSE, nrow(tree_data))
-            .is_live_fp  <- !is.na(tree_data$DBH)
+            .is_live_fp <- !is.na(tree_data$DBH)
             # Unassigned stump rows: broken-below, NA DBH, NA TrueStemID, no ReconstructionMethod yet
             .is_stump_fp <- (.is_bb_fp | .is_r_tsm_fp) & !.is_live_fp & is.na(tree_data$TrueStemID) & is.na(tree_data$ReconstructionMethod)
             if (any(.is_stump_fp)) {

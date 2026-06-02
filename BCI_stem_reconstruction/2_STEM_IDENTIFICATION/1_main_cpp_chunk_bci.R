@@ -2,32 +2,23 @@
 ### main_cpp_chunk_bci.R — dp_global BCI chunked driver
 ############################################################
 # Goal
-#   BCI-specific variant of the chunked DP_GLOBAL pipeline. Sources the DP
-#   solver from a self-contained bundle (dp_bundle_path) via withr::with_dir
-#   so bundle-internal relative paths resolve correctly when running from
-#   another directory. Groups (Tag + species) are processed in chunks of
+#   Sources the DP solver from dp_global/R/dp_global_main.R (via here()) within
+#   the project tree. Groups (Tag + species) are processed in parallel chunks of
 #   DP_CHUNK_SIZE and outputs are written incrementally to disk.
 #
-# BCI-specific behaviour (vs. main_cpp_chunk.R)
-# - Loads data from an RDS file (readRDS) instead of a CSV (fread).
-# - Estimates biological parameters from post-anchor census data, separately
-#   for trees/shrubs, palms/tree-ferns, figs, strangler figs, and unknowns.
-# - Splits tags into single-stemmed (bypass) and multi-stemmed (DP) subsets.
-# - FORCE_ONE_SPECIES_PARAMETERS=FALSE — uses real BCI species identities.
-# - Uses withr::with_dir to source dp_global_main.R from the bundle.
+# - Loads data from INPUT_FILE.
+# - Estimates biological parameters from anchor census data, separately for
+#   trees, shrubs, palms/tree-ferns, strangler figs, and unknowns.
+# - Splits tags into single-stem (bypass, ReconstructedStemID = StemID) and
+#   multi-stem (DP reconstruction) subsets before running.
+# - FORCE_ONE_SPECIES_PARAMETERS=FALSE — uses per-species BCI identities.
+# - BCI-specific TrueStemID pre-propagation (Steps 1–3) anchors unambiguous
+#   rows before handing control to the DP solver.
 #
 # Note for orchestrators
 # - This script accepts CLI overrides of internal variables via --KEY=VALUE.
-# - See the `CLI_REFERENCE` variable below for the canonical keys used by
-#   external orchestrators; they should construct flags matching these names
-#   (case-insensitive, '-' or '_' allowed).
-#
-# Differences from main_cpp.R
-# - run_main_chunked() writes each chunk to disk and sets out <- NULL after
-#   each chunk, keeping peak memory proportional to chunk size.
-# - Sensitivity sweeps and realism reports are disabled (require a full out).
-# - PLOT_PDF_ONE_TAG_ONLY is not used; per-chunk PDFs are controlled by
-#   WRITE_DP_PDF_PER_CHUNK.
+# - See the `CLI_REFERENCE` variable below for the canonical keys; they
+#   should construct flags matching these names (case-insensitive, '-' or '_').
 #
 # Table of Contents
 #  0) Housekeeping       — workspace reset guard
@@ -85,7 +76,8 @@ parse_args <- function() {
                 .char_keys <- c(
                     "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
                     "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
-                    "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL"
+                    "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL",
+                    "TAG_FILTER_FILE"
                 )
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
@@ -174,8 +166,7 @@ DP_VERBOSE <- TRUE
 DP_POSTERIOR_TOP_K <- 2L
 DP_MAX_TRACKS <- NULL # auto (computed from data)
 DP_MAX_STATES <- 10000L # maximum 30 minutes of runtime per tag check "./2_STEM_IDENTIFICATION/test_complexity_manual.R"
-DP_SLACK_TRACKS <- 1L
-# NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
+DP_SLACK_TRACKS <- 1L # Optionally require that slack be granted only if an anchor DBH is recruitable
 # (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
@@ -205,6 +196,14 @@ POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "feather" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
 POSTERIOR_SAMPLE_SEED <- NULL
+
+# Optional: restrict the chunked run to a subset of tags listed in a CSV/TSV
+# file. Useful for regression tests on curated tag subsets. When NULL or
+# empty, all tags in the input data are processed. The file must contain a
+# single column whose values match the Tag column in the input. TAG_FILTER_N
+# (optional) caps the number of tags taken from the file (head).
+TAG_FILTER_FILE <- NULL
+TAG_FILTER_N <- NULL
 # Option: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
 ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 
@@ -238,7 +237,7 @@ PROB_N_SIGMA_ME <- 2.5
 ### 3.3) Chunking & posterior sampling settings
 ############################################################
 # Controls incremental chunk processing and posterior path sampling.
-DP_CHUNK_SIZE <- 16L
+DP_CHUNK_SIZE <- 18L
 DP_CHUNK_RESUME <- TRUE
 DP_CHUNK_OVERWRITE <- FALSE
 # Optional: limit chunks to a specific range for testing (NULL means all)
@@ -250,7 +249,7 @@ DP_CHUNK_END <- NULL
 ############################################################
 RUN_ALL_TAGS <- TRUE
 MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
-MANUAL_CORES_VALUE <- 16L # Number of cores to use if MANUAL_CORES=TRUE
+MANUAL_CORES_VALUE <- 18L # Number of cores to use if MANUAL_CORES=TRUE
 
 ############################################################
 ### 3.5) Output & path settings
@@ -626,10 +625,6 @@ if (!is.null(POSTERIOR_SAMPLE_SEED)) {
 # Load dp_global R modules: DP solver, biological parameter estimation,
 # sensitivity and realism helpers, naming utilities.
 source(here("dp_global", "R", "dp_global_main.R"))
-# NOTE: sensitivity_transition_cost_bio.R, realism_calibration.R, and
-# k_tuning_viz.R are NOT sourced here — they require a fully assembled
-# output object and are not applicable to the chunked runner.
-# naming_helpers.R is already sourced in section 3.5.
 
 ############################################################
 ### 7) Helpers — data-manipulation utilities
@@ -779,7 +774,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
             use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
             # prune controls
-            # NOTE: You can always define very wide based on the parameter data you have.
+            # You can always define very wide based on the parameter data you have.
             prune_hard = TRUE,
             prune_min_growth = MAX_SHRINK_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
             prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
@@ -855,7 +850,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 if (!("ReconstructedStemID" %in% names(.post))) .post[, ReconstructedStemID := NA_integer_]
                 if (!("ReconstructionMethod" %in% names(.post))) .post[, ReconstructionMethod := NA_character_]
                 if (!("ConstraintViolation" %in% names(.post))) .post[, ConstraintViolation := NA]
-                # NOTE: no !is.na(DBH) guard here.  Terminal NA-DBH post-
+                # No !is.na(DBH) guard here.  Terminal NA-DBH post-
                 # anchor rows with a known TrueStemID (rows anchored by
                 # the pre-DP terminal-event propagation in main_cpp_bci.R
                 # Step 2 / Step 3) must also be honoured to satisfy the
@@ -1071,7 +1066,7 @@ run_main_chunked <- function() {
             CensusID,
             TrueStemID = StemID,
             Mnemonic,
-            # NOTE: BCI data is by default in mm
+            # BCI data is by default in mm
             DBH = dbh_with_best_candidate_taper_corrected / 10, # mm → cm
             ExactDate,
             growth_form
@@ -1824,6 +1819,46 @@ run_main_chunked <- function() {
 
     xrun <- data.table::copy(xraw_multi_stems)
 
+    # Optional regression-test filter: restrict xrun to tags listed in
+    # TAG_FILTER_FILE (first column). Applied before bio_par estimation
+    # so the species/parameter pool is also reduced when the filter is set.
+    if (exists("TAG_FILTER_FILE") && !is.null(TAG_FILTER_FILE) && nzchar(TAG_FILTER_FILE)) {
+        if (!file.exists(TAG_FILTER_FILE)) {
+            stop("TAG_FILTER_FILE not found: ", TAG_FILTER_FILE)
+        }
+        .tf <- tryCatch(data.table::fread(TAG_FILTER_FILE, colClasses = "character"),
+            error = function(e) {
+                stop("Failed to read TAG_FILTER_FILE: ", e$message)
+            }
+        )
+        if (ncol(.tf) < 1L) stop("TAG_FILTER_FILE has no columns: ", TAG_FILTER_FILE)
+        .filter_tags <- as.character(.tf[[1L]])
+        # Strip whitespace; drop NA/empty
+        .filter_tags <- trimws(.filter_tags)
+        .filter_tags <- .filter_tags[nzchar(.filter_tags) & !is.na(.filter_tags)]
+        if (exists("TAG_FILTER_N") && !is.null(TAG_FILTER_N)) {
+            .n_take <- as.integer(TAG_FILTER_N)
+            if (length(.filter_tags) > .n_take) .filter_tags <- head(.filter_tags, .n_take)
+        }
+        # Match Tag values robustly: accept either the raw string (e.g. "000015")
+        # OR the leading-zero-stripped form (e.g. "15") on either side, so the
+        # filter works regardless of whether xrun$Tag is character or integer.
+        .filter_norm <- sub("^0+", "", .filter_tags)
+        .filter_norm[!nzchar(.filter_norm)] <- "0"
+        .filter_keys <- unique(c(.filter_tags, .filter_norm))
+        .xrun_tag_char <- as.character(xrun$Tag)
+        .xrun_tag_norm <- sub("^0+", "", .xrun_tag_char)
+        .xrun_tag_norm[!nzchar(.xrun_tag_norm)] <- "0"
+        .keep <- (.xrun_tag_char %in% .filter_keys) | (.xrun_tag_norm %in% .filter_keys)
+        .before_n <- data.table::uniqueN(xrun$Tag)
+        xrun <- xrun[.keep]
+        message(sprintf(
+            "[main_cpp_chunk_bci.R] TAG_FILTER_FILE: kept %d of %d tags from %s (file lists %d tags).",
+            data.table::uniqueN(xrun$Tag), .before_n, TAG_FILTER_FILE, length(.filter_tags)
+        ))
+        if (nrow(xrun) == 0L) stop("After applying TAG_FILTER_FILE, xrun is empty.")
+    }
+
     # unique(xrun[Mnemonic != species, .(Mnemonic, species)])
 
     # ------------------------------------------------------------------
@@ -2000,28 +2035,37 @@ run_main_chunked <- function() {
 
                 if (nrow(out_chunk) > 0L) {
                     out_chunk[, DP_Chunk := ci]
+                    # ---- Post-engine helper chain (all helpers in dp_global/R/dp_global_main.R) ----
+                    # 1. Posterior bins: adds DP_PosteriorBin column.
                     out_chunk <- maybe_add_posterior_bins(out_chunk)
-                    # Post-engine backfill of orphan terminal-event rows.
-                    # For rows with Status %in% {"dead","stem dead","broken below"}
-                    # AND NA DBH AND NA ReconstructedStemID, copy the
-                    # ReconstructedStemID from the most recent prior row in the
-                    # same (Tag, StemID) group (LOCF) and set
-                    # ReconstructionMethod = "carried_terminal".
-                    # Shared helper defined in dp_global/R/dp_global_main.R;
-                    # mirrors Step 9b in main_cpp_bci.R / Step 5.5b in main_cpp.R.
-                    # verbose = FALSE keeps multi-tag chunked logs quiet.
+                    # 2. Carried-terminal backfill: LOCF of ReconstructedStemID onto
+                    #    NA-DBH terminal rows (dead/stem dead/broken below).
                     out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
+                    # 3. Orphan-stem backfill: fills NA-DBH, NA-TrueStemID rows from StemID.
                     out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
-                    # Enforce broken-below life-cycle invariants (R1: split-at-
-                    # resurrection; R2: post-terminator). Deterministic and
-                    # idempotent; may override TrueStemID-based pins on rows
-                    # that violate the contract. Tags rows with one of
-                    # bb_split / bb_split_carry / bb_post_terminator_split /
-                    # bb_post_terminator_split_carry. Defined in
-                    # dp_global/R/dp_global_main.R; see also
-                    # `apply_bb_invariants_to_samples()` for posterior writers.
+                    # 4. Broken-below invariants (R1 split-at-resurrection, R2 post-terminator).
+                    #    May mint new ReconstructedStemIDs tagged bb_split / bb_post_terminator_split.
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
-                    # Record run output directory (basename) in each row to avoid variable/column name collision
+                    # 5. Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
+                    #    ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
+                    #    then by original ID. This matches the OriginalStemID convention and ensures no negative or zero IDs.
+                    #    Must run after apply_broken_below_invariants(); returns a mapping table.
+                    .renum <- renumber_engine_minted_ids(
+                        out_chunk,
+                        posterior_top_k = DP_POSTERIOR_TOP_K,
+                        posterior_samples_path = out_dir,
+                        verbose = FALSE
+                    )
+                    out_chunk <- .renum$out
+                    # 6. Finalize posterior path files: translates staged per-sample
+                    #    ReconstructedStemIDs via the mapping, re-derives per-sample bb IDs,
+                    #    writes posteriors/tag_*_paths.<ext>, and removes staging files.
+                    finalize_posterior_paths(
+                        out_chunk,
+                        posterior_samples_path = out_dir,
+                        mapping = .renum$mapping,
+                        verbose = FALSE
+                    )
                     out_chunk[, run_out_dir := basename(out_dir)]
 
                     if (isTRUE(WRITE_DP_CSV)) {

@@ -50,6 +50,10 @@ The archive contains source code, not binaries — always compile on the target 
 
 ### Run
 
+## Stem Identity Renumbering
+
+All drivers in the dp_global workflow use a universal post-engine helper chain: `maybe_add_posterior_bins()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. After these steps, all `ReconstructedStemID` values are renumbered **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. **Negative or zero IDs are never produced.**
+
 ```r
 withr::with_dir("~/dp_global_bundle",
   source(file.path("dp_global", "R", "dp_global_main.R")))
@@ -106,7 +110,7 @@ tar -xzf dpglobal_bundle_full_YYYYMMDD_HHMMSS.tar.gz -C ~/projects/dp_global_bun
 cd ~/projects/dp_global_bundle
 ```
 
-2. Install missing R packages:
+1. Install missing R packages:
 
 ```r
 manifest <- readRDS("dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds")
@@ -116,7 +120,7 @@ missing <- pkgs[!pkgs %in% installed.packages()[, 1]]
 if (length(missing)) install.packages(missing)
 ```
 
-3. Compile C++ acceleration (recommended):
+1. Compile C++ acceleration (recommended):
 
 ```r
 Rcpp::sourceCpp("dp_global/src/transition_cost_rcpp.cpp")
@@ -124,13 +128,13 @@ Rcpp::sourceCpp("dp_global/src/transition_cost_rcpp.cpp")
 
 The archive contains source code, not binaries — always compile on the target machine.
 
-4. Run the verification script:
+1. Run the verification script:
 
 ```bash
 Rscript dp_global/R/dpglobal_bundle/verify_bundle.R
 ```
 
-5. Run your analysis:
+1. Run your analysis:
 
 ```r
 withr::with_dir("~/projects/dp_global_bundle",

@@ -230,7 +230,7 @@ weighted_quantile <- function(vals, w, prob) {
 
 post_change_list <- list()
 all_path_decomp_list <- list()
-all_paths_by_tag  <- list()  # tag -> data.table(path_idx, path_prob, obs_row_id, StemID, CensusID, DBH, BA)
+all_paths_by_tag <- list() # tag -> data.table(path_idx, path_prob, obs_row_id, StemID, CensusID, DBH, BA)
 
 for (tg_str in names(post_tag_map)) {
     tg <- tryCatch(as.integer(tg_str), warning = function(w) tg_str)
@@ -644,28 +644,35 @@ if (length(all_path_decomp_list) > 0L) {
     if (nrow(census_dates) > 0L) {
         all_pd <- merge(all_pd,
             census_dates[, .(CensusID_from = CensusID, Year_from = 1970 + MeanDate / 365.25)],
-            by = "CensusID_from", all.x = TRUE)
+            by = "CensusID_from", all.x = TRUE
+        )
         all_pd <- merge(all_pd,
             census_dates[, .(CensusID_to = CensusID, Year_to = 1970 + MeanDate / 365.25)],
-            by = "CensusID_to", all.x = TRUE)
+            by = "CensusID_to", all.x = TRUE
+        )
     }
 
     # Helper: draw density panel for a component
     draw_density_panel <- function(vals, weights, col_fill, col_line, main_title, xlab_expr) {
         if (length(vals) < 2L || all(is.na(vals))) {
-            plot.new(); text(0.5, 0.5, "Insufficient data", cex = 1.1)
+            plot.new()
+            text(0.5, 0.5, "Insufficient data", cex = 1.1)
             return(invisible(NULL))
         }
         w <- weights / sum(weights)
         wmean <- sum(w * vals)
         d <- tryCatch(density(vals, weights = w, na.rm = TRUE),
-                      error = function(e) NULL)
+            error = function(e) NULL
+        )
         if (is.null(d)) {
-            plot.new(); text(0.5, 0.5, "Density failed", cex = 1.1)
+            plot.new()
+            text(0.5, 0.5, "Density failed", cex = 1.1)
             return(invisible(NULL))
         }
-        plot(d, main = main_title, xlab = xlab_expr,
-             col = col_line, lwd = 2, zero.line = FALSE)
+        plot(d,
+            main = main_title, xlab = xlab_expr,
+            col = col_line, lwd = 2, zero.line = FALSE
+        )
         polygon(d$x, d$y, col = adjustcolor(col_fill, 0.3), border = NA)
         abline(v = wmean, col = col_line, lwd = 2.5, lty = 1)
         mtext(sprintf("mean = %.4e", wmean), side = 3, line = 0.2, cex = 0.7, adj = 1)
@@ -710,7 +717,7 @@ if (length(all_path_decomp_list) > 0L) {
         if (nrow(sub) < 2L) next
 
         yr_from <- sub$Year_from[1]
-        yr_to   <- sub$Year_to[1]
+        yr_to <- sub$Year_to[1]
         int_label <- if (!is.na(yr_from) && !is.na(yr_to)) {
             sprintf("C%d->C%d (%.0f-%.0f)", cf, ct, yr_from, yr_to)
         } else {
@@ -778,8 +785,10 @@ build_traj_panel <- function(rec_tag, assign_dt, title_str, subtitle_str,
         geom_point(size = 1.4) +
         scale_colour_manual(values = stem_palette, drop = FALSE) +
         scale_x_continuous(breaks = sort(unique(d$CensusID))) +
-        labs(title = title_str, subtitle = subtitle_str,
-             x = "Census", y = "DBH (mm)") +
+        labs(
+            title = title_str, subtitle = subtitle_str,
+            x = "Census", y = "DBH (mm)"
+        ) +
         theme_traj()
 }
 
@@ -793,8 +802,10 @@ for (tg_str in names(post_tag_map)) {
     tag_rec <- rec[Tag == tg]
     if (nrow(tag_rec) == 0L) next
 
-    map_assign <- tag_rec[!is.na(ReconstructedStemID),
-        .(obs_row_id, StemID = ReconstructedStemID)]
+    map_assign <- tag_rec[
+        !is.na(ReconstructedStemID),
+        .(obs_row_id, StemID = ReconstructedStemID)
+    ]
     if (nrow(map_assign) == 0L) next
 
     # Build a stable colour palette across all panels using the union of
@@ -819,7 +830,8 @@ for (tg_str in names(post_tag_map)) {
         top1 <- path_summary$path_idx[1]
         rest <- path_summary[path_idx != top1]
         sampled <- sample(
-            rest$path_idx, size = n_pick - 1L,
+            rest$path_idx,
+            size = n_pick - 1L,
             prob = rest$path_prob, replace = FALSE
         )
         c(top1, sampled)
@@ -847,7 +859,8 @@ for (tg_str in names(post_tag_map)) {
     # Pad to 8 if fewer posterior paths than 8
     while (length(sample_panels) < 8L) {
         sample_panels[[length(sample_panels) + 1L]] <-
-            ggplot() + theme_void()
+            ggplot() +
+            theme_void()
     }
 
     panels <- c(list(map_panel), sample_panels)
@@ -917,20 +930,25 @@ for (tg_str in names(post_tag_map)) {
     ]
 
     pA <- ggplot() +
-        geom_line(data = pa_dat,
+        geom_line(
+            data = pa_dat,
             aes(x = CensusID, y = BA_stem, group = line_id, alpha = weight),
             colour = "#1f77b4", linewidth = 0.35
         ) +
-        geom_line(data = map_stem_traj,
+        geom_line(
+            data = map_stem_traj,
             aes(x = CensusID, y = BA_stem, group = factor(StemID)),
             colour = "black", linewidth = 0.7
         ) +
-        geom_point(data = map_stem_traj,
+        geom_point(
+            data = map_stem_traj,
             aes(x = CensusID, y = BA_stem),
             colour = "black", size = 1.4
         ) +
-        scale_alpha_continuous(range = c(0.05, 0.6),
-            name = "path_prob (rescaled)") +
+        scale_alpha_continuous(
+            range = c(0.05, 0.6),
+            name = "path_prob (rescaled)"
+        ) +
         scale_x_continuous(breaks = sort(unique(pa_dat$CensusID))) +
         scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
         labs(
@@ -965,27 +983,34 @@ for (tg_str in names(post_tag_map)) {
 
     if (nrow(pd) > 0L) {
         long <- melt(pd,
-            id.vars = c("Tag", "CensusID_from", "CensusID_to",
-                        "path_idx", "path_prob"),
+            id.vars = c(
+                "Tag", "CensusID_from", "CensusID_to",
+                "path_idx", "path_prob"
+            ),
             measure.vars = c("Growth_BA", "Loss_BA", "Gain_BA"),
             variable.name = "Component", value.name = "BA"
         )
         long[, Component := factor(Component,
             levels = c("Growth_BA", "Loss_BA", "Gain_BA"),
-            labels = c("Growth (survivors)",
-                       "Loss (mortality)",
-                       "Gain (recruitment)")
+            labels = c(
+                "Growth (survivors)",
+                "Loss (mortality)",
+                "Gain (recruitment)"
+            )
         )]
         long[, Interval := factor(
             sprintf("C%d->C%d", CensusID_from, CensusID_to),
-            levels = unique(sprintf("C%d->C%d",
+            levels = unique(sprintf(
+                "C%d->C%d",
                 sort(unique(CensusID_from)),
-                sort(unique(CensusID_to))))
+                sort(unique(CensusID_to))
+            ))
         )]
 
         # Weighted mean per component x interval
         wmean_dt <- long[, .(wmean = sum(BA * path_prob) / sum(path_prob)),
-            by = .(Component, Interval)]
+            by = .(Component, Interval)
+        ]
 
         comp_cols <- c(
             "Growth (survivors)" = COL_G,
@@ -1002,7 +1027,8 @@ for (tg_str in names(post_tag_map)) {
                 width = 0.08, height = 0,
                 alpha = 0.35, colour = "grey25"
             ) +
-            geom_point(data = wmean_dt,
+            geom_point(
+                data = wmean_dt,
                 aes(x = Interval, y = wmean),
                 shape = 23, fill = "white", colour = "black",
                 size = 2.6, stroke = 0.6,
@@ -1011,8 +1037,10 @@ for (tg_str in names(post_tag_map)) {
             geom_hline(yintercept = 0, linetype = 2, colour = "grey60") +
             facet_wrap(~Component, ncol = 3, scales = "free_y") +
             scale_fill_manual(values = comp_cols, guide = "none") +
-            scale_size_continuous(range = c(0.4, 2),
-                name = "path_prob") +
+            scale_size_continuous(
+                range = c(0.4, 2),
+                name = "path_prob"
+            ) +
             scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
             labs(
                 title = "C. Posterior distributions of BA-change decomposition",
@@ -1026,7 +1054,8 @@ for (tg_str in names(post_tag_map)) {
             theme_prop() +
             theme(axis.text.x = element_text(angle = 30, hjust = 1))
     } else {
-        pC <- ggplot() + theme_void() +
+        pC <- ggplot() +
+            theme_void() +
             labs(title = "C. (no posterior decomposition available)")
     }
 
@@ -1135,7 +1164,4 @@ if (nrow(tag_change) > 0L && "Growth_sd" %in% names(tag_change)) {
 
 cat("\nDone.\n")
 
-# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260505_112731_BCI_tag258411_T258411_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
-# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260505_112753_BCI_tag000378_T000378_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
-# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260505_112815_BCI_tag115427_T115427_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
-
+# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260601_203802_BCI_tag115203_T115203_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"

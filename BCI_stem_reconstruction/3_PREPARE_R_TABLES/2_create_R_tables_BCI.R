@@ -1,137 +1,44 @@
 ################################################################################
 # FORESTGEO STEM TABLE CREATION SCRIPT
 ################################################################################
-# Purpose: Transform ViewFullTable_site.csv and ViewTaxonomy_site.csv into R tables
-#          ([site].stem[census#].rdata and [site].spptable.rdata)
+# Purpose: Build ForestGEO Rtables and a species table from a reconstructed
+# census dataset plus taxonomy input.
 #
-# Authors:
-#   - Original: Valentine Herrmann (HerrmannV@si.edu)
-#   - Updated: Jose Medina (MedinaJA@si.edu)
+# Inputs:
+#   - DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds
+#   - DATA/SPP_TABLE/bci_spptable.txt
 #
-# Environment:
-#   - R version 4.5.2 (2025-10-31)
-#   - data.table version 1.17.8
+# Outputs:
+#   - DATA/RTABLES/[site].stem[n].Rdata
+#   - DATA/RTABLES/[site].spptable.rdata
+#   - DATA/CHECKS/ diagnostic CSV files
 #
-# Last modified: [November 17th, 2025]
+# Main pipeline:
+#   1. Load census and species data
+#   2. Standardize stems across censuses
+#   3. Map raw Status values to A/D/G/P/N
+#   4. Validate encounter histories before propagation
+#   5. Propagate no-data and terminal states forward
+#   6. Fix PD/PG inconsistencies and resurrection anomalies
+#   7. Derive tree-level life histories and remap D/G for stems
+#   8. Write corrected census tables and a ForestGEO species table
 ################################################################################
-#
-# TABLE OF CONTENTS
-# =================
-# Section  1: Setup and Initialization
-# Section  2: Load Input Data
-# Section  3: Standardize Data Format Across Censuses
-# Section  4: Status Code Transformation (English → Single Letter) + Encounter Histories
-#            Includes the DBH-aware "broken below" rule (see Section 4 header).
-# Section  5: [VALIDATION] Check Encounter History Patterns (pre-propagation QA)
-# Section  6: [reserved]
-# Section  7: Status Propagation Rules (N → P/A/D/G)
-# Section  8: [CORRECTION] Fix Prior-to-Dead/Gone (DBH-aware)
-# Section  9-10: [CORRECTION] Resolve Resurrections D→A / G→A (DBH-aware merged)
-# Section 10b: [SAFETY NET] Resolve D / G stranded between two A's
-# Section 11: Tree-Level Status Calculation & D/G Correction (vectorized)
-# Section 12: Apply Corrected Status to Census Data
-# Section 12b: [VALIDATION] Unified Biology Assessment of all 4 history versions
-# Section 13: Generate Data Quality Reports
-# Section 13b: [VALIDATION] Status × DBH summary + final audit before export
-# Section 14: Export Census Tables (.Rdata)
-# Section 15: Export Species Table (.Rdata)
-#
-# VARIABLE NAMING CONVENTIONS (single source of truth)
-# =====================================================
-#   Status               raw English status from ViewFullTable ("alive",
-#                        "dead", "broken below", "missing", …). Mutated
-#                        in Section 4 by the broken-below DBH-aware rule
-#                        BEFORE the wide pivot.
-#   original_status      per-stem encounter history string built from the
-#                        post-broken-below `Status` (e.g. "NNAAAD"); never
-#                        mutated again — used as the pre-propagation
-#                        baseline.
-#   new_status           working per-stem encounter history. Updated by:
-#                          Section 7  N→P/A/D/G propagation
-#                          Section 8  fix_PD_PG_inconsistencies (DBH-aware)
-#                          Section 9-10 fix_resurrections (DBH-aware)
-#                          Section 10b fix_DG_between_A safety net
-#   corrected_new_status per-stem history after the Section 11 D↔G remap
-#                        (single-stem trees: G→D; multi-stem with any
-#                        live stem at last census: D→G; A and P preserved).
-#                        This is the canonical exported per-stem code.
-#   tree_histories       per-tree encounter history aggregated from all
-#                        stems of a TreeID via tree_state() (Section 11).
-#   DBHs                 numeric matrix [n_stems x n_censuses] of DBH,
-#                        built once in Section 8 and reused throughout.
-#   Rstatus              column name in the EXPORTED tables holding the
-#                        per-census slice of corrected_new_status
-#                        (renamed from "new_status" in Section 14).
-#   DFstatus             legacy ForestGEO column kept for backward
-#                        compatibility; carries the raw `Status` string
-#                        (post broken-below resolution). Set to "prior"
-#                        on rows where Rstatus == "P".
+# Variable summary:
+#   Status               raw field record, later mapped to A/D/G/P/N
+#   original_status      stem encounter history before propagation
+#   new_status           propagated stem history before D/G remap
+#   corrected_new_status final stem history after tree-level D/G adjustment
+#   tree_histories       tree-level history aggregated from stem histories
+#   DBHs                 numeric matrix of stem DBH measurements by census
+#   Rstatus              exported per-census corrected stem status
+#   DFstatus             legacy ForestGEO status field for prior stems
 ################################################################################
-#
-# SCRIPT OVERVIEW:
-# This script processes ForestGEO census data to create standardized R data tables.
-# It handles status propagation across censuses, identifies resurrected stems,
-# and exports cleaned data in .Rdata format for analysis.
-#
-# MAIN FEATURES:
-# - Uses data.table for fast processing and clean console output
-# - Verbose diagnostic messages showing status transformations
-# - Generates QA/QC reports for data quality review
-# - Handles multi-stem trees correctly (e.g., D vs G status codes)
-# - Detects and corrects invalid stem resurrection cases
-#
-# INPUT FILES:
-# - ViewFullTable_[site].csv: Tab-delimited census data (one row per stem per census)
-# - ViewTaxonomy_[site].csv: Tab-delimited species taxonomy data
-#
-# OUTPUT FILES:
-# - [site].stem[N].Rdata: One file per census with standardized format
-# - [site].spptable.rdata: Species taxonomy table
-# - Multiple CSV diagnostic files in ./DATA/CHECKS/
-#
-# WORKFLOW (HIGH-LEVEL PIPELINE):
-# 1. Load raw census (ViewFullTable) and taxonomy (ViewTaxonomy) data
-# 2. Standardize census format (same stem set & order across all censuses)
-# 3. Transform raw English status values to single-letter codes (A/D/G/P/N)
-# 4. Validate encounter histories for biological consistency (pre-propagation QA)
-# 5. Apply status propagation rules (resolve N → P / D / G and forward fill terminal states)
-# 6. Remove invalid resurrection patterns (alive after dead/gone with no DBH)
-# 7. Backfill validated resurrections (dead → alive with DBH evidence) as continuously alive
-# 8. Correct Prior→Dead/Gone inconsistencies (replace PD / PG with PP)
-# 9. Compute tree-level life histories and apply final biologically consistent D vs G mapping
-#    (single-stem: D = dead tree; multi-stem: G = gone stem while tree persists)
-# 10. Apply corrected stem statuses to census tables and export per-census stem files
-# 11. Export species taxonomy table (spptable)
-# 12. Generate diagnostic QA/QC reports (status changes, edge cases, resurrection review)
-#
-# STATUS CODE DEFINITIONS:
-#   A = Alive (stem measured and alive)
-#   D = Dead (entire tree dead – single-stem trees, or all stems dead)
-#   G = Gone (stem dead/lost but tree still alive – multi-stem trees only)
-#   P = Prior (prior to first observation)
-#   N = No data (missing measurement - converted to A/D/G/P during processing)
-######################################################
 
 # ========================================================================
 # SECTION 1: SETUP AND INITIALIZATION
 # ========================================================================
-# PURPOSE:
-#   Clean workspace, load required libraries, and define user parameters
-#
-# WHAT THIS SECTION DOES:
-#   1. Removes all objects from memory to start fresh
-#   2. Loads data.table library for fast data processing
-#   3. Sets input/output folder paths
-#   4. Creates output directories if they don't exist
-#   5. Defines site name and processing parameters
-#   6. Defines column names for data formatting
-#
-# USER PARAMETERS TO CONFIGURE:
-#   - INPUT_folder: Where to find ViewFullTable and ViewTaxonomy CSV files
-#   - OUTPUT_folder: Where to save .Rdata output files
-#   - CHECK_folder: Where to save diagnostic CSV reports
-#   - site: Site code (e.g., "hkk", "bci", "scbi")
-# ========================================================================
+# Load libraries, configure paths, and define output column mappings.
+# This section also ensures required folders exist before the pipeline runs.
 
 # Remove all objects from workspace to start fresh
 rm(list = ls())
@@ -175,7 +82,7 @@ if (!dir.exists(OUTPUT_folder)) {
 }
 
 # 5. Diagnostics folder for QA/QC reports
-CHECK_folder <- file.path(main_path, "BCI_stem_reconstruction", "3_PREPARE_R_TABLES", "CHECKS")
+CHECK_folder <- file.path(main_path, "BCI_stem_reconstruction", "DATA", "CHECKS")
 if (!dir.exists(CHECK_folder)) {
   dir.create(CHECK_folder, recursive = TRUE)
   cat("✓ Created CHECKS folder:", CHECK_folder, "\n")
@@ -205,7 +112,7 @@ ViewFullTable_columns_to_keep <- c(
   "DBHID", "CensusID", "DBH", "HOM", # measurement record
   "ExactDate", "Status", "ListOfTSM", # raw field status + measurement codes
   "Date", "new_status", # date + script-computed corrected status
-  "obs_row_id", "DP_PosteriorReconstructedProb" # DP reconstruction metadata
+  "obs_row_id" # DP reconstruction metadata
 )
 
 # Standardized ForestGEO R-table column names (must match ViewFullTable_columns_to_keep
@@ -216,7 +123,7 @@ new_names_columns_to_keep <- c(
   "MeasureID", "CensusID", "dbh", "hom", # hom = height of measurement
   "ExactDate", "DFstatus", "codes", # DFstatus = raw field status (legacy name)
   "date", "Rstatus", # date + script-computed corrected status
-  "obs_row_id", "PosteriorProb" # DP reconstruction metadata
+  "StemPaths" # DP reconstruction metadata
 )
 
 # ---- Hard guard: the two column vectors must be 1-to-1 -------------------
@@ -231,29 +138,8 @@ stopifnot(
 # ========================================================================
 # SECTION 2: LOAD INPUT DATA
 # ========================================================================
-# PURPOSE:
-#   Load census and taxonomy data from tab-delimited CSV files
-#
-# WHAT THIS SECTION DOES:
-#   1. Loads ViewFullTable (census data) using fread() for speed
-#   2. Displays data structure and unique values for verification
-#   3. Applies special filtering if needed
-#   4. Loads ViewTaxonomy (species data) using fread()
-#   5. Displays taxonomy structure for verification
-#
-# MAIN FUNCTIONS USED:
-#   - fread(): Fast data loading from data.table package
-#   - show_levels(): Custom function to display unique values in each column
-#
-# DATA VALIDATION:
-#   The show_levels() function helps verify:
-#   - Status values (alive, dead, etc.)
-#   - No unexpected values in key columns
-#
-# IMPORTANT NOTE:
-#   The script treats "NA", "NULL", and "" as missing values
-#   Set stringsAsFactors = FALSE to keep text as characters
-# ========================================================================
+# Load the reconstructed census table and taxonomy table, coerce key types,
+# and write diagnostic reports for raw value distributions.
 
 ################################################################################
 # HELPER FUNCTION: show_levels
@@ -335,8 +221,9 @@ cat("📂 Loading ViewFullTable_RAW...\n")
 
 ViewFullTable_RAW <- as.data.table(readRDS(file.path(
   INPUT_folder,
-  "complete_dataset_with_reconstructed_stemids.rds"
+  "complete_dataset_final_with_reconstructed_stemids.rds"
 )))
+ViewFullTable_RAW[, ReconstructedStemID := as.numeric(as.character(ReconstructedStemID))] # ensure character type for consistency
 
 # ── Standardize column types ──────────────────────────────────────────────────
 # The RDS file may carry incorrect types from the database export pipeline.
@@ -402,6 +289,10 @@ ViewFullTable <- copy(ViewFullTable_RAW)
 #   (see analysis above). They carry no DBH and do not affect size or growth analyses.
 ViewFullTable[, Raw_StemID := StemID] # preserve original DB StemID
 
+# unique(ViewFullTable$StemID)
+# unique(ViewFullTable$Raw_StemID)
+# unique(ViewFullTable$ReconstructedStemID)
+
 setkey(ViewFullTable, TreeID)
 setkey(ViewFullTable, Tag)
 
@@ -412,6 +303,7 @@ ViewFullTable[, .(n_treeid = uniqueN(TreeID)), by = Tag][order(-n_treeid)]
 ViewFullTable[is.na(Tag)]
 ViewFullTable[is.na(TreeID)]
 
+# sort(table(ViewFullTable$ReconstructedStemID))
 ViewFullTable[, StemID := paste(TreeID, ReconstructedStemID, sep = "_")] # new stable StemID
 
 # ── DIAGNOSTIC: Report "TreeID_NA" StemIDs ───────────────────────────────────────
@@ -504,41 +396,9 @@ fwrite(show_levels(ViewFullTable, n_to_print = Inf, output = "df"),
 # ========================================================================
 # SECTION 3: STANDARDIZE DATA FORMAT ACROSS CENSUSES
 # ========================================================================
-# PURPOSE:
-#   Create a standardized format where ALL censuses have the SAME stems
-#   in the SAME order, even if some stems weren't measured in some censuses
-#
-# THE PROBLEM:
-#   - Not all stems appear in all censuses (recruits, dead stems, missing data)
-#   - Different censuses have different numbers of rows
-#   - Difficult to compare status across censuses
-#
-# THE SOLUTION:
-#   - Create a master list of ALL stems (unique_StemID)
-#   - Force each census to have ALL stems in the SAME order
-#   - Fill in missing stems with NA for variable data
-#   - Fill in fixed attributes (e.g., ID's, taxonomy, coordinates) for all stems
-#
-# WHAT THIS SECTION DOES:
-#   1. Identifies columns that don't change across censuses (fixed_columns)
-#   2. Creates unique_StemID with one row per stem and fixed attributes
-# .  3. Idendity census date ranges for verification
-#   4. Splits ViewFullTable into separate data frames (one per census)
-#   5. Standardizes each census to have all stems in the same order
-#   6. Fills in fixed attributes and census identifiers
-#   7. Verifies all censuses now have identical dimensions
-#
-# VERIFICATION CHECKS:
-#   - All StemIDs are unique (no duplicates)
-#   - All censuses have the same number of rows
-# .  - Census dates are in expected order
-#   - Fixed columns are identical across all censuses
-#
-# WHY THIS MATTERS:
-#   This makes it possible to create "encounter history" strings where
-#   position i in the string corresponds to census i for ALL stems
-#   Example: "AAAD" = alive in censuses 1-3, dead in census 4
-# ========================================================================
+# Build a master stem list and force every census table to include the same
+# StemIDs in the same row order. Missing stems are retained as NA rows so that
+# encounter histories can be assembled consistently across all censuses.
 
 # --------------------------------------------------------------------
 # Create master stem list with fixed attributes
@@ -740,36 +600,11 @@ if (length(diffs) > 0) {
 }
 
 # ========================================================================
-# SECTION 4: STATUS CODE TRANSFORMATION - FOCUS AT THE STEM LEVEL, THEN TREES
+# SECTION 4: STATUS CODE TRANSFORMATION
 # ========================================================================
-# PURPOSE:
-#   Convert English status terms to standardized single-letter codes
-#   and create "encounter history" strings for each stem across censuses
-#
-# WHAT THIS SECTION DOES:
-#   1. Transforms English status ("alive", "dead", etc.) to codes (A, D, G, P)
-#   2. Handles missing data by assigning "N" (No data) placeholder
-#   3. Extracts status from each census into separate columns
-#   4. Creates encounter history strings (e.g., "AAAD" = alive 3x, then dead)
-#
-# STATUS CODE SYSTEM:
-#   A = Alive (stem was measured and alive)
-#   D = Dead (stem confirmed dead)
-#   G = Gone/Lost (stem missing/dead in multi-stem tree with other living stems)
-#   P = Prior (stem exists in later census, but this census hadn't started yet)
-#   N = No data (stem not measured, status unknown - temporary placeholder)
-#
-# WHY ENCOUNTER HISTORIES MATTER:
-#   Pattern "AAAD" tells us: stem alive in censuses 1-3, died before census 4
-#   Pattern "NAAA" tells us: stem recruited after census 1
-#   Pattern "AADN" tells us: potential data quality issue (dead then missing data)
-#   These patterns are used in Sections 5 and 7 for status propagation rules
-#
-# MAIN FUNCTIONS USED:
-#   - case_when(): Transform English to codes with pattern matching
-#   - lapply() + do.call(cbind): Extract status from each census into columns
-#   - paste0(): Concatenate status codes into encounter history string
-# ========================================================================
+# Convert raw Status terms to the canonical codes A/D/G/P/N, resolve "broken
+# below" using DBH, and assemble per-stem encounter history strings for later
+# propagation and correction.
 
 # --------------------------------------------------------------------
 # Transform English status codes to single letters
@@ -867,16 +702,20 @@ original_status <- gsub("alive", "A", original_status)
 # We'll distinguish between these in Section 6
 original_status[is.na(original_status)] <- "N"
 
+# Step 2b: Raw "missing" values should be treated as no-data, not dead.
+# A raw "missing" observation does not imply the stem was confirmed dead.
+original_status[original_status == "missing"] <- "N"
+
 # BCI rule: "broken below" with DBH → "alive"; without DBH → "dead".
 # Already resolved above before the wide pivot, so this gsub is a defensive
 # no-op kept only for documentation.
 original_status <- gsub("broken below", "G", original_status)
 
 # Step 4: Everything else → "D"
-# This catches: "dead", "stem dead", "missing", and any remaining
-# non-A/N/G statuses.  After Step 3, "broken below" has already been
-# split into "alive"/"dead" using DBH, so the only stems that fall
-# into "D" here are genuine deads (no DBH measurement implied).
+# This catches: "dead", "stem dead", and any remaining non-A/N/G statuses.
+# After Step 3, "broken below" has already been split into "alive"/"dead"
+# using DBH, so the only stems that fall into "D" here are genuine deads
+# or terminal statuses that were not explicitly marked as missing/no-data.
 # The "D" label is treated as REAL unless the same stem reappears as
 # "A" in a later census, in which case fix_resurrections() in Section
 # 9 backfills it (the "death" was a temporary measurement gap).
@@ -948,22 +787,11 @@ fwrite(tbl_sorted_before_propagation,
 )
 
 # ========================================================================
-# SECTION 5: VALIDATE ENCOUNTER HISTORIES FOR BIOLOGICAL CONSISTENCY
+# SECTION 5: VALIDATE ENCOUNTER HISTORIES
 # ========================================================================
-# PURPOSE:
-#   Check encounter histories for biological impossibilities before propagation
-#
-# VALIDATION RULES:
-#   - Length must match number of censuses
-#   - Only allowed codes: A (Alive), D (Dead), N (No data), G (Gone)
-#   - Cannot start with D or G (stems must be alive when first observed)
-#   - Terminal states: D→D only, G→G only (no resurrection)
-#   - Invalid transitions: D→A, G→A, D→N, G→N, etc.
-#
-# OUTPUT:
-#   - Reports violations to console
-#   - Exports encounter history patterns to CSV for review
-# ========================================================================
+# Check raw stem history strings for impossible biological transitions before
+# propagation. This flags histories with invalid codes, illegal state changes,
+# or resurrection-like patterns in the raw data.
 
 # Convert to character vector
 histories_before_propagation <- as.vector(tbl_sorted_before_propagation$code_before_propagation)
@@ -1090,19 +918,14 @@ if (nrow(issues) == 0) {
 # ========================================================================
 # SECTION 7: STATUS PROPAGATION RULES
 # ========================================================================
-# PURPOSE:
-#   Propagate status codes forward to resolve no-data (N) values
-#
-# PROPAGATION RULES:
-#   1. ^N → P: First census no-data = Prior (not yet recruited)
-#   2. PN → PP: Prior propagates until stem first measured
-#   3. AN → AD: Alive + no-data (interim; final D/G resolved at tree level)
-#   4. GN → GG: Gone propagates (terminal state)
-#   5. DN → DD: Dead propagates (terminal state)
-#
-# while() loops used because patterns may need multiple passes
-#   Example: "ANNN" requires 3 iterations → ADNN → ADDN → ADDD
-# ========================================================================
+# Resolve placeholder "N" values so each stem history is fully defined.
+#   - ^N → P
+#   - PN → PP
+#   - AN → AD
+#   - GN → GG
+#   - DN → DD
+# This turns partially observed histories into terminal or prior patterns
+# suitable for the downstream D/G correction logic.
 
 # --------------------------------------------------------------------
 ## RULE 1: First census N → P (Prior = not yet recruited)
@@ -1318,33 +1141,9 @@ if (nrow(issues) == 0) {
 # ========================================================================
 # SECTION 8: CORRECT PRIOR-TO-DEAD/GONE INCONSISTENCIES
 # ========================================================================
-# PURPOSE:
-#   Detect and correct cases where stems marked "P" (Prior - not yet recruited)
-#   transition directly to "D" (Dead) or "G" (Gone) without ever being alive.
-#
-# WHY THIS IS A VIOLATION:
-#   "P" means the stem had not yet been recruited / first observed. A stem
-#   cannot be "Dead" or "Gone" before it has ever been "Alive". So any
-#   adjacent pair PD or PG inside an encounter history is biologically
-#   inconsistent and must be resolved.
-#
-# TWO POSSIBLE RESOLUTIONS PER PD / PG CELL:
-#   (a) The D/G cell has NO DBH measurement. The most parsimonious fix is
-#       PD → PP / PG → PP: the stem was simply not yet recruited, so push
-#       Prior forward by one census.
-#   (b) The D/G cell DOES have a DBH measurement. This means the stem was
-#       actually measured at that census, so it cannot have been Prior the
-#       step before. The fix here is NOT PD → PP (that would silently drop
-#       a real measurement). These cases are biologically suspicious and
-#       should be flagged for manual review (and probably handled by a
-#       dedicated rule like "promote the surrounding P's to A").
-#
-# WHAT THIS SECTION DOES:
-#   1. Builds a DBH matrix aligned with the propagated status matrix.
-#   2. Calls fix_PD_PG_inconsistencies() which (optionally) uses the DBH
-#      matrix as evidence and writes a per-cell flag log to log_PD_PG.txt.
-#   3. Reports before/after pattern frequencies.
-# ========================================================================
+# Detect PD/PG transitions and correct them using DBH evidence. If the D/G cell
+# has no DBH, rewrite it to P; if the D/G cell has DBH, preserve the measured
+# observation and flag the case for review.
 
 # ------------------------------------------------------------------------
 # Build DBH matrix aligned with new_status / unique_StemID order
@@ -1641,35 +1440,14 @@ tbl_sorted <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
 print(tbl_sorted[grepl("PD|PG", tbl_sorted$x), ])
 
 # ========================================================================
-# SECTION 9-10: RESOLVE RESURRECTIONS (D→A, G→A)  — DBH-AWARE
+# SECTION 9-10: RESOLVE RESURRECTIONS (D→A, G→A)
 # ========================================================================
-# PURPOSE
-#   Resolve every D→A or G→A transition in the propagated encounter
-#   histories. After Section 7's propagation, any DA or GA substring is by
-#   definition biologically impossible (D and G are terminal). It must be
-#   one of two things:
-#
-#     (1) The "A" cell is real (has a DBH measurement) → the earlier D/G
-#         codes were wrong. Backfill alive ("data-error" interpretation).
-#         DDAA → AAAA  (was alive all along, just unobserved)
-#
-#     (2) The "A" cell is a "zombie" (no DBH) → the "A" itself is wrong.
-#         Demote it to D (or G if the previous code was G).
-#         DDDA → DDDD  (still dead)
-#
-# WHY MERGE THE TWO OLD SECTIONS
-#   The legacy Section 9 only handled D→A (not G→A) and only when the raw
-#   English status was literally "alive", missing cases that propagated
-#   through AN→AD chains. Section 10 then ran an unconditional gsub
-#   "DA|GA"→"AA" that would silently backfill any zombies Section 9 missed.
-#   The merged function below evaluates each cell once with full DBH
-#   evidence and writes a per-cell audit log.
-#
-# AUDIT
-#   Every D→A / G→A cell is logged to log_resurrections.txt with action:
-#     backfill_to_A : cell has DBH; backfill earlier D/G to A
-#     demote_to_DG  : cell has no DBH; rewrite A to D (or G)
-# ========================================================================
+# Correct impossible resurrection patterns using DBH evidence:
+#   - A with DBH after D/G means the earlier D/G was wrong and the stem is
+#     backfilled to A.
+#   - A without DBH after D/G means the alive record is suspect and is
+#     demoted to D or G.
+# Every case is audited in log_resurrections.txt.
 
 # ------------------------------------------------------------------------
 # HELPER FUNCTION: fix_resurrections
@@ -1843,36 +1621,16 @@ RES_fix <- fix_resurrections(
 )
 new_status <- RES_fix$status_vec
 
-cat("\n🔍 D→A / G→A patterns AFTER correction (should be empty):\n")
+cat("\n🔍 D→A / G→A patterns AFTER correction (should be empty; if not, next section):\n")
 tbl_sorted_stem <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
 print(tbl_sorted_stem[grepl("DA|GA", tbl_sorted_stem$x), ])
 
 # ========================================================================
-# SECTION 10b: SAFETY NET — D / G STRANDED BETWEEN TWO A's
+# SECTION 10b: SAFETY NET — D/G BETWEEN TWO A's
 # ========================================================================
-# BIOLOGY
-#   A stem that was observed alive (A) at census t1 and alive again at
-#   census t2 (t2 > t1) MUST have been continuously alive from t1 to t2.
-#   Any D or G in between is, by definition, an observation/recording
-#   error. The cell may have a missing DBH — that is a measurement gap,
-#   not a death — and the downstream user is expected to interpolate it.
-#
-# WHY fix_resurrections IS NOT ENOUGH
-#   fix_resurrections() only triggers a backfill when an "A" cell HAS a
-#   DBH (the cell itself proves the stem is alive). It then propagates
-#   the backfill through contiguous DA/GA runs. It will NOT cross a real
-#   "A" in the middle of the chain. Section 7's N→D and N→G propagation
-#   can also leave a row like  AADGGA  where neither the central D nor G
-#   was ever a real measurement, but they are flanked by alive cells on
-#   both sides.
-#
-# WHAT THIS PASS DOES (single vectorized matrix scan)
-#   For each stem row, find the first A position and the last A position.
-#   Every cell strictly between them whose status is D or G is rewritten
-#   to A and logged with its DBH (NA = no measurement, present = real).
-#   A and P cells are NEVER touched. The A→D→A and A→G→A patterns are
-#   logged separately.
-# ========================================================================
+# Rewrite any D or G strictly between two alive observations to A. This
+# final pass removes residual stranded dead/gone codes that are impossible
+# given the stem was alive before and after the gap.
 
 fix_DG_between_A <- function(status_vec,
                              dbh_matrix,
@@ -2158,50 +1916,11 @@ dev.off()
 # ========================================================================
 # SECTION 11: TREE-LEVEL STATUS CALCULATION AND FINAL D/G CORRECTION
 # ========================================================================
-# PURPOSE:
-#   Calculate tree-level status from stem-level data and apply the final
-#   correction to distinguish between D (dead tree) and G (gone stem) based
-#   on whether the tree has multiple stems
-#
-# THE CORE LOGIC:
-#   - Single-stem trees: Dead stems are marked "D" (whole tree dead)
-#   - Multi-stem trees:
-#        - Dead stems are marked "G" when at least one stem is alive
-#        - Dead stems are marked "D" when all stems are dead
-#
-# WHAT THIS SECTION DOES:
-#   1. Validates Tag-TreeID consistency across the dataset
-#   2. Groups stems by tree (using Tag or TreeID as tree identifier)
-#   3. Simulates all possible tree life-history sequences to define valid patterns
-#   4. Calculates tree-level status considering:
-#      - If ANY stem is alive (A) → tree is alive
-#      - If ANY stem is gone (G) → tree is alive (some stems lost)
-#      - If ALL stems are prior (P) → tree is prior
-#      - If ALL stems are dead (D) → tree is dead
-#   5. Handles "P" (Prior) status with future-looking logic:
-#      - If P + D/G combination exists, check if future censuses show alive stems
-#      - If future A exists → tree was alive (backfill tree status to A)
-#      - If no future A → tree is dead
-#   6. Applies final D/G correction based on stem count:
-#      - Multi-stem trees: Convert all D → G
-#      - Single-stem trees: Convert all G → D
-#
-# KEY FUNCTIONS:
-#   - tree_state(): Computes tree-level status from stem matrix
-#   - tree_exists_check(): Validates biological plausibility
-#   - compute_tree_for_row(): Wrapper to compute tree sequence
-#   - correct_stem_status(): Applies final D/G correction
-#
-# OUTPUT:
-#   - tree_histories: Tree-level encounter histories
-#   - corrected_new_status: Final stem-level status codes with D/G corrected
-#
-# WHY THIS MATTERS:
-#   This is the final step that ensures biological consistency:
-#   - D means "whole tree dead" (only for single-stem trees)
-#   - G means "stem gone but tree alive" (only for multi-stem trees)
-#   This distinction is CRITICAL for accurate mortality calculations.
-# ========================================================================
+# Aggregate stem histories by tree and enforce the D/G semantics:
+#   - single-stem trees: G becomes D
+#   - multi-stem trees with any alive stem at last census: D becomes G
+#   - fully dead multi-stem trees: G becomes D
+# This preserves A/P status and produces the final corrected stem histories.
 
 #--------------------------------------------------------------
 # 11.1  Tag <-> TreeID consistency check
@@ -2476,28 +2195,9 @@ cat("✓ Tree status matched to stem level\n\n")
 # ========================================================================
 # SECTION 12: APPLY CORRECTED STATUS TO CENSUS DATA FRAMES
 # ========================================================================
-# PURPOSE:
-#   Apply the corrected status codes (new_status_G) back to the census data frames
-#   so they can be exported with the cleaned status information
-#
-# WHAT THIS SECTION DOES:
-#   1. Split new_status_G string back into individual characters (one per census)
-#   2. For each census data frame, add a new column "new_status"
-#   3. Populate new_status with the corrected status code for that census
-#
-# WHY WE CREATE "new_status" COLUMN:
-#   - Preserves original "Status" column for comparison/verification
-#   - Allows users to see what was changed
-#
-# OUTPUT:
-#   Each ViewFullTable_split[[i]] now has an additional column: new_status
-#   This column contains the corrected single-letter status code (A/D/G/P)
-#
-# MAIN FUNCTIONS USED:
-#   - strsplit(): Split concatenated string into character vector
-#   - sapply(): Extract character at position i for census i
-#   - :=: data.table assignment operator for adding column by reference
-# ========================================================================
+# Assign the final corrected status code for each stem to the corresponding
+# census table so the exported data files contain the cleaned per-census
+# status values.
 
 # Split each string in 'new_status' into individual characters
 split_chars_new_status <- strsplit(new_status, "")
@@ -2667,6 +2367,61 @@ cat(sprintf(
   sum(G_to_D_mask), sum(D_to_G_mask)
 ))
 
+# ========================================================================
+# SECTION 11.7: CHECK STEMS WITH G OR D IN FIRST AND LAST CENSUS
+# ========================================================================
+# Identify stems whose corrected history begins and ends with the same
+# terminal code (G or D). Export first-census raw metadata for review of
+# full-window terminal histories or potential model issues.
+first_code <- corrected_new_status_matrix[, 1]
+last_code <- corrected_new_status_matrix[, n_cens]
+same_first_last_G <- first_code == "G" & last_code == "G"
+same_first_last_D <- first_code == "D" & last_code == "D"
+same_first_last <- same_first_last_G | same_first_last_D
+
+cat(sprintf(
+  "✓ Section 11.7 check: %d stems start and end with the same terminal code.\n",
+  sum(same_first_last)
+))
+cat(sprintf(
+  "   all-G first/last: %d, all-D first/last: %d\n",
+  sum(same_first_last_G), sum(same_first_last_D)
+))
+
+if (sum(same_first_last) > 0L) {
+  first_census_dt <- ViewFullTable_split[[1]][
+    , .(StemID, TreeID,
+      raw_first_status = Status, raw_first_dbh = DBH,
+      raw_first_ListOfTSM = ListOfTSM, raw_first_HOM = HOM
+    )
+  ]
+  idx_first <- match(unique_StemID$StemID, first_census_dt$StemID)
+
+  same_first_last_dt <- data.table(
+    TreeID = unique_StemID$TreeID,
+    StemID = unique_StemID$StemID,
+    first_code = first_code,
+    last_code = last_code,
+    raw_first_status = first_census_dt$raw_first_status[idx_first],
+    raw_first_dbh = first_census_dt$raw_first_dbh[idx_first],
+    raw_first_ListOfTSM = first_census_dt$raw_first_ListOfTSM[idx_first],
+    raw_first_HOM = first_census_dt$raw_first_HOM[idx_first],
+    original_status = original_status,
+    corrected_history = corrected_new_status
+  )[same_first_last]
+
+  fwrite(same_first_last_dt,
+    file.path(CHECK_folder, "section11_7_first_last_terminal_status.csv"),
+    sep = ",",
+    na = "",
+    row.names = FALSE
+  )
+  cat(sprintf(
+    "   details written to: %s\n",
+    file.path(CHECK_folder, "section11_7_first_last_terminal_status.csv")
+  ))
+}
+
 rm(
   tree_dt, AP_in, AP_out, single_stem_row, all_dead_row, some_alive_row,
   G_to_D_mask, D_to_G_mask, last_col, TreeID_vec
@@ -2682,39 +2437,11 @@ tbl_sorted_tree_histories <- sort_table_status(as.vector(tree_histories), sort_b
 setDT(tbl_sorted_tree_histories)
 
 # ========================================================================
-# SECTION 12b: UNIFIED BIOLOGY ASSESSMENT (CUMULATIVE PIPELINE REPORT)
+# SECTION 12b: UNIFIED BIOLOGY ASSESSMENT
 # ========================================================================
-# PURPOSE
-#   Produce a single tab-separated report that quantifies, for the four
-#   stem-history versions in the pipeline, how many illegal biological
-#   transitions remain. This is the canonical post-pipeline QA file:
-#
-#       original_status         : as decoded from the raw ViewFullTable
-#                                 (before any propagation / fix)
-#       new_status              : after Section 7 propagation + Sections
-#                                 8, 9-10, 10b corrections
-#       corrected_new_status    : after Section 11 stem-level D<->G remap
-#       tree_histories          : tree-level encounter history
-#
-# BIOLOGY RULES (single source of truth)
-#   Allowed two-cell transitions:
-#       A->A  A->D  A->G                (alive -> alive / death / gone)
-#       D->D                             (dead is terminal)
-#       G->G                             (gone is terminal)
-#       P->P  P->A                       (prior -> prior / first alive)
-#   Everything else is biologically impossible.
-#
-# WHAT GETS REPORTED
-#   - Total number of stems with at least one illegal transition.
-#   - Per-version counts of every illegal 2-letter substring (DA, GA,
-#     PD, PG, DG, GD, AP, DP, GP).
-#   - "Stranded D/G" pattern A[DG]+A : the row has at least one D or G
-#     surrounded by alive cells. After Section 10b this should be 0.
-#   - One-line summary of expected behaviour for each version.
-#
-# OUTPUT
-#   CHECK_folder / biology_assessment.txt
-# ========================================================================
+# Compare original_status, new_status, corrected_new_status, and tree_histories
+# for illegal transitions and stranded D/G patterns. Write a single QA report
+# summarizing pipeline behavior across the four history versions.
 
 assess_biology <- function(status_vec, label, valid_trans) {
   n <- length(status_vec)
@@ -2827,28 +2554,9 @@ rm(versions, summary_msg)
 # ========================================================================
 # SECTION 13: DATA QUALITY REPORTS AND DIAGNOSTICS
 # ========================================================================
-# PURPOSE:
-#   Generate diagnostic CSV files to help identify data quality issues
-#   and understand status transformations applied by the script
-#
-# OUTPUT FILES (saved to CHECK_folder):
-#   1. stem_status_resurected.csv - stem with resurrection patterns
-#   2. status_changed.csv - Summary of all status transformations
-#   3. subset_stems_never_alive.csv - Stems with P→D/G (never alive after prior)
-#   4. subset_stems_gone_to_alive.csv - Stems with GA (gone then reappeared)
-#
-# WHY THIS MATTERS:
-#   These reports help users:
-#   - Verify the script made correct decisions
-#   - Identify potential data entry errors in the raw data
-#   - Understand biological patterns (true resurrections, stem losses)
-#   - Make informed decisions about data quality before analysis
-#
-# MAIN PATTERNS TO REVIEW:
-#   - Resurrections (DA): Could be data errors or real sprouting
-#   - Never alive (P→D/G): Stems that where never there?
-#   - Reappearances (GA): Likely tagging errors or misidentifications
-# ========================================================================
+# Export CSV diagnostics that document key edge cases and status changes.
+# This includes resurrection patterns, never-alive stems, GA reappearances,
+# and a summary of how raw statuses were transformed.
 
 cat("\n📋 Creating diagnostic reports...\n")
 
@@ -3028,32 +2736,11 @@ write.csv(unique(problem_df[, .(dbh1, dbh2, dbh3, dbh4, original_status, new_sta
 )
 
 # ========================================================================
-# SECTION 13b: STATUS × DBH SUPPORT SUMMARY  +  FINAL AUDIT OF
-#              corrected_new_status_matrix (the object that gets exported)
+# SECTION 13b: STATUS × DBH SUPPORT SUMMARY
 # ========================================================================
-# PURPOSE
-#   `corrected_new_status_matrix` is the canonical, fully-cleaned object
-#   that Section 14 writes to disk. Before exporting, we:
-#     (a) verify it contains no illegal biological transitions;
-#     (b) verify A and P cells were never altered by Sections 8–11;
-#     (c) summarize every cell by status code AND by whether a DBH
-#         measurement is present.
-#
-# WHY THE DBH BREAKDOWN MATTERS
-#     status="A" with no DBH  : alive but unmeasured -> needs interpolation
-#     status="A" with    DBH  : healthy, real measurement
-#     status="D" with    DBH  : dead but a DBH was recorded that census
-#                               (broken-below code or last living measure)
-#     status="D" with no DBH  : standard "dead, no measurement" cell
-#     status="G" with    DBH  : multi-stem, broken-below-but-measured
-#     status="G" with no DBH  : multi-stem, gone, not measured
-#     status="P" with    DBH  : SHOULD BE ZERO. Any non-zero value is a
-#                               pipeline bug (P means "not yet recruited").
-#
-# OUTPUT FILES
-#     CHECK_folder/status_x_dbh_summary.csv          (overall + per census)
-#     CHECK_folder/status_x_dbh_summary.txt          (human-readable)
-# ========================================================================
+# Audit the final corrected_new_status_matrix before export.
+# Verify no illegal transitions remain, ensure A/P values are preserved,
+# and summarize status codes by whether a DBH measurement exists.
 
 stopifnot(
   is.matrix(corrected_new_status_matrix),
@@ -3255,52 +2942,14 @@ rm(
 # ========================================================================
 # SECTION 14: EXPORT CENSUS TABLES
 # ========================================================================
-# PURPOSE:
-#   Format each census data frame according to ForestGEO standards and
-#   export as .Rdata files for use in downstream analyses
-#
-# WHAT THIS SECTION DOES:
-#   1. For each census, select only the required columns
-#   2. Rename columns to ForestGEO standard names
-#   3. Set DFstatus field (legacy field for "prior" status)
-#   4. Export as .Rdata file with standardized name
-#
-# OUTPUT FILES:
-#   [site].stem1.Rdata, [site].stem2.Rdata, ..., [site].stem[n].Rdata
-#   Saved to: OUTPUT_folder
-#
-# FORESTGEO R TABLE FORMAT:
-#   Required columns (renamed from database format):
-#     - treeID (from TreeID)
-#     - stemID (from StemID)
-#     - TreeID (from TreeID)
-#     - StemTag (from StemTag)
-#     - sp (from Mnemonic - species code)
-#     - quadrat (from QuadratName)
-#     - gx, gy (from PX, PY - tree coordinates in meters)
-#     - hom (from HOM - height of measurement)
-#     - dbh (from DBH - diameter at breast height)
-#     - codes (from ListOfTSM - tree status modifiers)
-#     - status (from new_status - corrected status code)
-#     - date (from ExactDate - census date)
-#     - DFstatus (legacy field, set to "prior" when status is "P")
-#
-# WHY THIS FORMAT:
-#   - Standardized across all ForestGEO sites
-#   - Compatible with CTFSRPackage and other ForestGEO R tools
-#   - Enables cross-site comparisons and analyses
-#
-# MAIN FUNCTIONS USED:
-#   - setnames(): Rename columns in data.table
-#   - :=: data.table assignment by reference
-#   - assign() + save(): Create and export R objects
-# ========================================================================
+# Rename and subset each census table to ForestGEO R-table format, set
+# legacy DFstatus for prior stems, then save each census as .Rdata.
 
 for (census in seq_along(ViewFullTable_split)) {
   ViewFullTable_split[[census]]$new_status <- corrected_new_status_matrix[, census]
 }
 
-# table(ViewFullTable_split[[9]][, ..ViewFullTable_columns_to_keep]$new_status, useNA = "ifany")
+# table(ViewFullTable_split[[1]][, ..ViewFullTable_columns_to_keep]$new_status, useNA = "ifany")
 
 # ========================================================================
 # COORDINATE IMPUTATION: fill NA PX / PY across censuses
@@ -3452,14 +3101,7 @@ check_coordinates <- unique(check_coordinates[
 
 check_coordinates
 
-if (dir.exists("./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS")) {
-  cat("✓ CHECK folder exists: ./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS\n")
-} else {
-  dir.create("./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS", recursive = TRUE)
-  cat("✓ Created CHECK folder: ./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS\n")
-}
-
-fwrite(check_coordinates, "./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/repeated_coordinates.csv")
+fwrite(check_coordinates, file.path(CHECK_folder, "repeated_coordinates.csv"))
 
 impute_tree_dates <- function(split_list,
                               id_cols = c("TreeID", "Tag"),
@@ -3547,10 +3189,6 @@ ViewFullTable_split <- impute_tree_dates(
   strict = FALSE
 )
 
-# df_stem[treeID == "99995", .(treeID, stemID, CensusID, ExactDate, prev_ExactDate, Rstatus, dbh)]
-# df_stem[treeID == "243042", .(treeID, stemID, CensusID, ExactDate, prev_ExactDate, Rstatus, dbh)]
-
-
 cat("✓ Dates imputation complete.\n\n")
 
 cat("💾 Exporting census tables to .Rdata files...\n")
@@ -3568,7 +3206,7 @@ check_dates[, c("n_dates") :=
 by = .(CensusID, TreeID)
 ]
 
-fwrite(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)], "./BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/repeated_dates.csv")
+fwrite(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)], file.path(CHECK_folder, "repeated_dates.csv"))
 
 for (census in seq_along(ViewFullTable_split)) {
   cat(sprintf("  Processing census %d...\n", census))
@@ -3619,47 +3257,9 @@ cat(sprintf("\n✓✓ All %d census tables exported successfully\n\n", length(Vi
 # ========================================================================
 # SECTION 15: EXPORT SPECIES TABLE
 # ========================================================================
-# PURPOSE:
-#   Create and export the species taxonomy table in ForestGEO format
-#   Maps species codes (Mnemonic) to full taxonomic information
-#
-# WHAT THIS SECTION DOES:
-#   1. Copy ViewTaxonomy data (to avoid modifying original)
-#   2. Sort species alphabetically by Mnemonic code
-#   3. Create Latin name by combining Genus + SpeciesName
-#   4. Select and reorder columns for ForestGEO format
-#   5. Rename columns to ForestGEO standard names
-#   6. Export as [site].spptable.rdata
-#
-# OUTPUT FILE:
-#   [site].spptable.rdata (e.g., hkk.spptable.rdata)
-#   Saved to: OUTPUT_folder
-#
-# FORESTGEO SPECIES TABLE FORMAT:
-#   Required columns:
-#     - sp (species code - the Mnemonic like "ACERUB")
-#     - Latin (full scientific name like "Acer rubrum")
-#     - Genus (genus name)
-#     - SpeciesName (species epithet)
-#     - Family (taxonomic family)
-#     - speciesID (numeric species identifier)
-#     - authority (taxonomic authority who named the species)
-#     - IDLevel (identification confidence level)
-#     - oldnames (historical names/synonyms)
-#     - subsp (subspecies information)
-#
-# WHY THIS MATTERS:
-#   - Links species codes in census tables to full taxonomy
-#   - Enables filtering by family, genus, or species
-#   - Documents taxonomic authorities and synonyms
-#   - Essential for cross-site comparisons with standardized names
-#
-# MAIN FUNCTIONS USED:
-#   - copy(): Create independent copy of data.table
-#   - setorder(): Sort data.table by reference
-#   - paste(): Concatenate Genus and SpeciesName
-#   - setnames(): Rename columns to ForestGEO standards
-# ========================================================================
+# Build a ForestGEO species taxonomy table from ViewTaxonomy, keep only
+# species observed in this plot, clean NULL values, and export it as
+# .rdata and .csv.
 
 # --------------------------------------------------------------------
 # --------------------------------------------------------------------
@@ -3697,19 +3297,20 @@ sptable[, Latin := paste(Genus, SpeciesName)]
 # Select columns needed for ForestGEO format
 cols_to_keep <- c(
   "Mnemonic", # Species code (e.g., "ACERUB")
+  "Order", # Taxonomic order
   "Family", # Taxonomic family
-  "Latin", # Full scientific name
   "Genus", # Genus name
   "SpeciesName", # Species epithet
-  "Subspecies", # Subspecies information
-  # "SpeciesID", # Numeric species identifier
+  "Latin", # Full scientific name
+  "InfraspecificRank", # Subspecies/variety rank (if applicable)
+  "InfraspecificEpithet", # Subspecies/variety name (if applicable
   "Authority", # Taxonomic authority
-  # "IDLevel", # Identification confidence level
   "Synonyms", # Historical synonyms
   "Lifeform_RFoster",
   "Lifeform_RPerez_SAguilar",
   "CommonName", # Common name (if available)
-  "Herbarium" # Herbarium voucher information (if available)
+  "Herbarium", # Herbarium voucher information (if available)
+  "Notes"
 )
 
 sptable <- sptable[, ..cols_to_keep]

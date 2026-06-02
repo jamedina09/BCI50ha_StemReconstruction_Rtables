@@ -1,6 +1,5 @@
 # Global Dynamic Programming Stem-ID Reconstruction with Biological Costs
 
-**Date:** 2026-04-06
 **Author:** José A. Medina-Vega
 
 ---
@@ -26,6 +25,12 @@
 ---
 
 ## Overview
+
+## Stem Identity Renumbering Workflow
+
+All reconstructed stem identities (`ReconstructedStemID`) are assigned **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. This renumbering is always applied after the engine and all post-processing helpers, regardless of which driver or fallback is used. **Negative or zero IDs are never produced.**
+
+All drivers (`main_cpp.R`, `main_cpp_chunk.R`, `main_cpp_bci.R`) use the same post-engine helper chain: `maybe_add_posterior_bins()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. Posterior path files are always written after renumbering, using the staging architecture. All downstream outputs, including posterior path files, use this renumbered ID space.
 
 Reconstruct stable stem identities across censuses using a biologically informed global dynamic programming solver that enforces life-cycle constraints and provides uncertainty quantification.
 
@@ -103,7 +108,8 @@ dp_global/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
 │   ├── main_cpp_chunk.R              # Chunked driver for large runs
 │   ├── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, sources main_cpp.R for helpers)
-│   └── basal_area_uncertainty.R      # Posterior-based basal area uncertainty quantification
+│   ├── basal_area_uncertainty.R      # Posterior-based basal area uncertainty quantification
+│   └── run_bb_sample.sh              # Bash batch runner: invokes main_cpp_bci.R over a list of tags and concatenates per-tag CSVs
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
 │   └── transition_cost_rcpp.R        # R wrapper for Rcpp-compiled functions
@@ -349,20 +355,38 @@ When running `match_stems_dp_global_backward_marginals_batch()`:
 - `DP_PosteriorUnlinkedProb`
 - `DP_PosteriorBin` (if using `add_dp_posterior_bins()`)
 
-Posterior path summaries (`*_paths.csv`) encode the `recon` column as `ObsRowID:ReconstructedStemID` pairs. The attachment helpers expect ObsRowID-based encodings.
+Posterior path summaries (`*_paths.{feather|rds|csv}`) encode the `recon` column as `ObsRowID:ReconstructedStemID` pairs. The attachment helpers expect ObsRowID-based encodings.
 
 ### Posterior Paths File Format
 
-Posterior path summaries are written to `<out_dir>/posteriors/tag_<id>_posterior_samples__paths.csv` with the following columns:
+When `POSTERIOR_SAMPLES > 0`, every tag for which posteriors are drawn ends up with one final file at:
+
+```
+<out_dir>/posteriors/tag_<Tag>_posterior_samples_<BATCH_TS>_paths.<feather|rds|csv>
+```
+
+The extension follows `POSTERIOR_SAMPLES_FORMAT` (`feather` falls back to `rds` when the `arrow` package is unavailable). When `BATCH_TS` is empty (the script default), the timestamp segment collapses to an empty string and the filename contains a double underscore — this is expected and filenames remain unique per tag.
+
+Columns:
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `path_sig` | character | Dash-separated `ReconstructedStemID` values across all observations, ordered by census |
 | `path_count` | integer | Number of posterior samples that produced this exact path |
 | `path_prob` | numeric | Normalised probability of this path (sums to 1 across all rows) |
-| `recon` | character | Compact mapping of `obs_row_id:ReconstructedStemID` pairs, semicolon-separated |
+| `recon` | character | Compact mapping of `ObsRowID:ReconstructedStemID` pairs, semicolon-separated |
 
-Each row represents a **unique reconstruction** (unique identity assignment across all censuses). Posterior samples with identical paths are aggregated into `path_count` / `path_prob`. The `obs_row_id` values in the `recon` column correspond to the `obs_row_id` column in the main reconstruction CSV, providing the join key between posterior paths and per-observation data (Tag, CensusID, OriginalStemID, DBH).
+Each row represents a **unique reconstruction** (unique identity assignment across all censuses). Posterior samples with identical paths are aggregated into `path_count` / `path_prob`. The `ObsRowID` values in the `recon` column correspond to the `obs_row_id` column in the main reconstruction CSV, providing the join key between posterior paths and per-observation data (Tag, CensusID, OriginalStemID, DBH).
+
+**How these files are produced (staging architecture).** The DP and probabilistic engines do *not* write the final paths files themselves. Instead, each engine stages the raw per-sample reconstruction table (in engine ID space, before any post-hoc renaming) to:
+
+```
+<out_dir>/posteriors/.staging/tag_<Tag>_samples_raw_<BATCH_TS>.rds
+```
+
+After the engine returns and the post-engine helpers run (`apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`), the driver calls `finalize_posterior_paths()` (defined in `dp_global/R/dp_global_main.R`). That function reads each staging file, translates `ReconstructedStemID` via the renumber mapping, re-runs `apply_bb_invariants_to_samples()` so per-sample bb-minted IDs are derived from the renumbered track IDs, computes `path_sig` / `path_count` / `path_prob` / `recon`, writes the final paths file, and deletes the staging file on success. If `posterior_samples == 0`, no staging file is created and no paths file is written.
+
+`path_prob` uses logp-weighted sample weights when the engine attaches a `logp` column to the staged samples (DP path); when no `logp` is present (probabilistic path), `path_prob = path_count / n_samples`.
 
 ### MAP vs posterior-sampled paths 🔀
 
@@ -370,15 +394,15 @@ Each row represents a **unique reconstruction** (unique identity assignment acro
 
 - **`ReconstructedStemID` (main output)** is the *MAP joint assignment* (MAP — Maximum a posteriori) decoded by the DP (a deterministic Viterbi-style backtrace of the most probable full path). This is written per-observation in the main `stem_reconstruction_*.csv` as the best joint reconstruction under the model.
 
-- **Per-path posterior summary (`*_paths.csv`)** is an *empirical* summary of full reconstructions produced by the posterior sampler (only generated when `posterior_samples > 0`). Each row is a unique path observed among draws and `path_prob` is the normalized sampling weight for that unique path (sums to 1 across sampled unique paths).
+- **Per-path posterior summary (`*_paths.<feather|rds|csv>`)** is an *empirical* summary of full reconstructions produced by the posterior sampler (only generated when `posterior_samples > 0`). Each row is a unique path observed among draws and `path_prob` is the normalized sampling weight for that unique path (sums to 1 across sampled unique paths).
 
 **Why they can differ**
 
-- Posterior sampling is finite and stochastic: the MAP joint path may have non-zero posterior mass yet still not be drawn among the finite samples. Consequently, the concatenation of per-row MAPs (`ReconstructedStemID`) may *not* appear as any `path_sig` in the `*_paths.csv` file.
+- Posterior sampling is finite and stochastic: the MAP joint path may have non-zero posterior mass yet still not be drawn among the finite samples. Consequently, the concatenation of per-row MAPs (`ReconstructedStemID`) may *not* appear as any `path_sig` in the paths file.
 
 **Practical recommendations**
 
-- Increase `posterior_samples` to raise the chance the MAP path is drawn and therefore present in `*_paths.csv`.
+- Increase `posterior_samples` to raise the chance the MAP path is drawn and therefore present in the paths file.
 - If you require the MAP path to be represented in per-path summaries, you can explicitly insert the MAP signature into `paths_summary` after sampling (and mark it).
 
 **Quick check example (R)**
@@ -387,7 +411,8 @@ Each row represents a **unique reconstruction** (unique identity assignment acro
 library(data.table)
 dp <- fread("dp_global/output/.../stem_reconstruction_dp_global_rcpp.csv")
 sig <- paste0(dp[ReconstructionMethod == "dp", ReconstructedStemID], collapse = "-")
-paths <- fread("dp_global/output/.../posteriors/..._paths.csv")
+# Load via the format used for the run (feather is the BCI default; rds / csv also valid)
+paths <- arrow::read_feather("dp_global/output/.../posteriors/..._paths.feather")
 paths[path_sig == sig]  # empty => MAP path wasn't sampled
 ```
 
@@ -706,11 +731,7 @@ When a violation is detected, every row of the violating run (from the BB / term
 
 **Pin-override semantics.** `apply_broken_below_invariants()` may modify rows where the engine had set `ReconstructedStemID = TrueStemID` (e.g. BCI Step 3a pre-stamps `TrueStemID = OriginalStemID` on BB+DBH rows). The post-engine pass treats the R1/R2 invariants as harder than the `TrueStemID` pin and overrides the pin where the contract is violated. The pre-sweep value is preserved in `ReconstructedStemID_PreSweep`. (The script-level `TrueStemID` backstop sweep is intentionally **not** re-run after the BB pass.)
 
-**Posterior writers.** The same operator is applied per posterior sample inside `match_stems_dp_global_backward_marginals_batch()` (`dp_global/R/dp_global_dp.R`) and `export_probabilistic_posteriors()` (`dp_global/R/dp_probabilistic_matching.R`), via the helper `apply_bb_invariants_to_samples()`. The path-signature aggregation (`paste0(ReconstructedStemID, collapse = "-")` grouped by sample) is computed *after* per-sample relabel, so identical post-relabel paths collapse correctly and `sum(path_prob) == 1` is preserved.
-
-**Tests.** Eight fixtures (A–H) covering simple BB, multi-BB-at-one-census, post-terminator, multi-tracker, idempotence, integer-id collision, and orphan interaction are at `dp_global/tests/test_broken_below_invariants.R`. Run with `make test-bb` or `Rscript dp_global/tests/test_broken_below_invariants.R`. All 22 assertions pass.
-
-**Audit.** `dp_global/scripts/bb_audit.R` reports R1/R2 violation counts on any reconstruction CSV. Expected to print `R1: 0/N, R2: 0/N` after `apply_broken_below_invariants()` has been applied.
+**Posterior writers.** The same R1/R2 operator is applied per posterior sample by `apply_bb_invariants_to_samples()` (`dp_global/R/dp_global_main.R`). It is invoked by `finalize_posterior_paths()` after the renumber mapping has been applied to the staged per-sample `ReconstructedStemID` values, so the per-sample bb-minted IDs are derived from the renumbered track IDs and remain consistent with the MAP table's bb-minted IDs. The path-signature aggregation (`paste0(ReconstructedStemID, collapse = "-")` grouped by sample) is computed *after* the per-sample relabel, so identical post-relabel paths collapse correctly and `sum(path_prob) == 1` is preserved.
 
 ### Visualization
 
@@ -744,13 +765,17 @@ When you run `dp_global/scripts/main_cpp.R` or `dp_global/scripts/main_cpp_chunk
 
 - `run_started.txt`, `run_finished.txt` — simple markers indicating job start/finish timestamps
 - `run_parameters_full.txt` — full parameter dump and command-line overrides for reproducibility
-- `stem_reconstruction_dp_global_rcpp.csv` — main reconstruction CSV (also written as RDS when `--WRITE_DP_RDS=TRUE`)
-- `stem_reconstruction_dp_global_rcpp.rds` — binary R object of the reconstruction (written when `--WRITE_DP_RDS=TRUE`)
-- `stem_reconstruction_dp_global_rcpp.pdf` — per-tag reconstruction plots (if enabled)
+- `run_log.txt` — appended log lines from `log_msg()` throughout the run
+- `stem_reconstruction_dp_global_rcpp.csv` — main reconstruction CSV (written when `--WRITE_DP_CSV=TRUE`; chunked runner appends one chunk at a time)
+- `stem_reconstruction_dp_global_rcpp_chunk_NNN.rds` / `*.feather` — per-chunk binary outputs from the chunked runner; `*_done.txt` companion markers gate `DP_CHUNK_RESUME=TRUE`
+- `stem_reconstruction_dp_global_rcpp.rds` — binary R object of the full reconstruction (non-chunked runs only, written when `--WRITE_DP_RDS=TRUE`)
+- `stem_reconstruction_dp_global_rcpp.pdf` / `stem_reconstruction_dp_global_rcpp_chunk_NNN.pdf` — per-tag reconstruction plots (if enabled)
+- `posteriors/tag_<Tag>_posterior_samples_<BATCH_TS>_paths.<feather|rds|csv>` — final per-tag posterior path summaries (written when `POSTERIOR_SAMPLES > 0`)
+- `posteriors/.staging/` — internal staging directory for raw per-sample reconstructions emitted by the engines. `finalize_posterior_paths()` consumes and deletes each staging file after writing the corresponding final paths file; a healthy completed run leaves this directory empty
 - `tag_<which_tag>_realism_summary_rcpp.csv`, `tag_<which_tag>_realism_by_tag_rcpp.csv`, `tag_<which_tag>_realism_tuning_suggestions_rcpp.csv` — realism report tables when `--RUN_REALISM_REPORT=TRUE`
 - `simulated_all_transition_cost_sweeps_rcpp.rds`, `simulated_all_transition_cost_jumps_rcpp.csv`, `simulated_all_transition_cost_jumps_rcpp.rds` — sensitivity sweep outputs when `--SENSITIVITY_MODE` enables write
 
-Note: enabling `--WRITE_DP_RDS=TRUE` is recommended when you plan to post-process reconstructions in R (it preserves types and attributes without re-parsing CSVs). If you need a different output location, set `--PROJECT_ROOT` and `--BATCH_TS` or supply `OUT_DIR_NAME` via an override to control the output directory naming.
+Note: enabling `--WRITE_DP_RDS=TRUE` (or `--WRITE_DP_FEATHER=TRUE`) is recommended when you plan to post-process reconstructions in R (it preserves types and attributes without re-parsing CSVs). If you need a different output location, set `--PROJECT_ROOT` and `--BATCH_TS` or supply `OUT_DIR_NAME` via an override to control the output directory naming.
 
 ---
 
@@ -1568,6 +1593,12 @@ out <- add_dp_posterior_bins(
 | Posterior marginals (production) | `match_stems_dp_global_backward_marginals_batch()` | `dp_global/R/dp_global_dp.R` |
 | Posterior binning | `add_dp_posterior_bins()` | `dp_global/R/dp_global_diag.R` |
 | Probabilistic fallback | `match_stems_probabilistic()` | `dp_global/R/dp_probabilistic_matching.R` |
+| Carried-terminal backfill (post-engine) | `apply_carried_terminal_backfill()` | `dp_global/R/dp_global_main.R` |
+| Orphan-stem backfill (post-engine) | `apply_orphan_stem_backfill()` | `dp_global/R/dp_global_main.R` |
+| Broken-below invariants (post-engine) | `apply_broken_below_invariants()` | `dp_global/R/dp_global_main.R` |
+| Per-sample BB invariants (used by `finalize_posterior_paths`) | `apply_bb_invariants_to_samples()` | `dp_global/R/dp_global_main.R` |
+| Engine-ID renumber (post-engine) | `renumber_engine_minted_ids()` | `dp_global/R/dp_global_main.R` |
+| Finalize posterior path files (post-renumber) | `finalize_posterior_paths()` | `dp_global/R/dp_global_main.R` |
 | Parameter estimation | `estimate_bio_pars()` | `dp_global/R/dp_global_bio.R` |
 | DP complexity estimate | `estimate_dp_complexity()` | `dp_global/R/complexity/estimate_dp_complexity_function.R` |
 | Plotting | `plot_tag_to_pdf()` | `dp_global/R/dp_global_diag.R` |
@@ -1659,7 +1690,8 @@ Key computations and helpers:
   - Builds per-observation posterior distributions (`DP_PosteriorTopK*` columns) via normalized state weights.
 
 - Posterior sampling
-  - Optional sample drawing from the DP graph (`posterior_samples`), with backward sampling and per-sample `logp` weights converted to `sample_prob`.
+  - Optional sample drawing from the DP graph (`posterior_samples`), with backward sampling and per-sample `logp` weights.
+  - The engine writes the raw per-sample data.table (in engine ID space) to `<out_dir>/posteriors/.staging/tag_<Tag>_samples_raw_<BATCH_TS>.rds` and attaches `attr(out, "DP_Posterior_Staging_File")` / `attr(out, "DP_Sampling_Profile")` for diagnostics. The final `*_paths.<ext>` file is written downstream by `finalize_posterior_paths()` after `renumber_engine_minted_ids()` has translated engine IDs into the renumbered space (see `dp_global/R/dp_global_main.R`). The probabilistic engine's `export_probabilistic_posteriors()` writes a structurally identical staging file.
 
 - Diagnostics & fallbacks
   - `attr(out, "DP_PruneInfo")` contains pruning diagnostics (counts and effective thresholds). The function falls back to `match_stems_probabilistic()` on anchor failures, enumeration exhaustion, K insufficiency or if DP produces no feasible states after pruning. These fallback return values always include `DP_PruneInfo`.

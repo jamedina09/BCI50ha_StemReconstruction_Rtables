@@ -32,7 +32,7 @@ source(here("dp_global", "scripts", "main_cpp.R"))
 #    CLI args (already captured in `overrides`) are re-applied
 #    below so they can still override these BCI defaults.
 # ----------------------------------------------------------------
-INPUT_FILE <- here("bci_data", "multistem_tags.rds")
+INPUT_FILE <- here("data_simulation", "sample_data_BCI", "multistem_tags.rds")
 WHICH_TAG <- "080297" # default tag for testing; override with --WHICH_TAG
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE # use real species from BCI data
 MAX_GROWTH_FIXED <- 5.0
@@ -490,6 +490,23 @@ out <- apply_carried_terminal_backfill(out)
 out <- apply_orphan_stem_backfill(out)
 out <- apply_broken_below_invariants(out)
 
+# Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
+# ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
+# then by original ID. This matches the OriginalStemID convention and ensures no negative or zero IDs.
+# Returns a Tag/old_id/new_id mapping for finalize_posterior_paths(); see dp_global/improvements.md.
+.renum <- renumber_engine_minted_ids(
+    out,
+    posterior_top_k = DP_POSTERIOR_TOP_K,
+    posterior_samples_path = out_dir
+)
+out <- .renum$out
+# Finalize posterior path files in the renumbered ID space (see improvements.md for rationale).
+finalize_posterior_paths(
+    out,
+    posterior_samples_path = out_dir,
+    mapping = .renum$mapping
+)
+
 if (!is.null(out)) {
     out[, run_out_dir := basename(out_dir)]
     message("[main_cpp_bci.R] DP done. ", nrow(out), " rows returned.")
@@ -536,36 +553,6 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 #   Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=000378 --DP_MAX_STATES=2
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=258411
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=227398
-
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=255814 \
-#     --DP_MAX_STATES=10000 \
-#     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
-#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
-#     --POSTERIOR_SAMPLE_SEED=42 \
-#     --MANUAL_CORES=TRUE \
-#     --MANUAL_CORES_VALUE=16 \
-#     --DP_CHUNK_SIZE=16 \
-#     --USE_MEASUREMENT_ERROR=FALSE
-
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=171506 \
-#     --DP_MAX_STATES=10000 \
-#     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
-#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
-#     --POSTERIOR_SAMPLE_SEED=42 \
-#     --MANUAL_CORES=TRUE \
-#     --MANUAL_CORES_VALUE=16 \
-#     --DP_CHUNK_SIZE=16 \
-#     --USE_MEASUREMENT_ERROR=FALSE
-
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=093711 \
-#     --DP_MAX_STATES=10000 \
-#     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
-#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
-#     --POSTERIOR_SAMPLE_SEED=42 \
-#     --MANUAL_CORES=TRUE \
-#     --MANUAL_CORES_VALUE=16 \
-#     --DP_CHUNK_SIZE=16 \
-#     --USE_MEASUREMENT_ERROR=FALSE
 
 # Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=171506 \
 #     --DP_MAX_STATES=10000 \
