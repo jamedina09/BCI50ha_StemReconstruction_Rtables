@@ -29,8 +29,6 @@ BCI_stem_reconstruction/1_DATA_PREPARATION/compare_tables1_and_tables2.R
 BCI_stem_reconstruction/DATA/RAW/ViewFullTable_census2022-23.txt
 BCI_stem_reconstruction/DATA/
 
-BCI_stem_reconstruction/output
-
 BCI_stem_reconstruction/3_PREPARE_R_TABLES/CHECKS
 BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS
 BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons
@@ -42,4 +40,4 @@ dp_global/tests
 
 BCI_stem_reconstruction/2_STEM_IDENTIFICATION/3_initial_comparisson_dryad_and_me.R
 
-BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs
+BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs/ba_mc_realizations_treeID
