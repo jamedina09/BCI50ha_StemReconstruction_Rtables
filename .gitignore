@@ -17,7 +17,7 @@ tests/
 # Editor
 .vscode/
 
-bci_data/
+data_simulation/sample_data_BCI/general_data
 
 baseline_pre_change/
 baseline_pre_greedy_fix/

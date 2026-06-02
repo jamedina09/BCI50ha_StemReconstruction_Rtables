@@ -32,7 +32,7 @@ source(here("dp_global", "scripts", "main_cpp.R"))
 #    CLI args (already captured in `overrides`) are re-applied
 #    below so they can still override these BCI defaults.
 # ----------------------------------------------------------------
-INPUT_FILE <- here("bci_data", "multistem_tags.rds")
+INPUT_FILE <- here("data_simulation", "sample_data_BCI", "multistem_tags.rds")
 WHICH_TAG <- "080297" # default tag for testing; override with --WHICH_TAG
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE # use real species from BCI data
 MAX_GROWTH_FIXED <- 5.0
