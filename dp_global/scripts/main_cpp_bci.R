@@ -554,36 +554,6 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=258411
 #   Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=227398
 
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=162037 \
-#     --DP_MAX_STATES=10000 \
-#     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
-#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
-#     --POSTERIOR_SAMPLE_SEED=42 \
-#     --MANUAL_CORES=TRUE \
-#     --MANUAL_CORES_VALUE=16 \
-#     --DP_CHUNK_SIZE=16 \
-#     --USE_MEASUREMENT_ERROR=FALSE
-
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=171506 \
-#     --DP_MAX_STATES=10000 \
-#     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
-#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
-#     --POSTERIOR_SAMPLE_SEED=42 \
-#     --MANUAL_CORES=TRUE \
-#     --MANUAL_CORES_VALUE=16 \
-#     --DP_CHUNK_SIZE=16 \
-#     --USE_MEASUREMENT_ERROR=FALSE
-
-# Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=093711 \
-#     --DP_MAX_STATES=10000 \
-#     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
-#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
-#     --POSTERIOR_SAMPLE_SEED=42 \
-#     --MANUAL_CORES=TRUE \
-#     --MANUAL_CORES_VALUE=16 \
-#     --DP_CHUNK_SIZE=16 \
-#     --USE_MEASUREMENT_ERROR=FALSE
-
 # Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=171506 \
 #     --DP_MAX_STATES=10000 \
 #     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
