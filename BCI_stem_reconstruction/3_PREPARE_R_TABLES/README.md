@@ -1,7 +1,7 @@
 # 3_PREPARE_R_TABLES
 
 Stage 3 of the BCI stem-reconstruction pipeline. This stage consumes the
-reconstructed stem identities from `2_STEM_IDENTIFICATION/` and generates the
+reconstructed stem identities from `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/` and generates the
 ForestGEO-format census tables plus QC exports used for downstream analysis.
 
 ## Scripts (run in order)

@@ -27,15 +27,19 @@ This repository has three components:
 │   │   ├── naming_helpers.R           # Output directory naming
 │   │   ├── complexity/                # DP complexity estimator
 │   │   └── dpglobal_bundle/           # Portable deployment bundle builder
+│   ├── output/                 # Runtime outputs (not tracked by git)
 │   ├── scripts/               # CLI driver scripts, batch runner, and BA uncertainty
 │   └── src/                   # C++ transition cost (Rcpp)
 ├── BCI_stem_reconstruction/   # Full BCI 50-ha pipeline
 │   ├── 1_DATA_PREPARATION/    # Species tables and cleaned ViewFullTable
 │   ├── 2_STEM_IDENTIFICATION/ # Chunked DP runner on BCI data + chunk merger
 │   ├── 3_PREPARE_R_TABLES/    # Posterior consolidation and ForestGEO-format R tables
-│   └── 4_BIOMASS_STOCKS_AND_FLUXES/  # AGB stocks/fluxes and BA uncertainty
+│   ├── 4_BIOMASS_STOCKS_AND_FLUXES/  # AGB stocks/fluxes and BA uncertainty
+│   └── DATA/                  # Generated BCI outputs (not tracked by git)
 ├── data_simulation/           # Simulated forest-census data generator
-│   └── data/                  # Generated test datasets (CSV + diagnostic PDFs)
+│   ├── data/                  # Generated test datasets (CSV + diagnostic PDFs)
+│   ├── sample_data_BCI/       # Example BCI-formatted sample data
+│   └── simulate_data.R        # Simulation driver script
 └── Makefile                   # Convenience targets (smoke test)
 ```
 

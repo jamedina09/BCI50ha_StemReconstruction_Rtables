@@ -22,7 +22,7 @@ tables for the downstream stem identification and reconstruction stages.
    - Loads raw `ViewFullTable` data.
    - Applies HOM/DBH taper corrections and fixes common data-entry issues.
    - Harmonizes census records and outputs the cleaned long-format table.
-   - Prepares the data for stem reconstruction in `2_STEM_IDENTIFICATION/`.
+   - Prepares the data for stem reconstruction in `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/`.
 
 ## Inputs
 
