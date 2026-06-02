@@ -41,6 +41,19 @@
 #   fig1_stock.pdf                      Forest BA stock: MAP vs MC
 #   fig2_fluxes.pdf                     Forest BA fluxes: MAP vs MC
 #   fig3_trajectories.pdf               Individual-tree BA trajectories (6 trees)
+#
+# NOTES
+# --------
+# Additional methodological decisions and design choices are documented in
+# biomass_stocks_fluxes.R and should be evaluated against individual study
+# needs. In the present script, giant strangler ficus (> 500 mm DBH) are
+# retained despite violating standard allometric assumptions and
+# disproportionately inflating plot-level basal area. No correction is applied
+# for the DBH bias introduced by measuring around buttresses in the first
+# census, nor for buttressed trees in subsequent censuses. Bias-corrected
+# productivity (G*) and mortality (M*) estimators from Kohyama et al. (2019) are
+# not included. Moreover, we are not accounting for the lack of diameter growth
+# in some palm species. For a valid output, these decisions should be evaluated.
 # ==============================================================================
 
 rm(list = ls())
