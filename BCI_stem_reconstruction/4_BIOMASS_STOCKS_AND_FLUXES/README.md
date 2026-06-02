@@ -21,7 +21,7 @@ Key processing steps:
 - Apply optional strangler-fig removal and palm DBH correction.
 - Convert DBH from mm to cm and apply Cushman et al. 2014 taper correction to estimate
   DBH at 1.3 m (`dbh_t`).
-- Interpolate missing DBH for alive stems using `linear`, `locf`, or `mean`.
+- Interpolate missing DBH for alive stems using `linear` (alternatives: `locf`, or `mean`).
 - Compute AGB with Chave et al. 2014 allometry plus Martinez-Cano et al. 2019 height model,
   with Goodman et al. 2013 palm-specific allometry.
 - Correct 1985 small-stem DBH rounding bias using a Census 3 reference.
