@@ -131,12 +131,11 @@ ViewFullTable_columns_to_keep <- c(
   "CensusID", "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
   "QuadratName", "PX", "PY", # spatial location in plot (meters)
   "DBH", "HOM",
-  "ExactDate", "Date",
+  "ExactDate", # "Date",
   "ListOfTSM",
   "Status", # raw field status + measurement codes
   "new_status", # date + script-computed corrected status
-  "obs_row_id", # DP reconstruction metadata
-  "DBHID" # measurement record
+  "obs_row_id" # DP reconstruction metadata
 )
 
 # Standardized ForestGEO R-table column names (must match ViewFullTable_columns_to_keep
@@ -145,12 +144,11 @@ new_names_columns_to_keep <- c(
   "CensusID", "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
   "quadrat", "gx", "gy", # gx/gy = plot coordinates in meters
   "dbh", "hom",
-  "ExactDate", "date",
+  "ExactDate", # "date",
   "codes",
   "DFstatus", # DFstatus = raw field status (legacy name)
   "Rstatus", # date + script-computed corrected status
-  "StemPaths", # DP reconstruction metadata
-  "MeasureID" # hom = height of measurement
+  "StemPaths" # DP reconstruction metadata
 )
 
 
