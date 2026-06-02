@@ -1034,7 +1034,7 @@ inc <- all_paths[, .(N_paths = uniqueN(path_idx)), by = treeID][N_paths == 10]$t
 set.seed(42)
 focal_trees <- sample(inc, 5L, replace = FALSE)
 
-fig3_path <- file.path(out_dir, "fig3_trajectories.pdf")
+fig3_path <- file.path(out_dir, "fig3_BA_trajectories.pdf")
 pdf(fig3_path, width = 9, height = 8)
 for (tid in focal_trees) {
     pg <- build_tree_page(
@@ -1051,6 +1051,6 @@ dev.off()
 cat("[Fig3] Written:", fig3_path, "\n")
 
 # ── Save Figures 1 and 2 ──────────────────────────────────────────────────────
-ggsave(file.path(out_dir, "fig1_stock.pdf"), fig1, width = 8, height = 4.5)
-ggsave(file.path(out_dir, "fig2_fluxes.pdf"), fig2, width = 8, height = 10)
+ggsave(file.path(out_dir, "fig1_BA_stock.pdf"), fig1, width = 8, height = 4.5)
+ggsave(file.path(out_dir, "fig2_BA_fluxes.pdf"), fig2, width = 8, height = 10)
 cat("[Figs] fig1_stock.pdf and fig2_fluxes.pdf saved to", out_dir, "\n")
