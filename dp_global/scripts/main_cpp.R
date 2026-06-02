@@ -67,9 +67,11 @@ parse_args <- function() {
                 val <- kv[2]
                 # Try to convert to appropriate type (handle booleans, integers, floats, including negatives)
                 # Keys whose values must stay character (e.g. Tag IDs with leading zeros)
-                .char_keys <- c("WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
-                                "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
-                                "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL")
+                .char_keys <- c(
+                    "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
+                    "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
+                    "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL"
+                )
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
                 } else if (!(toupper(key) %in% .char_keys) && grepl("^[+-]?[0-9]+$", val)) {
@@ -868,8 +870,10 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
                 out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
             } else {
-                out[is.na(ReconstructedStemID_PreSweep),
-                    ReconstructedStemID_PreSweep := ReconstructedStemID]
+                out[
+                    is.na(ReconstructedStemID_PreSweep),
+                    ReconstructedStemID_PreSweep := ReconstructedStemID
+                ]
             }
             .pre_recon <- out$ReconstructedStemID_PreSweep[.ts_rows]
             .true_int <- as.integer(out$TrueStemID[.ts_rows])
@@ -1215,6 +1219,28 @@ run_main <- function() {
     #      dp_global/R/dp_global_main.R. Mirrors Step 9d in main_cpp_bci.R
     #      and the per-chunk call in main_cpp_chunk.R.
     out <- apply_broken_below_invariants(out)
+
+    # 5.5e Reverse the direction of ReconstructedStemID numbering so
+    #      smaller integers correspond to earlier stem appearances.
+    #      Must run AFTER apply_broken_below_invariants(). Returns a
+    #      Tag/old_id/new_id mapping consumed by finalize_posterior_paths();
+    #      companion mapping files are no longer written.
+    #      See dp_global/improvements.md for the full algorithm.
+    if (!is.null(out)) {
+        .renum <- renumber_engine_minted_ids(
+            out,
+            posterior_top_k = DP_POSTERIOR_TOP_K,
+            posterior_samples_path = out_dir
+        )
+        out <- .renum$out
+        # Finalize posterior path files in the renumbered ID space
+        # (recommended architecture, see dp_global/improvements.md).
+        finalize_posterior_paths(
+            out,
+            posterior_samples_path = out_dir,
+            mapping = .renum$mapping
+        )
+    }
 
     # Record run output directory (basename) in each row to avoid variable/column name collision
     if (!is.null(out)) {

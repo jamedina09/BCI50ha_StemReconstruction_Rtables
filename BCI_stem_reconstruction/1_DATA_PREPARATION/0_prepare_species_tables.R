@@ -1,11 +1,14 @@
 # =============================================================================
 # 0_prepare_species_tables.R
 #
-# Purpose: Update BCI 50-plot species list.
-#
+# Purpose: Prepare and update the BCI 50-ha plot species list by merging new and old taxonomy tables,
+#          and flagging known data issues for downstream processing.
 # =============================================================================
+
+# Clear all objects from the workspace to avoid accidental contamination
 rm(list = ls())
 
+# Set data.table and print options for clarity
 options(
     datatable.print.class = FALSE,
     datatable.print.keys = TRUE,
@@ -13,28 +16,22 @@ options(
 )
 
 # =============================================================================
-# PACKAGES
+# LOAD REQUIRED PACKAGES
 # =============================================================================
-library(data.table) # fast data manipulation
-library(here) # project-relative paths
-library(TNRS) # Taxonomic Name Resolution Service client
-library(stringr) # string helpers (str_to_sentence, str_trim, etc.)
+library(data.table) # Fast table manipulation
+library(here) # Easy project-relative file paths
+library(TNRS) # Taxonomic Name Resolution Service
+library(stringr) # String helpers (trimming, case, etc.)
 
+# Show how many threads data.table will use (for debugging/performance)
 data.table::getDTthreads()
 
 # =============================================================================
-# FILE PATHS
+# DEFINE INPUT FILE PATHS
 # =============================================================================
-TAXONOMY_NEW <- here(
-    "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables",
-    "Lista_bci_mnemonics_formadevida.xlsx"
-)
-TAXONOMY_OLD <- here(
-    "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewTaxonomy_bci.csv"
-)
-INPUT_FILE <- here(
-    "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv"
-)
+TAXONOMY_NEW <- here("BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "Lista_bci_mnemonics_formadevida.xlsx")
+TAXONOMY_OLD <- here("BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewTaxonomy_bci.csv")
+INPUT_FILE <- here("BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv")
 
 # =============================================================================
 # 1. LOAD DATA
@@ -57,30 +54,30 @@ colnames(spp_new) <- gsub("[^[:alnum:]_]", "", colnames(spp_new))
 # Inspect missing values to understand which columns are incomplete
 inspectdf::inspect_na(spp_new)
 
-# --- 1b. Old taxonomy (Previous ForestGEO/CTFS ViewTaxonomy) --------------------------
+
+# --- 1b. Load old taxonomy table (CSV) and clean column names ---
 spp_old <- as.data.table(fread(TAXONOMY_OLD))
 colnames(spp_old) <- tolower(colnames(spp_old))
 colnames(spp_old) <- stringr::str_trim(colnames(spp_old))
-# Replace literal "NULL" strings (CSV artefact from the database export)
-# with proper NA values so they behave correctly in logical tests
+# Convert literal "NULL" strings to NA for proper handling
 spp_old[spp_old == "NULL"] <- NA
 
-# --- 1c. BCI inventory (pre-processed; no missing tags/censuses) -------------
+# --- 1c. Load BCI inventory (CSV) and keep unique Tag–Mnemonic–CensusID ---
 sp_bci_raw_input <- as.data.table(fread(INPUT_FILE))
-# Keep only unique Tag–Mnemonic pairs so each physical tree is counted once;
-# census-level rows are not needed at this stage.
+# Keep only unique Tag–Mnemonic–CensusID combinations (one row per tree per census)
 sp_bci_raw <- unique(sp_bci_raw_input[, .(Tag, Mnemonic, CensusID)])
 
 # =============================================================================
-# 1.1. CHECK DATA QUALITY ISSUES IN THE RAW INPUT
+# 1.1. CHECK RAW TAXONOMY DATA
 # =============================================================================
+# Identify known data problems in the new taxonomy table and mark rows that
+# need manual attention before TNRS validation.
 spp_new[, notes := NA_character_]
 
-# Rolando Pérez comments:
-# El nombre Appunia siebertiii es correcto y actualizado, Morinda siebertii es un sinónimo.
+# Example: Appunia siebertiii is correct; Morinda siebertii is a synonym.
 spp_new[especie == "siebertii"]
 
-# Apeiba "hybrida" murió.
+# Apeiba "hybrida" is no longer present in the plot.
 spp_new[codigo %in% "apeihy"]
 # present in census 1:3
 sp_bci_raw[Mnemonic == "apeihy"]
@@ -89,8 +86,8 @@ sp_bci_raw_input[Mnemonic == "apeihy", .(CensusID, ExactDate)]
 spp_new[codigo %in% "apeihy", notes := "No longer present; last seen 1990"]
 spp_new[codigo %in% "apeihy"]
 
-# Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una
-# con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla.
+# Nectandra s1 and Nectandra s3 are Lauraceae morphospecies; one of them died.
+# Only one remains alive, and it should be monitored for fertility-based identification.
 spp_new[codigo %in% "nects1"]
 spp_new[codigo %in% "nects3"]
 
@@ -116,12 +113,10 @@ sp_bci_raw_input[Mnemonic == "pterro"]
 # Replace with pterro:
 sp_bci_raw_input[Mnemonic == "pterof"]
 
-# FIXME: pterof code in BCI data needs to be replaced by pterro.
-# This fix is applied in the next script
+# FIXME: pterof should be replaced by pterro in the BCI inventory.
+# The correction is applied here in the current script.
 
-# Beilschmiedia pendula y Quararibea asterolepis son especies que no existen para BCI. Las
-# especies correctas son Beilschmiedia tovarensis y Quararibea stenophylla, ambas fueron
-# confirmadas por los especialistas en nuestras muestras de herbario.
+# Legacy codes for Beilschmiedia and Quararibea are being checked against the raw inventory.
 spp_new[especie %in% "pendula"]
 spp_new[especie %in% "asterolepis"]
 spp_new[especie %in% "tovarensis"]
@@ -132,40 +127,32 @@ unique(sp_bci_raw_input[Genus == "Quararibea", .(Mnemonic, Family, Genus, Specie
 
 spp_new[codigo %in% c("beilpe", "quaras")]
 
-# NOTE: The only required fix is the pterof → pterro code replacement in the BCI inventory.
-
-# ----------
+# The only current inventory fix applied here is the known mnemonic correction
+# `pterof -> pterro`.
 sp_bci_raw_input[, Mnemonic := ifelse(Mnemonic == "pterof", "pterro", Mnemonic)]
 bci_data_mnemonic <- sort(unique(sp_bci_raw_input[, Mnemonic]))
 
-# mnemonic in BCI plot data not present in the list
+# Find mnemonics present in the BCI inventory that are missing from the new list.
 inc <- setdiff(bci_data_mnemonic, spp_new$codigo)
-inc
-# uniden is unidentified
 unique(sp_bci_raw_input[Mnemonic %in% inc, .(Mnemonic, Family, Genus, SpeciesName)])
 
 # =============================================================================
 # 2. PREPARE NEW TAXONOMY FOR TNRS VALIDATION
 # =============================================================================
-# --- 2a. Standardise name components ----------------------------------------
+# Standardise the taxon names and build the strings that will be sent to TNRS.
 
-# TNRS requires genus with first letter capitalised
+# Genus must be capitalised for TNRS.
 spp_new[, genero := str_to_sentence(genero)]
 
-# Species epithets must be lower-case for correct parsing
+# Species epithets should be lower-case.
 spp_new[, especie := str_to_lower(especie)]
 
-# Subspecies are in some synonim
-# Note: There are a couple of codes with subespecies in BCI plot
-# 1) select those rows with subspecies names in the old taxonomy
+# Preserve variety/subspecies data when it appears in the old taxonomy.
 subp_in_old <- spp_old[subspmnemonic %in% spp_new$codigo & !is.na(subspecies)]
-# theres no subspecies, only variety
 subp_in_old <- subp_in_old[rank == "var."]
 
-# for those with subspecies, add the subspecies name io the new dataset
 spp_new[, rank := NA_character_]
 spp_new[, variety := NA_character_]
-
 inc <- sort(subp_in_old$subspmnemonic)
 
 spp_new[codigo %in% inc[1], `:=`(
@@ -181,6 +168,7 @@ spp_new[codigo %in% inc[2], `:=`(
 spp_new[codigo %in% inc[1]]
 spp_new[codigo %in% inc[2]]
 
+# Remove extra annotations from authorities so TNRS can parse them cleanly.
 # Strip non-authority annotations (sensu, auct., nom. dub., ined.) from the
 # authority field; they confuse the TNRS parser
 spp_new[, autoridad := stringr::str_replace_all(
@@ -191,19 +179,18 @@ spp_new[, autoridad := stringr::str_replace_all(
 spp_new[, autoridad := str_trim(autoridad)]
 spp_new[autoridad == "", autoridad := NA_character_]
 
-# Families that do NOT end in -aceae will be excluded from the name string
-# because TNRS only accepts families with the standard -aceae suffix
+# TNRS only accepts families ending in -aceae, so other families are omitted
+# from the generated name string.
 cat("Families not ending in -aceae (will be excluded from name string):\n")
 spp_new[
     !is.na(familia) & !grepl("aceae$", familia, ignore.case = TRUE),
     .(familia)
 ]
-# No problem here
+
 
 # --- 2b. Build the TNRS name string -----------------------------------------
-# TNRS expects a single string per taxon that may include:
-#   [Family] Genus [species [subsp. subspecies]] [authority]
-# Family is prepended only when it ends in -aceae (TNRS parser requirement).
+# Create the query string for TNRS, including family, genus, species,
+# optional infraspecific rank, and authority.
 
 build_tnrs_name <- function(
   family,
@@ -279,10 +266,8 @@ cat(nrow(spp_new_to_check), "rows will be sent to TNRS\n")
 tnrs_input <- spp_new_to_check[, .(ID, name_string)]
 
 # --- 2c. TNRS parse mode: verify parsing before resolving -------------------
-# Parse mode does NOT query the backbone; it only shows how TNRS splits the
-# name string into components (Family, Genus, epithet, Author).
-# Inspect the output to confirm no components are mis-assigned before the
-# more expensive resolve call.
+# TNRS parse mode checks the name string syntax and component extraction.
+# Run this before resolve mode to catch any badly formed names early.
 
 # Boyle, B. L., Matasci, N., Mozzherin, D., Rees, T., Barbosa, G. C., Kumar
 # Sajja, R., & Enquist, B. J. (2021). Taxonomic Name Resolution Service, version
@@ -410,10 +395,10 @@ results_dt[, .N, by = problem][order(-N)]
 # Keep only the columns that are actionable for downstream curation.
 # See the reference block below for a full description of each column.
 
-# check the variety
+# Inspect any Swartzia varieties that may need special handling.
 results_dt[Genus_submitted == "Swartzia"]
 
-# check unmatched rows
+# Inspect rows that did not match cleanly.
 results_dt[Unmatched_terms != ""]
 
 cols_tnrs_clean <- c(
@@ -447,18 +432,12 @@ spp_new <- merge(
 # =============================================================================
 # 3. APPLY TNRS CORRECTIONS
 # =============================================================================
-# The `problem` column (populated in section 2f) classifies each species by
-# the type of name issue detected. This section resolves each issue category
-# in turn, updating the relevant name fields in `spp_new` and marking the
-# row as "OK" in a working `solution` column. The checks are applied in
-# order of increasing complexity:
-#   Check 1 — Species absent from Rolando's list          (mark OK as-is)
-#   Check 2 — Family reclassified in backbone             (update familia)
-#   Check 3 — Morphospecies (sp.)                         (mark OK, no fix needed)
-#   Check 4 — Authority format difference only            (update autoridad)
-# Note: The TNRS synonym flag for Swartzia simplex is a false positive caused by
-# the presence of an intraspecific rank; no synonym fix is applied.
-# After all checks, any remaining authority mismatches are standardised.
+# Use the TNRS diagnosis labels to apply safe fixes.
+# - Missing from the new list: keep the old taxonomy values.
+# - Reclassified family: update only the family.
+# - Morphospecies: accept genus-only names.
+# - Authority formatting: standardise authority text.
+# After these steps, clean up temporary TNRS helper columns and finalise the table.
 
 # Add a stable row index for reference during curation
 spp_new[, I := .I]

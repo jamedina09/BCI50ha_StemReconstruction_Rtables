@@ -72,9 +72,11 @@ parse_args <- function() {
                 val <- kv[2]
                 # Try to convert to appropriate type (handle booleans, integers, floats, including negatives)
                 # Keys whose values must stay character (e.g. Tag IDs with leading zeros)
-                .char_keys <- c("WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
-                                "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
-                                "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL")
+                .char_keys <- c(
+                    "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
+                    "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
+                    "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL"
+                )
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
                 } else if (!(toupper(key) %in% .char_keys) && grepl("^[+-]?[0-9]+$", val)) {
@@ -873,8 +875,10 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
                 out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
             } else {
-                out[is.na(ReconstructedStemID_PreSweep),
-                    ReconstructedStemID_PreSweep := ReconstructedStemID]
+                out[
+                    is.na(ReconstructedStemID_PreSweep),
+                    ReconstructedStemID_PreSweep := ReconstructedStemID
+                ]
             }
             .pre_recon <- out$ReconstructedStemID_PreSweep[.ts_rows]
             .true_int <- as.integer(out$TrueStemID[.ts_rows])
@@ -1273,6 +1277,24 @@ run_main_chunked <- function() {
                     out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
                     out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
+                    # Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
+                    # ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
+                    # then by original ID. This matches the OriginalStemID convention and ensures no negative or zero IDs.
+                    # See dp_global/improvements.md for the full algorithm and rationale.
+                    .renum <- renumber_engine_minted_ids(
+                        out_chunk,
+                        posterior_top_k = DP_POSTERIOR_TOP_K,
+                        posterior_samples_path = out_dir,
+                        verbose = FALSE
+                    )
+                    out_chunk <- .renum$out
+                    # Finalize posterior path files in the renumbered ID space (recommended architecture).
+                    finalize_posterior_paths(
+                        out_chunk,
+                        posterior_samples_path = out_dir,
+                        mapping = .renum$mapping,
+                        verbose = FALSE
+                    )
                     # Record run output directory (basename) in each row to avoid variable/column name collision
                     out_chunk[, run_out_dir := basename(out_dir)]
 
