@@ -105,26 +105,54 @@ if (!dir.exists(CHECK_folder)) {
 #   "DFstatus"                      — legacy ForestGEO column name for the raw field status
 #   "Rstatus"                       — script-computed corrected status (from "new_status")
 
+# # Columns to retain from ViewFullTable (original DB column names)
+# ViewFullTable_columns_to_keep <- c(
+#   "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
+#   "QuadratName", "PX", "PY", # spatial location in plot (meters)
+#   "DBHID", "CensusID", "DBH", "HOM", # measurement record
+#   "ExactDate", "Status", "ListOfTSM", # raw field status + measurement codes
+#   "Date", "new_status", # date + script-computed corrected status
+#   "obs_row_id" # DP reconstruction metadata
+# )
+
+# # Standardized ForestGEO R-table column names (must match ViewFullTable_columns_to_keep
+# # one-to-one: same length and same order)
+# new_names_columns_to_keep <- c(
+#   "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
+#   "quadrat", "gx", "gy", # gx/gy = plot coordinates in meters
+#   "MeasureID", "CensusID", "dbh", "hom", # hom = height of measurement
+#   "ExactDate", "DFstatus", "codes", # DFstatus = raw field status (legacy name)
+#   "date", "Rstatus", # date + script-computed corrected status
+#   "StemPaths" # DP reconstruction metadata
+# )
+
 # Columns to retain from ViewFullTable (original DB column names)
 ViewFullTable_columns_to_keep <- c(
-  "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
+  "CensusID", "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
   "QuadratName", "PX", "PY", # spatial location in plot (meters)
-  "DBHID", "CensusID", "DBH", "HOM", # measurement record
-  "ExactDate", "Status", "ListOfTSM", # raw field status + measurement codes
-  "Date", "new_status", # date + script-computed corrected status
-  "obs_row_id" # DP reconstruction metadata
+  "DBH", "HOM",
+  "ExactDate", "Date",
+  "ListOfTSM",
+  "Status", # raw field status + measurement codes
+  "new_status", # date + script-computed corrected status
+  "obs_row_id", # DP reconstruction metadata
+  "DBHID" # measurement record
 )
 
 # Standardized ForestGEO R-table column names (must match ViewFullTable_columns_to_keep
 # one-to-one: same length and same order)
 new_names_columns_to_keep <- c(
-  "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
+  "CensusID", "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
   "quadrat", "gx", "gy", # gx/gy = plot coordinates in meters
-  "MeasureID", "CensusID", "dbh", "hom", # hom = height of measurement
-  "ExactDate", "DFstatus", "codes", # DFstatus = raw field status (legacy name)
-  "date", "Rstatus", # date + script-computed corrected status
-  "StemPaths" # DP reconstruction metadata
+  "dbh", "hom",
+  "ExactDate", "date",
+  "codes",
+  "DFstatus", # DFstatus = raw field status (legacy name)
+  "Rstatus", # date + script-computed corrected status
+  "StemPaths", # DP reconstruction metadata
+  "MeasureID" # hom = height of measurement
 )
+
 
 # ---- Hard guard: the two column vectors must be 1-to-1 -------------------
 # A typo or accidental edit to either vector would silently mis-rename
