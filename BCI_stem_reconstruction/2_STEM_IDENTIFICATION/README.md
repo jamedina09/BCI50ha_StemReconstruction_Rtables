@@ -1,8 +1,8 @@
 # 2_STEM_IDENTIFICATION
 
 Stage 2 of the BCI stem-reconstruction pipeline. This stage runs the DP solver
-on cleaned ViewFullTable input from `1_DATA_PREPARATION/` and produces the
-reconstructed stem dataset used by `3_PREPARE_R_TABLES/`.
+on cleaned ViewFullTable input from `BCI_stem_reconstruction/1_DATA_PREPARATION/` and produces the
+reconstructed stem dataset used by `BCI_stem_reconstruction/3_PREPARE_R_TABLES/`.
 
 ## Scripts
 
