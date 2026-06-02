@@ -3081,6 +3081,19 @@ ViewFullTable_split <- impute_tree_coords(
 )
 cat("✓ Location imputation complete.\n\n")
 
+# [impute_tree_coords] PX              | no data: 86 | single value (fill): 456771 | multiple values (mode): 3354
+# [impute_tree_coords] PY              | no data: 86 | single value (fill): 456775 | multiple values (mode): 3350
+# [impute_tree_coords] QuadratName     | no data: 51 | single value (fill): 460159 | multiple values (mode): 1
+# [impute_tree_coords] census 1: filled 859034 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 2: filled 788036 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 3: filled 729706 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 4: filled 752220 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 5: filled 789214 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 6: filled 811886 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 7: filled 752346 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 8: filled 716396 NA location cell(s); 275 remain (ambiguous trees)
+# [impute_tree_coords] census 9: filled 645564 NA location cell(s); 275 remain (ambiguous trees)
+
 cat("💾 Exporting census tables to .Rdata files...\n")
 
 ## Format and export each census as ForestGEO R table ####
@@ -3188,6 +3201,16 @@ ViewFullTable_split <- impute_tree_dates(
   quadrat_col = "QuadratName",
   strict = FALSE
 )
+
+# [impute_tree_dates] census 1: filled 134729 from tree-level, 294791 from quadrat-level; 67 remain NA
+# [impute_tree_dates] census 2: filled 149327 from tree-level, 244758 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 3: filled 153347 from tree-level, 211538 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 4: filled 159771 from tree-level, 216420 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 5: filled 156634 from tree-level, 238071 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 6: filled 147502 from tree-level, 258541 from quadrat-level; 0 remain NA
+# [impute_tree_dates] census 7: filled 150295 from tree-level, 225915 from quadrat-level; 67 remain NA
+# [impute_tree_dates] census 8: filled 126367 from tree-level, 231868 from quadrat-level; 67 remain NA
+# [impute_tree_dates] census 9: filled 90299 from tree-level, 232520 from quadrat-level; 67 remain NA
 
 cat("✓ Dates imputation complete.\n\n")
 
