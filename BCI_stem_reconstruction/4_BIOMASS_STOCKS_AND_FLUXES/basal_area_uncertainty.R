@@ -121,7 +121,7 @@ ANCHOR_START_CENSUS <- 7L
 first_plot_census <- 2L
 
 # Number of MC realizations to draw from the posterior distribution of paths.
-K_realizations <- 100L
+K_realizations <- 200L
 
 mc_center <- "mean" # choose "mean" or "median"
 mc_center <- match.arg(mc_center, c("mean", "median"))
@@ -832,7 +832,7 @@ print(fig1)
 flux_labels <- c(
     Growth_BA     = "Growth",
     Loss_BA       = "Loss (mortality)",
-    Gain_BA       = "Gain (recruitment)",
+    Gain_BA       = "Gain (recruitment + ingrowth)",
     DeltaBA_total = "Net \u0394BA"
 )
 
