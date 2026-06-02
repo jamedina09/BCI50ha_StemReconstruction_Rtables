@@ -4,7 +4,6 @@
 
 Biologically informed dynamic-programming (DP) solver that reconstructs stem identities across forest censuses backward in time from a known anchor census. Given multi-stem tree measurements and a late-census anchor with trusted `TrueStemID`, the algorithm assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, and recruitment biology. Uncertainty is quantified via forward-backward marginals and optional posterior sampling.
 
-
 After the engine and all post-processing helpers run, a final renumbering pass assigns `ReconstructedStemID` values sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. This ensures that IDs are always positive, contiguous, and chronologically ordered, matching the `OriginalStemID` convention. All downstream outputs, including posterior path files, use this renumbered ID space.
 
 ## How the Two Algorithms Work (Plain-Language Summary)
@@ -36,7 +35,6 @@ The choice is made **per tag** (i.e., per tree) and is controlled by the `DP_MAX
 | Certain species or growth forms (configured via `PROB_SPECIES` / `FALLBACK_GROWTH_FORMS`) | **Probabilistic matcher** | User routes specific groups to the fallback regardless of stem count |
 | DP solver hits a runtime error (e.g., memory) | **Probabilistic matcher** | Automatic error-recovery fallback |
 
-
 ### Can Both Run on the Same Tag?
 
 For a simple tag with no resprout events, **only one** algorithm produces the reconstruction. However, when a tag contains an **R event** (a resprout or breakage code such as R, RP, RF, RT, QR, or OR), the tag is split into a pre-resprout segment and a post-resprout segment, each solved independently. Because the two segments have different stem counts and therefore different state-space sizes, **each segment chooses its algorithm independently** — so it is possible for the post-resprout segment to be solved by the exact DP while the pre-resprout segment falls back to the probabilistic matcher (or vice versa). Both algorithms' outputs are then combined into a single reconstruction for the tag.
@@ -58,15 +56,18 @@ After all segments are solved and merged, the final renumbering pass ensures tha
 │   │   ├── naming_helpers.R          # Output directory naming
 │   │   ├── complexity/               # DP complexity estimator
 │   │   └── dpglobal_bundle/          # Portable deployment bundle builder
-│   ├── scripts/               # CLI driver scripts (main_cpp*.R) + basal area uncertainty
+│   ├── scripts/               # CLI driver scripts (main_cpp*.R), basal area uncertainty, and run_bb_sample.sh batch helper
 │   └── src/                   # C++ transition cost (Rcpp)
+├── BCI_stem_reconstruction/   # Full BCI 50-ha pipeline (data prep → DP → R-tables → biomass)
+│   ├── 1_DATA_PREPARATION/    # Build species tables and cleaned ViewFullTable
+│   ├── 2_STEM_IDENTIFICATION/ # Chunked DP runner on BCI data + chunk merger
+│   ├── 3_PREPARE_R_TABLES/    # Consolidate posteriors, build ForestGEO-format R tables
+│   └── 4_BIOMASS_STOCKS_AND_FLUXES/  # AGB stocks/fluxes and basal-area uncertainty
 ├── data_simulation/           # Simulated forest-census data generator
 │   └── data/                  # Generated test datasets (CSV)
-├── bci_data/                  # BCI census data (not tracked by git)
 └── Makefile                   # Convenience targets (smoke test)
 ```
 
-**Not tracked by git** (see `.gitignore`): `dp_global/output/`, `dp_global/ForestGEO_codes/`, `dp_global/examples/`, `bci_data/`, `*.rds`, `*.pdf`, `*.log`.
 
 ## Prerequisites
 
@@ -188,9 +189,14 @@ See `dp_global/README.md` for the full algorithm description and `dp_global/scri
 | Document | Contents |
 |----------|----------|
 | `dp_global/README.md` | Algorithm details, cost model, data requirements, parameter estimation, fallback mechanisms |
-| `dp_global/scripts/README.md` | CLI flags, chunking, resume, example invocations, basal area uncertainty |
+| `dp_global/scripts/README.md` | CLI flags, chunking, resume, example invocations, basal area uncertainty, batch runner |
 | `dp_global/src/README.md` | C++ acceleration API and validation |
+| `dp_global/R/dpglobal_bundle/README.md` | Portable bundle builder for deploying the algorithm on other machines |
 | `data_simulation/README.md` | Simulation parameters, biological models, output format |
+| `BCI_stem_reconstruction/1_DATA_PREPARATION/README.md` | Build species tables and cleaned ViewFullTable from ForestGEO exports |
+| `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/README.md` | Chunked BCI DP runner and chunk merger |
+| `BCI_stem_reconstruction/3_PREPARE_R_TABLES/README.md` | Consolidate posteriors and build ForestGEO-format R tables |
+| `BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/README.md` | AGB stocks/fluxes and basal-area uncertainty for the BCI 50-ha plot |
 
 ## Reconstruction Methods
 

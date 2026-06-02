@@ -13,7 +13,7 @@ Both `main_cpp.R` and `main_cpp_chunk.R` accept command-line overrides of defaul
 
 ## Overview ✨
 
-## Stem Identity Renumbering (2024+)
+## Stem Identity Renumbering
 
 All drivers (`main_cpp.R`, `main_cpp_chunk.R`, `main_cpp_bci.R`) use a universal post-engine helper chain: `maybe_add_posterior_bins()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. After these steps, all `ReconstructedStemID` values are renumbered **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. **Negative or zero IDs are never produced.**
 
@@ -428,5 +428,3 @@ Two CSV files and one PDF written to `<RUN_DIR>/`:
 ### Key insight
 
 Tag-level total BA per census is **invariant** to identity assignment — the same DBH values are summed regardless of which stem identity each observation receives. The **decomposition** of BA change into growth (surviving stems), loss (mortality), and gain (recruitment) **is** identity-dependent. Different posterior path samples assign different stems as survivors vs. deaths vs. recruits, producing uncertainty in the attribution of BA change to these demographic components.
-
----
