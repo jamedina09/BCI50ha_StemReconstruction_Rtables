@@ -20,8 +20,8 @@ BCI_stem_reconstruction/DATA/
 BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/
 BCI_stem_reconstruction/3_PREPARE_R_TABLES/CHECKS/
 BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/
-BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/wd/
-BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs/ba_mc_realizations_treeID/
+BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/wd/
+BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/ba_mc_realizations_treeID/
 
 # Specific ignored files
 BCI_stem_reconstruction/1_DATA_PREPARATION/compare_tables1_and_tables2.R
