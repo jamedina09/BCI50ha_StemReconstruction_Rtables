@@ -28,7 +28,7 @@
 # applies only to pre-anchor intervals (C1–C6).
 # See the ANCHOR_START_CENSUS block in Section 1 for full documentation.
 #
-# OUTPUTS (written to BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs/)
+# OUTPUTS (written to BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/)
 # --------
 #   ba_map_change_treeID.feather        MAP tree-level flux per census pair
 #   ba_map_change_quadrat.feather       MAP quadrat-level flux per census pair
@@ -465,7 +465,7 @@ if (nrow(post_anchor_pairs) > 0L) {
 tree_fixed_cols <- c("quadrat", "treeID", "CensusID_from", "CensusID_to", flux_cols)
 stock_cols <- c("quadrat", "treeID", "CensusID", "TotalBA_m2")
 
-out_dir <- "./BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs"
+out_dir <- "./BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs"
 realization_dir <- file.path(out_dir, "ba_mc_realizations_treeID")
 if (!dir.exists(realization_dir)) dir.create(realization_dir, recursive = TRUE)
 
@@ -581,7 +581,7 @@ all_stock_summary <- all_stock_realizations[,
 ]
 
 # ---- Write outputs to disk --------------------------------------------------
-out_dir <- "./BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/outputs"
+out_dir <- "./BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs"
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 write_feather(map_tree_change, file.path(out_dir, "ba_map_change_treeID.feather"))

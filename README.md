@@ -34,7 +34,7 @@ This repository has three components:
 │   ├── 1_DATA_PREPARATION/    # Species tables and cleaned ViewFullTable
 │   ├── 2_STEM_IDENTIFICATION/ # Chunked DP runner on BCI data + chunk merger
 │   ├── 3_PREPARE_R_TABLES/    # Posterior consolidation and ForestGEO-format R tables
-│   ├── 4_BIOMASS_STOCKS_AND_FLUXES/  # AGB stocks/fluxes and BA uncertainty
+│   ├── 4_EXAMPLE_STRUCTURE_ASSESSMENT/  # AGB stocks/fluxes and BA uncertainty
 │   └── DATA/                  # Generated BCI outputs (not tracked by git)
 ├── data_simulation/           # Simulated forest-census data generator
 │   ├── data/                  # Generated test datasets (CSV + diagnostic PDFs)
@@ -151,7 +151,7 @@ Consolidates posterior path files and builds ForestGEO-format census and species
 - `1_prepare_posteriors_BCI.R` — aggregates `_paths.feather` files into `posterior_sampled_paths.rds`.
 - `2_create_R_tables_BCI.R` — resolves encounter histories, applies broken-below rules, imputes missing data, and exports `<site>.stemN.Rdata` and `<site>.spptable.rdata`.
 
-### Stage 4 — Biomass Stocks and Fluxes (`4_BIOMASS_STOCKS_AND_FLUXES/`)
+### Stage 4 — Biomass Stocks and Fluxes (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)
 
 Two independent analysis scripts; all outputs are written to `outputs/`.
 
@@ -205,4 +205,4 @@ Each output row receives a `ReconstructionMethod` label:
 | `BCI_stem_reconstruction/1_DATA_PREPARATION/README.md` | Build species tables and cleaned ViewFullTable from ForestGEO exports |
 | `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/README.md` | Chunked BCI DP runner and chunk merger |
 | `BCI_stem_reconstruction/3_PREPARE_R_TABLES/README.md` | Consolidate posteriors and build ForestGEO-format R tables |
-| `BCI_stem_reconstruction/4_BIOMASS_STOCKS_AND_FLUXES/README.md` | AGB stocks/fluxes and basal-area uncertainty for the BCI 50-ha plot |
+| `BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/README.md` | AGB stocks/fluxes and basal-area uncertainty for the BCI 50-ha plot |
