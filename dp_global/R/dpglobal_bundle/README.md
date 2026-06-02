@@ -50,7 +50,7 @@ The archive contains source code, not binaries — always compile on the target 
 
 ### Run
 
-## Stem Identity Renumbering (2024+)
+## Stem Identity Renumbering
 
 All drivers in the dp_global workflow use a universal post-engine helper chain: `maybe_add_posterior_bins()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. After these steps, all `ReconstructedStemID` values are renumbered **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. **Negative or zero IDs are never produced.**
 

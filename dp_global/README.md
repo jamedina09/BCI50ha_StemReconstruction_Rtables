@@ -1,6 +1,5 @@
 # Global Dynamic Programming Stem-ID Reconstruction with Biological Costs
 
-**Date:** 2026-04-06
 **Author:** José A. Medina-Vega
 
 ---
@@ -27,7 +26,7 @@
 
 ## Overview
 
-## Stem Identity Renumbering Workflow (2024+)
+## Stem Identity Renumbering Workflow
 
 All reconstructed stem identities (`ReconstructedStemID`) are assigned **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. This renumbering is always applied after the engine and all post-processing helpers, regardless of which driver or fallback is used. **Negative or zero IDs are never produced.**
 
@@ -109,7 +108,8 @@ dp_global/
 │   ├── main_cpp.R                    # Interactive / single-tag driver
 │   ├── main_cpp_chunk.R              # Chunked driver for large runs
 │   ├── main_cpp_bci.R               # BCI debug driver (single-tag, RDS input, sources main_cpp.R for helpers)
-│   └── basal_area_uncertainty.R      # Posterior-based basal area uncertainty quantification
+│   ├── basal_area_uncertainty.R      # Posterior-based basal area uncertainty quantification
+│   └── run_bb_sample.sh              # Bash batch runner: invokes main_cpp_bci.R over a list of tags and concatenates per-tag CSVs
 ├── src/
 │   ├── transition_cost_rcpp.cpp      # C++ transition cost + phase feasibility functions
 │   └── transition_cost_rcpp.R        # R wrapper for Rcpp-compiled functions
@@ -732,10 +732,6 @@ When a violation is detected, every row of the violating run (from the BB / term
 **Pin-override semantics.** `apply_broken_below_invariants()` may modify rows where the engine had set `ReconstructedStemID = TrueStemID` (e.g. BCI Step 3a pre-stamps `TrueStemID = OriginalStemID` on BB+DBH rows). The post-engine pass treats the R1/R2 invariants as harder than the `TrueStemID` pin and overrides the pin where the contract is violated. The pre-sweep value is preserved in `ReconstructedStemID_PreSweep`. (The script-level `TrueStemID` backstop sweep is intentionally **not** re-run after the BB pass.)
 
 **Posterior writers.** The same R1/R2 operator is applied per posterior sample by `apply_bb_invariants_to_samples()` (`dp_global/R/dp_global_main.R`). It is invoked by `finalize_posterior_paths()` after the renumber mapping has been applied to the staged per-sample `ReconstructedStemID` values, so the per-sample bb-minted IDs are derived from the renumbered track IDs and remain consistent with the MAP table's bb-minted IDs. The path-signature aggregation (`paste0(ReconstructedStemID, collapse = "-")` grouped by sample) is computed *after* the per-sample relabel, so identical post-relabel paths collapse correctly and `sum(path_prob) == 1` is preserved.
-
-**Tests.** Eight fixtures (A–H) covering simple BB, multi-BB-at-one-census, post-terminator, multi-tracker, idempotence, integer-id collision, and orphan interaction are at `dp_global/tests/test_broken_below_invariants.R`. Run with `make test-bb` or `Rscript dp_global/tests/test_broken_below_invariants.R`. All 22 assertions pass.
-
-**Audit.** `dp_global/scripts/bb_audit.R` reports R1/R2 violation counts on any reconstruction CSV. Expected to print `R1: 0/N, R2: 0/N` after `apply_broken_below_invariants()` has been applied.
 
 ### Visualization
 

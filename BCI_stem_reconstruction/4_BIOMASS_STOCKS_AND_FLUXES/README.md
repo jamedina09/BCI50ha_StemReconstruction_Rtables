@@ -60,8 +60,24 @@ Key assumptions and scope:
 - The script writes several outputs to `outputs/`, including MAP feather tables, MC realization
   feather files, summary files, and diagnostic figures.
 
-Outputs:
+Outputs (written to `outputs/`):
 
-- `outputs/fig1_BA_stock.pdf`
-- `outputs/fig2_BA_fluxes.pdf`
-- `outputs/fig3_BA_trajectories.pdf`
+MAP (deterministic) tables:
+
+- `ba_map_change_treeID.feather` — MAP tree-level BA flux per census pair.
+- `ba_map_change_quadrat.feather` — MAP quadrat-level BA flux per census pair.
+- `ba_map_stock_quadrat.feather` — MAP quadrat-level BA stock per census.
+
+Monte Carlo realizations and summaries:
+
+- `ba_mc_realizations_quadrat.feather` — quadrat-level MC realization fluxes.
+- `ba_mc_realizations_stock_quadrat.feather` — quadrat-level MC realization stocks.
+- `ba_mc_summary_quadrat.feather` — empirical 95 % CI of quadrat fluxes.
+- `ba_mc_summary_stock_quadrat.feather` — empirical 95 % CI of quadrat stocks.
+- `ba_mc_realizations_treeID/` — one feather per MC realization with tree-level fluxes (not tracked by git).
+
+Figures:
+
+- `fig1_BA_stock.pdf` — forest-level BA stock: MAP vs MC.
+- `fig2_BA_fluxes.pdf` — forest-level BA fluxes: MAP vs MC.
+- `fig3_BA_trajectories.pdf` — individual-tree BA trajectories for a selected subset.
