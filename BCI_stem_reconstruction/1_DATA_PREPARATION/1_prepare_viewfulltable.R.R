@@ -11,7 +11,6 @@ rm(list = ls())
 
 # Load required libraries
 library(data.table) # fast data manipulation
-library(here) # convenient file paths
 library(ggplot2) # diagnostic plots
 # References: https://arelbundock.com/posts/dt_tb_df/index.html
 #             https://rdatatable.gitlab.io/data.table/
@@ -23,15 +22,20 @@ library(ggplot2) # diagnostic plots
 site <- "bci" # Site code for BCI
 
 # Input folders for the two datasets to compare
-INPUT_folder_1 <- here::here("BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses")
+workspace_root <- getwd()
+if (basename(workspace_root) == "BCI_stem_reconstruction") {
+  workspace_root <- dirname(workspace_root)
+}
+
+INPUT_folder_1 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses")
 
 # Output and diagnostics folders
-OUTPUT_folder <- here::here("BCI_stem_reconstruction", "DATA", "PROCESSED")
+OUTPUT_folder <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED")
 if (!dir.exists(OUTPUT_folder)) {
   dir.create(OUTPUT_folder, recursive = TRUE)
 }
 
-CHECK_folder <- here::here("BCI_stem_reconstruction", "DATA", "CHECKS")
+CHECK_folder <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "CHECKS")
 if (!dir.exists(CHECK_folder)) {
   dir.create(CHECK_folder, recursive = TRUE)
 }
@@ -873,13 +877,10 @@ if (nrow(missing_tags) > 0) {
 # ---- 8.2 Apply taper correction (DBH → DBHC) ----
 # Prepare `HOM_for_taper_correction` and run taper correction to compute DBH at 1.3 m (DBHC).
 # Inputs: `dbh_with_best_candidate` (numeric) and `HOM_for_taper_correction`.
-# The function `apply_taper_correction()` (in `taper_correction.R`) returns a column
-# named by `output_col` (here: `dbh_with_best_candidate_taper_corrected`).
-# Create `HOM_for_taper_correction` column for taper correction
 ViewFullTable_measurement_error_indication[, HOM_for_taper_correction := HOM]
 
-# Load taper utilities (provides `apply_taper_correction()` and `taper()`)
-source(here("BCI_stem_reconstruction", "1_DATA_PREPARATION", "HELPER_FUNCTIONS", "taper_correction.R"))
+# # Load taper utilities (provides `apply_taper_correction()` and `taper()`)
+# source(here("BCI_stem_reconstruction", "1_DATA_PREPARATION", "HELPER_FUNCTIONS", "taper_correction.R"))
 
 # Inspect HOM_for_taper_correction values
 range(ViewFullTable_measurement_error_indication$HOM_for_taper_correction, na.rm = TRUE)
@@ -903,7 +904,7 @@ ViewFullTable_measurement_error_indication[HOM_for_taper_correction == 0, HOM_fo
 # Re-check range after conversion
 range(ViewFullTable_measurement_error_indication$HOM_for_taper_correction, na.rm = TRUE)
 
-# Load species table with growth-form classifications
+# # Load species table with growth-form classifications
 load("./BCI_stem_reconstruction/DATA/SPP_TABLE/bci_spptable.RData")
 
 # check database
@@ -920,18 +921,32 @@ species_to_use_tapper_corrected_dbh <- growth_forms[
 ]$Mnemonic
 
 # taper correction is only done to those rows with HOM_for_taper_correction != 1.3
-# ! FIXME: Use 2014 equation
-ViewFullTable_taper_corrected <- apply_taper_correction(ViewFullTable_measurement_error_indication,
-  # dbh input in mm
-  dbh_col = "dbh_with_best_candidate",
-  hom_col = "HOM_for_taper_correction",
-  wsg_col = NULL,
-  output_col = "dbh_with_best_candidate_taper_corrected_raw",
-  taper_correction = TRUE,
-  common_hom = 1.3,
-  convert_units = FALSE, # Disable unit conversion (BCI hom units appear fine)
-  verbose = TRUE
-)
+# DBH is corrected for taper using Cushman et al. 2014.
+# Taper adjusts DBH to what it would be at 1.3 m when measured higher (e.g., above
+# buttresses). The corrected value is stored as `dbh_t`; all downstream AGB uses _t.
+#
+# Applied universally: although ideal only for buttressed species, the equation
+# returns dbh_t ≈ dbh when hom ≈ 1.3 m (b ≈ 0), so non-buttressed stems are
+# unaffected.
+
+ViewFullTable_measurement_error_indication[, b := exp(-2.0205 - 0.5053 * log(dbh_with_best_candidate) + 0.3748 * log(HOM_for_taper_correction))]
+ViewFullTable_measurement_error_indication[!is.na(HOM_for_taper_correction), dbh_with_best_candidate_taper_corrected_raw := dbh_with_best_candidate * exp(b * (HOM_for_taper_correction - 1.3))]
+ViewFullTable_measurement_error_indication[, b := NULL] # intermediate taper coefficient — no longer needed
+
+# source("./BCI_stem_reconstruction/1_DATA_PREPARATION/HELPER_FUNCTIONS/taper_correction.R")
+# ViewFullTable_taper_corrected <- apply_taper_correction(ViewFullTable_measurement_error_indication,
+#   # dbh input in mm
+#   dbh_col = "dbh_with_best_candidate",
+#   hom_col = "HOM_for_taper_correction",
+#   wsg_col = NULL,
+#   output_col = "dbh_with_best_candidate_taper_corrected_raw",
+#   taper_correction = TRUE,
+#   common_hom = 1.3,
+#   convert_units = FALSE, # Disable unit conversion (BCI hom units appear fine)
+#   verbose = TRUE
+# )
+
+ViewFullTable_taper_corrected <- copy(ViewFullTable_measurement_error_indication)
 
 # use the tapper corrected for the species that require taper correction
 ViewFullTable_taper_corrected[, dbh_with_best_candidate_taper_corrected := fifelse(
@@ -1073,7 +1088,7 @@ tags_per_growth_form[
 ][order(single_stem_tags, -N)]
 
 # Save the enriched observation table with growth-form classifications.
-saveRDS(ViewFullTable_single_vs_multiple_stem_tags, "./BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds")
+saveRDS(ViewFullTable_single_vs_multiple_stem_tags, file.path(OUTPUT_folder, "ViewFullTable_single_vs_multiple_stem_tags.rds"))
 
 # make sure SpeciesName in ViewFullTable_single_vs_multiple_stem_tags matches your full "Genus species" format
 nobs_growth_form <- ViewFullTable_single_vs_multiple_stem_tags[!is.na(DBH)][

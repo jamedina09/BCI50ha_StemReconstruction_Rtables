@@ -19,7 +19,6 @@ options(
 # LOAD REQUIRED PACKAGES
 # =============================================================================
 library(data.table) # Fast table manipulation
-library(here) # Easy project-relative file paths
 library(TNRS) # Taxonomic Name Resolution Service
 library(stringr) # String helpers (trimming, case, etc.)
 
@@ -29,9 +28,14 @@ data.table::getDTthreads()
 # =============================================================================
 # DEFINE INPUT FILE PATHS
 # =============================================================================
-TAXONOMY_NEW <- here("BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "Lista_bci_mnemonics_formadevida.xlsx")
-TAXONOMY_OLD <- here("BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewTaxonomy_bci.csv")
-INPUT_FILE <- here("BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv")
+workspace_root <- getwd()
+if (basename(workspace_root) == "BCI_stem_reconstruction") {
+    workspace_root <- dirname(workspace_root)
+}
+
+TAXONOMY_NEW <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "Lista_bci_mnemonics_formadevida.xlsx")
+TAXONOMY_OLD <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewTaxonomy_bci.csv")
+INPUT_FILE <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv")
 
 # =============================================================================
 # 1. LOAD DATA
@@ -672,10 +676,12 @@ full_out[, .N, by = Lifeform_RPerez_SAguilar]
 # --- 11e. Export -------------------------------------------------------------
 bci.spptable <- full_out
 
+output_path <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "SPP_TABLE")
+
 # Tab-delimited plain text — portable, version-control friendly
 fwrite(
     bci.spptable,
-    here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.txt"),
+    file.path(output_path, "bci_spptable.txt"),
     sep = "\t"
 )
 message("Exported: DATA/SPP_TABLE/bci_spptable.txt")
@@ -683,13 +689,13 @@ message("Exported: DATA/SPP_TABLE/bci_spptable.txt")
 # R binary format — for direct use in downstream R scripts
 save(
     bci.spptable,
-    file = here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.RData")
+    file = file.path(output_path, "bci_spptable.RData")
 )
 message("Exported: DATA/SPP_TABLE/bci_spptable.RData")
 
 fwrite(
     bci.spptable,
-    here("BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.csv"),
+    file.path(output_path, "bci_spptable.csv"),
     sep = "\t"
 )
 message("Exported: DATA/SPP_TABLE/bci_spptable.csv")
