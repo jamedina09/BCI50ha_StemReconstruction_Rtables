@@ -181,13 +181,51 @@ if (remove_strangler_figs) {
 rm(large_strangler_figs)
 
 # ============================================================
-# Section 5 — DBH unit conversion: mm to cm
+# Section 5 — Taper correction
+# ============================================================
+# Cushman et al. 2014
+taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
+  # Defensive checks
+  if (length(dbh_mm) != length(hom)) {
+    stop("'dbh_mm' and 'hom' must have the same length")
+  }
+  # copy inputs to avoid modifying caller's vectors
+  dbh_mm <- as.numeric(dbh_mm)
+  hom <- as.numeric(hom)
+  # Replace NA heights with 1.3 m (do not modify valid measured heights)
+  hom_na <- is.na(hom)
+  hom[hom_na] <- common_hom
+  # convert dbh from mm to cm for the model
+  dbh_cm <- dbh_mm / 10
+  # Protect against log(0) or negative inputs by coercing non-positive values to NA
+  dbh_cm[dbh_cm <= 0] <- NA_real_
+  hom_for_log <- hom
+  hom_for_log[hom_for_log <= 0] <- NA_real_
+  b <- exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
+  out <- dbh_cm / (exp(-b * (hom - common_hom)))
+  # convert back to mm and set invalid values to NA
+  out_mm <- out * 10
+  out_mm[is.na(out_mm) | is.infinite(out_mm)] <- NA_real_
+  return(out_mm)
+}
+
+# NOTE: dbh should be in cm for the equation.
+df_stem[, hom := ifelse(is.na(hom), 1.3, hom)]
+df_stem[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
+df_stem[, dbh_raw := dbh]
+df_stem[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
+
+# with(df_stem[CensusID == 9], plot(dbh_raw, dbh))
+# abline(a = 0, b = 1, col = "red")
+
+# ============================================================
+# Section 6 — DBH unit conversion: mm to cm
 # ============================================================
 # Raw BCI RTABLE DBH is in mm. All allometric equations expect cm.
 df_stem[, dbh := dbh / 10]
 
 # ============================================================
-# Section 6 — Palm DBH correction
+# Section 7 — Palm DBH correction
 # ============================================================
 # Non-Socratea palms do not grow in diameter; observed DBH changes are measurement
 # error. Replace each species' DBH with the species median across all censuses
@@ -195,25 +233,6 @@ df_stem[, dbh := dbh / 10]
 if (use_median_palm_dbh) {
   df_stem[Family == "Arecaceae" & Genus != "Socratea", dbh := median(dbh, na.rm = TRUE), .(Latin)]
 }
-
-# ============================================================
-# Section 7 — Taper correction
-# ============================================================
-# DBH is corrected for taper using Cushman et al. 2014.
-# Taper adjusts DBH to what it would be at 1.3 m when measured higher (e.g., above
-# buttresses). The corrected value is stored as `dbh_t`; all downstream AGB uses _t.
-#
-# Applied universally: although ideal only for buttressed species, the equation
-# returns dbh_t ≈ dbh when hom ≈ 1.3 m (b ≈ 0), so non-buttressed stems are
-# unaffected.
-#
-# [EDGE CASE] Stems with hom = NA are imputed to 1.3 m (b = 0, dbh_t = dbh).
-# [EDGE CASE] Interpolation of dbh_t (section 7) is done AFTER taper correction:
-#             taper uses the raw measured dbh; filling missing dbh_t comes after.
-df_stem[, hom := ifelse(is.na(hom), 1.3, hom)]
-df_stem[, b := exp(-2.0205 - 0.5053 * log(dbh) + 0.3748 * log(hom))]
-df_stem[!is.na(hom), dbh_t := dbh * exp(b * (hom - 1.3))]
-df_stem[, b := NULL] # intermediate taper coefficient — no longer needed
 
 # ============================================================
 # Section 8 — Interpolate DBH for unmeasured-but-alive stems
