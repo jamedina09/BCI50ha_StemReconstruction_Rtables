@@ -127,13 +127,16 @@ plot(density(ViewFullTable[!is.na(DBH)]$DBH))
 
 # Explore DBH units by comparing quantiles under different assumptions.
 # The values confirm that DBH is recorded in millimetres.
-quantile(ViewFullTable[!is.na(DBH)]$DBH, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 10
-quantile(ViewFullTable[!is.na(DBH)]$DBH, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 10 / 100
-quantile(ViewFullTable[!is.na(DBH)]$DBH, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 100
+check_diameter_units <- sort(ViewFullTable[!is.na(DBH)]$DBH)
 
-# The DBH distribution confirms the units are millimetres, not centimetres.
-table(ViewFullTable[DBH < 10]$DBH)
-range(ViewFullTable$DBH, na.rm = TRUE)
+head(check_diameter_units, 100) # mm
+tail(check_diameter_units, 100) ## check next lines
+
+ViewFullTable[DBH == "8169"]
+
+quantile(check_diameter_units, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 10 # convert to cm from mm # GOOD
+quantile(check_diameter_units, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 10 / 100 # convert to m from mm # GOOD
+quantile(check_diameter_units, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 100 # convert to m from cm #! WRONG
 
 # Tag and CensusID have no missing values, so they can safely define the complete panel.
 
@@ -929,24 +932,64 @@ species_to_use_tapper_corrected_dbh <- growth_forms[
 # returns dbh_t ≈ dbh when hom ≈ 1.3 m (b ≈ 0), so non-buttressed stems are
 # unaffected.
 
-ViewFullTable_measurement_error_indication[, b := exp(-2.0205 - 0.5053 * log(dbh_with_best_candidate) + 0.3748 * log(HOM_for_taper_correction))]
-ViewFullTable_measurement_error_indication[!is.na(HOM_for_taper_correction), dbh_with_best_candidate_taper_corrected_raw := dbh_with_best_candidate * exp(b * (HOM_for_taper_correction - 1.3))]
-ViewFullTable_measurement_error_indication[, b := NULL] # intermediate taper coefficient — no longer needed
+# NOTE: dbh should be in cm for the equation.
+# Sanity check
+# Explore DBH units by comparing quantiles under different assumptions.
+# The values confirm that DBH is recorded in millimetres.
+check_diameter_units <- sort(ViewFullTable_measurement_error_indication[!is.na(dbh_with_best_candidate)]$dbh_with_best_candidate)
 
-# source("./BCI_stem_reconstruction/1_DATA_PREPARATION/HELPER_FUNCTIONS/taper_correction.R")
-# ViewFullTable_taper_corrected <- apply_taper_correction(ViewFullTable_measurement_error_indication,
-#   # dbh input in mm
-#   dbh_col = "dbh_with_best_candidate",
-#   hom_col = "HOM_for_taper_correction",
-#   wsg_col = NULL,
-#   output_col = "dbh_with_best_candidate_taper_corrected_raw",
-#   taper_correction = TRUE,
-#   common_hom = 1.3,
-#   convert_units = FALSE, # Disable unit conversion (BCI hom units appear fine)
-#   verbose = TRUE
-# )
+head(check_diameter_units, 100) # mm
+tail(check_diameter_units, 100) ## check next lines
+
+quantile(check_diameter_units, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 10 # convert to cm from mm # GOOD
+quantile(check_diameter_units, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 10 / 100 # convert to m from mm # GOOD
+quantile(check_diameter_units, probs = c(seq(0, 1, 0.25), 0.95, 0.99), na.rm = TRUE) / 100 # convert to m from cm #! WRONG
+
+# Cushman et al. 2014
+taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
+  # Defensive checks
+  if (length(dbh_mm) != length(hom)) {
+    stop("'dbh_mm' and 'hom' must have the same length")
+  }
+  # copy inputs to avoid modifying caller's vectors
+  dbh_mm <- as.numeric(dbh_mm)
+  hom <- as.numeric(hom)
+  # Replace NA heights with 1.3 m (do not modify valid measured heights)
+  hom_na <- is.na(hom)
+  hom[hom_na] <- common_hom
+  # convert dbh from mm to cm for the model
+  dbh_cm <- dbh_mm / 10
+  # Protect against log(0) or negative inputs by coercing non-positive values to NA
+  dbh_cm[dbh_cm <= 0] <- NA_real_
+  hom_for_log <- hom
+  hom_for_log[hom_for_log <= 0] <- NA_real_
+  b <- exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
+  out <- dbh_cm / (exp(-b * (hom - common_hom)))
+  # convert back to mm and set invalid values to NA
+  out_mm <- out * 10
+  out_mm[is.na(out_mm) | is.infinite(out_mm)] <- NA_real_
+  return(out_mm)
+}
 
 ViewFullTable_taper_corrected <- copy(ViewFullTable_measurement_error_indication)
+
+# are there na homs with dbh candidates?
+ViewFullTable_taper_corrected[!is.na(dbh_with_best_candidate) & is.na(HOM_for_taper_correction)]
+# only 4; the function will fix this
+
+ViewFullTable_taper_corrected[
+  ,
+  dbh_with_best_candidate_taper_corrected_raw := taper_2014(
+    dbh_mm = dbh_with_best_candidate, hom = HOM_for_taper_correction, common_hom = 1.3
+  )
+]
+
+# check plot
+with(
+  ViewFullTable_taper_corrected[CensusID == 9],
+  plot(dbh_with_best_candidate_taper_corrected_raw ~ dbh_with_best_candidate, pch = 16, cex = 0.5)
+)
+abline(a = 0, b = 1, col = "red")
 
 # use the tapper corrected for the species that require taper correction
 ViewFullTable_taper_corrected[, dbh_with_best_candidate_taper_corrected := fifelse(
