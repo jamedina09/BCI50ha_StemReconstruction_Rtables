@@ -50,10 +50,10 @@
 # retained despite violating standard allometric assumptions and
 # disproportionately inflating plot-level basal area. No correction is applied
 # for the DBH bias introduced by measuring around buttresses in the first
-# census, nor for buttressed trees in subsequent censuses. Bias-corrected
-# productivity (G*) and mortality (M*) estimators from Kohyama et al. (2019) are
-# not included. Moreover, we are not accounting for the lack of diameter growth
-# in some palm species. For a valid output, these decisions should be evaluated.
+# census. Bias-corrected productivity (G*) and mortality (M*) estimators from
+# Kohyama et al. (2019) are not included. Moreover, we are not accounting for
+# the lack of diameter growth in some palm species. For a valid output, these
+# decisions should be evaluated.
 # ==============================================================================
 
 rm(list = ls())
@@ -92,6 +92,22 @@ rec[, date_plot_census := median(ExactDate, na.rm = TRUE), by = CensusID]
 rec[, ExactDate := fifelse(is.na(ExactDate), date_quad_census, ExactDate)]
 rec[is.na(ExactDate), ExactDate := date_plot_census]
 rec[, c("date_quad_census", "date_plot_census") := NULL]
+
+# Section 7 — Taper correction
+# DBH is corrected for taper using Cushman et al. 2014.
+# Taper adjusts DBH to what it would be at 1.3 m when measured higher (e.g., above
+# buttresses). The corrected value is stored as `dbh_t`; all downstream AGB uses _t.
+#
+# Applied universally: although ideal only for buttressed species, the equation
+# returns dbh_t ≈ dbh when hom ≈ 1.3 m (b ≈ 0), so non-buttressed stems are
+# unaffected.
+
+rec[, hom := ifelse(is.na(hom), 1.3, hom)]
+rec[, b := exp(-2.0205 - 0.5053 * log(dbh) + 0.3748 * log(hom))]
+rec[!is.na(hom), dbh_t := dbh * exp(b * (hom - 1.3))]
+rec[, b := NULL] # intermediate taper coefficient — no longer needed
+rec[, dbh_raw := dbh]
+rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 
 post_file <- "./BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds"
 
