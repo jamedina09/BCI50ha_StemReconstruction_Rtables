@@ -220,6 +220,18 @@ bci.spptable <- bci.spptable[, keep_spp, with = FALSE]
 # Join taxonomy onto the stem records
 rec <- merge(rec, bci.spptable, by = "sp", all.x = TRUE)
 
+# ---- Taper correction -------------------------------------
+source("./BCI_stem_reconstruction/1_DATA_PREPARATION/HELPER_FUNCTIONS/taper_correction.R")
+
+rec <- apply_taper_correction(rec,
+    dbh_col = "dbh", hom_col = "hom", wsg_col = NULL, output_col = "dbh_t",
+    taper_correction = TRUE, common_hom = 1.3, convert_units = TRUE,
+    verbose = TRUE, overwrite = TRUE
+)
+
+rec[, dbh_raw := dbh]
+rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
+
 # ---- Stem-level basal area (m²) -------------------------------------
 # BA = π/4 × (DBH in m)²; DBH is stored in mm, hence ÷ 1000.
 rec[, ba_m2 := pi / 4 * (dbh / 1000)^2]
