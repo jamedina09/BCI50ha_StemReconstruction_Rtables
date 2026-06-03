@@ -1,4 +1,5 @@
 rm(list = ls())
+workspace_root <- getwd()
 
 # ============================================================
 # GENERAL PLOT INFORMATION: BCI 50-ha Plot
@@ -178,7 +179,7 @@ message("Loading census data ...")
 
 bci_nums <- as.character(seq_len(N_CENSUSES))
 census_list <- lapply(bci_nums, function(n) {
-    fp <- sprintf("./BCI_stem_reconstruction/DATA/RTABLES/bci.stem%s.Rdata", n)
+    fp <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", paste0("bci.stem", n, ".Rdata"))
     if (!file.exists(fp)) stop("Missing file: ", fp)
     e <- new.env(parent = emptyenv())
     load(fp, envir = e)
@@ -193,7 +194,7 @@ rm(census_list, bci_nums)
 gc()
 
 # ---- Species / taxonomy table ---------------------------------------
-load("./BCI_stem_reconstruction/DATA/RTABLES/bci.spptable.rdata")
+load(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.rdata"))
 bci.spptable <- as.data.table(bci.spptable)
 
 # Append infraspecific epithet to the Latin name when available
@@ -221,14 +222,27 @@ bci.spptable <- bci.spptable[, keep_spp, with = FALSE]
 rec <- merge(rec, bci.spptable, by = "sp", all.x = TRUE)
 
 # ---- Taper correction -------------------------------------
-source("./BCI_stem_reconstruction/1_DATA_PREPARATION/HELPER_FUNCTIONS/taper_correction.R")
+# source(file.path(workspace_root, "BCI_stem_reconstruction", "1_DATA_PREPARATION", "HELPER_FUNCTIONS", "taper_correction.R"))
 
-rec <- apply_taper_correction(rec,
-    dbh_col = "dbh", hom_col = "hom", wsg_col = NULL, output_col = "dbh_t",
-    taper_correction = TRUE, common_hom = 1.3, convert_units = TRUE,
-    verbose = TRUE, overwrite = TRUE
-)
+# rec <- apply_taper_correction(rec,
+#     dbh_col = "dbh", hom_col = "hom", wsg_col = NULL, output_col = "dbh_t",
+#     taper_correction = TRUE, common_hom = 1.3, convert_units = TRUE,
+#     verbose = TRUE, overwrite = TRUE
+# )
 
+# ---- Taper correction -------------------------------------
+# DBH is corrected for taper using Cushman et al. 2014.
+# Taper adjusts DBH to what it would be at 1.3 m when measured higher (e.g., above
+# buttresses). The corrected value is stored as `dbh_t`; all downstream AGB uses _t.
+#
+# Applied universally: although ideal only for buttressed species, the equation
+# returns dbh_t ≈ dbh when hom ≈ 1.3 m (b ≈ 0), so non-buttressed stems are
+# unaffected.
+
+rec[, hom := ifelse(is.na(hom), 1.3, hom)]
+rec[, b := exp(-2.0205 - 0.5053 * log(dbh) + 0.3748 * log(hom))]
+rec[!is.na(hom), dbh_t := dbh * exp(b * (hom - 1.3))]
+rec[, b := NULL] # intermediate taper coefficient — no longer needed
 rec[, dbh_raw := dbh]
 rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 

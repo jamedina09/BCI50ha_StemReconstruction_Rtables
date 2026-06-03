@@ -19,14 +19,15 @@ library(data.table) # fast data manipulation, rbindlist()
 # CONFIGURATION
 # =============================================================================
 
+workspace_root <- getwd()
 home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 
 # Choose the run folder inside the output directory and locate its posterior files.
 run_code <- list.files(home_dir)
-post_dir <- path.expand(file.path(home_dir, run_code, "posteriors"))
+post_dir <- normalizePath(file.path(home_dir, run_code, "posteriors"), winslash = "/", mustWork = FALSE)
 
 # Output directory where consolidated posteriors will be saved
-output_dir_posteriors <- "./BCI_stem_reconstruction/DATA/POSTERIORS"
+output_dir_posteriors <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "POSTERIORS")
 
 # Ensure run-specific output directory exists
 if (!dir.exists(output_dir_posteriors)) {
@@ -81,7 +82,9 @@ cat("Found", length(post_files), "posterior files\n")
 dt_posteriors <- read_and_bind_feathers(post_files)
 
 # link treeid to tag
-tag_treeid_map <- as.data.table(readRDS("./BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds"))
+tag_treeid_map <- as.data.table(readRDS(file.path(
+    workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_single_vs_multiple_stem_tags.rds"
+)))
 tag_treeid_map <- unique(tag_treeid_map[, .(TreeID, Tag)])
 tag_treeid_map[, Tag := as.character(Tag)]
 tag_treeid_map[, TreeID := as.character(TreeID)]

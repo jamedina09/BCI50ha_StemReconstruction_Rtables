@@ -15,8 +15,10 @@ rm(list = ls())
 
 # Packages
 library(arrow) # read/write Feather/Parquet and manage Arrow datasets
-library(here) # construct file paths relative to the project root
 library(data.table) # fast in-memory data manipulation
+
+# Project root when running from the repository root.
+workspace_root <- getwd()
 
 # =============================================================================
 # 1. CONFIGURATION
@@ -31,7 +33,7 @@ run_code <- list.files(home_dir)
 
 # Derived paths -----------------------------------------------------------------
 chunks_path <- file.path(home_dir, run_code) # Feather input directory
-outputs_path <- here("BCI_stem_reconstruction", "DATA", run_code) # merged output directory
+outputs_path <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", run_code) # merged output directory
 
 # Create the output directory if it does not already exist
 if (!dir.exists(outputs_path)) {
@@ -39,8 +41,8 @@ if (!dir.exists(outputs_path)) {
 }
 
 # Final output file names
-out_file <- here(outputs_path, "merged_output.parquet")
-out_file_rds <- here(outputs_path, "merged_output.rds")
+out_file <- file.path(outputs_path, "merged_output.parquet")
+out_file_rds <- file.path(outputs_path, "merged_output.rds")
 
 # =============================================================================
 # 2. BATCH-PROCESS FEATHER CHUNKS INTO PARQUET PARTS
@@ -66,7 +68,7 @@ group_size <- 500 # files per batch
 n_groups <- ceiling(length(feathers) / group_size)
 
 # Temporary directory for intermediate Parquet parts (removed after final merge)
-temp_dir <- here("BCI_stem_reconstruction", "DATA", "temp_parts")
+temp_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "temp_parts")
 dir.create(temp_dir, recursive = TRUE, showWarnings = FALSE)
 
 # Process each batch sequentially:
@@ -151,8 +153,8 @@ compare_columns <- function(dt1, dt2) {
 # contains both single-stem and multi-stem records and is the reference for
 # all validation steps below.
 
-xraw <- as.data.table(readRDS(here(
-    "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_taper_corrected_growth_forms.rds"
+xraw <- as.data.table(readRDS(file.path(
+    workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_taper_corrected_growth_forms.rds"
 )))
 xraw[, growth_form := Lifeform]
 xraw[, Lifeform := NULL]
@@ -431,5 +433,5 @@ if (!dir.exists(post_dir)) {
 
 saveRDS(
     complete_dataset_final,
-    here(post_dir, "complete_dataset_final_with_reconstructed_stemids.rds")
+    file.path(post_dir, "complete_dataset_final_with_reconstructed_stemids.rds")
 )
