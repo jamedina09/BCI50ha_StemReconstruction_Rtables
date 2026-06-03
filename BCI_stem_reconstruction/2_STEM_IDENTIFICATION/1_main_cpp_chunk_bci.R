@@ -2,7 +2,7 @@
 ### main_cpp_chunk_bci.R — dp_global BCI chunked driver
 ############################################################
 # Goal
-#   Sources the DP solver from dp_global/R/dp_global_main.R (via here()) within
+#   Sources the DP solver from dp_global/R/dp_global_main.R within
 #   the project tree. Groups (Tag + species) are processed in parallel chunks of
 #   DP_CHUNK_SIZE and outputs are written incrementally to disk.
 #
@@ -112,11 +112,6 @@ if (!requireNamespace("data.table", quietly = TRUE)) {
 }
 library(data.table)
 
-if (!requireNamespace("here", quietly = TRUE)) {
-    stop("Please install the 'here' package to run this script.")
-}
-library(here)
-
 ############################################################
 ### 3) Defaults — editable run defaults
 ############################################################
@@ -126,7 +121,11 @@ library(here)
 ############################################################
 # Input data and species handling
 
-INPUT_FILE <- here("BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_taper_corrected_growth_forms.rds")
+# Project root: the working directory when running from the repo root
+# (i.e. /path/to/BCI50ha_StemReconstruction_Rtables).
+workspace_root <- getwd()
+
+INPUT_FILE <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_single_vs_multiple_stem_tags.rds")
 FORCE_ONE_SPECIES_PARAMETERS <- FALSE
 if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
     FORCED_SPECIES_LABEL <- "all"
@@ -262,8 +261,8 @@ MANUAL_CORES_VALUE <- 18L # Number of cores to use if MANUAL_CORES=TRUE
 # file.
 # Pass --BASE_OUT_DIR=/some/path on the CLI to redirect output anywhere
 # (e.g. a home-directory folder on a remote machine).
-base_out_dir <- here("BCI_stem_reconstruction", "output")
-message("[dp_global main_cpp_chunk_bci.R] here root: ", here::here())
+base_out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "output")
+message("[dp_global main_cpp_chunk_bci.R] workspace_root: ", workspace_root)
 message("[dp_global main_cpp_chunk_bci.R] base_out_dir (raw): ", base_out_dir)
 base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
 message("[dp_global main_cpp_chunk_bci.R] base_out_dir (normalized): ", base_out_dir)
@@ -291,13 +290,13 @@ WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- FALSE
 DP_PDF_INCLUDE_REFERENCE <- FALSE
 
 # Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
-PROJECT_ROOT <- here::here()
+PROJECT_ROOT <- workspace_root
 # Batch timestamp can be provided by orchestrators; default empty so overrides like --BATCH_TS=... are accepted without warnings
 BATCH_TS <- ""
 # Naming helpers (encode_num, build_out_dir_name) live in a separate helper
 # file to keep the main script concise. Source it early so it's available
 # when we compute `out_dir` below.
-source(here("dp_global", "R", "naming_helpers.R"))
+source(file.path(workspace_root, "dp_global", "R", "naming_helpers.R"))
 
 ############################################################
 ### 4) CLI reference & override mapping
@@ -476,7 +475,7 @@ if ("BASE_OUT_DIR" %in% toupper(gsub("[- ]", "_", names(overrides)))) {
 # Usage: --PROJECT_ROOT=/absolute/path/to/project
 if ("PROJECT_ROOT" %in% toupper(gsub("[- ]", "_", names(overrides)))) {
     message("[dp_global main_cpp_chunk_bci.R] Using PROJECT_ROOT override: ", PROJECT_ROOT)
-    base_out_dir <- normalizePath(file.path(PROJECT_ROOT, "2_STEM_IDENTIFICATION", "output"), winslash = "/", mustWork = FALSE)
+    base_out_dir <- normalizePath(file.path(PROJECT_ROOT, "BCI_stem_reconstruction", "output"), winslash = "/", mustWork = FALSE)
     message("[dp_global main_cpp_chunk_bci.R] base_out_dir overridden to: ", base_out_dir)
 }
 
@@ -624,7 +623,7 @@ if (!is.null(POSTERIOR_SAMPLE_SEED)) {
 ############################################################
 # Load dp_global R modules: DP solver, biological parameter estimation,
 # sensitivity and realism helpers, naming utilities.
-source(here("dp_global", "R", "dp_global_main.R"))
+source(file.path(workspace_root, "dp_global", "R", "dp_global_main.R"))
 
 ############################################################
 ### 7) Helpers — data-manipulation utilities
