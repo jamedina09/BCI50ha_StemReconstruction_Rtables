@@ -154,7 +154,7 @@ compare_columns <- function(dt1, dt2) {
 # all validation steps below.
 
 xraw <- as.data.table(readRDS(file.path(
-    workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_taper_corrected_growth_forms.rds"
+    workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_single_vs_multiple_stem_tags.rds"
 )))
 xraw[, growth_form := Lifeform]
 xraw[, Lifeform := NULL]

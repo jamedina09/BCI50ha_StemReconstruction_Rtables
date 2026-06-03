@@ -10,7 +10,7 @@ reconstructed stem dataset used by `BCI_stem_reconstruction/3_PREPARE_R_TABLES/`
 
 Chunked DP driver.
 
-- Loads `BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds`.
+- Loads `BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds`.
 - Estimates per-species parameters and applies BCI-specific preprocessing.
 - Runs `dp_global` on multi-stem tags in parallel chunks.
 - Writes chunk outputs to `BASE_OUT_DIR/<run_timestamp>/`.
@@ -33,7 +33,7 @@ Merges completed chunk outputs into final files.
 ## Data flow
 
 ```text
-DATA/PROCESSED/ViewFullTable_taper_corrected_growth_forms.rds
+DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
         │
         ▼
 1_main_cpp_chunk_bci.R
