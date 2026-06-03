@@ -1,3 +1,5 @@
+# Work in progress! The present repository is still under revision
+
 # Stem Reconstruction and Rtables for the Barro Colorado 50-ha Forest Dynamics Plot
 
 ## Overview
