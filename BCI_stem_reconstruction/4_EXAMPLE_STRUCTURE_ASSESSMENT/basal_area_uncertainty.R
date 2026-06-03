@@ -65,6 +65,8 @@ library(scales)
 library(collapse)
 library(arrow)
 
+workspace_root <- getwd()
+
 # ============================================================
 # SECTION 1: Configuration and data loading
 # ============================================================
@@ -76,7 +78,7 @@ library(arrow)
 
 bci_stem_nums <- as.character(1:9)
 census_list <- lapply(bci_stem_nums, function(num) {
-    fp <- paste0("./BCI_stem_reconstruction/DATA/RTABLES/bci.stem", num, ".Rdata")
+    fp <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", paste0("bci.stem", num, ".Rdata"))
     if (!file.exists(fp)) stop("Missing census file: ", fp)
     load(fp)
     get(paste0("bci.stem", num))
@@ -109,7 +111,7 @@ rec[, b := NULL] # intermediate taper coefficient — no longer needed
 rec[, dbh_raw := dbh]
 rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 
-post_file <- "./BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds"
+post_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "POSTERIORS", "posterior_sampled_paths.rds")
 
 # ── Anchor census ──────────────────────────────────────────────────────────────
 # ANCHOR_START_CENSUS is the first census where individual stem identities are
@@ -481,7 +483,7 @@ if (nrow(post_anchor_pairs) > 0L) {
 tree_fixed_cols <- c("quadrat", "treeID", "CensusID_from", "CensusID_to", flux_cols)
 stock_cols <- c("quadrat", "treeID", "CensusID", "TotalBA_m2")
 
-out_dir <- "./BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs"
+out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
 realization_dir <- file.path(out_dir, "ba_mc_realizations_treeID")
 if (!dir.exists(realization_dir)) dir.create(realization_dir, recursive = TRUE)
 
@@ -597,7 +599,7 @@ all_stock_summary <- all_stock_realizations[,
 ]
 
 # ---- Write outputs to disk --------------------------------------------------
-out_dir <- "./BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs"
+out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 write_feather(map_tree_change, file.path(out_dir, "ba_map_change_treeID.feather"))

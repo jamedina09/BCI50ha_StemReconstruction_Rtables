@@ -3313,7 +3313,7 @@ cat(sprintf("\n✓✓ All %d census tables exported successfully\n\n", length(Vi
 # --------------------------------------------------------------------
 # --------------------------------------------------------------------
 ViewTaxonomy <- fread(
-  file = file.path("./BCI_stem_reconstruction/DATA/SPP_TABLE/bci_spptable.txt"),
+  file = file.path(main_path, "BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.txt"),
   sep = "\t",
   stringsAsFactors = FALSE, # Keep text as character strings
   na.strings = c("NA", "NULL", "")

@@ -49,6 +49,8 @@
 
 rm(list = ls())
 
+workspace_root <- getwd()
+
 # ============================================================
 # Section 1 — Parameters
 # ============================================================
@@ -88,7 +90,7 @@ library(lubridate)
 library(HDInterval)
 
 # Output directory — created if absent; all figures are written here.
-out_dir <- "./BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs"
+out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 # ============================================================
@@ -101,7 +103,7 @@ if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 bci_stem_nums <- as.character(1:9)
 
 census_list <- lapply(bci_stem_nums, function(num) {
-  filepath <- paste0("./BCI_stem_reconstruction/DATA/RTABLES/bci.stem", num, ".Rdata")
+  filepath <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", paste0("bci.stem", num, ".Rdata"))
   if (!file.exists(filepath)) stop("Missing census file: ", filepath)
   load(filepath)
   get(paste0("bci.stem", num))
@@ -125,10 +127,10 @@ df_stem[, CensusID := as.integer(CensusID)]
 
 # Download wood density data from Wright & Mulle-Landau 2026 Dryad
 # url: "https://datadryad.org/dataset/doi:10.5061/dryad.5qfttdzn3"
-bci_wd <- fread("./BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/wd/doi_10_5061_dryad_5qfttdzn3__v20260403/WD_species.txt")
+bci_wd <- fread(file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "wd", "doi_10_5061_dryad_5qfttdzn3__v20260403", "WD_species.txt"))
 bci_wd <- bci_wd[, .(sp = tolower(sp6), wsg = wd100.mean)][!is.na(wsg)]
 
-bci.spptable <- fread("./BCI_stem_reconstruction/DATA/RTABLES/bci.spptable.csv")
+bci.spptable <- fread(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.csv"))
 bci.spptable <- unique(bci.spptable[, .(Family, sp, Genus, Species = SpeciesName, Latin)])
 
 df_stem <- merge(df_stem, bci.spptable, by = "sp", all.x = TRUE)
