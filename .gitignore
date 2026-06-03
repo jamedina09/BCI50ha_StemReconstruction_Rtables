@@ -27,6 +27,7 @@ BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/ba_mc_realization
 BCI_stem_reconstruction/1_DATA_PREPARATION/compare_tables1_and_tables2.R
 BCI_stem_reconstruction/2_STEM_IDENTIFICATION/3_initial_comparisson_dryad_and_me.R
 BCI_stem_reconstruction/DATA/RAW/ViewFullTable_census2022-23.txt
+data_paper_and_repo_publication
 
 dp_global/improvements.md
 
