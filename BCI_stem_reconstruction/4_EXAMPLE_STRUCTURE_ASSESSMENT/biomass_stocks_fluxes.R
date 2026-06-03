@@ -222,7 +222,7 @@ df_stem[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 # Section 6 — DBH unit conversion: mm to cm
 # ============================================================
 # Raw BCI RTABLE DBH is in mm. All allometric equations expect cm.
-df_stem[, dbh := dbh / 10]
+df_stem[, dbh_cm := dbh / 10]
 
 # ============================================================
 # Section 7 — Palm DBH correction
@@ -304,24 +304,24 @@ interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_int
 }
 
 # Count alive stems that are missing taper-corrected DBH before interpolation.
-# dbh_t is NA whenever dbh (raw) is NA, so the counts are equivalent, but we
-# count dbh_t explicitly for clarity since that is the column being filled.
-n_to_fill <- df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_t), .N]
+# dbh_cm is NA whenever dbh (raw) is NA, so the counts are equivalent, but we
+# count dbh_cm explicitly for clarity since that is the column being filled.
+n_to_fill <- df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_cm), .N]
 message(sprintf(
-  "[INTERP] %d stem-census rows are Rstatus=A & dbh_t=NA. Filling with method='%s'.",
+  "[INTERP] %d stem-census rows are Rstatus=A & dbh_cm=NA. Filling with method='%s'.",
   n_to_fill, dbh_interp_method
 ))
-interpolate_dbh(df_stem, method = dbh_interp_method, var_to_interpolate = "dbh_t")
-df_stem[, was_interpolated := is.na(dbh_raw) & !is.na(dbh_t)]
+interpolate_dbh(df_stem, method = dbh_interp_method, var_to_interpolate = "dbh_cm")
+df_stem[, was_interpolated := is.na(dbh_raw) & !is.na(dbh_cm)]
 n_filled <- df_stem[was_interpolated == TRUE, .N]
 message(sprintf("[INTERP] Filled %d / %d candidate rows.", n_filled, n_to_fill))
 rm(n_to_fill, n_filled)
 
-# Diagnostic: stems that are alive but still have NA dbh_t after interpolation.
+# Diagnostic: stems that are alive but still have NA dbh_cm after interpolation.
 # These cannot be filled (e.g. stem never measured on either side of the gap).
-inc <- unique(df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_t)]$stemID)
+inc <- unique(df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_cm)]$stemID)
 if (length(inc) > 0L) {
-  message(sprintf("[INTERP] %d stems remain with NA dbh_t after interpolation.", length(inc)))
+  message(sprintf("[INTERP] %d stems remain with NA dbh_cm after interpolation.", length(inc)))
 }
 
 # ============================================================
@@ -372,11 +372,11 @@ agb_bci <- function(dbh, # dbh, in cm
 # ============================================================
 # Section 10 — Estimate AGB (taper-corrected)
 # ============================================================
-# AGB (Mg dry mass) from taper-corrected DBH (`dbh_t`) only.
+# AGB (Mg dry mass) from taper-corrected DBH (`dbh_cm`) only.
 # Allometry: Chave et al. 2014 (eq. 4) + Martinez-Cano et al. 2019 height model.
 # Palms use the Goodman et al. 2013 palm-specific allometry.
 df_stem[, agb_t := agb_bci(
-  dbh = dbh_t,
+  dbh = dbh_cm,
   wsg = wsg,
   method = "chave14",
   use_height_allom = TRUE,
@@ -392,9 +392,9 @@ df_stem[, agb_t := agb_bci(
 # the START of the 1985→1990 interval and biases growth estimates upward.
 #
 # Correction:
-#   1. Identify stems < 5.5 cm dbh_t in CensusID 2 (1985).
-#   2. Assign each a 5-mm rounding class from their 1985 dbh_t:
-#      class = floor(dbh_t / 0.5) * 0.5  (reproduces the field rounding).
+#   1. Identify stems < 5.5 cm dbh_cm in CensusID 2 (1985).
+#   2. Assign each a 5-mm rounding class from their 1985 dbh_cm:
+#      class = floor(dbh_cm / 0.5) * 0.5  (reproduces the field rounding).
 #   3. Compute mean agb_t per rounding class from CensusID 3 (1990).
 #      Using 1990 values as reference avoids carrying the rounding error forward.
 #   4. Replace agb_t at BOTH CensusID 2 (1985) AND CensusID 3 (1990) with
@@ -407,13 +407,13 @@ df_stem[, agb_t := agb_bci(
 # [EDGE CASE] A rounding class with no CensusID 3 observations gets agb_t_m = NA
 #             and the substitution is skipped for those stems (warning issued).
 
-# Step 1: stems < 5.5 cm dbh_t in the 1985 census (CensusID 2)
+# Step 1: stems < 5.5 cm dbh_cm in the 1985 census (CensusID 2)
 small_stems_1985 <- df_stem[
-  CensusID == 2L & !is.na(dbh_t) & dbh_t < 5.5,
+  CensusID == 2L & !is.na(dbh_cm) & dbh_cm < 5.5,
   unique(stemID)
 ]
 message(sprintf(
-  "[ROUNDING] %d stems identified with dbh_t < 5.5 cm in CensusID 2 (1985).",
+  "[ROUNDING] %d stems identified with dbh_cm < 5.5 cm in CensusID 2 (1985).",
   length(small_stems_1985)
 ))
 
@@ -421,7 +421,7 @@ message(sprintf(
 # One row per stemID — used as the join key for steps 3 and 4.
 dbh_r_lut <- df_stem[
   stemID %in% small_stems_1985 & CensusID == 2L,
-  .(stemID, dbh_r = floor(dbh_t / 0.5) * 0.5)
+  .(stemID, dbh_r = floor(dbh_cm / 0.5) * 0.5)
 ]
 
 # Step 3: mean agb_t per rounding class from CensusID 3 (1990).
@@ -461,7 +461,7 @@ data.table::setorder(df_stem, treeID, stemID, CensusID)
 # Breaks (cm): [0,10), [10,20), [20,50), [50,500)
 # [EDGE CASE] Stems with NA DBH get size = NA and are excluded from
 #             size-stratified analyses.
-df_stem[, size := cut(dbh_t,
+df_stem[, size := cut(dbh_cm,
   breaks = c(0, 10, 20, 50, 500),
   include.lowest = TRUE, right = FALSE
 )]
@@ -542,19 +542,19 @@ rm(n_bad_dT)
 data.table::setorder(df_stem, treeID, stemID, CensusID)
 
 # 11c. Lag base values per stem
-df_stem[, prev_dbh_t := shift(dbh_t), .(treeID, stemID)]
+df_stem[, prev_dbh_cm := shift(dbh_cm), .(treeID, stemID)]
 df_stem[, prev_agb_t := shift(agb_t), .(treeID, stemID)]
 
 # 11d. Recruit detection: first row per stem where the stem is alive (Rstatus=A,
 #      valid dbh) AND there is no PRIOR alive observation. Recruits at CensusID 1
 #      are excluded (they are start-of-monitoring, not new recruits).
-df_stem[, n_alive_prior := cumsum(!is.na(dbh_t) & Rstatus == "A") -
-  (!is.na(dbh_t) & Rstatus == "A"), .(treeID, stemID)]
-df_stem[, is_recruit := !is.na(dbh_t) & Rstatus == "A" &
+df_stem[, n_alive_prior := cumsum(!is.na(dbh_cm) & Rstatus == "A") -
+  (!is.na(dbh_cm) & Rstatus == "A"), .(treeID, stemID)]
+df_stem[, is_recruit := !is.na(dbh_cm) & Rstatus == "A" &
   n_alive_prior == 0L & CensusID >= 2L]
 
 # 11e. Standard lag-difference growth (ongoing stems with both c and c+1 alive+measured)
-df_stem[, Ddbh_t := fifelse(!is.na(dbh_t) & !is.na(prev_dbh_t), (dbh_t - prev_dbh_t) / dT, NA_real_)]
+df_stem[, Ddbh_cm := fifelse(!is.na(dbh_cm) & !is.na(prev_dbh_cm), (dbh_cm - prev_dbh_cm) / dT, NA_real_)]
 df_stem[, Dagb_t := fifelse(!is.na(agb_t) & !is.na(prev_agb_t), (agb_t - prev_agb_t) / dT, NA_real_)]
 
 # 11f. Recruit gain: assign Dagb = agb / dT at the row where the recruit
@@ -564,7 +564,7 @@ df_stem[is_recruit == TRUE, Dagb_t := fifelse(!is.na(dT) & dT > 0, agb_t / dT, N
 # Remove temporary lag and helper columns
 df_stem[, c(
   "prev_ExactDate", "n_alive_prior",
-  "prev_dbh_t", "prev_agb_t"
+  "prev_dbh_cm", "prev_agb_t"
 ) := NULL]
 
 # ============================================================
@@ -584,7 +584,6 @@ df_stem[, prev_hom := NULL]
 # ============================================================
 # Section 14 — Outlier detection and growth substitution
 # ============================================================
-
 # A growth interval is flagged as an outlier when:
 #   (a) DBH growth exceeds the plausible range [lower_ddbh_threshold, upper_ddbh_threshold], OR
 #   (b) the height of measurement changed between censuses (HOM shift).
@@ -595,11 +594,11 @@ df_stem[, prev_hom := NULL]
 #
 # [EDGE CASE] A size class with ALL stems as outliers will have tot_rawp = NaN
 #             (0/0). Outlier substitution for those stems produces NaN Dagb_s.
-# [EDGE CASE] Rows with NA Ddbh_t (first obs, both censuses missing) are NOT
+# [EDGE CASE] Rows with NA Ddbh_cm (first obs, both censuses missing) are NOT
 #             flagged as outliers; they simply have no growth estimate.
 
-df_stem[, outlier := !is.na(Ddbh_t) &
-  (hom_change | Ddbh_t > upper_ddbh_threshold | Ddbh_t < lower_ddbh_threshold)]
+df_stem[, outlier := !is.na(Ddbh_cm) &
+  (hom_change | Ddbh_cm > upper_ddbh_threshold | Ddbh_cm < lower_ddbh_threshold)]
 
 # Size-class relative growth rate: used to substitute growth for outlier stems.
 # Recruits are excluded from the rate denominator — their Dagb is biomass "birth",
@@ -645,10 +644,10 @@ df_stem[, c("tot_rawp_t") := NULL]
 #             We fall back to plot-level dT_plot of CensusID c+1 in that case.
 
 # Identify each stem's last census with a valid taper-corrected alive DBH.
-# Using dbh_t for consistency: dbh_t is the corrected and interpolated
+# Using dbh_cm for consistency: dbh_cm is the corrected and interpolated
 # value that feeds all downstream AGB calculations.
 df_stem[
-  !is.na(dbh_t) & Rstatus == "A",
+  !is.na(dbh_cm) & Rstatus == "A",
   last_census_alive := max(CensusID),
   .(treeID, stemID)
 ]
@@ -686,14 +685,14 @@ df_stem[
 # One row per ALIVE stem per census.
 # Represents standing AGB at each measured census (the "stock").
 # Use this to compute AGB at any given census snapshot.
-# Filter on dbh_t (taper-corrected) rather than raw dbh so that only rows with
+# Filter on dbh_cm (taper-corrected) rather than raw dbh so that only rows with
 # a valid corrected measurement are included as "standing stock".
 df_stem_status <- df_stem[
-  !is.na(dbh_t) & Rstatus == "A",
+  !is.na(dbh_cm) & Rstatus == "A",
   .(
     stemID, treeID, sp, Latin, Family, Genus, Species,
     quadrat, CensusID, dT, ExactDate,
-    dbh_t, hom, agb_t, size, wsg
+    dbh_cm, hom, agb_t, size, wsg
   )
 ]
 
@@ -707,13 +706,13 @@ df_stem_status <- df_stem[
 # All growth values are taper-corrected (`_t` suffix):
 #   Dagb_t   — raw lag-difference growth (before outlier substitution)
 #   Dagb_t_s — outlier-substituted growth  <- USE THIS for analyses
-#   Ddbh_t   — annualised taper-corrected DBH growth (cm yr⁻¹; diagnostics)
+#   Ddbh_cm   — annualised taper-corrected DBH growth (cm yr⁻¹; diagnostics)
 df_stem_prod <- df_stem[
   !is.na(Dagb_t_s) & !is.na(dT) & dT > 0,
   .(
     stemID, treeID, sp, quadrat, CensusID,
     dT, size, agb_t,
-    Ddbh_t, Dagb_t, Dagb_t_s,
+    Ddbh_cm, Dagb_t, Dagb_t_s,
     outlier, hom_change, is_recruit, was_interpolated
   )
 ]
@@ -781,7 +780,7 @@ build_demo <- function(group_cols) {
   stock_agg <- df_stem_status[
     !is.na(quadrat) & quadrat != "",
     .(
-      ntrees = uniqueN(treeID[!is.na(dbh_t)]),
+      ntrees = uniqueN(treeID[!is.na(dbh_cm)]),
       agb_t = sum(agb_t, na.rm = TRUE)
     ),
     by = group_cols
@@ -937,12 +936,12 @@ run_tests <- function() {
     "  [INFO] %d stem rows had dbh interpolated (method='%s')\n",
     n_int, dbh_interp_method
   ))
-  # Check taper-corrected DBH (dbh_t) — that is the column that was interpolated.
-  bad_int <- df_stem[was_interpolated == TRUE & dbh_t <= 0, .N]
+  # Check taper-corrected DBH (dbh_cm) — that is the column that was interpolated.
+  bad_int <- df_stem[was_interpolated == TRUE & dbh_cm <= 0, .N]
   if (bad_int == 0) {
-    pass("T5 no non-positive interpolated dbh_t values")
+    pass("T5 no non-positive interpolated dbh_cm values")
   } else {
-    fail(sprintf("T5 %d interpolated dbh_t values are <= 0", bad_int))
+    fail(sprintf("T5 %d interpolated dbh_cm values are <= 0", bad_int))
   }
 
   # T6. AGB stock should be non-decreasing then decreasing only when (mort > prod);
@@ -1295,8 +1294,8 @@ p_stock_size <- ggplot(
   geom_ribbon(aes(ymin = agb_lwr, ymax = agb_upr), alpha = 0.18, colour = NA) +
   geom_line(linewidth = 0.9) +
   geom_point(shape = 21, size = 2.5, stroke = 0.8) +
-  scale_colour_manual(values = c("[0,10)" = "#2c7fb8", "[10,20)" = "#7fc97f", "[20,50)" = "#fdae61", "[50,500]" = "#d95f02")) +
-  scale_fill_manual(values = c("[0,10)" = alpha("#2c7fb8", 0.35), "[10,20)" = alpha("#7fc97f", 0.35), "[20,50)" = alpha("#fdae61", 0.35), "[50,500]" = alpha("#d95f02", 0.35))) +
+  scale_colour_manual(values = c("[0,10)" = "#2c7fb8", "[10,20)" = "#7fc97f", "[20,50)" = "#fdae61", "[50,500)" = "#d95f02")) +
+  scale_fill_manual(values = c("[0,10)" = alpha("#2c7fb8", 0.35), "[10,20)" = alpha("#7fc97f", 0.35), "[20,50)" = alpha("#fdae61", 0.35), "[50,500)" = alpha("#d95f02", 0.35))) +
   labs(
     x = NULL,
     y = expression("AGB (Mg ha"^
