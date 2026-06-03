@@ -165,32 +165,6 @@ Two independent analysis scripts; all outputs are written to `outputs/`.
 
 After the engine and all post-processing helpers run, `ReconstructedStemID` values are renumbered sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears (ties broken by largest DBH, then original ID). IDs are always positive and contiguous.
 
-### Reconstruction methods
-
-Each output row receives a `ReconstructionMethod` label:
-
-| Method | Description |
-|--------|-------------|
-| `given` | Identity from `TrueStemID` (anchor, pre-anchor pin, post-anchor row, or hard-invariant sweep) |
-| `dp` | Assigned by the exact DP solver |
-| `probabilistic` | Assigned by the probabilistic greedy matcher |
-| `provisional_dp` | Provisional anchor assigned by DP when no `TrueStemID` exists at the anchor census |
-| `dp_mf_inferred` | Missing-from-field census identity inferred from flanking DP assignments |
-| `carried_terminal` | Terminal-event row (`dead`, `stem dead`, `broken below`, `DBH = NA`) backfilled by LOCF from the most recent prior identity in the same `(Tag, OriginalStemID)` group |
-| `given_orphan` | Born-orphan stem: source identifier is non-NA but `DBH`, `TrueStemID`, and engine output are all NA; source identifier is copied directly |
-| `bb_split` / `bb_split_carry` | Row relabeled by the broken-below invariant (R1: resurrection after BB) |
-| `bb_post_terminator_split` / `bb_post_terminator_split_carry` | Row relabeled by the broken-below invariant (R2: continuation after hard terminator) |
-| `none_after_anchor` | Post-anchor row without assignment |
-| `skipped_no_data` | Tag had no usable data for reconstruction |
-
-### Sweep audit columns
-
-**`SweepAuditOverride`** (`logical`) — `TRUE` on rows where the hard-invariant sweep forced `ReconstructedStemID = TrueStemID`, overriding a conflicting engine assignment. Treat these rows as observed (P=1, entropy=0) in downstream uncertainty propagation; the `DP_Posterior*` columns on these rows reflect the engine's pre-sweep choice.
-
-**`ReconstructedStemID_PreSweep`** — snapshot of the engine's assignment before the sweep. Equals `ReconstructedStemID` where `SweepAuditOverride == FALSE`; carries the original engine ID where `SweepAuditOverride == TRUE`.
-
-**`SweepRollbackToPreSweep`** (`logical`) — `TRUE` on rows where the duplicate-aware sweep refused to pin `TrueStemID` because doing so would create two rows with the same `ReconstructedStemID` at the same `(Tag, CensusID)`. The engine's pre-sweep assignment is retained instead.
-
 ---
 
 ## Key Documentation
