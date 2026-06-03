@@ -920,6 +920,7 @@ species_to_use_tapper_corrected_dbh <- growth_forms[
 ]$Mnemonic
 
 # taper correction is only done to those rows with HOM_for_taper_correction != 1.3
+# ! FIXME: Use 2014 equation
 ViewFullTable_taper_corrected <- apply_taper_correction(ViewFullTable_measurement_error_indication,
   # dbh input in mm
   dbh_col = "dbh_with_best_candidate",
