@@ -1294,8 +1294,8 @@ p_stock_size <- ggplot(
   geom_ribbon(aes(ymin = agb_lwr, ymax = agb_upr), alpha = 0.18, colour = NA) +
   geom_line(linewidth = 0.9) +
   geom_point(shape = 21, size = 2.5, stroke = 0.8) +
-  scale_colour_manual(values = c("[0,10)" = "#2c7fb8", "[10,20)" = "#7fc97f", "[20,50)" = "#fdae61", "[50,500)" = "#d95f02")) +
-  scale_fill_manual(values = c("[0,10)" = alpha("#2c7fb8", 0.35), "[10,20)" = alpha("#7fc97f", 0.35), "[20,50)" = alpha("#fdae61", 0.35), "[50,500)" = alpha("#d95f02", 0.35))) +
+  scale_colour_manual(values = c("[0,10)" = "#2c7fb8", "[10,20)" = "#7fc97f", "[20,50)" = "#fdae61", "[50,500]" = "#d95f02")) +
+  scale_fill_manual(values = c("[0,10)" = alpha("#2c7fb8", 0.35), "[10,20)" = alpha("#7fc97f", 0.35), "[20,50)" = alpha("#fdae61", 0.35), "[50,500]" = alpha("#d95f02", 0.35))) +
   labs(
     x = NULL,
     y = expression("AGB (Mg ha"^
