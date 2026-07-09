@@ -127,9 +127,6 @@ rec[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
 rec[, dbh_raw := dbh]
 rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 
-# with(rec[CensusID == 9], plot(dbh_raw, dbh))
-# abline(a = 0, b = 1, col = "red")
-
 post_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "POSTERIORS", "posterior_sampled_paths.rds")
 
 # ── Anchor census ──────────────────────────────────────────────────────────────
