@@ -222,15 +222,6 @@ bci.spptable <- bci.spptable[, keep_spp, with = FALSE]
 rec <- merge(rec, bci.spptable, by = "sp", all.x = TRUE)
 
 # ---- Taper correction -------------------------------------
-# source(file.path(workspace_root, "BCI_stem_reconstruction", "1_DATA_PREPARATION", "HELPER_FUNCTIONS", "taper_correction.R"))
-
-# rec <- apply_taper_correction(rec,
-#     dbh_col = "dbh", hom_col = "hom", wsg_col = NULL, output_col = "dbh_t",
-#     taper_correction = TRUE, common_hom = 1.3, convert_units = TRUE,
-#     verbose = TRUE, overwrite = TRUE
-# )
-
-# ---- Taper correction -------------------------------------
 # Cushman et al. 2014
 taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
     # Defensive checks
