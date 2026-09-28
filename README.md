@@ -6,9 +6,9 @@
 
 This repository has three components:
 
-- **`dp_global/`** — a biologically informed dynamic-programming (DP) engine that reconstructs multi-stem tree identities across forest censuses. Given measurements from a long-term plot and a late "anchor" census with confirmed stem labels, the engine assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, recruitment, and measurement error. Posterior path sampling provides uncertainty estimates on all downstream derived quantities.
+- **`dp_global/`** — a biologically informed dynamic-programming (DP) engine that reconstructs multi-stem tree identities across forest censuses. Given measurements from a long-term plot and a late "anchor" census with confirmed stem labels, the engine assigns each earlier observation to a latent identity track by minimising negative log-likelihood costs that encode growth, mortality, and recruitment (or ingrowth). Posterior path sampling provides uncertainty estimates on all downstream derived quantities.
 
-- **`data_simulation/`** — a synthetic forest-census generator used to develop and validate the `dp_global` engine. It produces biologically plausible multi-species, multi-stem datasets with controlled ground truth, including hardcoded edge-case and regression-test tags derived from BCI field data.
+- **`data_simulation/`** — a synthetic forest-census generator used to develop and validate the `dp_global` engine. It produces biologically plausible multi-species, multi-stem datasets with controlled ground truth, including hardcoded edge-case and regression-test tags derived from BCI field data itself.
 
 - **`BCI_stem_reconstruction/`** — an end-to-end pipeline that applies `dp_global` to the Barro Colorado Island (BCI) 50-ha permanent plot across nine censuses (1982–2022/3). It covers ForestGEO data preparation, chunked DP stem reconstruction, posterior consolidation, ForestGEO-format R-table assembly, and estimation of aboveground biomass (AGB) stocks and fluxes and basal area (BA) uncertainty.
 
@@ -73,7 +73,7 @@ Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 ### Key CLI flags
 
 | Flag | Default | Purpose |
-|------|---------|---------|
+| ------ | --------- | --------- |
 | `--DP_MAX_STATES` | `40000` | Max injective states per census before probabilistic fallback |
 | `--PROB_N_SAMPLES` | `200` | Gumbel-noise samples for probabilistic matching |
 | `--PROB_LOOKAHEAD_WEIGHT` | `1` | Sequential backward conditioning weight (0 = disabled) |
@@ -85,11 +85,11 @@ Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 
 #### The problem
 
-In long-term forest census plots, individual trees can have multiple stems measured every few years, but **stem identity labels are only reliable at one late census** (the "anchor"). For all earlier censuses, we need to determine which measurement belongs to which stem — a problem compounded by stem death, new recruitment, and measurement noise.
+In long-term forest census plots, individual trees can have multiple stems measured every few years, but **stem identity labels are only reliable at one late census** (the "anchor"). For all earlier censuses, we need to determine which measurement belongs to which stem — a problem compounded by stem death and new recruitment.
 
 #### Exact DP solver
 
-The DP solver works backward from the anchor census, evaluating every possible assignment of earlier measurements to known stem identities. Each candidate is scored using biology: size-dependent growth rates, mortality hazard, recruitment probability, and measurement error. The algorithm picks the single jointly optimal assignment across all censuses.
+The DP solver works backward from the anchor census, evaluating every possible assignment of earlier measurements to known stem identities. Each candidate is scored using biology: size-dependent growth rates, mortality hazard, and recruitment probability. The algorithm picks the single jointly optimal assignment across all censuses.
 
 Because it examines every possibility, the DP always finds the mathematically optimal answer. The downside is that the number of possibilities grows factorially with stem count: the solver is exact for tags with **≤ 6 stems per census** (with `DP_MAX_STATES = 40,000`), and falls back for tags with 7 or more stems.
 
@@ -100,7 +100,7 @@ When the state space is too large for exact enumeration, the probabilistic match
 #### When each algorithm runs
 
 | Scenario | Algorithm |
-|----------|-----------|
+| ---------- | ----------- |
 | ≤ 6 observed stems per census | Exact DP |
 | 7+ observed stems in any census | Probabilistic matcher |
 | Species / growth forms in `FALLBACK_GROWTH_FORMS` | Probabilistic matcher |
@@ -133,7 +133,7 @@ A sequential four-stage pipeline that takes raw BCI ForestGEO exports through to
 
 ### Stage 1 — Data Preparation (`1_DATA_PREPARATION/`)
 
-Converts raw ForestGEO census exports into a cleaned, harmonized ViewFullTable. Builds species lookup tables, applies Cushman et al. 2014 taper corrections, fixes common data-entry issues, and assigns growth forms used by the DP engine.
+Converts raw ForestGEO census exports into a cleaned, harmonized ViewFullTable. Builds species lookup tables, applies Cushman et al. 2014 taper corrections (important for extracting species-level parameters), fixes common data-entry issues, and assigns growth forms used by the DP engine.
 
 Scripts (run in order): `0_prepare_species_tables.R` → `1_prepare_viewfulltable.R.R`
 
@@ -151,7 +151,7 @@ See `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_chunk_bci.md` for run and
 Consolidates posterior path files and builds ForestGEO-format census and species R tables.
 
 - `1_prepare_posteriors_BCI.R` — aggregates `_paths.feather` files into `posterior_sampled_paths.rds`.
-- `2_create_R_tables_BCI.R` — resolves encounter histories, applies broken-below rules, imputes missing data, and exports `<site>.stemN.Rdata` and `<site>.spptable.rdata`.
+- `2_create_R_tables_BCI.R` — resolves encounter histories, applies broken-below rules, imputes missing data (dates + coordinates), and exports `<site>.stemN.Rdata` and `<site>.spptable.rdata`.
 
 ### Stage 4 — Biomass Stocks and Fluxes (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)
 
@@ -165,14 +165,14 @@ Two independent analysis scripts; all outputs are written to `outputs/`.
 
 ## Engine Output Reference
 
-After the engine and all post-processing helpers run, `ReconstructedStemID` values are renumbered sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears (ties broken by largest DBH, then original ID). IDs are always positive and contiguous.
+After the engine and all post-processing helpers run, `ReconstructedStemID` values are renumbered sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears (ties broken by largest DBH, then original ID).
 
 ---
 
 ## Key Documentation
 
 | Document | Contents |
-|----------|----------|
+| ---------- | ---------- |
 | `dp_global/README.md` | Algorithm details, cost model, data requirements, parameter estimation, fallback mechanisms |
 | `dp_global/scripts/README.md` | CLI flags, chunking, resume, example invocations, basal area uncertainty, batch runner |
 | `dp_global/src/README.md` | C++ acceleration API and validation |
