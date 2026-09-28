@@ -5,20 +5,24 @@ This directory contains a four-stage workflow to reconstruct stem identities for
 ## What happens in this workflow
 
 1. **Data preparation** (`1_DATA_PREPARATION/`)
- - Cleans and harmonizes raw census/taxonomy inputs.
- - Produces standardized species tables and a cleaned long-format ViewFullTable.
 
-2. **Stem identification** (`2_STEM_IDENTIFICATION/`)
- - Runs the chunked DP reconstruction engine on prepared inputs.
- - Merges chunk outputs into consolidated reconstructed stem results.
+- Cleans and harmonizes raw census/taxonomy inputs.
+- Produces standardized species tables and a cleaned long-format ViewFullTable.
 
-3. **R table creation** (`3_PREPARE_R_TABLES/`)
- - Converts reconstructed paths into ForestGEO-compatible stem tables.
- - Exports final `stemN` tables, species tables, and QC/check files.
+1. **Stem identification** (`2_STEM_IDENTIFICATION/`)
 
-4. **Example structure assessment** (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)
- - Demonstrates downstream analyses (biomass and basal-area stocks/fluxes).
- - Includes uncertainty propagation from posterior reconstruction paths.
+- Runs the chunked DP reconstruction engine on prepared inputs.
+- Merges chunk outputs into consolidated reconstructed stem results.
+
+1. **R table creation** (`3_PREPARE_R_TABLES/`)
+
+- Converts reconstructed paths into ForestGEO-compatible stem tables.
+- Exports final `stemN` tables, species tables, and QC/check files.
+
+1. **Example structure assessment** (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)
+
+- Demonstrates downstream analyses (biomass and basal-area stocks/fluxes).
+- Includes uncertainty propagation from posterior reconstruction paths.
 
 ## Main data flow
 
