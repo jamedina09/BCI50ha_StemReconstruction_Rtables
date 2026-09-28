@@ -324,7 +324,7 @@ ViewFullTable_RAW[!is.na(StemID) & single_stem_tags == FALSE, .(
 ViewFullTable <- copy(ViewFullTable_RAW)
 
 # ── FINAL STEP: Overwrite StemID with stable TreeID_ReconstructedStemID ──────────
-# WHY: The original DB StemID may NOT be stable across censuses. ForestGEO can assign
+# WHY: The original DB StemID is NOT stable across censuses. ForestGEO can assign
 #   different integer IDs to the same physical stem in different censuses (e.g.,
 #   when a stem resprout-codes and is re-entered with a new StemID). The
 #   ReconstructedStemID assigned by DP IS stable: it tracks the same biological
@@ -467,7 +467,7 @@ fixed_columns <- c(
   "TreeID",
   "Tag",
   "StemID" # ,
-  # "StemTag" # why exclusing stemtag? stemtag was NA in earlier censuses, so those will be marked as duplicated
+  # "StemTag"
 )
 
 # Convert to data.table if not already (defensive coding)
@@ -487,8 +487,6 @@ if (anyDuplicated(unique_StemID$StemID)) {
 } else {
   cat("✓ All StemIDs are unique\n")
 }
-
-## return the duplicated rows in ViewFullTable using StemID as the identifier
 
 # Show all unique values
 # show_levels(unique_StemID, n_to_print = Inf, output = "print")
@@ -696,10 +694,6 @@ if (length(diffs) > 0) {
 # DBH-aware way below: a broken-below stem with a measured DBH is
 # treated as alive (A); without DBH it is treated as dead (D). See the
 # "broken below" rule further down for the full rationale.
-# The fact that a broken below without DBH is treated as dead doesnt matter. Why?
-# If in the next census, a stem is alive (A), then the fix_resurrections()
-# function will backfill the previous D to A.
-# If it is dead (D) in the next census, then it will remain dead (D).
 DT_Status <- rbindlist(lapply(seq_along(ViewFullTable_split), function(i) {
   ViewFullTable_split[[i]][, .(StemID, Status, DBH, census = i)]
 }), use.names = TRUE, fill = TRUE)
@@ -764,12 +758,7 @@ original_status_wide <- original_status_wide[idx] # subset/reorder using idx
 # head(original_status_wide)
 original_status_full <- as.matrix(original_status_wide[, -1])
 original_status <- original_status_full # Create working copy (preserve original)
-head(original_status_full)
-head(original_status_wide)
-
-tail(original_status_full)
-tail(original_status_wide)
-
+head(original_status)
 # Then proceed using original_status_full_dt as the status matrix
 
 # Show frequency of status values before transformation
@@ -918,12 +907,10 @@ invalid_transitions <- list(
   c("D", "A"), # D is dead, cannot become A
   c("G", "A"), # G is gone, cannot become A
   c("N", "D"), # N is no data, cannot confirm D directly
-  # ! G vd. D will be corrected later
   c("G", "D"), # G is gone, cannot become D (already gone)
   c("A", "N"), # A is alive, cannot become N (should be measured)
   c("D", "N"), # D is dead, cannot become N (should remain D)
   c("G", "N"), # G is gone, cannot become N (should remain G)
-  # ! G vd. D will be corrected later
   c("D", "G"), # D is dead, cannot become G (already dead)
   c("N", "G") # N is no data, cannot become G directly
 )
@@ -2047,8 +2034,8 @@ dev.off()
 #                             : D -> G (stem lost, tree still alive)
 #   - multi-stem, tree fully dead (all stems D or G, no A/P at census j)
 #                             : G -> D (permanent death)
-# A and P cells are never modified. This should produces GD as valid transition.
-# DG should not be a valid transitions. Why? D is dead, it cannot come to live.
+# A and P cells are never modified. This produces GD and DG as
+# valid transitions in corrected_new_status (see Section 10.4).
 
 #--------------------------------------------------------------
 # 10.1  Tag <-> TreeID consistency check
@@ -2295,7 +2282,7 @@ tree_histories_list <- lapply(new_status_split, compute_tree_for_row)
 # and report which trees would have been flagged invalid. OFF by default
 # because the strict check returns NA for trees ending in P+D/G (known
 # false positive).
-RUN_TREE_EXISTS_DIAGNOSTIC <- TRUE
+RUN_TREE_EXISTS_DIAGNOSTIC <- FALSE
 if (RUN_TREE_EXISTS_DIAGNOSTIC) {
   tree_histories_list_checking <- lapply(new_status_split, compute_tree_for_row_checking)
   diff_indices <- which(!mapply(identical, tree_histories_list, tree_histories_list_checking))
@@ -3386,102 +3373,102 @@ for (census in seq_along(ViewFullTable_split)) {
 
 cat(sprintf("\n✓✓ All %d census tables exported successfully\n\n", length(ViewFullTable_split)))
 
-# # ========================================================================
-# # SECTION 15: EXPORT SPECIES TABLE
-# # ========================================================================
-# # Build a ForestGEO species taxonomy table from ViewTaxonomy, keep only
-# # species observed in this plot, clean NULL values, and export it as
-# # .rdata and .csv.
+# ========================================================================
+# SECTION 15: EXPORT SPECIES TABLE
+# ========================================================================
+# Build a ForestGEO species taxonomy table from ViewTaxonomy, keep only
+# species observed in this plot, clean NULL values, and export it as
+# .rdata and .csv.
 
-# # --------------------------------------------------------------------
-# # --------------------------------------------------------------------
-# ViewTaxonomy <- fread(
-#   file = file.path(main_path, "BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.txt"),
-#   sep = "\t",
-#   stringsAsFactors = FALSE, # Keep text as character strings
-#   na.strings = c("NA", "NULL", "")
-# )
+# --------------------------------------------------------------------
+# --------------------------------------------------------------------
+ViewTaxonomy <- fread(
+  file = file.path(main_path, "BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.txt"),
+  sep = "\t",
+  stringsAsFactors = FALSE, # Keep text as character strings
+  na.strings = c("NA", "NULL", "")
+)
 
-# # Export unique values for QA/QC
-# show_levels(ViewTaxonomy, n_to_print = Inf, output = "print")
-# fwrite(show_levels(ViewTaxonomy, n_to_print = Inf, output = "df"),
-#   file = file.path(CHECK_folder, paste0("ViewTaxonomy_levels_", site, ".csv")),
-#   sep = ",",
-#   na = "",
-#   row.names = FALSE
-# )
+# Export unique values for QA/QC
+show_levels(ViewTaxonomy, n_to_print = Inf, output = "print")
+fwrite(show_levels(ViewTaxonomy, n_to_print = Inf, output = "df"),
+  file = file.path(CHECK_folder, paste0("ViewTaxonomy_levels_", site, ".csv")),
+  sep = ",",
+  na = "",
+  row.names = FALSE
+)
 
-# cat("📚 Creating and exporting species table...\n")
+cat("📚 Creating and exporting species table...\n")
 
-# ## Transform ViewTaxonomy into ForestGEO species table format ####
+## Transform ViewTaxonomy into ForestGEO species table format ####
 
-# # Create independent copy to avoid modifying original ViewTaxonomy
-# sptable <- copy(ViewTaxonomy)
+# Create independent copy to avoid modifying original ViewTaxonomy
+sptable <- copy(ViewTaxonomy)
 
-# # Sort alphabetically by species code (Mnemonic)
-# # This makes the table easier to browse and reference
-# setorder(sptable, Mnemonic)
+# Sort alphabetically by species code (Mnemonic)
+# This makes the table easier to browse and reference
+setorder(sptable, Mnemonic)
 
-# # Create full Latin name by combining Genus and SpeciesName
-# # Example: Genus="Acer" + SpeciesName="rubrum" → Latin="Acer rubrum"
-# sptable[, Latin := paste(Genus, SpeciesName)]
+# Create full Latin name by combining Genus and SpeciesName
+# Example: Genus="Acer" + SpeciesName="rubrum" → Latin="Acer rubrum"
+sptable[, Latin := paste(Genus, SpeciesName)]
 
-# # Select columns needed for ForestGEO format
-# cols_to_keep <- c(
-#   "Mnemonic", # Species code (e.g., "ACERUB")
-#   "Order", # Taxonomic order
-#   "Family", # Taxonomic family
-#   "Genus", # Genus name
-#   "SpeciesName", # Species epithet
-#   "Latin", # Full scientific name
-#   "InfraspecificRank", # Subspecies/variety rank (if applicable)
-#   "InfraspecificEpithet", # Subspecies/variety name (if applicable
-#   "Authority", # Taxonomic authority
-#   "Synonyms", # Historical synonyms
-#   "Lifeform_RFoster",
-#   "Lifeform_RPerez_SAguilar",
-#   "CommonName", # Common name (if available)
-#   "Herbarium", # Herbarium voucher information (if available)
-#   "Notes"
-# )
+# Select columns needed for ForestGEO format
+cols_to_keep <- c(
+  "Mnemonic", # Species code (e.g., "ACERUB")
+  "Order", # Taxonomic order
+  "Family", # Taxonomic family
+  "Genus", # Genus name
+  "SpeciesName", # Species epithet
+  "Latin", # Full scientific name
+  "InfraspecificRank", # Subspecies/variety rank (if applicable)
+  "InfraspecificEpithet", # Subspecies/variety name (if applicable
+  "Authority", # Taxonomic authority
+  "Synonyms", # Historical synonyms
+  "Lifeform_RFoster",
+  "Lifeform_RPerez_SAguilar",
+  "CommonName", # Common name (if available)
+  "Herbarium", # Herbarium voucher information (if available)
+  "Notes"
+)
 
-# sptable <- sptable[, ..cols_to_keep]
+sptable <- sptable[, ..cols_to_keep]
 
-# # Rename columns to ForestGEO standard names
-# # Database names → ForestGEO R names
-# setnames(sptable,
-#   old = c(
-#     "Mnemonic"
-#   ),
-#   new = c(
-#     "sp"
-#   )
-# )
+# Rename columns to ForestGEO standard names
+# Database names → ForestGEO R names
+setnames(sptable,
+  old = c(
+    "Mnemonic"
+  ),
+  new = c(
+    "sp"
+  )
+)
 
-# # Filter to only species that actually appear in the census data
-# # This removes species from the taxonomy list that aren't in this plot
-# species_in_census <- sort(unique(ViewFullTable$Mnemonic))
-# sptable <- sptable[sp %in% species_in_census]
+# Filter to only species that actually appear in the census data
+# This removes species from the taxonomy list that aren't in this plot
+species_in_census <- sort(unique(ViewFullTable$Mnemonic))
+sptable <- sptable[sp %in% species_in_census]
 
-# cat(sprintf("  Species in this plot: %d\n", nrow(sptable)))
+cat(sprintf("  Species in this plot: %d\n", nrow(sptable)))
 
-# # Clean up "NULL" and empty strings by converting to NA
-# # Some databases export NULL values as the string "NULL"
-# for (col in names(sptable)) {
-#   sptable[get(col) == "NULL", (col) := NA]
-#   sptable[get(col) == "", (col) := NA]
-# }
+# Clean up "NULL" and empty strings by converting to NA
+# Some databases export NULL values as the string "NULL"
+for (col in names(sptable)) {
+  sptable[get(col) == "NULL", (col) := NA]
+  sptable[get(col) == "", (col) := NA]
+}
 
-# # Convert to data.frame for compatibility with legacy ForestGEO code
-# sptable <- as.data.frame(sptable)
+# Convert to data.frame for compatibility with legacy ForestGEO code
+sptable <- as.data.frame(sptable)
 
-# # Export species table as .Rdata file
-# obj_name <- paste0(site, ".spptable")
-# assign(obj_name, sptable)
-# save(list = obj_name, file = file.path(OUTPUT_folder, paste0(obj_name, ".rdata")))
+# Export species table as .Rdata file
+obj_name <- paste0(site, ".spptable")
+assign(obj_name, sptable)
+save(list = obj_name, file = file.path(OUTPUT_folder, paste0(obj_name, ".rdata")))
 
-# fwrite(sptable,
-#   file = file.path(OUTPUT_folder, sprintf("%s.spptable.csv", site))
-# )
+fwrite(sptable,
+  file = file.path(OUTPUT_folder, sprintf("%s.spptable.csv", site))
+)
 
-# cat(sprintf("  ✓ Saved: %s.spptable.rdata\n\n", site))
+cat(sprintf("  ✓ Saved: %s.spptable.rdata\n\n", site))
