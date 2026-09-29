@@ -1,0 +1,79 @@
+CHECK OK: Every stem-census row has an ExactDate (dated in stage 3)
+CHECK OK: At least two censuses are available
+CHECK OK: One measurement per stem and census in the exported reconstruction
+CHECK OK: Path weights (path_count / sum(path_count)) sum to 1 within every tree
+CHECK OK: Every completed path contains exactly its tree's measured observations (all censuses)
+CHECK OK: Measured BA stock per tree and census is identical in every path (identity cannot change measurements)
+CHECK OK: In every realization, Growth + Loss + Gain equals the stock change (max error 1.44e-12 m2)
+
+# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-09-29 00:47:13
+K_realizations = 200 | seed = 42 | anchor census = 7
+
+## Trees
+trees with a posterior: 121748
+  single path (no identity uncertainty): 45385
+  multi path, sampled: 76206
+  multi path, fallback to exported reconstruction: 156
+  multi path, not analysed (no quadrat / no measured observation): 1
+  multi path, probabilistic engine: 2736 (sampled)
+analysed trees without a posterior (single-stem tags, exported reconstruction): 338416
+
+## Measured observations of multi-path trees (all censuses)
+  in story                       571300
+  after window                   111934
+  before window                     645
+spliced observations by stage-2 method:
+  after window   given                         99080
+  after window   bb_post_terminator_split_carry  10162
+  after window   bb_split_carry                 2028
+  after window   probabilistic                   434
+  after window   dp                              173
+  after window   bb_post_terminator_split         37
+  after window   provisional_dp                   14
+  after window   bb_split                          6
+  before window  dp                              466
+  before window  given                           157
+  before window  provisional_dp                   22
+
+## Exported reconstruction vs posterior (sampled trees)
+mean posterior probability of the exported partition: 0.661
+share of trees where the exported partition is among the sampled paths: 0.906
+share of trees where it is the most probable path: 0.843
+
+## Invariance
+largest |MC plot stock - exported stock|: 4.107370 m2 (gap stems only)
+largest accounting error (Growth + Loss + Gain vs stock change): 1.44e-12 m2
+
+## Monte Carlo error of the plot-level 95 % interval bounds (m2 per plot)
+  C1->C2 Growth_BA      width    0.6837 | SE(lwr)   0.0334 | SE(upr)   0.0472 | max SE / width 0.069
+  C2->C3 Growth_BA      width    5.6503 | SE(lwr)   0.0242 | SE(upr)   0.1492 | max SE / width 0.026
+  C3->C4 Growth_BA      width    4.7529 | SE(lwr)   0.1985 | SE(upr)   0.1108 | max SE / width 0.042
+  C4->C5 Growth_BA      width    5.3275 | SE(lwr)   0.1001 | SE(upr)   0.5040 | max SE / width 0.095
+  C5->C6 Growth_BA      width    1.8220 | SE(lwr)   0.0689 | SE(upr)   0.0737 | max SE / width 0.040
+  C6->C7 Growth_BA      width    2.4902 | SE(lwr)   0.0476 | SE(upr)   0.1388 | max SE / width 0.056
+  C7->C8 Growth_BA      width    0.0258 | SE(lwr)   0.0004 | SE(upr)   0.0014 | max SE / width 0.053
+  C8->C9 Growth_BA      width    0.0072 | SE(lwr)   0.0003 | SE(upr)   0.0003 | max SE / width 0.039
+  C1->C2 Loss_BA        width    8.0909 | SE(lwr)   0.0628 | SE(upr)   0.1156 | max SE / width 0.014
+  C2->C3 Loss_BA        width    6.9982 | SE(lwr)   0.1623 | SE(upr)   0.1094 | max SE / width 0.023
+  C3->C4 Loss_BA        width    6.5508 | SE(lwr)   0.6511 | SE(upr)   0.3162 | max SE / width 0.099
+  C4->C5 Loss_BA        width    7.0152 | SE(lwr)   0.3104 | SE(upr)   0.2359 | max SE / width 0.044
+  C5->C6 Loss_BA        width    1.9065 | SE(lwr)   0.1818 | SE(upr)   0.0618 | max SE / width 0.095
+  C6->C7 Loss_BA        width    3.0532 | SE(lwr)   0.0908 | SE(upr)   0.0454 | max SE / width 0.030
+  C7->C8 Loss_BA        width    0.0000 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.000
+  C8->C9 Loss_BA        width    0.0000 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.000
+  C1->C2 Gain_BA        width    8.5795 | SE(lwr)   0.1216 | SE(upr)   0.0796 | max SE / width 0.014
+  C2->C3 Gain_BA        width    4.2274 | SE(lwr)   0.0688 | SE(upr)   0.1458 | max SE / width 0.034
+  C3->C4 Gain_BA        width    7.5928 | SE(lwr)   0.2954 | SE(upr)   0.2592 | max SE / width 0.039
+  C4->C5 Gain_BA        width    6.0617 | SE(lwr)   0.1241 | SE(upr)   0.5859 | max SE / width 0.097
+  C5->C6 Gain_BA        width    2.0199 | SE(lwr)   0.1655 | SE(upr)   0.0826 | max SE / width 0.082
+  C6->C7 Gain_BA        width    3.4765 | SE(lwr)   0.0272 | SE(upr)   0.1721 | max SE / width 0.050
+  C7->C8 Gain_BA        width    0.0843 | SE(lwr)   0.0014 | SE(upr)   0.0024 | max SE / width 0.029
+  C8->C9 Gain_BA        width    0.0275 | SE(lwr)   0.0012 | SE(upr)   0.0010 | max SE / width 0.043
+  C1->C2 DeltaBA_total  width    0.6988 | SE(lwr)   0.0373 | SE(upr)   0.0169 | max SE / width 0.053
+  C2->C3 DeltaBA_total  width    2.0253 | SE(lwr)   0.0469 | SE(upr)   0.1511 | max SE / width 0.075
+  C3->C4 DeltaBA_total  width    4.2711 | SE(lwr)   0.1270 | SE(upr)   0.2178 | max SE / width 0.051
+  C4->C5 DeltaBA_total  width    4.1908 | SE(lwr)   0.1918 | SE(upr)   0.0993 | max SE / width 0.046
+  C5->C6 DeltaBA_total  width    1.3567 | SE(lwr)   0.1729 | SE(upr)   0.0195 | max SE / width 0.127
+  C6->C7 DeltaBA_total  width    1.3359 | SE(lwr)   0.0305 | SE(upr)   0.0511 | max SE / width 0.038
+  C7->C8 DeltaBA_total  width    0.0652 | SE(lwr)   0.0014 | SE(upr)   0.0018 | max SE / width 0.027
+  C8->C9 DeltaBA_total  width    0.0272 | SE(lwr)   0.0008 | SE(upr)   0.0013 | max SE / width 0.047
