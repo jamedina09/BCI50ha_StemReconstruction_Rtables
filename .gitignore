@@ -42,6 +42,7 @@ BCI_stem_reconstruction/DATA/RAW/sp_tables
 BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds
 BCI_stem_reconstruction/DATA/RAW/compare_tables1_and_tables2.R
 BCI_stem_reconstruction/DATA/RAW/ViewFullTable_census2022-23.txt
+BCI_stem_reconstruction/DATA/RAW/ViewFiles_bci_allcensuses/ViewFullTable_bci.csv
 BCI_stem_reconstruction/DATA/RTABLES
 BCI_stem_reconstruction/DATA/SPP_TABLE
 BCI_stem_reconstruction/DATA/BACKUPS
