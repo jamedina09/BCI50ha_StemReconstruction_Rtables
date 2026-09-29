@@ -16,7 +16,7 @@
 dp_global/output/
 
 data_simulation/sample_data_BCI/general_data/
-BCI_stem_reconstruction/DATA/
+# BCI_stem_reconstruction/DATA/
 BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/
 BCI_stem_reconstruction/3_PREPARE_R_TABLES/CHECKS/
 BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/
@@ -26,7 +26,6 @@ BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/ba_mc_realization
 # Specific ignored files
 BCI_stem_reconstruction/1_DATA_PREPARATION/compare_tables1_and_tables2.R
 BCI_stem_reconstruction/2_STEM_IDENTIFICATION/3_initial_comparisson_dryad_and_me.R
-BCI_stem_reconstruction/DATA/RAW/ViewFullTable_census2022-23.txt
 data_paper_and_repo_publication
 
 dp_global/improvements.md
@@ -34,3 +33,15 @@ dp_global/improvements.md
 data_paper_documentation
 David/
 SPECIES_RAW/
+
+BCI_stem_reconstruction/DATA/20260603_193836_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp
+BCI_stem_reconstruction/DATA/CHECKS
+BCI_stem_reconstruction/DATA/POSTERIORS
+BCI_stem_reconstruction/DATA/PROCESSED
+BCI_stem_reconstruction/DATA/RAW/sp_tables
+BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds
+BCI_stem_reconstruction/DATA/RAW/compare_tables1_and_tables2.R
+BCI_stem_reconstruction/DATA/RAW/ViewFullTable_census2022-23.txt
+BCI_stem_reconstruction/DATA/RTABLES
+BCI_stem_reconstruction/DATA/SPP_TABLE
+BCI_stem_reconstruction/DATA/BACKUPS
