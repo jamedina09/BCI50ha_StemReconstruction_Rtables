@@ -130,7 +130,9 @@ df_stem[, CensusID := as.integer(CensusID)]
 bci_wd <- fread(file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "wd", "doi_10_5061_dryad_5qfttdzn3__v20260403", "WD_species.txt"))
 bci_wd <- bci_wd[, .(sp = tolower(sp6), wsg = wd100.mean)][!is.na(wsg)]
 
-bci.spptable <- fread(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.csv"))
+# bci.spptable <- fread(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.csv"))
+load(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.rdata"))
+bci.spptable <- as.data.table(bci.spptable)
 bci.spptable <- unique(bci.spptable[, .(Family, sp, Genus, Species = SpeciesName, Latin)])
 
 df_stem <- merge(df_stem, bci.spptable, by = "sp", all.x = TRUE)
