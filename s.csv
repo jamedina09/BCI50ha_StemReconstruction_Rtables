@@ -1,0 +1,137 @@
+CensusID,DFstatus,Rstatus,N
+1,alive,A,263896
+1,missing,P,38
+1,prior,P,429536
+2,alive,A,272508
+2,broken below,A,591
+2,broken below,D,3257
+2,broken below,G,1555
+2,broken below,P,1072
+2,dead,A,176
+2,dead,D,19870
+2,dead,G,27
+2,dead,P,3
+2,missing,A,267
+2,missing,D,15
+2,missing,G,22
+2,missing,P,55
+2,prior,P,373994
+2,stem dead,A,17
+2,,A,1207
+2,,D,2357
+2,,G,16477
+3,alive,A,282602
+3,broken below,A,4296
+3,broken below,D,6730
+3,broken below,G,1305
+3,broken below,P,2135
+3,dead,A,7
+3,dead,D,26798
+3,dead,G,3
+3,missing,A,81
+3,missing,D,3536
+3,missing,G,60
+3,missing,P,892
+3,prior,P,299587
+3,stem dead,A,58
+3,stem dead,D,40
+3,stem dead,G,29
+3,,A,1654
+3,,D,30573
+3,,G,33084
+4,alive,A,261633
+4,broken below,A,5818
+4,broken below,D,9164
+4,broken below,G,1621
+4,broken below,P,3703
+4,dead,A,17
+4,dead,D,34331
+4,dead,G,2
+4,dead,P,742
+4,missing,A,15
+4,missing,D,8
+4,missing,G,5
+4,prior,P,253030
+4,stem dead,A,108
+4,stem dead,D,68
+4,stem dead,G,57
+4,stem dead,P,11
+4,,A,2000
+4,,D,70314
+4,,G,50823
+5,alive,A,246739
+5,broken below,A,2820
+5,broken below,D,7914
+5,broken below,G,1259
+5,broken below,P,4233
+5,dead,A,208
+5,dead,D,34879
+5,dead,G,108
+5,dead,P,604
+5,missing,A,1
+5,missing,D,1
+5,prior,P,213338
+5,,A,1833
+5,,D,119731
+5,,G,59802
+6,alive,A,241759
+6,broken below,A,3040
+6,broken below,D,8727
+6,broken below,G,935
+6,broken below,P,4547
+6,dead,A,107
+6,dead,D,27873
+6,dead,G,72
+6,dead,P,381
+6,missing,A,1
+6,prior,P,167367
+6,stem dead,A,1
+6,,A,1745
+6,,D,166545
+6,,G,70370
+7,alive,A,243303
+7,broken below,A,3596
+7,broken below,D,9319
+7,broken below,G,1244
+7,broken below,P,3936
+7,dead,A,141
+7,dead,D,54922
+7,dead,G,22
+7,dead,P,742
+7,prior,P,120075
+7,stem dead,P,1
+7,,A,22
+7,,D,179897
+7,,G,76250
+8,alive,A,248712
+8,broken below,A,16
+8,broken below,D,10378
+8,broken below,G,8066
+8,broken below,P,795
+8,dead,A,214
+8,dead,D,55886
+8,dead,G,94
+8,dead,P,774
+8,prior,P,74324
+8,stem dead,A,41
+8,stem dead,D,3642
+8,stem dead,G,6589
+8,,A,13
+8,,D,217537
+8,,G,66389
+9,alive,A,244202
+9,broken below,A,2
+9,broken below,D,13266
+9,broken below,G,13747
+9,broken below,P,800
+9,dead,D,73661
+9,dead,P,878
+9,missing,D,33
+9,missing,P,1
+9,prior,P,11677
+9,stem dead,A,1
+9,stem dead,D,9340
+9,stem dead,G,14438
+9,stem dead,P,266
+9,,D,256354
+9,,G,54804
