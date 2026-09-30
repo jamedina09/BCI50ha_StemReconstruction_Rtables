@@ -89,6 +89,26 @@ library(truncnorm)
 library(lubridate)
 library(HDInterval)
 
+# Hard check that stays visible in interactive (line-by-line) runs.
+# On failure: prints a ❌ line (count + examples), raises an immediate warning,
+# and only then stops. On success it prints a ✓ line.
+bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
+  if (isTRUE(all(ok))) {
+    cat("✓", msg, "\n")
+    return(invisible(TRUE))
+  }
+  n_txt <- if (!is.null(n_bad)) sprintf(" [%d case(s)]", n_bad) else ""
+  ex_txt <- if (length(examples) > 0L) {
+    paste0(" | examples: ", paste(head(unique(examples), 10), collapse = ", "))
+  } else {
+    ""
+  }
+  full_msg <- paste0("CHECK FAILED: ", msg, n_txt, ex_txt)
+  cat("❌", full_msg, "\n")
+  warning(full_msg, call. = FALSE, immediate. = TRUE)
+  stop(full_msg, call. = FALSE)
+}
+
 # Output directory — created if absent; all figures are written here.
 out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -121,11 +141,17 @@ df_stem[, CensusID := as.integer(CensusID)]
 # ============================================================
 #
 # Join the BCI species table (Family, Genus, Species) and WSG from
-# Wright & Mulle-Landau 2026 Dryad. Missing WSG is filled hierarchically:
-#   1st: genus-level mean  2nd: family-level mean  3rd: global mean (~0.58 g/cm³).
+# Wright & Muller-Landau 2026 Dryad (wd100: oven-dry mass at 100 °C / fresh
+# volume). Missing WSG is filled hierarchically from SPECIES values:
+#   1st: mean over the species of the same genus
+#   2nd: mean over the species of the same family
+#   3rd: mean over all species
+# Each species counts once, whatever its abundance (a stem-weighted mean would
+# let the most abundant congener set the value).
 # [EDGE CASE] Species whose entire family has no WSG receive the global mean.
+# [NOTE] Palms use the Goodman et al. 2013 allometry, which ignores WSG.
 
-# Download wood density data from Wright & Mulle-Landau 2026 Dryad
+# Download wood density data from Wright & Muller-Landau 2026 Dryad
 # url: "https://datadryad.org/dataset/doi:10.5061/dryad.5qfttdzn3"
 bci_wd <- fread(file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "wd", "doi_10_5061_dryad_5qfttdzn3__v20260403", "WD_species.txt"))
 bci_wd <- bci_wd[, .(sp = tolower(sp6), wsg = wd100.mean)][!is.na(wsg)]
@@ -135,20 +161,21 @@ load(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bc
 bci.spptable <- as.data.table(bci.spptable)
 bci.spptable <- unique(bci.spptable[, .(Family, sp, Genus, Species = SpeciesName, Latin)])
 
+# Species-level WSG for every BCI species, gaps filled from species means.
+sp_wsg <- merge(unique(bci.spptable[, .(sp, Genus, Family)]), bci_wd, by = "sp", all.x = TRUE)
+genus_wsg <- sp_wsg[!is.na(wsg) & !is.na(Genus), .(wsg_genus = mean(wsg)), by = Genus]
+family_wsg <- sp_wsg[!is.na(wsg) & !is.na(Family), .(wsg_family = mean(wsg)), by = Family]
+global_wsg <- sp_wsg[!is.na(wsg), mean(wsg)]
+sp_wsg[genus_wsg, on = "Genus", wsg_genus := i.wsg_genus]
+sp_wsg[family_wsg, on = "Family", wsg_family := i.wsg_family]
+sp_wsg[, wsg := fcoalesce(wsg, wsg_genus, wsg_family, global_wsg)]
+
 df_stem <- merge(df_stem, bci.spptable, by = "sp", all.x = TRUE)
-df_stem <- merge(df_stem, bci_wd, by = "sp", all.x = TRUE)
+df_stem <- merge(df_stem, sp_wsg[, .(sp, wsg)], by = "sp", all.x = TRUE)
+# Codes missing from the species table get the mean over all species.
+df_stem[is.na(wsg), wsg := global_wsg]
 
-rm(bci_wd, bci.spptable)
-
-# Fill missing wood specific gravity (WSG) hierarchically:
-#   1st: species-level mean within the same genus
-#   2nd: genus-level mean within the same family
-#   3rd: global mean across all species
-# [EDGE CASE] Species whose entire family has no WSG data will receive the
-#             global mean (~0.58 g/cm³). Flag these if precision matters.
-df_stem[, wsg := ifelse(is.na(wsg), ave(wsg, Genus, FUN = function(x) mean(x, na.rm = TRUE)), wsg)]
-df_stem[, wsg := ifelse(is.na(wsg), ave(wsg, Family, FUN = function(x) mean(x, na.rm = TRUE)), wsg)]
-df_stem[, wsg := ifelse(is.na(wsg), mean(wsg, na.rm = TRUE), wsg)]
+rm(bci_wd, bci.spptable, sp_wsg, genus_wsg, family_wsg, global_wsg)
 
 # Replace NA taxonomy labels so downstream group-by operations produce clean groups
 df_stem[, Family := ifelse(is.na(Family), "Unknown", Family)]
@@ -231,9 +258,20 @@ df_stem[, dbh_cm := dbh / 10]
 # ============================================================
 # Non-Socratea palms do not grow in diameter; observed DBH changes are measurement
 # error. Replace each species' DBH with the species median across all censuses
-# (Rutishauser et al. 2020).
+# (Rutishauser et al. 2020; Piponiot et al. 2024).
+# The median is applied to dbh_cm — the column every downstream AGB calculation
+# uses (dbh_cm is created in Section 6, so correcting `dbh` here would have no
+# effect) — and only to alive rows, so dead or prior rows never get a diameter.
+# Alive palm rows without a measurement also receive the species median.
+n_palm_median_fill <- 0L
 if (use_median_palm_dbh) {
-  df_stem[Family == "Arecaceae" & Genus != "Socratea", dbh := median(dbh, na.rm = TRUE), .(Latin)]
+  n_palm_median_fill <- df_stem[
+    Family == "Arecaceae" & Genus != "Socratea" & Rstatus == "A" & is.na(dbh_cm), .N
+  ]
+  df_stem[
+    Family == "Arecaceae" & Genus != "Socratea" & Rstatus == "A",
+    dbh_cm := median(dbh_cm, na.rm = TRUE), .(Latin)
+  ]
 }
 
 # ============================================================
@@ -246,20 +284,48 @@ if (use_median_palm_dbh) {
 #
 # We provide three interpolation methods. Set `dbh_interp_method` at the top of
 # the script and re-run to assess sensitivity:
-#   "linear" — linear interpolation between flanking MEASURED DBHs (preferred)
-#   "locf"   — last observation carried forward (assumes no growth; conservative)
-#   "mean"   — mean of nearest flanking measured DBHs
+#   "linear" — the rule of basal_area_uncertainty.R and
+#              general_plot_information.R (dbh_from_own_measurements()):
+#              linear IN TIME (ExactDate) between the flanking measured DBHs;
+#              after the last measurement, the growth trend of the last two
+#              measurements continued (preferred)
+#   "mean"   — mean of the two flanking measured DBHs; after the last
+#              measurement as "linear"
+#   "locf"   — last observation carried forward (sensitivity option only)
 #
-# Only rows where  Rstatus == "A"  AND  dbh is NA  are filled. Original raw
-# DBH is preserved in `dbh_raw`; an integer flag `was_interpolated` marks
-# the affected rows so downstream code (and tests) can audit them.
+# Only rows where  Rstatus == "A"  AND  dbh is NA  are filled. Rstatus "A"
+# without a DBH means the stem was ALIVE and its measurement was missed in the
+# field: it stays in the stock until it is actually dead (D / G).
+# Original raw DBH is preserved in `dbh_raw`; the flag `was_interpolated`
+# marks the affected rows so downstream code (and tests) can audit them.
 #
-# [EDGE CASE] Stems with no measured DBH on at least one side cannot be
-#             interpolated by "linear" or "mean" — they remain NA.
-# [EDGE CASE] "locf" can fill a trailing gap (after the last measurement) only
-#             when Rstatus == "A" persists; it cannot extrapolate growth.
+# [EDGE CASE] After the last measurement a negative trend (shrinkage, usually
+#             a measurement or POM problem) is not extrapolated, and a stem
+#             measured only once keeps that value.
 # [EDGE CASE] If a stem has Rstatus = A throughout but never measured, no method
 #             can fill it; it is excluded from analyses.
+
+# DBH of a stem at dates t_new from its own measurements (t_meas, d_meas):
+# between two measurements linear in time; after the last one the growth
+# trend of the last two continued (never shrinking; one measurement: kept);
+# before the first one the first measurement.
+# Same function in basal_area_uncertainty.R and general_plot_information.R.
+dbh_from_own_measurements <- function(t_meas, d_meas, t_new) {
+  o <- order(t_meas)
+  t_meas <- t_meas[o]
+  d_meas <- d_meas[o]
+  n <- length(t_meas)
+  if (n == 1L) {
+    return(rep(d_meas, length(t_new)))
+  }
+  out <- approx(t_meas, d_meas, xout = t_new, rule = 2)$y
+  after <- t_new > t_meas[n]
+  if (any(after)) {
+    growth <- max((d_meas[n] - d_meas[n - 1L]) / (t_meas[n] - t_meas[n - 1L]), 0)
+    out[after] <- d_meas[n] + growth * (t_new[after] - t_meas[n])
+  }
+  out
+}
 
 interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_interpolate = "dbh") {
   method <- match.arg(method)
@@ -267,31 +333,24 @@ interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_int
   if (!"dbh_raw" %in% names(dt)) {
     dt[, dbh_raw := get(var_to_interpolate)]
   }
-  fill_one <- function(x, status) {
+  fill_one <- function(x, status, t_num) {
     target <- !is.na(status) & status == "A" & is.na(x)
-    if (!any(target)) {
-      return(x)
-    }
     measured <- !is.na(x)
-    if (sum(measured) < 1L) {
+    if (!any(target) || !any(measured)) {
       return(x)
     }
     idx_meas <- which(measured)
     out <- x
-    if (method == "linear" && sum(measured) >= 2L) {
-      yhat <- approx(
-        x = idx_meas, y = x[idx_meas], xout = seq_along(x),
-        method = "linear", rule = 1
-      )$y
-      out[target] <- yhat[target]
-    } else if (method == "mean") {
+    if (method %in% c("linear", "mean")) {
+      out[target] <- dbh_from_own_measurements(t_num[idx_meas], x[idx_meas], t_num[target])
+    }
+    if (method == "mean") {
       for (i in which(target)) {
-        prev_i <- if (any(idx_meas < i)) max(idx_meas[idx_meas < i]) else NA_integer_
-        next_i <- if (any(idx_meas > i)) min(idx_meas[idx_meas > i]) else NA_integer_
-        vals <- c(if (!is.na(prev_i)) x[prev_i], if (!is.na(next_i)) x[next_i])
-        if (length(vals)) out[i] <- mean(vals)
+        if (any(idx_meas < i) && any(idx_meas > i)) {
+          out[i] <- mean(c(x[max(idx_meas[idx_meas < i])], x[min(idx_meas[idx_meas > i])]))
+        }
       }
-    } else { # "locf"
+    } else if (method == "locf") {
       last_val <- NA_real_
       for (i in seq_along(x)) {
         if (!is.na(x[i])) last_val <- x[i]
@@ -300,10 +359,20 @@ interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_int
     }
     out
   }
-  # Apply interpolation using get() to reference column by name
-  dt[, (var_to_interpolate) := fill_one(get(var_to_interpolate), Rstatus), by = .(treeID, stemID)]
+  # Rows must be in census order within each stem ("mean" and "locf").
+  data.table::setorder(dt, treeID, stemID, CensusID)
+  dt[, (var_to_interpolate) := fill_one(get(var_to_interpolate), Rstatus, as.numeric(ExactDate)),
+    by = .(treeID, stemID)
+  ]
   invisible(dt)
 }
+
+# Linear interpolation uses the measurement dates, set for every row in stage 3.
+bio_check(
+  df_stem[Rstatus == "A", !anyNA(ExactDate)],
+  "Every alive stem-census row has an ExactDate (needed to interpolate DBH in time)",
+  n_bad = df_stem[Rstatus == "A" & is.na(ExactDate), .N]
+)
 
 # Count alive stems that are missing taper-corrected DBH before interpolation.
 # dbh_cm is NA whenever dbh (raw) is NA, so the counts are equivalent, but we
@@ -314,13 +383,29 @@ message(sprintf(
   n_to_fill, dbh_interp_method
 ))
 interpolate_dbh(df_stem, method = dbh_interp_method, var_to_interpolate = "dbh_cm")
+# was_interpolated marks every alive row whose DBH is not a measurement: rows
+# filled here and unmeasured palm rows given the species median (Section 7).
 df_stem[, was_interpolated := is.na(dbh_raw) & !is.na(dbh_cm)]
-n_filled <- df_stem[was_interpolated == TRUE, .N]
-message(sprintf("[INTERP] Filled %d / %d candidate rows.", n_filled, n_to_fill))
-rm(n_to_fill, n_filled)
+n_filled <- df_stem[was_interpolated == TRUE, .N] - n_palm_median_fill
+message(sprintf(
+  "[INTERP] Filled %d / %d candidate rows (plus %d unmeasured alive palm rows given the species median in Section 7).",
+  n_filled, n_to_fill, n_palm_median_fill
+))
+rm(n_to_fill, n_filled, n_palm_median_fill)
+
+# Every alive row of a stem that was ever measured now has a DBH: an alive
+# stem stays in the stock until it is dead.
+measured_stems <- df_stem[!is.na(dbh_raw), unique(stemID)]
+no_dbh <- df_stem[Rstatus == "A" & is.na(dbh_cm) & stemID %in% measured_stems]
+bio_check(
+  nrow(no_dbh) == 0L,
+  "Every alive (A) row of a measured stem has a DBH (alive stems stay in the stock)",
+  examples = no_dbh$stemID, n_bad = nrow(no_dbh)
+)
+rm(measured_stems, no_dbh)
 
 # Diagnostic: stems that are alive but still have NA dbh_cm after interpolation.
-# These cannot be filled (e.g. stem never measured on either side of the gap).
+# These were never measured.
 inc <- unique(df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_cm)]$stemID)
 if (length(inc) > 0L) {
   message(sprintf("[INTERP] %d stems remain with NA dbh_cm after interpolation.", length(inc)))
@@ -375,83 +460,67 @@ agb_bci <- function(dbh, # dbh, in cm
 # Section 10 — Estimate AGB (taper-corrected)
 # ============================================================
 # AGB (Mg dry mass) from taper-corrected DBH (`dbh_cm`) only.
-# Allometry: Chave et al. 2014 (eq. 4) + Martinez-Cano et al. 2019 height model.
+# Allometry and height model follow the Section 1 settings:
+#   biomass_allometry          — "chave14" (default) or "chave05"
+#   use_local_height_allometry — TRUE: Martinez-Cano et al. 2019 height model
 # Palms use the Goodman et al. 2013 palm-specific allometry.
 df_stem[, agb_t := agb_bci(
   dbh = dbh_cm,
   wsg = wsg,
-  method = "chave14",
-  use_height_allom = TRUE,
+  method = biomass_allometry,
+  use_height_allom = use_local_height_allometry,
   palms = (Family == "Arecaceae")
 )]
 
 # ============================================================
-# Section 10b — Correction for 1985 DBH rounding bias
+# Section 10b — Correction for 1985 DBH rounding bias (growth only)
 # ============================================================
 #
 # In the 1985 census (CensusID 2), stems with DBH < 5.5 cm were recorded in
-# 5-mm intervals (rounded down to the nearest 5 mm). This compresses AGB at
-# the START of the 1985→1990 interval and biases growth estimates upward.
+# 5-mm classes (rounded down to the nearest 5 mm), which biases the growth of
+# these stems between 1985 and 1990 (CensusID 3; measured to the mm).
 #
-# Correction:
-#   1. Identify stems < 5.5 cm dbh_cm in CensusID 2 (1985).
-#   2. Assign each a 5-mm rounding class from their 1985 dbh_cm:
-#      class = floor(dbh_cm / 0.5) * 0.5  (reproduces the field rounding).
-#   3. Compute mean agb_t per rounding class from CensusID 3 (1990).
-#      Using 1990 values as reference avoids carrying the rounding error forward.
-#   4. Replace agb_t at BOTH CensusID 2 (1985) AND CensusID 3 (1990) with
-#      the class mean. Setting both endpoints to the same value makes the
-#      1985→1990 growth contribution from these stems ≈ 0, which is the
-#      conservative but unbiased choice when the initial measurement is unreliable.
+# Correction, following Piponiot et al. 2024 (Appendix S1 R code):
+#   1. Select stems with DBH < 5.5 cm in 1985.
+#   2. Assign each of their 1985 and 1990 measurements (< 5.5 cm) to its OWN
+#      5-mm class: dbh_r = floor(dbh_cm / 0.5) * 0.5.
+#   3. Compute the mean 1990 AGB of these stems per 5-mm class. Because 1990
+#      was measured to the mm, this is the expected AGB of a stem whose DBH
+#      falls in that 5-mm class.
+#   4. Replace ONLY the 1985->1990 growth of each stem with
+#        (class mean of its 1990 class - class mean of its 1985 class) / dT.
+#      Both endpoints are then at the same 5-mm resolution, so the rounding
+#      bias cancels.
 #
-# [EDGE CASE] Stems present in 1985 but absent/unmeasured in 1990 do not
-#             contribute to mean_agb; their CensusID 3 agb_t is left unchanged.
-# [EDGE CASE] A rounding class with no CensusID 3 observations gets agb_t_m = NA
-#             and the substitution is skipped for those stems (warning issued).
-
-# Step 1: stems < 5.5 cm dbh_cm in the 1985 census (CensusID 2)
-small_stems_1985 <- df_stem[
-  CensusID == 2L & !is.na(dbh_cm) & dbh_cm < 5.5,
-  unique(stemID)
-]
-message(sprintf(
-  "[ROUNDING] %d stems identified with dbh_cm < 5.5 cm in CensusID 2 (1985).",
-  length(small_stems_1985)
-))
-
-# Step 2: 5-mm rounding class from the 1985 (CensusID 2) taper-corrected DBH.
-# One row per stemID — used as the join key for steps 3 and 4.
-dbh_r_lut <- df_stem[
-  stemID %in% small_stems_1985 & CensusID == 2L,
-  .(stemID, dbh_r = floor(dbh_cm / 0.5) * 0.5)
-]
-
-# Step 3: mean agb_t per rounding class from CensusID 3 (1990).
-# Join the 1985 rounding class to the 1990 rows of the same stems, then
-# aggregate. Only stems with a valid 1990 agb_t contribute to the mean.
-mean_agb <- merge(
-  df_stem[
-    stemID %in% small_stems_1985 & CensusID == 3L & !is.na(agb_t),
-    .(stemID, agb_t)
-  ],
-  dbh_r_lut,
-  by = "stemID"
-)[, .(agb_t_m = mean(agb_t, na.rm = TRUE)), by = dbh_r]
-
-n_missing_class <- dbh_r_lut[!dbh_r %in% mean_agb$dbh_r, .N]
-if (n_missing_class > 0L) {
-  warning(sprintf("[ROUNDING] %d rounding classes have no CensusID 3 data; substitution skipped for those stems.", n_missing_class))
+# AGB STOCKS AND MORTALITY ARE NOT MODIFIED. Stems whose 1990 DBH is >= 5.5 cm
+# (no 1990 class) keep their measured growth, as in the reference code.
+# Interpolated DBHs (Section 8) are excluded: only field measurements count.
+# The function is applied in Section 12, right after lag-difference growth and
+# before outlier detection. It returns the number of stems corrected.
+correct_1985_small_stem_growth <- function(dt) {
+  small_1985 <- dt[
+    CensusID == 2L & Rstatus == "A" & !is.na(dbh_cm) & dbh_cm < 5.5 & !was_interpolated,
+    unique(stemID)
+  ]
+  cls <- dt[
+    stemID %in% small_1985 & CensusID %in% c(2L, 3L) & Rstatus == "A" &
+      !is.na(dbh_cm) & dbh_cm < 5.5 & !was_interpolated & !is.na(agb_t),
+    .(stemID, CensusID, agb_t, dbh_r = floor(dbh_cm / 0.5) * 0.5)
+  ]
+  # Mean 1990 AGB per 5-mm class
+  class_mean <- cls[CensusID == 3L, .(agb_m = mean(agb_t)), by = dbh_r]
+  cls <- class_mean[cls, on = "dbh_r"]
+  # One row per stem: class mean of its 1985 class and of its 1990 class
+  both <- dcast(cls, stemID ~ CensusID, value.var = "agb_m")
+  setnames(both, c("stemID", "m85", "m90"))
+  both <- both[!is.na(m85) & !is.na(m90)]
+  # Growth is stored on the row of the END census (CensusID 3)
+  dt[both,
+    on = "stemID",
+    Dagb_t := fifelse(CensusID == 3L & !is.na(dT) & dT > 0, (m90 - m85) / dT, Dagb_t)
+  ]
+  nrow(both)
 }
-
-# Step 4: join the per-stem mean AGB and apply substitution at CensusID 2 AND 3.
-# The join is on stemID only, so agb_t_m propagates to all census rows of the
-# affected stems — but the assignment is restricted to the two target censuses,
-# so all other censuses are untouched.
-subst_lut <- merge(dbh_r_lut, mean_agb, by = "dbh_r")[, .(stemID, agb_t_m)]
-df_stem <- merge(df_stem, subst_lut, by = "stemID", all.x = TRUE)
-df_stem[!is.na(agb_t_m) & CensusID %in% c(2L, 3L), agb_t := agb_t_m]
-df_stem[, agb_t_m := NULL]
-rm(small_stems_1985, dbh_r_lut, mean_agb, subst_lut, n_missing_class)
 
 # ============================================================
 # Section 11 — Sort rows and assign DBH size classes
@@ -559,6 +628,14 @@ df_stem[, is_recruit := !is.na(dbh_cm) & Rstatus == "A" &
 df_stem[, Ddbh_cm := fifelse(!is.na(dbh_cm) & !is.na(prev_dbh_cm), (dbh_cm - prev_dbh_cm) / dT, NA_real_)]
 df_stem[, Dagb_t := fifelse(!is.na(agb_t) & !is.na(prev_agb_t), (agb_t - prev_agb_t) / dT, NA_real_)]
 
+# 11e-bis. 1985 small-stem rounding correction (Section 10b): growth only.
+n_corrected_1985 <- correct_1985_small_stem_growth(df_stem)
+message(sprintf(
+  "[ROUNDING] 1985->1990 growth replaced by 5-mm class means for %d small stems (stocks unchanged).",
+  n_corrected_1985
+))
+rm(n_corrected_1985)
+
 # 11f. Recruit gain: assign Dagb = agb / dT at the row where the recruit
 #      first appears.
 df_stem[is_recruit == TRUE, Dagb_t := fifelse(!is.na(dT) & dT > 0, agb_t / dT, NA_real_)]
@@ -661,14 +738,21 @@ df_stem[, dT_mort := as.numeric(difftime(next_date, ExactDate, units = "days")) 
 
 data.table::setorder(df_stem, treeID, stemID, CensusID)
 
-# A stem is dead in the next census if next_Rstatus is D or G, OR if the stem
-# row simply disappears after its last alive census (next_Rstatus == NA but
-# last_census_alive < max plot census). The latter is rare in well-curated data.
+# A stem dies in the next census only if it is D or G there, or its row simply
+# disappears after its last alive census (rare in well-curated data). A stem
+# that is A (alive) is never counted as dead: alive rows whose measurement was
+# missed carry a DBH from Section 8, so they are part of last_census_alive.
 max_census <- df_stem[, max(CensusID, na.rm = TRUE)]
 df_stem[, dies_next := CensusID == last_census_alive &
   last_census_alive < max_census &
   (next_Rstatus %in% c("D", "G") | is.na(next_Rstatus))]
 rm(max_census)
+bio_check(
+  df_stem[CensusID == last_census_alive & next_Rstatus == "A", .N] == 0L,
+  "No stem leaves the stock while it is alive (A) in the next census",
+  examples = df_stem[CensusID == last_census_alive & next_Rstatus == "A", stemID],
+  n_bad = df_stem[CensusID == last_census_alive & next_Rstatus == "A", .N]
+)
 
 # Apply mortality flux at the last alive census whose next census is dead.
 df_stem[
@@ -755,6 +839,18 @@ df_stem_mort <- df_stem[
 # [EDGE CASE] Stems with NA or empty quadrat are excluded from spatial aggregation.
 # [EDGE CASE] size = NA (NA DBH) are excluded from df_stem_demo (size-stratified)
 #             but ARE included in df_stem_demo_quadrat (pooled).
+# [EDGE CASE] The grid is COMPLETE: every quadrat (× size class) appears in
+#             every census, with zeros where it holds no stem of that class.
+#             Per-hectare means are averages over all quadrats; dropping the
+#             empty ones would inflate them (most of all for large trees).
+
+all_quadrats <- df_stem[!is.na(quadrat) & quadrat != "", sort(unique(quadrat))]
+size_levels <- df_stem[, levels(size)]
+complete_grid <- function(dt, group_cols, census_ids) {
+  grid_args <- list(quadrat = all_quadrats, CensusID = census_ids)
+  if ("size" %in% group_cols) grid_args$size <- factor(size_levels, levels = size_levels)
+  dt[do.call(CJ, grid_args), on = group_cols]
+}
 
 build_demo <- function(group_cols) {
   # Aggregate productivity at the INITIAL census (re-index by CensusID - 1).
@@ -790,15 +886,15 @@ build_demo <- function(group_cols) {
 
   out <- merge(stock_agg, prod_agg, by = group_cols, all = TRUE)
   out <- merge(out, mort_agg, by = group_cols, all = TRUE)
+  # Complete grid for the intervals c -> c+1 (c = 1 .. last census - 1)
+  max_c <- df_stem[, max(CensusID, na.rm = TRUE)]
+  out <- complete_grid(out, group_cols, seq_len(max_c - 1L))
   out[is.na(ntrees), ntrees := 0L]
   out[is.na(agb_t), agb_t := 0]
   out[is.na(Dagb_growth), Dagb_growth := 0]
   out[is.na(Dagb_recruit), Dagb_recruit := 0]
   out[is.na(Dagb), Dagb := 0]
   out[is.na(DagbM), DagbM := 0]
-  # Drop final-census rows (no forward interval defined)
-  max_c <- df_stem[, max(CensusID, na.rm = TRUE)]
-  out <- out[CensusID < max_c]
   out[]
 }
 
@@ -838,14 +934,20 @@ kohyama_correction <- function(stock, gain, loss, dT, output = "prod") {
   B0 <- stock
   BS0 <- B0 - loss * dT # surviving AGB at interval start
   BT <- B0 + (gain - loss) * dT # estimated AGB at interval end
-  denom <- dT * log(BT / B0)
+  # Defined only for positive stocks and BT != B0; NA elsewhere (the caller
+  # falls back to the uncorrected flux). Logs are taken only where defined.
+  ok <- !is.na(B0) & !is.na(BS0) & !is.na(BT) & !is.na(dT) &
+    B0 > 0 & BS0 > 0 & BT > 0 & BT != B0 & dT > 0
+  out <- rep(NA_real_, length(B0))
+  denom <- dT[ok] * log(BT[ok] / B0[ok])
   if (output == "prod") {
-    log(BT / BS0) * (BT - B0) / denom
+    out[ok] <- log(BT[ok] / BS0[ok]) * (BT[ok] - B0[ok]) / denom
   } else if (output == "mort") {
-    log(B0 / BS0) * (BT - B0) / denom
+    out[ok] <- log(B0[ok] / BS0[ok]) * (BT[ok] - B0[ok]) / denom
   } else {
     stop("'output' must be \"prod\" or \"mort\".")
   }
+  out
 }
 
 # Internal helper: applies the correction in-place; counts and replaces any
@@ -853,16 +955,17 @@ kohyama_correction <- function(stock, gain, loss, dT, output = "prod") {
 apply_kohyama <- function(dt, tag = "") {
   dt[, Dagb_k := kohyama_correction(agb_t, Dagb, DagbM, dT, output = "prod")]
   dt[, DagbM_k := kohyama_correction(agb_t, Dagb, DagbM, dT, output = "mort")]
-  n_bad_prod <- dt[!is.finite(Dagb_k) | is.na(Dagb_k), .N]
-  n_bad_mort <- dt[!is.finite(DagbM_k) | is.na(DagbM_k), .N]
+  # Empty cells (no stock, no flux) have nothing to correct; count them apart.
+  empty <- dt[, agb_t == 0 & Dagb == 0 & DagbM == 0]
+  n_empty <- sum(empty)
+  n_bad_prod <- dt[!empty & (!is.finite(Dagb_k) | is.na(Dagb_k)), .N]
+  n_bad_mort <- dt[!empty & (!is.finite(DagbM_k) | is.na(DagbM_k)), .N]
   dt[!is.finite(Dagb_k) | is.na(Dagb_k), Dagb_k := Dagb]
   dt[!is.finite(DagbM_k) | is.na(DagbM_k), DagbM_k := DagbM]
-  if (n_bad_prod + n_bad_mort > 0L) {
-    message(sprintf(
-      "[KOHYAMA%s] %d prod / %d mort rows fell back to uncorrected values (BT == B0 or BS0 <= 0).",
-      tag, n_bad_prod, n_bad_mort
-    ))
-  }
+  message(sprintf(
+    "[KOHYAMA%s] %d prod / %d mort rows fell back to uncorrected values (BT == B0 or BS0 <= 0); %d empty cells (0 kept).",
+    tag, n_bad_prod, n_bad_mort, n_empty
+  ))
   invisible(dt)
 }
 
@@ -959,8 +1062,17 @@ run_tests <- function() {
   plot_check[, agb_next := shift(agb_t, type = "lead")]
   plot_check[, predicted_next := agb_t + (Dagb - DagbM) * dT]
   plot_check[, abs_err := abs(agb_next - predicted_next)]
-  worst <- plot_check[!is.na(abs_err), max(abs_err)]
-  cat(sprintf("  [INFO] Plot-wide AGB conservation max abs err across intervals: %.3f Mg\n", worst))
+  # Not expected to be zero: outlier growth is substituted, 1985->1990 growth
+  # carries the rounding correction while stocks do not, and mortality uses the
+  # AGB at the last census alive. C1->C2 is dominated by the 1982 buttress bias
+  # (census 1 is excluded from the results).
+  cat("  [INFO] Plot-wide AGB conservation per interval, Mg (stock change vs (Dagb - DagbM) x dT):\n")
+  print(plot_check[!is.na(abs_err), .(
+    interval = paste0(CensusID, "->", CensusID + 1L),
+    stock_change = round(agb_next - agb_t, 1),
+    flux_change = round((Dagb - DagbM) * dT, 1),
+    difference = round(agb_next - predicted_next, 1)
+  )])
 
   # T7. Quadrat coverage: per quadrat there should be 1 row per census (1–8 typically)
   q_counts <- df_stem_demo_quadrat[, .N, .(quadrat)][, range(N)]
@@ -973,8 +1085,8 @@ run_tests <- function() {
   #     census (prev_ExactDate = NA by design). Any additional NA dT on non-first
   #     rows indicates a date that could not be imputed.
   # "First census" rows: those where shift(CensusID) gives NA within each stem.
-  non_first_rows <- df_stem[, .SD[-.1], .(treeID, stemID)] # drop first row per stem
-  n_na_dt_non_first <- non_first_rows[is.na(dT), .N]
+  # (rows are ordered by treeID, stemID, CensusID; dT[-1L] drops the first row)
+  n_na_dt_non_first <- df_stem[, .(n = sum(is.na(dT[-1L]))), by = .(treeID, stemID)][, sum(n)]
   if (n_na_dt_non_first == 0L) {
     pass("T8 dT is non-NA for all non-first-census rows (dates fully imputed)")
   } else {
@@ -983,7 +1095,6 @@ run_tests <- function() {
       n_na_dt_non_first
     ))
   }
-  rm(non_first_rows)
 
   cat("========== END TESTS ==========\n\n")
   invisible(NULL)
@@ -1074,6 +1185,9 @@ stock_q <- df_stem_status[
   .(agb_ha = sum(agb_t, na.rm = TRUE) * ha_factor),
   .(quadrat, CensusID)
 ]
+# Every quadrat in every census (0 where it holds no alive stem).
+stock_q <- complete_grid(stock_q, c("quadrat", "CensusID"), sort(unique(df_stem_status$CensusID)))
+stock_q[is.na(agb_ha), agb_ha := 0]
 stock_q <- merge(stock_q, census_yr_lut, by = "CensusID")
 
 stock_summary <- bootstrap_ci(
@@ -1146,7 +1260,7 @@ summary_tbl <- merge(
 )
 cat("\n========== PLOT SUMMARY (Mg ha\u207b\u00b9 | Mg ha\u207b\u00b9 yr\u207b\u00b9) ==========\n")
 print(summary_tbl)
-cat("Expected: AGB ~220 Mg ha\u207b\u00b9 | productivity 2\u20138 | mortality comparable | net \u00b11\u20132\n")
+cat("Reference: Piponiot et al. 2024 (same allometry and height model, older wood density values) report 236 Mg ha\u207b\u00b9 for 2015\n")
 
 # --- Figure A: Standing AGB stock (Mg ha⁻¹) ---
 
@@ -1252,7 +1366,7 @@ p_net <- ggplot(flux_summary, aes(x = CensusYear + dT_mean / 2, y = net_mean)) +
   )
 
 library(cowplot)
-plots <- plot_grid(p_stock, p_flux, p_net, ncol = 1, align = "v", labels = c("A", "B", "C"))
+plots <- plot_grid(p_stock, p_flux, p_net, ncol = 1, align = "v", axis = "lr", labels = c("A", "B", "C"))
 
 ggsave(
   plot = plots,
@@ -1272,6 +1386,10 @@ size_stock_q <- df_stem_status[
   .(agb_ha = sum(agb_t, na.rm = TRUE) * ha_factor),
   .(quadrat, CensusID, size)
 ]
+# Every quadrat × size class in every census (0 where the class is absent);
+# averaging only over quadrats that hold the class would inflate the estimate.
+size_stock_q <- complete_grid(size_stock_q, c("quadrat", "CensusID", "size"), sort(unique(df_stem_status$CensusID)))
+size_stock_q[is.na(agb_ha), agb_ha := 0]
 size_stock_q <- merge(size_stock_q, census_yr_lut, by = "CensusID")
 
 size_stock_summary <- bootstrap_ci(
@@ -1288,6 +1406,18 @@ setnames(
   c("agb_mean", "agb_lwr", "agb_upr")
 )
 data.table::setorder(size_stock_summary, size, CensusID)
+
+# With every quadrat included, class means add up to the plot mean exactly.
+size_sum_chk <- size_stock_summary[, .(size_total = sum(agb_mean)), by = CensusID][
+  stock_summary[, .(CensusID, agb_mean)],
+  on = "CensusID"
+]
+bio_check(
+  size_sum_chk[, all(abs(size_total - agb_mean) < 1e-6)],
+  "Size-class AGB stocks add up to the plot AGB stock in every census",
+  examples = size_sum_chk[abs(size_total - agb_mean) >= 1e-6, CensusID]
+)
+rm(size_sum_chk)
 
 p_stock_size <- ggplot(
   size_stock_summary,
@@ -1434,7 +1564,7 @@ p_net_size <- ggplot(
 
 size_plots <- plot_grid(
   p_stock_size, p_flux_size, p_net_size,
-  ncol = 1, align = "v", labels = c("D1", "D2", "D3")
+  ncol = 1, align = "v", axis = "lr", labels = c("D1", "D2", "D3")
 )
 ggsave(
   plot = size_plots,
