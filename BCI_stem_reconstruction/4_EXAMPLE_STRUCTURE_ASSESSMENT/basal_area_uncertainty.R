@@ -1,59 +1,82 @@
 # ==============================================================================
-# BCI Stem Reconstruction — Basal Area Uncertainty Propagation
+# BCI Stem Reconstruction — Basal Area: Stem-Identity Uncertainty
 # ==============================================================================
 #
 # PURPOSE
 # -------
-# Propagates stem-identity uncertainty (encoded in posterior reconstruction
-# paths produced by the dp_global engine) into forest-level basal area (BA)
-# stocks and fluxes for the full BCI 50-ha plot across nine stem censuses
-# (1985–2022/3).
+# Propagates STEM-IDENTITY uncertainty (the posterior reconstruction paths of
+# the dp_global engine) into basal area (BA) stocks and fluxes of the BCI 50-ha
+# plot across nine stem censuses (1982–2022/3). Only identity uncertainty is
+# quantified here; spatial sampling uncertainty is deliberately not included.
 #
-# DESIGN OVERVIEW
-# ---------------
-# For each tree the engine outputs one or more *reconstruction paths*: ordered
-# sequences of StemID assignments across censuses. Trees with only one path are
-# deterministic (MAP-equivalent); trees with multiple paths have genuine
-# identity ambiguity. Each Monte Carlo (MC) realization draws one path per
-# ambiguous tree proportional to path probability, then aggregates BA across all
-# trees and all quadrats to produce a single forest-level estimate. Repeating
-# this K_realizations times yields an empirical posterior distribution of
-# forest-level BA stocks and fluxes from which we read uncertainty (95 % CI).
+# WHAT IDENTITY UNCERTAINTY CAN AND CANNOT CHANGE
+# -----------------------------------------------
+# A reconstruction path says which measurement belongs to which stem across
+# censuses. Every path contains the SAME measurements; paths differ only in how
+# those measurements are linked into stems. Therefore:
+#   • BA stock of measured stems is identical in every realization;
+#   • the split of BA change into Growth (survivors), Loss (deaths) and Gain
+#     (recruits) is what identity uncertainty changes;
+#   • stock and net change can differ only through stems that are alive but
+#     unmeasured in a census (gaps, interpolated in time; see fill_stem_gaps()).
+# These properties are enforced with hard checks (bio_check()).
+#
+# DESIGN
+# ------
+# Exported reconstruction : the stem IDs of the R tables (the DP's Viterbi
+#                           decoding plus stage-2 post-processing). Used for
+#                           every tree with no identity uncertainty and as the
+#                           reference line in the figures.
+# Posterior paths         : 200 backward-sampled posterior draws per tag,
+#                           collapsed into unique paths with their sample
+#                           counts (DATA/POSTERIORS/posterior_sampled_paths.rds).
+#                           Path weights = path_count / sum(path_count).
+#                           (path_prob is NOT used: it re-weights samples by
+#                           their own probability and double counts.)
+# Splice                  : a path covers the DP window of its tree. Measured
+#                           observations outside that window were placed
+#                           deterministically by stage 2 (DB StemID kept,
+#                           broken-below splits, probabilistic / enumeration
+#                           fallbacks) and keep those links: each joins the
+#                           path stem that holds its exported stem-mate at the
+#                           nearest window edge.
+# Monte Carlo             : each realization draws one path per multi-path tree
+#                           (independently, by weight) and aggregates BA at
+#                           quadrat and plot level.
+# Probabilistic engine    : trees reconstructed by dp_probabilistic_matching.R
+#                           (instead of the DP) are sampled or held at the
+#                           exported reconstruction according to
+#                           sample_probabilistic_trees (see the note there).
 #
 # ANCHOR CENSUSES AND SCOPE
 # -------------------------
-# The DP engine reconstructs identities through the anchor census,
-# ANCHOR_START_CENSUS = Census 7. Post-anchor censuses (C8+) have confirmed
-# stemID and are appended as deterministic rows. MC uncertainty therefore
-# applies only to pre-anchor intervals (C1–C6).
-# See the ANCHOR_START_CENSUS block in Section 1 for full documentation.
+# The DP reconstructs identities backward from the anchor census
+# (ANCHOR_START_CENSUS = Census 7). Post-anchor censuses (C8, C9) have confirmed
+# stem IDs: their stocks and the C7→C8 and C8→C9 fluxes are the same in every
+# realization, except for the rare stem whose unmeasured gap spans the anchor
+# (its interpolated DBH depends on the path).
 #
 # OUTPUTS (written to BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/)
 # --------
-#   ba_map_change_treeID.feather        MAP tree-level flux per census pair
-#   ba_map_change_quadrat.feather       MAP quadrat-level flux per census pair
-#   ba_map_stock_quadrat.feather        MAP quadrat-level BA stock per census
-#   ba_mc_realizations_quadrat.feather  K MC realization quadrat fluxes
-#   ba_mc_realizations_stock_*.feather  K MC realization quadrat stocks
-#   ba_mc_summary_quadrat.feather       Empirical 95 % CI of quadrat fluxes
-#   ba_mc_summary_stock_quadrat.feather Empirical 95 % CI of quadrat stocks
-#   ba_mc_realizations_treeID/          Per-realization tree-level feather files
-#   fig1_stock.pdf                      Forest BA stock: MAP vs MC
-#   fig2_fluxes.pdf                     Forest BA fluxes: MAP vs MC
-#   fig3_trajectories.pdf               Individual-tree BA trajectories (6 trees)
+#   ba_map_change_treeID.feather        exported reconstruction: tree-level flux
+#   ba_map_change_quadrat.feather       exported reconstruction: quadrat-level flux
+#   ba_map_stock_quadrat.feather        exported reconstruction: quadrat-level stock
+#   ba_mc_realizations_quadrat.feather  MC realizations: quadrat-level fluxes
+#   ba_mc_realizations_stock_quadrat.feather  MC realizations: quadrat-level stocks
+#   ba_mc_summary_quadrat.feather       MC mean / sd / 95 % interval of quadrat fluxes
+#   ba_mc_summary_stock_quadrat.feather MC mean / sd / 95 % interval of quadrat stocks
+#   ba_mc_diagnostics.txt               tree counts, splice counts, checks, MC error
+#   ba_mc_realizations_treeID/          optional per-realization tree-level fluxes
+#   fig1_BA_stock.pdf                   BA stock: exported vs identity MC
+#   fig2_BA_fluxes.pdf                  BA fluxes: exported vs identity MC
+#   fig3_BA_trajectories.pdf            tree BA trajectories: exported vs posterior paths
 #
 # NOTES
 # --------
-# Additional methodological decisions and design choices are documented in
-# biomass_stocks_fluxes.R and should be evaluated against individual study
-# needs. In the present script, giant strangler ficus (> 500 mm DBH) are
-# retained despite violating standard allometric assumptions and
-# disproportionately inflating plot-level basal area. No correction is applied
-# for the DBH bias introduced by measuring around buttresses in the first
-# census. Bias-corrected productivity (G*) and mortality (M*) estimators from
-# Kohyama et al. (2019) are not included. Moreover, we are not accounting for
-# the lack of diameter growth in some palm species. For a valid output, these
-# decisions should be evaluated.
+# Additional methodological decisions are documented in biomass_stocks_fluxes.R.
+# In this script, giant strangler ficus (> 500 mm DBH) are retained, no
+# correction is applied for the buttress bias of the first census, the Kohyama
+# et al. (2019) correction is not applied, and palm diameters are not modified.
 # ==============================================================================
 
 rm(list = ls())
@@ -70,11 +93,71 @@ workspace_root <- getwd()
 # ============================================================
 # SECTION 1: Configuration and data loading
 # ============================================================
-# Reads all 9 BCI stem census files, stacks them into a single
-# long data.table (rec), and imputes missing measurement dates
-# via a two-step median strategy: first within quadrat × census,
-# then within the full census, so every row has an ExactDate.
-# ============================================================
+
+# ── Anchor census ──────────────────────────────────────────────────────────────
+# First census with confirmed stem identities (2010 = Census 7). The DP samples
+# identity paths backward from this anchor; censuses after it are deterministic.
+ANCHOR_START_CENSUS <- 7L
+
+# The first census is omitted from figures.
+first_plot_census <- 2L
+
+# Number of Monte Carlo realizations and seed (recorded in the diagnostics).
+K_realizations <- 100L
+mc_seed <- 42L
+
+# Center of the MC distribution drawn as a dashed line ("mean" or "median").
+mc_center <- "median"
+mc_center <- match.arg(mc_center, c("mean", "median"))
+
+# Optional heavy outputs.
+write_tree_realizations <- FALSE # one tree-level feather per realization
+write_quadrat_realizations <- TRUE # all quadrat-level realizations in one feather
+
+# Report the stage-2 method of spliced observations.
+report_splice_methods <- TRUE
+
+# Trees reconstructed by the probabilistic engine (dp_probabilistic_matching.R)
+# have posterior samples drawn per census pair and then repaired: every sampled
+# link that fails the growth checks (hard rate, or cumulative shrinkage beyond
+# 3 SD of measurement error) is cut, and the earlier measurement gets a new,
+# sample-specific stem ID (repair_stitched_growth_violations()). A cut turns
+# one measurement into a one-census stem (recruit + death) while its own stem
+# becomes alive-but-unmeasured in that census. That is growth quality control,
+# not identity uncertainty: in 1982–2005 it adds ~5–8 % to plot BA Loss and
+# ~15–25 % to plot BA Gain, and double counts BA in the stock.
+# FALSE (recommended): these trees keep the exported reconstruction in every
+# realization (their identity uncertainty is not quantified).
+# TRUE: sample their paths as they are, including those cuts.
+sample_probabilistic_trees <- TRUE
+
+out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+diag_file <- file.path(out_dir, "ba_mc_diagnostics.txt")
+if (file.exists(diag_file)) file.remove(diag_file)
+diag_line <- function(...) cat(..., "\n", file = diag_file, append = TRUE, sep = "")
+
+# ── Hard check that stays visible in interactive (line-by-line) runs ────────
+# On failure: prints a ❌ line (count + examples), raises an immediate warning,
+# writes the same text to the diagnostics file, and only then stops.
+bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
+    if (isTRUE(all(ok))) {
+        cat("✓", msg, "\n")
+        diag_line("CHECK OK: ", msg)
+        return(invisible(TRUE))
+    }
+    n_txt <- if (!is.null(n_bad)) sprintf(" [%d case(s)]", n_bad) else ""
+    ex_txt <- if (length(examples) > 0L) {
+        paste0(" | examples: ", paste(head(unique(examples), 10), collapse = ", "))
+    } else {
+        ""
+    }
+    full_msg <- paste0("CHECK FAILED: ", msg, n_txt, ex_txt)
+    cat("❌", full_msg, "\n")
+    warning(full_msg, call. = FALSE, immediate. = TRUE)
+    diag_line(full_msg)
+    stop(full_msg, call. = FALSE)
+}
 
 bci_stem_nums <- as.character(1:9)
 census_list <- lapply(bci_stem_nums, function(num) {
@@ -86,14 +169,15 @@ census_list <- lapply(bci_stem_nums, function(num) {
 names(census_list) <- paste0("bci.stem", bci_stem_nums)
 rec <- rbindlist(census_list, fill = TRUE, idcol = "censusID")
 rec <- rec[!is.na(quadrat)]
+rec[, CensusID := as.integer(CensusID)]
 rm(census_list, bci_stem_nums)
 
-# Impute missing ExactDate: quadrat-census median, then plot-census median.
-rec[, date_quad_census := median(ExactDate, na.rm = TRUE), by = .(quadrat, CensusID)]
-rec[, date_plot_census := median(ExactDate, na.rm = TRUE), by = CensusID]
-rec[, ExactDate := fifelse(is.na(ExactDate), date_quad_census, ExactDate)]
-rec[is.na(ExactDate), ExactDate := date_plot_census]
-rec[, c("date_quad_census", "date_plot_census") := NULL]
+# Stage 3 dates every row (modal field date), so no imputation is needed here.
+bio_check(
+    rec[, !anyNA(ExactDate)],
+    "Every stem-census row has an ExactDate (dated in stage 3)",
+    n_bad = rec[is.na(ExactDate), .N]
+)
 
 # Cushman et al. 2014
 taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
@@ -128,70 +212,104 @@ rec[, dbh_raw := dbh]
 rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 
 post_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "POSTERIORS", "posterior_sampled_paths.rds")
-
-# ── Anchor census ──────────────────────────────────────────────────────────────
-# ANCHOR_START_CENSUS is the first census where individual stem identities are
-# known with certainty (from 2010 onward = Census 7). The DP reconstruction
-# algorithm runs *backward* from this anchor: it finds the most probable
-# stem-identity assignment for censuses 1 through ANCHOR_START_CENSUS, treating
-# the anchor census as the fixed endpoint.
-#
-# Consequence for uncertainty propagation:
-#   • Posterior paths only encode identity choices for StemPaths in C1–C7
-#     (the DP segment). The 'recon' string in the paths file does NOT include
-#     StemPaths for C8 or C9.
-#   • Fluxes and stocks involving post-anchor censuses (C7→C8, C8→C9) are
-#     deterministic: every MC realization must use the MAP (stemID-based)
-#     values for those intervals.
-#   • Comparison figures must be restricted to pre-anchor intervals; including
-#     post-anchor intervals in the MC layers would show inflated mortality
-#     (C7 stems appear dead because C8/C9 StemPaths are absent from
-#     all_paths) and zero recruitment — artifacts, not uncertainty.
-ANCHOR_START_CENSUS <- 7L
-
-# Exclude the first census from all figures and plot summaries.
-# The first census is usually omitted because buttressed trees were measured
-# around the buttress at breast height, which introduces a strong DBH bias.
-first_plot_census <- 2L
-
-# Number of MC realizations to draw from the posterior distribution of paths.
-K_realizations <- 200L
-
-mc_center <- "mean" # choose "mean" or "median"
-mc_center <- match.arg(mc_center, c("mean", "median"))
+stage2_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "complete_dataset_final_with_reconstructed_stemids.rds")
 
 # ============================================================
 # SECTION 2: Helper functions
 # ============================================================
-# ba_m2(dbh_mm)   – converts stem DBH (mm) to basal area in m²
-#                   using the standard circle formula: BA = π/4 × (d/1000)².
-#
-# parse_recon(s)  – parses a posterior 'recon' string of the form
-#                   "obs_row_id:ReconstructedStemID;..." into a two-column
-#                   data.table (StemPaths, stemID). obs_row_id maps back to
-#                   the original census row in rec via the StemPaths column.
-#
-# decompose_ba()  – given a merged from/to BA table (one row per stem per
-#                   interval), classifies stems as survivor (observed in both
-#                   censuses), death (present only in 'from'), or recruit
-#                   (present only in 'to'), then returns the signed BA
-#                   components: Growth (positive), Loss (negative), Gain
-#                   (positive). Used identically for MAP and posterior loops.
-#
-# summarise_flux()– collapses the K-realization flux distribution to empirical
-#                   mean/sd/95 % CI for each grouping level (quadrat or plot).
+# ba_m2(dbh_mm)     – stem basal area in m² (π/4 × (d/1000)²).
+# fill_stem_gaps()  – adds a row for every census in which a stem is alive but
+#                     unmeasured (between two of its measurements) with DBH
+#                     interpolated linearly in time, flagged `interpolated`.
+# decompose_ba()    – classifies each stem of an interval as survivor, death
+#                     or recruit and returns Growth / Loss / Gain.
+# summarise_flux()  – mean / sd / 95 % interval of fluxes across realizations.
 # ============================================================
 
 ba_m2 <- function(dbh_mm) pi / 4 * (dbh_mm / 1000)^2
 
-parse_recon <- function(recon_str) {
-    # recon_str: a single character string e.g. "3:101;3:205;7:88"
-    pairs <- strsplit(recon_str, ";", fixed = TRUE)[[1L]]
-    parts <- strsplit(pairs, ":", fixed = TRUE)
-    data.table(
-        StemPaths = as.integer(vapply(parts, `[`, character(1L), 1L)),
-        stemID    = as.integer(vapply(parts, `[`, character(1L), 2L))
-    )
+# A stem measured at censuses a and b is alive at every census between them
+# (stage-3 lifespan rule: alive later => never dead). Without a row for those
+# censuses the flux decomposition would count a death followed by a new
+# recruit. Missing rows are added with DBH interpolated linearly in time
+# between the neighbouring measurements (measurement dates).
+# Rstatus "A" without a DBH means the stem was alive and its measurement was
+# missed in the field, so it stays in the stock until it is dead (D / G). A
+# census in `alive` after the stem's last measurement gets the growth trend of
+# its last two measurements continued in time (a negative trend is not
+# extrapolated; a stem measured once keeps that value); one before its first
+# measurement gets the first measurement. This is dbh_from_own_measurements()
+# of general_plot_information.R and biomass_stocks_fluxes.R.
+#   dt        : one row per stem × census with a measured `dbh` and its date `t`
+#   stem_cols : columns identifying a stem (e.g. treeID, stemID)
+#   gap_dates : date `t` of a missing census, joined on its other columns
+#               (the stem's own row date, or the tree's date in that census)
+#   alive     : stem_cols + CensusID of censuses in which the stem is alive
+#               without a DBH (NULL: none)
+# Added rows are flagged `interpolated` (not a measurement); those beyond the
+# measured span are also flagged `carried`.
+fill_stem_gaps <- function(dt, stem_cols, gap_dates, alive = NULL) {
+    dt <- copy(dt)
+    dt[, `:=`(interpolated = FALSE, carried = FALSE)]
+    setkeyv(dt, c(stem_cols, "CensusID"))
+    date_keys <- setdiff(names(gap_dates), "t")
+    rng <- dt[, .(c_min = min(CensusID), c_max = max(CensusID), n = .N), by = stem_cols]
+    added <- list()
+
+    # 1. Censuses between two measurements: linear in time.
+    gaps <- rng[c_max - c_min + 1L > n]
+    if (nrow(gaps) > 0L) {
+        full <- gaps[, .(CensusID = seq.int(c_min, c_max)), by = stem_cols]
+        miss <- full[!dt, on = c(stem_cols, "CensusID")]
+        prev <- dt[miss, on = c(stem_cols, "CensusID"), roll = Inf, .(d_prev = x.dbh, t_prev = x.t)]
+        nxt <- dt[miss, on = c(stem_cols, "CensusID"), roll = -Inf, .(d_next = x.dbh, t_next = x.t)]
+        miss[, c("d_prev", "t_prev") := prev]
+        miss[, c("d_next", "t_next") := nxt]
+        miss[gap_dates, on = date_keys, t := i.t]
+        miss[, dbh := d_prev + (d_next - d_prev) * (t - t_prev) / (t_next - t_prev)]
+        bad <- miss[is.na(dbh) | !(t_prev < t & t < t_next)]
+        bio_check(
+            nrow(bad) == 0L,
+            "Every alive-but-unmeasured census lies in time between two measurements of its stem and gets an interpolated DBH",
+            examples = bad$treeID, n_bad = nrow(bad)
+        )
+        added$gap <- miss[, c(stem_cols, "CensusID", "dbh", "t"), with = FALSE][, `:=`(interpolated = TRUE, carried = FALSE)]
+    }
+
+    # 2. Alive censuses outside the measured span.
+    if (!is.null(alive) && nrow(alive) > 0L) {
+        carry <- unique(alive[, c(stem_cols, "CensusID"), with = FALSE])
+        carry <- rng[carry, on = stem_cols, nomatch = 0L][CensusID > c_max | CensusID < c_min]
+        if (nrow(carry) > 0L) {
+            carry[gap_dates, on = date_keys, t := i.t]
+            # last measurement (after the span) and the one before it
+            lastm <- dt[carry, on = c(stem_cols, "CensusID"), roll = Inf, .(c_l = x.CensusID, d_l = x.dbh, t_l = x.t)]
+            carry[, c("c_l", "d_l", "t_l") := lastm]
+            prevq <- carry[, c(stem_cols, "CensusID"), with = FALSE][, CensusID := carry$c_l - 1L]
+            prevm <- dt[prevq, on = c(stem_cols, "CensusID"), roll = Inf, .(d_p = x.dbh, t_p = x.t)]
+            carry[, c("d_p", "t_p") := prevm]
+            # first measurement (before the span)
+            carry[, d_f := dt[carry, on = c(stem_cols, "CensusID"), roll = -Inf, x.dbh]]
+            carry[, growth := fifelse(is.na(d_p), 0, pmax((d_l - d_p) / (t_l - t_p), 0))]
+            carry[, dbh := fifelse(CensusID > c_max, d_l + growth * (t - t_l), d_f)]
+            bad <- carry[is.na(dbh) | (CensusID > c_max & !(t > t_l))]
+            bio_check(
+                nrow(bad) == 0L,
+                "Every alive census outside a stem's measured span gets a DBH from the stem's own measurements",
+                examples = bad$treeID, n_bad = nrow(bad)
+            )
+            added$carry <- carry[, c(stem_cols, "CensusID", "dbh", "t"), with = FALSE][, `:=`(interpolated = TRUE, carried = TRUE)]
+        }
+    }
+
+    if (length(added) == 0L) {
+        return(dt)
+    }
+    # added rows take the stem's tree-level attributes (quadrat) from its measured rows
+    add <- rbindlist(added, use.names = TRUE)
+    attr_dt <- unique(dt[, c(stem_cols, intersect(names(dt), "quadrat")), with = FALSE])
+    add <- attr_dt[add, on = stem_cols]
+    rbindlist(list(dt, add), use.names = TRUE, fill = TRUE)
 }
 
 decompose_ba <- function(m, by_cols) {
@@ -199,10 +317,12 @@ decompose_ba <- function(m, by_cols) {
         !is.na(BA_from) & !is.na(BA_to), "survivor",
         fifelse(!is.na(BA_from), "death", "recruit")
     )]
+    # fifelse(..., 0) keeps every component defined (0, not NA) when a tree
+    # has no stem of that class in the interval.
     m[, .(
-        Growth_BA     = fsum((BA_to - BA_from) * (status == "survivor"), na.rm = TRUE),
-        Loss_BA       = -fsum(BA_from * (status == "death"), na.rm = TRUE),
-        Gain_BA       = fsum(BA_to * (status == "recruit"), na.rm = TRUE)
+        Growth_BA     = fsum(fifelse(status == "survivor", BA_to - BA_from, 0)),
+        Loss_BA       = -fsum(fifelse(status == "death", BA_from, 0)),
+        Gain_BA       = fsum(fifelse(status == "recruit", BA_to, 0))
     ), by = by_cols]
 }
 
@@ -219,48 +339,46 @@ summarise_flux <- function(dt, by_cols) {
                 Loss_mean   = fmean(Loss_BA),       Loss_sd    = fsd(Loss_BA),
                 Loss_lwr    = ql[1L],               Loss_upr   = ql[2L],
                 Gain_mean   = fmean(Gain_BA),       Gain_sd    = fsd(Gain_BA),
-                Gain_lwr    = qa[1L],               Gain_upr   = qa[2L]
+                Gain_lwr    = qa[1L],               Gain_upr   = qa[2L],
+                Delta_mean  = fmean(DeltaBA_total), Delta_sd   = fsd(DeltaBA_total),
+                Delta_lwr   = qd[1L],               Delta_upr  = qd[2L]
             )
         },
         by = by_cols
     ]
 }
 
+# Per-interval decomposition of a stem table (stems identified by stem_cols;
+# `tree_cols` are the grouping columns kept in the result).
+decompose_intervals <- function(stems, pairs, stem_cols, tree_cols) {
+    rbindlist(lapply(seq_len(nrow(pairs)), function(i) {
+        cf <- pairs$CensusID_from[i]
+        ct <- pairs$CensusID_to[i]
+        sf <- stems[CensusID == cf, c(stem_cols, "BA"), with = FALSE]
+        st <- stems[CensusID == ct, c(stem_cols, "BA"), with = FALSE]
+        setnames(sf, "BA", "BA_from")
+        setnames(st, "BA", "BA_to")
+        d <- decompose_ba(merge(sf, st, by = stem_cols, all = TRUE), by_cols = tree_cols)
+        d[, `:=`(CensusID_from = cf, CensusID_to = ct)]
+    }))
+}
+
 # ============================================================
-# SECTION 3: MAP baseline BA decomposition
+# SECTION 3: Exported reconstruction
 # ============================================================
-# Uses observed (maximum a posteriori) DBH measurements — i.e. the single
-# best-guess stem-identity assignment — to compute deterministic BA stocks
-# and fluxes for every census and census interval. This is the "ground truth"
-# reference against which MC uncertainty is assessed.
-#
-# Stems are matched across consecutive censuses on (quadrat, treeID, stemID).
-# The decompose_ba() function then classifies each matched/unmatched stem as
-# survivor / death / recruit and accumulates the signed BA components:
-#   Growth_BA  – BA increment of stems alive in both censuses (positive)
-#   Loss_BA    – BA of stems that died (negative)
-#   Gain_BA    – BA of newly recruited stems (positive)
-#
+# The stem IDs of the R tables are the exported reconstruction. Gaps (alive
+# but unmeasured censuses) are filled before the decomposition so that they
+# are not counted as a death plus a recruitment.
 # Outputs:
 #   map_tree_change    – tree-level flux per census pair
-#   map_quadrat_change – quadrat-level flux (sum within each 20×20 m quadrat)
-#   map_quadrat_stock  – quadrat-level BA stock (sum of stem BAs per census)
-#
-# These serve two roles downstream:
-#   (a) Fixed component in every MC realization for trees with a single path.
-#   (b) Reference lines in the comparison figures.
+#   map_quadrat_change – quadrat-level flux
+#   map_quadrat_stock  – quadrat-level BA stock
+# (object names keep the historical "map_" prefix.)
 # ============================================================
 
-tree_census <- rec[!is.na(dbh) & !is.na(stemID) & !is.na(treeID),
-    .(TotalBA_m2 = fsum(ba_m2(dbh)), NumStems = .N),
-    by = .(quadrat, treeID, CensusID)
-]
-setorder(tree_census, treeID, CensusID)
-cat("[BA] treeID x census rows:", nrow(tree_census), "\n")
-
-dates <- rec[!is.na(treeID), .(Date = median(ExactDate, na.rm = TRUE)), by = CensusID][order(CensusID)]
+dates <- rec[, .(Date = median(ExactDate)), by = CensusID][order(CensusID)]
 dates[, Year := as.integer(format(Date, "%Y"))]
-cat("Need >= 2 censuses" = nrow(dates) >= 2L)
+bio_check(nrow(dates) >= 2L, "At least two censuses are available")
 
 census_pairs <- data.table(
     CensusID_from = dates$CensusID[-nrow(dates)],
@@ -270,418 +388,472 @@ census_pairs <- data.table(
 )
 census_pairs[, Date_mid := Date_from + (Date_to - Date_from) / 2]
 census_pairs[, Year_mid := as.integer(format(Date_mid, "%Y"))]
+census_pairs[, Interval_yr := as.numeric(difftime(Date_to, Date_from, units = "days")) / 365.25]
 
-stem_dt <- rec[
-    !is.na(treeID) & !is.na(stemID),
-    .(treeID, stemID = stemID, CensusID, BA = ba_m2(dbh), quadrat)
+stem_obs <- rec[
+    !is.na(dbh) & !is.na(treeID) & !is.na(stemID),
+    .(quadrat, treeID, stemID, CensusID, StemPaths, dbh, t = as.numeric(ExactDate))
 ]
-
-# MAP census-pair decomposition using shared decompose_ba().
-map_change <- rbindlist(lapply(seq_len(nrow(census_pairs)), function(i) {
-    cf <- census_pairs$CensusID_from[i]
-    ct <- census_pairs$CensusID_to[i]
-    sf <- stem_dt[CensusID == cf, .(quadrat, treeID, stemID, BA_from = BA)]
-    st <- stem_dt[CensusID == ct, .(quadrat, treeID, stemID, BA_to = BA)]
-    d <- decompose_ba(
-        merge(sf, st, by = c("quadrat", "treeID", "stemID"), all = TRUE),
-        by_cols = c("quadrat", "treeID")
-    )
-    d[, `:=`(
-        CensusID_from = cf, CensusID_to = ct,
-        Date_from = census_pairs$Date_from[i],
-        Date_to = census_pairs$Date_to[i]
-    )]
-}))
-cat(
-    "[BA] MAP decomposition:", nrow(map_change), "intervals across",
-    uniqueN(map_change$treeID), "treeIDs\n"
+bio_check(
+    stem_obs[, !anyDuplicated(stem_obs[, .(stemID, CensusID)])],
+    "One measurement per stem and census in the exported reconstruction"
 )
 
+# Dates of a census in which a stem is alive but unmeasured: the stem's own
+# row date (exported stems), or the tree's modal date in that census (stems
+# of a posterior path, which have no row of their own).
+stem_dates <- rec[, .(treeID, stemID, CensusID, t = as.numeric(ExactDate))]
+tree_dates <- rec[, .N, by = .(treeID, CensusID, ExactDate)][order(-N)][
+    , .(t = as.numeric(ExactDate[1L])),
+    by = .(treeID, CensusID)
+]
+
+# Censuses in which a stem is alive (A) but its measurement was missed.
+alive_nodbh <- rec[Rstatus == "A" & is.na(dbh), .(treeID, stemID, CensusID)]
+exp_stems <- fill_stem_gaps(stem_obs, c("treeID", "stemID"), stem_dates, alive = alive_nodbh)
+exp_stems[, BA := ba_m2(dbh)]
+cat(sprintf(
+    "[BA] exported: %d measured stem-censuses | alive without DBH: %d (interpolated %d, trend continued after the last measurement %d, never measured %d)\n",
+    nrow(stem_obs), nrow(alive_nodbh), exp_stems[interpolated & !carried, .N], exp_stems[carried == TRUE, .N],
+    alive_nodbh[!stemID %in% stem_obs$stemID, .N]
+))
+
+# An alive stem is in the stock in every census it is alive; a stem is never
+# in the stock in a census where it is not alive.
+alive_rows <- rec[Rstatus == "A" & stemID %in% stem_obs$stemID, .(stemID, CensusID)]
+not_in_stock <- alive_rows[!exp_stems, on = .(stemID, CensusID)]
+bio_check(
+    nrow(not_in_stock) == 0L,
+    "Every alive (A) census of a measured stem is in the stock (measured, interpolated or trend-continued)",
+    examples = not_in_stock$stemID, n_bad = nrow(not_in_stock)
+)
+not_alive <- exp_stems[, .(stemID, CensusID)][!alive_rows, on = .(stemID, CensusID)]
+bio_check(
+    nrow(not_alive) == 0L,
+    "No stem is in the stock in a census where it is not alive (A)",
+    examples = not_alive$stemID, n_bad = nrow(not_alive)
+)
+rm(alive_rows, not_in_stock, not_alive)
+
+tree_census <- exp_stems[,
+    .(TotalBA_m2 = fsum(BA), MeasuredBA_m2 = fsum(BA * !interpolated), NumStems = .N),
+    by = .(quadrat, treeID, CensusID)
+]
+setorder(tree_census, treeID, CensusID)
+
+map_change <- decompose_intervals(
+    exp_stems, census_pairs,
+    stem_cols = c("quadrat", "treeID", "stemID"), tree_cols = c("quadrat", "treeID")
+)
+map_change <- census_pairs[, .(CensusID_from, CensusID_to, Date_from, Date_to)][map_change, on = .(CensusID_from, CensusID_to)]
+map_change[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
+cat("[BA] exported decomposition:", nrow(map_change), "tree-intervals across", uniqueN(map_change$treeID), "treeIDs\n")
+
 flux_cols <- c("Growth_BA", "Loss_BA", "Gain_BA")
-
-# Quadrat-level MAP aggregations (deterministic; no CI needed here).
-map_tree_change <- copy(map_change)
-
-# Fluxes: 8 census intervals
+map_tree_change <- map_change
 map_quadrat_change <- map_tree_change[,
     lapply(.SD, fsum, na.rm = TRUE),
     .SDcols = flux_cols,
     by = .(quadrat, CensusID_from, CensusID_to)
 ]
 map_quadrat_change[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
-
-# Stocks: 9 censuses
-map_quadrat_stock <- tree_census[,
-    .(TotalBA_m2 = fsum(TotalBA_m2, na.rm = TRUE)),
-    by = .(quadrat, CensusID)
-]
-cat("[BA] MAP quadrat stock:", nrow(map_quadrat_stock), "quadrat×census rows\n")
+map_quadrat_stock <- tree_census[, .(TotalBA_m2 = fsum(TotalBA_m2)), by = .(quadrat, CensusID)]
+cat("[BA] exported quadrat stock:", nrow(map_quadrat_stock), "quadrat×census rows\n")
 
 # ============================================================
-# SECTION 4: Posterior uncertainty propagation (MC realizations)
-# ============================================================
-# Reads the posterior reconstruction paths and propagates stem-identity
-# uncertainty into forest-level BA stocks and fluxes.
-#
-# KEY CONCEPT — pre-anchor vs post-anchor censuses
-# ─────────────────────────────────────────────────
-# Posterior 'recon' strings only encode identity assignments for the
-# pre-anchor DP segment (C1 through ANCHOR_START_CENSUS). Post-anchor
-# rows (C8, C9, …) carry confirmed stemID and are NOT included in
-# any posterior path. Therefore:
-#   • all_paths is restricted to pre-anchor observations after the merge.
-#   • post_decomp covers only census pairs where CensusID_to <=
-#     ANCHOR_START_CENSUS (true sampling uncertainty).
-#   • For post-anchor intervals the MAP flux (deterministic) is used
-#     in every realization — post_decomp_postanchor handles this.
-#
-# TREE PARTITIONING
-# ─────────────────
-# Trees are split into two groups based on the number of posterior paths:
-#   fixed component  – single-path trees. Their identity is unambiguous;
-#                      MAP fluxes/stocks are contributed unchanged to every
-#                      realization. (fixed_tree_change, fixed_stock)
-#   variable component – multi-path trees. One path is drawn per realization
-#                      proportionally to path_prob. (post_decomp, tree_stock)
-#
-# MC REALIZATION LOOP
-# ────────────────────
-# For each realization k = 1…K_realizations:
-#   1. Sample one path per uncertain tree group (pre-drawn in sampled_paths).
-#   2. Assemble per-tree flux table: fixed MAP trees + sampled uncertain trees
-#      (pre-anchor from post_decomp) + deterministic post-anchor uncertain
-#      trees (from post_decomp_postanchor).
-#   3. Aggregate to quadrat level and store.
-#   4. Repeat for stocks: fixed MAP + sampled pre-anchor + deterministic
-#      post-anchor (from tree_census).
-#
-# Outputs:
-#   all_quadrat_realizations – K × quadrat × interval flux table
-#   all_stock_realizations   – K × quadrat × census stock table
-#   (collapsed to empirical 95 % CI in all_quadrat_summary / all_stock_summary)
+# SECTION 4: Identity uncertainty (Monte Carlo over posterior paths)
 # ============================================================
 
+# ---- 4.1 Posterior paths and weights ---------------------------------------
 post_full <- as.data.table(readRDS(post_file))
-post_full[, group_id := treeID]
+post_full[, treeID := as.character(treeID)]
+post_full[, n_paths := .N, by = treeID]
+# Sample frequencies are the posterior probabilities of the unique paths.
+post_full[, w := path_count / sum(path_count), by = treeID]
+bio_check(
+    post_full[, abs(sum(w) - 1) < 1e-9, by = treeID][, all(V1)],
+    "Path weights (path_count / sum(path_count)) sum to 1 within every tree"
+)
 cat(
-    "[BA] Posterior paths loaded:", nrow(post_full), "rows for",
-    uniqueN(post_full$treeID), "treeIDs\n"
+    "[BA] posterior:", nrow(post_full), "paths for", uniqueN(post_full$treeID), "trees |",
+    post_full[n_paths > 1L, uniqueN(treeID)], "trees with >1 path\n"
 )
 
-# Add path index if not present in the posterior file.
-if (!"path_idx" %in% names(post_full)) {
-    post_full[, path_idx := seq_len(.N), by = group_id]
+multi <- post_full[n_paths > 1L]
+multi[, path_idx := seq_len(.N), by = treeID]
+multi_trees <- unique(multi$treeID)
+
+# Stage-2 reconstruction method of every observation (engine of each tree).
+s2 <- as.data.table(readRDS(stage2_file))[, .(
+    treeID = as.character(TreeID), StemPaths = as.integer(obs_row_id),
+    method = as.character(ReconstructionMethod)
+)]
+prob_trees <- intersect(multi_trees, s2[method == "probabilistic", unique(treeID)])
+if (!sample_probabilistic_trees) {
+    multi_trees <- setdiff(multi_trees, prob_trees)
+    multi <- multi[treeID %in% multi_trees]
 }
+cat(
+    "[BA] multi-path trees from the probabilistic engine:", length(prob_trees),
+    if (sample_probabilistic_trees) "(sampled)\n" else "(exported reconstruction, not sampled)\n"
+)
 
-# Guard against missing path_prob; normalise to sum = 1 within each group so
-# that sample(prob = ...) is well-defined even when the engine returns raw
-# log-probabilities or un-normalised scores.
-post_full[, path_prob := fifelse(is.na(path_prob), 0, path_prob)]
-post_full[, path_prob := {
-    s <- fsum(path_prob)
-    if (s > 0) path_prob / s else rep(1 / .N, .N)
-}, by = group_id]
+# Parse every path into (observation, stem label). Path labels get a "p"
+# prefix so they cannot collide with the labels of spliced stems ("x").
+recon_split <- strsplit(multi$recon, ";", fixed = TRUE)
+parts <- data.table(
+    treeID = rep(multi$treeID, lengths(recon_split)),
+    path_idx = rep(multi$path_idx, lengths(recon_split)),
+    pair = unlist(recon_split, use.names = FALSE)
+)
+rm(recon_split)
+parts[, c("StemPaths", "lab") := tstrsplit(pair, ":", fixed = TRUE)]
+parts[, `:=`(StemPaths = as.integer(StemPaths), lab = paste0("p", lab), pair = NULL)]
 
-# ── Parse reconstruction strings → long stem table ────────────────────────────
-# Each row in post_full holds a 'recon' string of the form
-# "StemPaths:ReconstructedStemID;StemPaths:ReconstructedStemID;..." encoding the
-# identity assignment for every stem observation in the pre-anchor DP segment.
-# parse_recon() expands one string into one row per stem, keyed by StemPaths.
-# The resulting all_paths table has one row per treeID × path × stem observation
-# before the DBH merge.
-all_paths <- rbindlist(mapply(
-    function(grp, tid, pidx, pprob, recon_str) {
-        dt <- parse_recon(recon_str)
-        dt[, `:=`(group_id = grp, treeID = tid, path_idx = pidx, path_prob = pprob)]
-        dt
-    },
-    post_full$group_id, post_full$treeID, post_full$path_idx,
-    post_full$path_prob, post_full$recon,
-    SIMPLIFY = FALSE
+# ---- 4.2 Observation universe of the multi-path trees ----------------------
+# Every measured observation of these trees in ALL censuses. Paths cover the
+# DP window (at most up to the anchor); post-anchor observations (confirmed
+# identities) are spliced in below with the exported links, so every interval
+# and stock of a sampled tree is computed from one consistent set of stems.
+# `oid` identifies an observation independently of StemPaths.
+U <- stem_obs[
+    treeID %in% multi_trees,
+    .(treeID, xstem = stemID, CensusID, StemPaths, dbh, t, quadrat)
+]
+# Trees without a quadrat (no coordinates) are not in `rec`, so they have no
+# observations here and nothing to sample; they are reported, not used.
+no_obs_trees <- setdiff(multi_trees, U$treeID)
+multi_trees <- setdiff(multi_trees, no_obs_trees)
+multi <- multi[treeID %in% multi_trees]
+cat("[BA] multi-path trees without analysed observations (no quadrat):", length(no_obs_trees), "\n")
+U[, oid := .I]
+setkey(U, treeID, StemPaths)
+in_story <- unique(parts[, .(treeID, StemPaths)])[U, on = .(treeID, StemPaths), nomatch = 0L]$oid
+U[, story := oid %in% in_story]
+
+# Story window per tree: census range of its measured observations in paths.
+win <- U[story == TRUE, .(wmin = min(CensusID), wmax = max(CensusID)), by = treeID]
+U <- win[U, on = "treeID"]
+U[, position := fcase(
+    story == TRUE, "in story",
+    is.na(wmin), "tree without story overlap",
+    CensusID < wmin, "before window",
+    CensusID > wmax, "after window",
+    default = "inside window, missing"
+)]
+
+# Trees that cannot be spliced safely fall back to the exported reconstruction.
+fallback_trees <- unique(U[position %in% c("inside window, missing", "tree without story overlap"), treeID])
+
+# ---- 4.3 Splice: complete every path with the stage-2 links ----------------
+# An observation outside the story window joins the path stem holding its
+# exported stem-mate at the nearest window edge: the last in-story observation
+# of the same exported stem (for later censuses) or the first one (for earlier
+# censuses). Exported stems without any in-story observation keep their own
+# label ("x" + exported stem).
+edge_obs <- U[story == TRUE, .(
+    first_in = oid[which.min(CensusID)],
+    last_in = oid[which.max(CensusID)]
+), by = .(treeID, xstem)]
+outside <- U[position %in% c("before window", "after window") & !treeID %in% fallback_trees]
+outside <- edge_obs[outside, on = .(treeID, xstem)]
+outside[, anchor_oid := fifelse(position == "after window", last_in, first_in)]
+
+# Story labels per path, keyed by observation id (only measured observations).
+story_lab <- parts[U[story == TRUE & !treeID %in% fallback_trees, .(treeID, StemPaths, oid, CensusID, dbh, t, quadrat)],
+    on = .(treeID, StemPaths), nomatch = 0L
+][, .(treeID, path_idx, oid, lab, CensusID, dbh, t, quadrat)]
+
+anchored <- story_lab[, .(treeID, path_idx, anchor_oid = oid, lab)][
+    outside[!is.na(anchor_oid), .(treeID, oid, anchor_oid, CensusID, dbh, t, quadrat)],
+    on = .(treeID, anchor_oid), allow.cartesian = TRUE, nomatch = 0L
+][, .(treeID, path_idx, oid, lab, CensusID, dbh, t, quadrat)]
+
+own_stem <- unique(multi[!treeID %in% fallback_trees, .(treeID, path_idx)])[
+    outside[is.na(anchor_oid), .(treeID, oid, lab = paste0("x", xstem), CensusID, dbh, t, quadrat)],
+    on = "treeID", allow.cartesian = TRUE, nomatch = 0L
+]
+
+comp <- rbindlist(list(story_lab, anchored, own_stem), use.names = TRUE)
+rm(anchored, own_stem, edge_obs)
+
+# A spliced path must never hold two observations of one stem in one census.
+dup_trees <- comp[, .N, by = .(treeID, path_idx, lab, CensusID)][N > 1L, unique(treeID)]
+if (length(dup_trees) > 0L) {
+    fallback_trees <- union(fallback_trees, dup_trees)
+    comp <- comp[!treeID %in% dup_trees]
+}
+sampled_trees <- setdiff(multi_trees, fallback_trees)
+
+# Every completed path holds exactly the tree's measured observations.
+n_expect <- U[treeID %in% sampled_trees, .N, by = treeID]
+n_have <- comp[, .N, by = .(treeID, path_idx)]
+cov_chk <- n_expect[n_have, on = "treeID"][N != i.N]
+bio_check(
+    nrow(cov_chk) == 0L &&
+        nrow(n_have) == multi[treeID %in% sampled_trees, .N],
+    "Every completed path contains exactly its tree's measured observations (all censuses)",
+    examples = cov_chk$treeID, n_bad = uniqueN(cov_chk$treeID)
+)
+rm(n_expect, n_have, cov_chk)
+
+cat(sprintf(
+    "[BA] identity MC: %d trees sampled | %d fallback (exported reconstruction) | spliced observations: %d before / %d after the story window\n",
+    length(sampled_trees), length(fallback_trees),
+    U[position == "before window" & treeID %in% sampled_trees, .N],
+    U[position == "after window" & treeID %in% sampled_trees, .N]
 ))
 
-# Create compound stemID: "treeID_ReconstructedStemID". Used as a within-tree
-# stem identifier when merging across censuses (two ReconstructedStemIDs from
-# different trees could collide numerically; prefixing with treeID avoids this).
-all_paths[, stemID := paste(treeID, stemID, sep = "_")]
+# ---- 4.4 Gap filling, per-path stocks and fluxes ----------------------------
+# An exported stem alive (A) without a DBH outside its measured span stays
+# alive in every path: the census joins the path stem that holds the exported
+# stem's last measurement (after the span) or first one (before it), as in the
+# splice. Censuses between two measurements are gap-filled anyway.
+xspan <- U[treeID %in% sampled_trees, .(
+    first_oid = oid[which.min(CensusID)], last_oid = oid[which.max(CensusID)],
+    c_min = min(CensusID), c_max = max(CensusID)
+), by = .(treeID, xstem)]
+path_alive <- xspan[alive_nodbh[, .(treeID, xstem = stemID, CensusID)], on = .(treeID, xstem), nomatch = 0L][
+    CensusID > c_max | CensusID < c_min
+][, anchor_oid := fifelse(CensusID > c_max, last_oid, first_oid)]
+path_alive <- unique(comp[, .(treeID, path_idx, anchor_oid = oid, lab)][
+    path_alive[, .(treeID, anchor_oid, CensusID)],
+    on = .(treeID, anchor_oid), allow.cartesian = TRUE, nomatch = 0L
+][, .(treeID, path_idx, lab, CensusID)])
+rm(xspan)
 
-# ── Merge with census observations to obtain DBH → BA per path × census ──────
-# StemPaths in all_paths is the integer key used inside the 'recon' string. It maps
-# to rec$StemPaths which indexes the original census row. Join key: (treeID,
-# StemPaths). Do NOT join on stemID — all_paths$stemID is the compound stemID
-# ("treeID_stemID"); they are in different namespaces.
-obs_lookup <- rec[
-    !is.na(treeID) & !is.na(StemPaths),
-    .(quadrat, treeID, StemPaths, CensusID, dbh)
+comp_f <- fill_stem_gaps(comp, c("treeID", "path_idx", "lab"), tree_dates, alive = path_alive)
+comp_f[, BA := ba_m2(dbh)]
+
+# Measured stock per tree and census must be identical in every path.
+meas_path <- comp_f[interpolated == FALSE, .(ba = fsum(BA)), by = .(treeID, path_idx, CensusID)]
+meas_exp <- U[treeID %in% sampled_trees, .(ba_exp = fsum(ba_m2(dbh))), by = .(treeID, CensusID)]
+inv <- meas_exp[meas_path, on = .(treeID, CensusID)][abs(ba - ba_exp) > 1e-9]
+bio_check(
+    nrow(inv) == 0L,
+    "Measured BA stock per tree and census is identical in every path (identity cannot change measurements)",
+    examples = inv$treeID, n_bad = uniqueN(inv$treeID)
+)
+rm(meas_path, meas_exp, inv)
+
+# All intervals and censuses of sampled trees come from the completed paths.
+# After the anchor, every observation is linked by the (confirmed) exported
+# links, so post-anchor values equal the exported ones except where a gap
+# spanning the anchor is interpolated from a path-specific neighbour.
+post_decomp <- decompose_intervals(
+    comp_f, census_pairs,
+    stem_cols = c("quadrat", "treeID", "path_idx", "lab"),
+    tree_cols = c("quadrat", "treeID", "path_idx")
+)
+setkey(post_decomp, treeID, path_idx)
+tree_stock <- comp_f[, .(TotalBA_m2 = fsum(BA)), by = .(quadrat, treeID, path_idx, CensusID)]
+setkey(tree_stock, treeID, path_idx)
+cat("[BA] per-path decompositions:", nrow(post_decomp), "rows | per-path stocks:", nrow(tree_stock), "rows\n")
+
+# ---- 4.5 Fixed component (identical in every realization) ------------------
+# Trees without identity uncertainty (single path, no posterior, fallback):
+# exported reconstruction for every census and interval.
+fixed_flux_q <- map_tree_change[
+    !treeID %in% sampled_trees,
+    lapply(.SD, fsum),
+    .SDcols = flux_cols, by = .(quadrat, CensusID_from, CensusID_to)
 ]
-all_paths <- merge(all_paths, obs_lookup, by = c("treeID", "StemPaths"), all.x = TRUE)
-all_paths <- all_paths[!is.na(dbh)] # drop path rows with no observed DBH
-all_paths[, `:=`(BA = ba_m2(dbh), dbh = NULL)]
-rm(obs_lookup)
-gc()
-setkey(all_paths, treeID)
-cat(
-    "[BA] Parsed path observations:", nrow(all_paths), "rows for",
-    uniqueN(all_paths$treeID), "treeIDs\n"
-)
-
-# ── Posterior census-pair decomposition (PRE-ANCHOR INTERVALS ONLY) ───────────
-# Posterior paths encode identity assignments only for censuses up to and
-# including ANCHOR_START_CENSUS (the DP segment). Running decompose_ba() over
-# post-anchor intervals would find zero rows in 'st' for C8/C9 (no obs_row_ids
-# in all_paths for those censuses), classifying every C7 stem as dead and every
-# C8 recruit from scratch — a pure artifact, not uncertainty.
-# Solution: restrict to census pairs where CensusID_to <= ANCHOR_START_CENSUS.
-pre_anchor_pairs <- census_pairs[CensusID_to <= ANCHOR_START_CENSUS]
-post_decomp <- rbindlist(lapply(seq_len(nrow(pre_anchor_pairs)), function(i) {
-    cf <- pre_anchor_pairs$CensusID_from[i]
-    ct <- pre_anchor_pairs$CensusID_to[i]
-    sf <- all_paths[CensusID == cf, .(group_id, quadrat, treeID, path_idx, stemID, BA_from = BA)]
-    st <- all_paths[CensusID == ct, .(group_id, quadrat, treeID, path_idx, stemID, BA_to = BA)]
-    d <- decompose_ba(
-        merge(sf, st, by = c("group_id", "quadrat", "treeID", "path_idx", "stemID"), all = TRUE),
-        by_cols = c("group_id", "quadrat", "treeID", "path_idx")
-    )
-    d[, `:=`(CensusID_from = cf, CensusID_to = ct)]
-}))
-post_decomp[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
-cat(
-    "[BA] Posterior decompositions:", nrow(post_decomp),
-    "rows (pre-anchor intervals C1–C", ANCHOR_START_CENSUS, " only)\n"
-)
-
-# ── Per-path tree-level BA stocks (PRE-ANCHOR ONLY) ───────────────────────────
-# Restrict to pre-anchor censuses. Post-anchor census stocks for uncertain trees
-# are deterministic and will be pulled from tree_census in the realization loop.
-tree_stock <- all_paths[CensusID <= ANCHOR_START_CENSUS,
-    .(TotalBA_m2 = fsum(BA, na.rm = TRUE)),
-    by = .(group_id, quadrat, treeID, path_idx, CensusID)
+fixed_stock_q <- tree_census[
+    !treeID %in% sampled_trees,
+    .(TotalBA_m2 = fsum(TotalBA_m2)),
+    by = .(quadrat, CensusID)
 ]
-cat("[BA] Per-path tree stocks:", nrow(tree_stock), "rows (pre-anchor censuses)\n")
 
-# ── Partition trees: single-path (fixed) vs multi-path (uncertain) ────────────
-# fixed component : trees with one path only → MAP values used unchanged.
-# variable component: trees with ≥ 2 paths → one path sampled per realization.
-path_group_sizes <- post_full[, .N, by = group_id]
-multi_path_groups <- path_group_sizes[N > 1L, group_id]
-uncertain_treeIDs <- unique(post_full[group_id %in% multi_path_groups, treeID])
-fixed_tree_change <- map_change[!treeID %in% uncertain_treeIDs]
-fixed_tree_change[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
-fixed_stock <- tree_census[!treeID %in% uncertain_treeIDs]
+# ---- 4.6 Realizations ------------------------------------------------------
+# One path per sampled tree and realization, drawn by weight (inverse-CDF on
+# the cumulative weights of the tree's paths).
+wtab <- multi[treeID %in% sampled_trees, .(treeID, path_idx, w)]
+setorder(wtab, treeID, path_idx)
+wtab[, cw := cumsum(w), by = treeID]
+wtab[, cw := cw / cw[.N], by = treeID]
+wtab[, cw_prev := shift(cw, fill = 0), by = treeID]
+tree_index <- wtab[, .GRP, by = treeID]
+wtab[tree_index, on = "treeID", tidx := i.GRP]
+n_sampled <- nrow(tree_index)
 
-cat(
-    "[BA] Uncertain groups:", length(multi_path_groups),
-    "; uncertain treeIDs:", length(uncertain_treeIDs),
-    "; fixed treeIDs:", uniqueN(fixed_tree_change$treeID), "\n"
-)
-
-# ── Post-anchor intervals for uncertain trees (deterministic) ─────────────────
-# Censuses after ANCHOR_START_CENSUS have confirmed stemID — every path
-# for these trees gives the same stem assignment. Their fluxes therefore equal
-# MAP fluxes exactly. We pull MAP values for UNCERTAIN trees only from
-# map_change (fixed trees are already fully covered by fixed_tree_change).
-post_anchor_pairs <- census_pairs[CensusID_from >= ANCHOR_START_CENSUS]
-if (nrow(post_anchor_pairs) > 0L) {
-    post_decomp_postanchor <- map_change[
-        treeID %in% uncertain_treeIDs &
-            CensusID_from %in% post_anchor_pairs$CensusID_from
-    ]
-    post_decomp_postanchor[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
-    cat(
-        "[BA] Post-anchor intervals stored for", nrow(post_anchor_pairs),
-        "census pair(s) (uncertain trees only, deterministic MAP values)\n"
-    )
-} else {
-    post_decomp_postanchor <- data.table()
+add_fixed <- function(var_dt, fixed_dt, by_cols, value_cols) {
+    out <- rbindlist(list(fixed_dt, var_dt), use.names = TRUE, fill = TRUE)
+    out[, lapply(.SD, fsum), .SDcols = value_cols, by = by_cols]
 }
 
-# Column sets for consistent subset-and-bind inside the realization loop.
-tree_fixed_cols <- c("quadrat", "treeID", "CensusID_from", "CensusID_to", flux_cols)
-stock_cols <- c("quadrat", "treeID", "CensusID", "TotalBA_m2")
-
-out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
 realization_dir <- file.path(out_dir, "ba_mc_realizations_treeID")
-if (!dir.exists(realization_dir)) dir.create(realization_dir, recursive = TRUE)
+if (write_tree_realizations && !dir.exists(realization_dir)) dir.create(realization_dir, recursive = TRUE)
 
+set.seed(mc_seed)
 all_quadrat_realizations <- vector("list", K_realizations)
 all_stock_realizations <- vector("list", K_realizations)
-k_trees_NtreeID <- vector("list", K_realizations)
-k_stock_NtreeID <- vector("list", K_realizations)
-# Pre-draw all path selections so each group gets exactly one path
-# per realization, sampled proportionally to path_prob.
-path_opts <- post_full[group_id %in% multi_path_groups, .(group_id, path_idx, path_prob)]
-sampled_paths <- path_opts[,
-    .(path_idx = sample(path_idx, K_realizations, replace = TRUE, prob = path_prob)),
-    by = group_id
-]
-sampled_paths[, realization := seq_len(.N), by = group_id]
-setkey(sampled_paths, group_id, realization)
-
 for (k in seq_len(K_realizations)) {
-    if (k == 1L || k %% 10L == 0L) cat(sprintf("  Realization %d / %d\n", k, K_realizations))
-    # Select the sampled path for each uncertain group in this realization.
-    sel <- sampled_paths[.(k), on = "realization", .(group_id, path_idx)]
-    # ── Pre-anchor sampled fluxes and stocks ──────────────────────────────────
-    k_var <- post_decomp[sel, on = .(group_id, path_idx), nomatch = 0L]
-    k_var_stk <- tree_stock[sel, on = .(group_id, path_idx), nomatch = 0L]
-    # ── Tree-level flux table for this realization ────────────────────────────
-    # Combines three components:
-    #   (1) fixed_tree_change : single-path trees — all census intervals, MAP.
-    #   (2) k_var             : uncertain trees, pre-anchor intervals, sampled path.
-    #   (3) post-anchor rows  : uncertain trees, post-anchor intervals, MAP
-    #       (post_decomp_postanchor). These are deterministic because stemID
-    #       is confirmed; every realization contributes the same MAP flux here.
-    k_postanchor_flux <- if (nrow(post_decomp_postanchor) > 0L) {
-        post_decomp_postanchor[, ..tree_fixed_cols]
-    } else {
-        NULL
+    if (k == 1L || k %% 100L == 0L) cat(sprintf("  Realization %d / %d\n", k, K_realizations))
+    u <- runif(n_sampled)
+    ur <- u[wtab$tidx]
+    sel <- wtab[ur > cw_prev & ur <= cw, .(treeID, path_idx)]
+    k_flux <- post_decomp[sel, on = .(treeID, path_idx), nomatch = 0L]
+    k_flux_q <- k_flux[, lapply(.SD, fsum), .SDcols = flux_cols, by = .(quadrat, CensusID_from, CensusID_to)]
+    all_quadrat_realizations[[k]] <- add_fixed(k_flux_q, fixed_flux_q, c("quadrat", "CensusID_from", "CensusID_to"), flux_cols)[, realization := k]
+    k_stock_q <- tree_stock[sel, on = .(treeID, path_idx), nomatch = 0L][, .(TotalBA_m2 = fsum(TotalBA_m2)), by = .(quadrat, CensusID)]
+    all_stock_realizations[[k]] <- add_fixed(k_stock_q, fixed_stock_q, c("quadrat", "CensusID"), "TotalBA_m2")[, realization := k]
+    if (write_tree_realizations) {
+        k_tree <- rbindlist(list(
+            map_tree_change[!treeID %in% sampled_trees, c("quadrat", "treeID", "CensusID_from", "CensusID_to", flux_cols), with = FALSE],
+            k_flux[, c("quadrat", "treeID", "CensusID_from", "CensusID_to", flux_cols), with = FALSE]
+        ))[, realization := k]
+        write_feather(k_tree, file.path(realization_dir, sprintf("ba_mc_realization_treeID_%04d.feather", k)))
     }
-    k_tree <- rbindlist(
-        c(
-            list(
-                fixed_tree_change[, ..tree_fixed_cols],
-                k_var[, ..tree_fixed_cols]
-            ),
-            if (!is.null(k_postanchor_flux)) list(k_postanchor_flux) else list()
-        ),
-        use.names = TRUE, fill = TRUE
-    )
-    k_tree[, realization := k]
-    write_feather(
-        k_tree,
-        file.path(realization_dir, sprintf("ba_mc_realization_treeID_%03d.feather", k))
-    )
-    # Quadrat-level: aggregate tree fluxes within each quadrat × interval.
-    k_trees_NtreeID[[k]] <- k_tree[,
-        .(N_unique_treeid = uniqueN(treeID)),
-        by = .(CensusID_from, CensusID_to)
-    ]
-    all_quadrat_realizations[[k]] <- k_tree[,
-        lapply(.SD, fsum, na.rm = TRUE),
-        .SDcols = flux_cols,
-        by = .(quadrat, CensusID_from, CensusID_to)
-    ][, realization := k]
-    rm(k_tree)
-    gc()
-    # ── Stock-level table for this realization ────────────────────────────────
-    # (1) fixed_stock    : single-path trees, all censuses, MAP.
-    # (2) k_var_stk      : uncertain trees, pre-anchor censuses, sampled path.
-    # (3) post-anchor stocks: uncertain trees, post-anchor censuses (C8, C9, …).
-    #     These come from tree_census (MAP) because stemID is confirmed;
-    #     every realization gives the same BA stock for these censuses.
-    k_postanchor_stk <- tree_census[
-        treeID %in% uncertain_treeIDs & CensusID > ANCHOR_START_CENSUS,
-        ..stock_cols
-    ]
-    k_stk <- rbindlist(list(
-        fixed_stock[, ..stock_cols],
-        k_var_stk[, ..stock_cols],
-        k_postanchor_stk
-    ), use.names = TRUE, fill = TRUE)
-    k_stock_NtreeID[[k]] <- k_stk[, .(N_unique_treeid = uniqueN(treeID)), by = CensusID]
-    all_stock_realizations[[k]] <- k_stk[,
-        .(TotalBA_m2 = fsum(TotalBA_m2, na.rm = TRUE)),
-        by = .(quadrat, CensusID)
-    ][, realization := k]
-    rm(k_stk, k_var, k_var_stk, k_postanchor_stk)
-    gc()
 }
 all_quadrat_realizations <- rbindlist(all_quadrat_realizations)
 all_stock_realizations <- rbindlist(all_stock_realizations)
-
 all_quadrat_realizations[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
-cat(
-    "[BA] Realization loop complete:", K_realizations, "draws;",
-    nrow(all_quadrat_realizations), "quadrat-flux rows;",
-    nrow(all_stock_realizations), "stock rows\n"
-)
+cat("[BA] realizations:", K_realizations, "| quadrat-flux rows:", nrow(all_quadrat_realizations), "| stock rows:", nrow(all_stock_realizations), "\n")
 
-# ── MC summary tables: empirical 95 % CI collapsed across realizations ────────
-# all_quadrat_summary – quadrat × interval mean/sd/95 % CI for each flux component.
-# all_stock_summary   – quadrat × census mean/sd/95 % CI for BA stock.
-all_quadrat_summary <- summarise_flux(
-    all_quadrat_realizations,
-    c("quadrat", "CensusID_from", "CensusID_to")
+# ---- 4.7 Accounting and invariance checks ----------------------------------
+plot_flux_real <- all_quadrat_realizations[, lapply(.SD, fsum), .SDcols = c(flux_cols, "DeltaBA_total"), by = .(CensusID_from, CensusID_to, realization)]
+plot_stock_real <- all_stock_realizations[, .(TotalBA_m2 = fsum(TotalBA_m2)), by = .(CensusID, realization)]
+acc <- plot_stock_real[, .(CensusID_to = CensusID, realization, s_to = TotalBA_m2)][
+    plot_stock_real[, .(CensusID_from = CensusID, realization, s_from = TotalBA_m2)][
+        plot_flux_real,
+        on = .(CensusID_from, realization)
+    ],
+    on = .(CensusID_to, realization)
+]
+acc_err <- acc[, max(abs(DeltaBA_total - (s_to - s_from)))]
+bio_check(
+    acc_err < 1e-6,
+    sprintf("In every realization, Growth + Loss + Gain equals the stock change (max error %.2e m2)", acc_err)
 )
+map_plot_stock <- map_quadrat_stock[, .(map = fsum(TotalBA_m2)), by = CensusID]
+stock_dev <- plot_stock_real[map_plot_stock, on = "CensusID"][, max(abs(TotalBA_m2 - map))]
+cat(sprintf("[BA] largest |MC plot stock - exported stock| across realizations: %.4f m2 (only alive-but-unmeasured stems can differ)\n", stock_dev))
+
+# ---- 4.8 Summaries and outputs ----------------------------------------------
+all_quadrat_summary <- summarise_flux(all_quadrat_realizations, c("quadrat", "CensusID_from", "CensusID_to"))
 all_stock_summary <- all_stock_realizations[,
     {
         q <- fquantile(TotalBA_m2, c(0.025, 0.975))
-        .(
-            TotalBA_mean = fmean(TotalBA_m2), TotalBA_sd = fsd(TotalBA_m2),
-            TotalBA_lwr  = q[1L],             TotalBA_upr = q[2L]
-        )
+        .(TotalBA_mean = fmean(TotalBA_m2), TotalBA_sd = fsd(TotalBA_m2), TotalBA_lwr = q[1L], TotalBA_upr = q[2L])
     },
     by = .(quadrat, CensusID)
 ]
-
-# ---- Write outputs to disk --------------------------------------------------
-out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
-if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 write_feather(map_tree_change, file.path(out_dir, "ba_map_change_treeID.feather"))
 write_feather(map_quadrat_change, file.path(out_dir, "ba_map_change_quadrat.feather"))
 write_feather(map_quadrat_stock, file.path(out_dir, "ba_map_stock_quadrat.feather"))
-write_feather(all_quadrat_realizations, file.path(out_dir, "ba_mc_realizations_quadrat.feather"))
-write_feather(all_stock_realizations, file.path(out_dir, "ba_mc_realizations_stock_quadrat.feather"))
+if (write_quadrat_realizations) {
+    write_feather(all_quadrat_realizations, file.path(out_dir, "ba_mc_realizations_quadrat.feather"))
+    write_feather(all_stock_realizations, file.path(out_dir, "ba_mc_realizations_stock_quadrat.feather"))
+}
 write_feather(all_quadrat_summary, file.path(out_dir, "ba_mc_summary_quadrat.feather"))
 write_feather(all_stock_summary, file.path(out_dir, "ba_mc_summary_stock_quadrat.feather"))
-cat("[BA] Outputs written to", out_dir, "\n")
+cat("[BA] outputs written to", out_dir, "\n")
+
+# ---- 4.9 Diagnostics --------------------------------------------------------
+# Monte Carlo error of the plot-level 95 % interval bounds: bootstrap over
+# realizations.
+per_ha <- 1 / 50 # plot total (m2) -> per hectare
+mc_quantile_se <- function(x, B = 500L) {
+    qs <- replicate(B, fquantile(sample(x, replace = TRUE), c(0.025, 0.975)))
+    c(se_lwr = sd(qs[1, ]), se_upr = sd(qs[2, ]), width = unname(diff(fquantile(x, c(0.025, 0.975)))))
+}
+flux_long_real <- melt(plot_flux_real, id.vars = c("CensusID_from", "CensusID_to", "realization"), variable.name = "Component")
+mc_err <- flux_long_real[, as.list(mc_quantile_se(value)), by = .(CensusID_from, Component)]
+mc_err[, rel_se := fifelse(width > 0, pmax(se_lwr, se_upr) / width, 0)]
+
+# Posterior probability of the exported partition (label-invariant): the
+# weight of the paths that group the tree's observations exactly as the R
+# tables do.
+sig_path <- comp[order(treeID, path_idx, oid)][, canon := match(lab, unique(lab)), by = .(treeID, path_idx)][
+    , .(sig = paste(canon, collapse = ",")),
+    by = .(treeID, path_idx)
+]
+sig_exp <- U[treeID %in% sampled_trees][order(treeID, oid)][, canon := match(xstem, unique(xstem)), by = treeID][
+    , .(sig_exp = paste(canon, collapse = ",")),
+    by = treeID
+]
+sig_path <- multi[, .(treeID, path_idx, w)][sig_path, on = .(treeID, path_idx)]
+exp_prob <- sig_exp[sig_path, on = "treeID"][, .(p_exported = sum(w[sig == sig_exp]), p_best = max(w)), by = treeID]
+
+splice_methods <- NULL
+if (report_splice_methods) {
+    splice_methods <- s2[U[position %in% c("before window", "after window") & treeID %in% sampled_trees], on = .(treeID, StemPaths), nomatch = NA][
+        , .N,
+        by = .(position, method)
+    ][order(position, -N)]
+}
+rm(s2)
+
+diag_line("")
+diag_line("# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated ", format(Sys.time()))
+diag_line("K_realizations = ", K_realizations, " | seed = ", mc_seed, " | anchor census = ", ANCHOR_START_CENSUS)
+diag_line("")
+diag_line("## Trees")
+diag_line("trees with a posterior: ", uniqueN(post_full$treeID))
+diag_line("  single path (no identity uncertainty): ", post_full[n_paths == 1L, uniqueN(treeID)])
+diag_line(
+    "  multi path, sampled: ", length(sampled_trees),
+    sprintf(" (of which probabilistic engine: %d)", length(intersect(sampled_trees, prob_trees)))
+)
+diag_line("  multi path, fallback to exported reconstruction: ", length(fallback_trees))
+if (!sample_probabilistic_trees) {
+    diag_line("  multi path, probabilistic engine, held at the exported reconstruction (not sampled): ", length(prob_trees))
+}
+diag_line("  multi path, not analysed (no quadrat / no measured observation): ", length(no_obs_trees))
+diag_line("analysed trees without a posterior (single-stem tags, exported reconstruction): ", length(setdiff(unique(rec$treeID), post_full$treeID)))
+diag_line("")
+diag_line("## Measured observations of multi-path trees (all censuses)")
+for (r in seq_len(nrow(U[, .N, by = position]))) {
+    p <- U[, .N, by = position][r]
+    diag_line(sprintf("  %-28s %8d", p$position, p$N))
+}
+if (!is.null(splice_methods)) {
+    diag_line("spliced observations by stage-2 method:")
+    for (r in seq_len(nrow(splice_methods))) {
+        diag_line(sprintf("  %-14s %-28s %6d", splice_methods$position[r], splice_methods$method[r], splice_methods$N[r]))
+    }
+}
+diag_line("")
+diag_line("## Exported reconstruction vs posterior (sampled trees)")
+diag_line(sprintf("mean posterior probability of the exported partition: %.3f", exp_prob[, mean(p_exported)]))
+diag_line(sprintf("share of trees where the exported partition is among the sampled paths: %.3f", exp_prob[, mean(p_exported > 0)]))
+diag_line(sprintf("share of trees where it is the most probable path: %.3f", exp_prob[, mean(p_exported >= p_best - 1e-12)]))
+diag_line("")
+diag_line("## Invariance")
+diag_line(sprintf("largest |MC plot stock - exported stock|: %.6f m2 (alive-but-unmeasured stems only)", stock_dev))
+diag_line(sprintf("largest accounting error (Growth + Loss + Gain vs stock change): %.2e m2", acc_err))
+diag_line("")
+diag_line("## Monte Carlo error of the plot-level 95 % interval bounds (m2 per plot)")
+for (r in seq_len(nrow(mc_err))) {
+    e <- mc_err[r]
+    diag_line(sprintf(
+        "  C%d->C%d %-14s width %9.4f | SE(lwr) %8.4f | SE(upr) %8.4f | max SE / width %.3f",
+        e$CensusID_from, e$CensusID_from + 1L, e$Component, e$width, e$se_lwr, e$se_upr, e$rel_se
+    ))
+}
+cat("[BA] diagnostics written to", diag_file, "\n")
 
 # ============================================================
-# SECTION 5: Figures
+# SECTION 5: Figures (identity uncertainty only)
 # ============================================================
-# Three figures compare MAP estimates against MC uncertainty using a consistent
-# visual grammar throughout:
-#   MAP  – bold solid line (+ bootstrap 95 % CI ribbon for stocks)
-#   MC   – empirical 95 % CI ribbon + dashed center line
-#            (mean or median, per mc_center)
-#
-# Figure 1 — Forest-level BA stock per hectare across all censuses.
-#   MC layers are restricted to censuses <= ANCHOR_START_CENSUS because
-#   post-anchor census stocks for uncertain trees are deterministic (no
-#   identity uncertainty) and the spaghetti would collapse to a single line.
-#
-# Figure 2 — Forest-level BA flux components (Growth, Loss, Gain, Net ΔBA)
-#   per hectare per year across census intervals, faceted by component.
-#   MC and MAP layers are both restricted to pre-anchor intervals
-#   (CensusID_from < ANCHOR_START_CENSUS). Post-anchor intervals have no path
-#   uncertainty; including them would place MAP and MC on top of each other
-#   trivially and inflate the apparent certainty of the pre-anchor estimates.
-#
-# Figure 3 — Individual-tree BA trajectories for five focal trees,
-#   one tree per page in a single multi-page PDF. Each page overlays the
-#   observed stem BA record (path 0, charcoal) against all posterior paths
-#   (coloured lines), faceted by reconstruction path.
-#
-# KEY DESIGN RULES (applied uniformly):
-# • MAP center = fmean() across quadrats. Using fmedian() would yield ~0 for
-#   zero-inflated Loss/Gain distributions (most quadrats have no deaths or
-#   recruits per interval), placing the MAP line far below the MC ribbon.
-# • mc_center (mean or median) controls only the MC dashed summary line.
-# • All MC layers respect ANCHOR_START_CENSUS filter.
+# Exported reconstruction – bold solid line.
+# Identity MC            – 95 % interval ribbon across realizations + dashed
+#                          center line (mean or median, per mc_center).
+# Forest-level values are plot totals divided by the plot area (50 ha).
+# Post-anchor censuses/intervals have zero identity uncertainty by construction.
 # ============================================================
 
-library(scales)
-
-# ── Scaling & palettes ───────────────────────────────────────────────────────
-scale_ha <- 10000 / (20 * 20) # 20 m × 20 m quadrats → per-hectare conversion
-
-# Two-source palette (MAP vs MC)
 pal <- c(MAP = "#1b7a56", MC = "#c4520a")
-
-# Four flux-component palette
 flux_pal <- c(
     Growth_BA     = "#1b7a56",
     Loss_BA       = "#c4520a",
     Gain_BA       = "#5b57a8",
     DeltaBA_total = "#c4186a"
 )
+COL_OBS <- "#3d3d3a" # charcoal → exported reconstruction
+COL_MOD <- "#2e9e75" # green    → posterior paths
 
-# Individual-tree palette
-COL_OBS <- "#3d3d3a" # charcoal → observed path (path 0)
-COL_MOD <- "#2e9e75" # green    → imputed paths
-
-# ── Shared theme ─────────────────────────────────────────────────────────────
 theme_forest <- function(base_size = 11) {
     theme_minimal(base_size = base_size) +
         theme(
@@ -719,129 +891,36 @@ theme_forest <- function(base_size = 11) {
         )
 }
 
-# Shared guide: ribbon swatch + line inside the legend key
-guide_two_source <- function() {
-    guides(
-        colour = guide_legend(override.aes = list(linewidth = 1.2, linetype = c("solid", "dashed"))),
-        fill   = guide_legend(override.aes = list(alpha = 0.35))
-    )
-}
-
-# ── center_fun: summarises the MC distribution across realizations ────────────
-# Applied to the 250 per-realization forest-level means (one value per draw).
-# NOTE: this is NOT used for the MAP — see the design rule in the section header.
 center_fun <- function(x) {
     if (mc_center == "median") fmedian(x, na.rm = TRUE) else fmean(x, na.rm = TRUE)
 }
 
-# ── Figure 1: Forest-level BA stock per hectare ───────────────────────────────
-
-# BUG FIX 1 & 2 — MAP stock bootstrap:
-# Previously used center_fun() for both the center statistic and the bootstrap
-# statistic. When mc_center == "median" this gave fmedian across raw per-quadrat
-# BA values (one value per quadrat, ~1250 values in BCI). The MC center is
-# center_fun() of 250 per-realization *means* — a distribution of means that
-# clusters tightly near the overall forest mean by the CLT. The two "medians"
-# measure completely different things and for skewed quadrat distributions they
-# diverge badly, placing the MAP line far outside the MC ribbon.
-# Fix: the MAP forest-level summary is always fmean() across quadrats, matching
-# exactly what each MC realization computes (fmean across quadrats). The
-# mc_center choice then only governs the MC posterior summary.
-map_stock_boot <- map_quadrat_stock[
-    , .(TotalBA_ha = TotalBA_m2 * scale_ha),
-    by = .(quadrat, CensusID)
-][,
-    {
-        v <- TotalBA_ha
-        n <- length(v)
-        B <- 1000L
-        bm <- vapply(
-            seq_len(B),
-            function(i) fmean(v[sample.int(n, n, replace = TRUE)]), # FIX: was center_fun
-            numeric(1L)
-        )
-        .(
-            center = fmean(v), # FIX: was center_fun(v)
-            lwr = fquantile(bm, 0.025),
-            upr = fquantile(bm, 0.975)
-        )
-    },
+# ── Figure 1: BA stock per hectare ──────────────────────────────────────────────
+stock_exp <- map_plot_stock[, .(CensusID, value = map * per_ha)][dates[, .(CensusID, Year)], on = "CensusID"]
+stock_mc <- plot_stock_real[, .(value = TotalBA_m2 * per_ha), by = .(CensusID, realization)][,
+    .(center = center_fun(value), lwr = fquantile(value, 0.025), upr = fquantile(value, 0.975)),
     by = CensusID
-]
-map_stock_boot <- merge(map_stock_boot, dates[, .(CensusID, Year)], by = "CensusID")
-map_stock_boot <- map_stock_boot[CensusID >= first_plot_census]
-
-# MC: per-realization forest-level stock (mean per-ha across all quadrats).
-# Restrict to pre-anchor censuses (<=ANCHOR_START_CENSUS): post-anchor stocks
-# for uncertain trees are identical across paths (deterministic stemID),
-# so the spaghetti would collapse to a single line there — not informative.
-mc_stock_per_real <- all_stock_realizations[,
-    .(TotalBA_ha = fmean(TotalBA_m2 * scale_ha)),
-    by = .(CensusID, realization)
-]
-mc_stock_per_real <- merge(mc_stock_per_real, dates[, .(CensusID, Year)], by = "CensusID")
-mc_stock_per_real <- mc_stock_per_real[CensusID >= first_plot_census & CensusID <= ANCHOR_START_CENSUS]
-
-# MC: collapse K realization means to center + 95 % empirical CI.
-mc_stock_ci <- mc_stock_per_real[,
-    {
-        q <- fquantile(TotalBA_ha, c(0.025, 0.975))
-        .(center = center_fun(TotalBA_ha), lwr = q[1L], upr = q[2L])
-    },
-    by = CensusID
-]
-mc_stock_ci <- merge(mc_stock_ci, dates[, .(CensusID, Year)], by = "CensusID")
-mc_stock_ci <- mc_stock_ci[CensusID >= first_plot_census & CensusID <= ANCHOR_START_CENSUS]
+][dates[, .(CensusID, Year)], on = "CensusID"]
+stock_exp <- stock_exp[CensusID >= first_plot_census]
+stock_mc <- stock_mc[CensusID >= first_plot_census]
 
 fig1 <- ggplot() +
-    # # MC: spaghetti (one line per realization, pre-anchor censuses only)
-    # geom_line(
-    #     data = mc_stock_per_real,
-    #     aes(Year, TotalBA_ha, group = realization),
-    #     colour = pal["MC"], alpha = 0.1, linewidth = 0.25
-    # ) +
-    # MC: 95 % empirical CI ribbon (pre-anchor)
-    geom_ribbon(
-        data = mc_stock_ci,
-        aes(Year, ymin = lwr, ymax = upr, fill = "MC"),
-        alpha = 0.22
-    ) +
-    # MC: center line (dashed, pre-anchor)
-    geom_line(
-        data = mc_stock_ci,
-        aes(Year, center, colour = "MC"),
-        linewidth = 0.9, linetype = "dashed"
-    ) +
-    # MAP: bootstrap 95 % CI ribbon
-    geom_ribbon(
-        data = map_stock_boot,
-        aes(Year, ymin = lwr, ymax = upr, fill = "MAP"),
-        alpha = 0.22
-    ) +
-    # MAP: forest mean (solid, thicker — primary reference)
-    geom_line(
-        data = map_stock_boot,
-        aes(Year, center, colour = "MAP"),
-        linewidth = 1.4
-    ) +
+    geom_ribbon(data = stock_mc, aes(Year, ymin = lwr, ymax = upr, fill = "MC"), alpha = 0.25) +
+    geom_line(data = stock_mc, aes(Year, center, colour = "MC"), linewidth = 0.9, linetype = "dashed") +
+    geom_line(data = stock_exp, aes(Year, value, colour = "MAP"), linewidth = 1.4) +
     scale_colour_manual(
         "Estimate",
         values = pal,
-        labels = c(MAP = "MAP mean (bootstrap 95 % CI)", MC = "MC (empirical 95 % CI)")
+        labels = c(MAP = "Exported reconstruction", MC = "Identity MC (95 % interval)")
     ) +
-    scale_fill_manual(
-        "Estimate",
-        values = pal,
-        labels = c(MAP = "MAP mean (bootstrap 95 % CI)", MC = "MC (empirical 95 % CI)")
-    ) +
+    scale_fill_manual(values = pal, guide = "none") +
     scale_x_continuous(breaks = scales::pretty_breaks(5)) +
     scale_y_continuous(labels = scales::label_comma()) +
-    guide_two_source() +
     labs(
         title = "Forest-level BA stock per hectare",
         subtitle = sprintf(
-            "MAP: solid mean + bootstrap 95 %% CI  ·  MC: dashed %s + empirical 95 %% CI",
-            mc_center # mc_center governs only the MC dashed line, not the MAP
+            "Identity uncertainty only (%d realizations) · stock can vary only through alive-but-unmeasured stems",
+            K_realizations
         ),
         x = "Year",
         y = expression("BA (m"^2 ~ "ha"^
@@ -850,115 +929,40 @@ fig1 <- ggplot() +
             } * ")")
     ) +
     theme_forest()
-
 print(fig1)
 
-# ── Figure 2: Forest-level annual BA flux components per hectare ────────────
-# Flux components are annualised (divided by census interval length in years)
-# and scaled to per-hectare units. All MC and MAP layers are restricted to
-# pre-anchor intervals (CensusID_from < ANCHOR_START_CENSUS). Post-anchor
-# intervals (C7→C8, C8→C9) are excluded: their MC paths are deterministic
-# (zero identity uncertainty), so showing them would misleadingly suggest the
-# MC ribbon collapses post-C7 due to higher certainty rather than absence of
-# sampling. Forest-level values are always averaged with fmean() across
-# quadrats (see MAP design rule in Section 5 header).
-
+# ── Figure 2: annual BA flux components per hectare ────────────────────────────
 flux_labels <- c(
     Growth_BA     = "Growth",
     Loss_BA       = "Loss (mortality)",
     Gain_BA       = "Gain (recruitment + ingrowth)",
-    DeltaBA_total = "Net \u0394BA"
+    DeltaBA_total = "Net BA change"
 )
+flux_all <- c(flux_cols, "DeltaBA_total")
 
-census_pairs[, Interval_yr := as.numeric(difftime(Date_to, Date_from, units = "days")) / 365.25]
-
-# MAP flux — restricted to pre-anchor intervals.
-map_flux_center <- merge(
-    map_quadrat_change, # [CensusID_from < ANCHOR_START_CENSUS],
-    census_pairs[, .(CensusID_from, Interval_yr)],
-    by = "CensusID_from",
-    all.x = TRUE
-)
-map_flux_center[, (flux_cols) := lapply(.SD, function(x) x / Interval_yr), .SDcols = flux_cols]
-map_flux_center <- map_flux_center[,
-    lapply(.SD, fmean, na.rm = TRUE),
-    .SDcols = flux_cols,
-    by = CensusID_from
-]
-map_flux_center[, (flux_cols) := lapply(.SD, `*`, scale_ha), .SDcols = flux_cols]
-map_flux_center[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
-map_flux_long <- melt(
-    map_flux_center,
-    id.vars = "CensusID_from", variable.name = "Component", value.name = "value"
-)
-map_flux_long <- merge(map_flux_long, census_pairs[, .(CensusID_from, Year_mid)], by = "CensusID_from")
-map_flux_long <- map_flux_long[CensusID_from >= first_plot_census]
-
-# MC flux — all_quadrat_realizations already contains only pre-anchor intervals
-# (post_decomp was restricted above). Annualise and scale.
-flux_cols <- c("Growth_BA", "Loss_BA", "Gain_BA", "DeltaBA_total")
-mc_flux_mean <- merge(
-    all_quadrat_realizations[CensusID_from < ANCHOR_START_CENSUS],
-    census_pairs[, .(CensusID_from, Interval_yr)],
-    by = "CensusID_from",
-    all.x = TRUE
-)
-mc_flux_mean[, (flux_cols) := lapply(.SD, function(x) x / Interval_yr), .SDcols = flux_cols]
-mc_flux_mean <- mc_flux_mean[,
-    lapply(.SD, fmean, na.rm = TRUE),
-    .SDcols = flux_cols,
-    by = .(CensusID_from, realization)
-]
-mc_flux_mean[, (flux_cols) := lapply(.SD, `*`, scale_ha), .SDcols = flux_cols]
-mc_flux_long <- melt(
-    mc_flux_mean,
-    id.vars = c("CensusID_from", "realization"),
+flux_exp <- map_quadrat_change[, lapply(.SD, fsum), .SDcols = flux_all, by = .(CensusID_from, CensusID_to)]
+flux_exp <- census_pairs[, .(CensusID_from, Interval_yr, Year_mid)][flux_exp, on = "CensusID_from"]
+flux_exp[, (flux_all) := lapply(.SD, function(x) x * per_ha / Interval_yr), .SDcols = flux_all]
+flux_exp_long <- melt(flux_exp[CensusID_from >= first_plot_census],
+    id.vars = c("CensusID_from", "Year_mid"), measure.vars = flux_all,
     variable.name = "Component", value.name = "value"
 )
-mc_flux_long <- merge(mc_flux_long, census_pairs[, .(CensusID_from, Year_mid)], by = "CensusID_from")
-mc_flux_long <- mc_flux_long[CensusID_from >= first_plot_census]
 
-# MC: collapse K realizations to center + 95 % empirical CI.
-mc_flux_ci <- mc_flux_long[,
-    {
-        q <- fquantile(value, c(0.025, 0.975))
-        .(center = center_fun(value), lwr = q[1L], upr = q[2L])
-    },
-    by = .(CensusID_from, Component)
+flux_mc <- census_pairs[, .(CensusID_from, Interval_yr, Year_mid)][plot_flux_real, on = "CensusID_from"]
+flux_mc[, (flux_all) := lapply(.SD, function(x) x * per_ha / Interval_yr), .SDcols = flux_all]
+flux_mc_ci <- melt(flux_mc[CensusID_from >= first_plot_census],
+    id.vars = c("CensusID_from", "Year_mid", "realization"), measure.vars = flux_all,
+    variable.name = "Component", value.name = "value"
+)[, .(center = center_fun(value), lwr = fquantile(value, 0.025), upr = fquantile(value, 0.975)),
+    by = .(CensusID_from, Year_mid, Component)
 ]
-mc_flux_ci <- merge(mc_flux_ci, census_pairs[, .(CensusID_from, Year_mid)], by = "CensusID_from")
 
 fig2 <- ggplot() +
-    # # MC: spaghetti (pre-anchor intervals only)
-    # geom_line(
-    #     data = mc_flux_long,
-    #     aes(Year_mid, value, group = realization, colour = Component),
-    #     alpha = 0.12, linewidth = 0.7
-    # ) +
-    # MC: 95 % ribbon
-    geom_ribbon(
-        data = mc_flux_ci,
-        aes(Year_mid, ymin = lwr, ymax = upr, fill = Component),
-        alpha = 0.7
-    ) +
-    # MC: center (dashed)
-    geom_line(
-        data = mc_flux_ci,
-        aes(Year_mid, center, colour = Component),
-        linewidth = 0.7, linetype = "dashed"
-    ) +
-    # MAP: bold solid (pre-anchor intervals; aligned with MC data range)
-    geom_line(
-        data = map_flux_long,
-        aes(Year_mid, value),
-        linewidth = 1
-    ) +
+    geom_ribbon(data = flux_mc_ci, aes(Year_mid, ymin = lwr, ymax = upr, fill = Component), alpha = 0.6) +
+    geom_line(data = flux_mc_ci, aes(Year_mid, center, colour = Component), linewidth = 0.7, linetype = "dashed") +
+    geom_line(data = flux_exp_long, aes(Year_mid, value), linewidth = 1) +
     geom_hline(yintercept = 0, linetype = "dotted", colour = "#bbbbaa", linewidth = 0.4) +
-    facet_wrap(
-        ~Component,
-        scales = "free_y", ncol = 1,
-        labeller = as_labeller(flux_labels)
-    ) +
+    facet_wrap(~Component, scales = "free_y", ncol = 1, labeller = as_labeller(flux_labels)) +
     scale_colour_manual(values = flux_pal, guide = "none") +
     scale_fill_manual(values = flux_pal, guide = "none") +
     scale_x_continuous(breaks = scales::pretty_breaks(5)) +
@@ -966,8 +970,8 @@ fig2 <- ggplot() +
     labs(
         title = "Forest-level annual BA fluxes per hectare",
         subtitle = sprintf(
-            "Bold solid = MAP (mean)  \u00b7  dashed %s + ribbon = MC uncertainty",
-            mc_center
+            "Bold = exported reconstruction · dashed %s + ribbon = identity MC 95 %% interval (%d realizations)",
+            mc_center, K_realizations
         ),
         x = "Midpoint year between censuses",
         y = expression("BA flux (m"^2 ~ "ha"^{
@@ -978,126 +982,63 @@ fig2 <- ggplot() +
             } * ")")
     ) +
     theme_forest()
-
 print(fig2)
 
-# ── Figure 3: BA trajectories for five focal trees — one page per tree ─────────
-# For each tree in focal_trees we overlay every posterior reconstruction path
-# against the observed (MAP) stem record. Panels within each page are faceted
-# by path index; path 0 is the observed record (charcoal); modelled paths are
-# coloured green. All five pages are written to a single multi-page PDF via
-# pdf() so the file can be scrolled in any PDF reader.
-#
-# The function build_tree_page() encapsulates the plot logic so the loop is
-# kept clean. It returns NULL (with a message) if the treeID is not found in
-# all_paths or stem_dt, so missing trees do not crash the loop.
-
-build_tree_page <- function(tid, all_paths_dt, stem_dt_all, census_dates,
-                            dates_dt, first_census) {
-    # ── Subset posterior paths for this tree ──────────────────────────────────
-    ap <- all_paths_dt[treeID == tid]
+# ── Figure 3: BA trajectories of focal trees — one page per tree ────────────────
+# Each page shows the exported reconstruction (panel 0, charcoal) and the most
+# probable posterior paths of one tree (completed with the splice).
+build_tree_page <- function(tid, paths_dt, exported_dt, dates_dt, first_census, weights, n_show = 5L) {
+    top <- weights[treeID == tid][order(-w)][seq_len(min(n_show, .N))]
+    ap <- paths_dt[treeID == tid & path_idx %in% top$path_idx, .(path_idx, stemID = lab, CensusID, BA)]
     if (nrow(ap) == 0L) {
-        message(sprintf("[Fig3] treeID %d not found in all_paths — skipping.", tid))
+        message(sprintf("[Fig3] treeID %s not found among sampled paths — skipping.", tid))
         return(NULL)
     }
-    ap[, group_id := NULL]
-    ap[, StemPaths := NULL]
-
-    # ── Add observed path (path_idx = 0) from stem_dt ────────────────────────
-    obs <- stem_dt_all[treeID == tid]
-    if (nrow(obs) == 0L) {
-        message(sprintf("[Fig3] treeID %d not found in stem_dt — skipping.", tid))
-        return(NULL)
-    }
-    obs[, path_idx := 0L]
-    obs[, path_prob := 1.0]
-    keep_cols <- intersect(names(ap), names(obs))
-    obs <- obs[, ..keep_cols]
-
-    pp <- rbindlist(list(ap[, ..keep_cols], obs), use.names = TRUE, fill = TRUE)
+    obs <- exported_dt[treeID == tid, .(path_idx = 0L, stemID = as.character(stemID), CensusID, BA)]
+    pp <- rbindlist(list(ap, obs), use.names = TRUE)
+    pp <- dates_dt[, .(CensusID, Year)][pp, on = "CensusID"][CensusID >= first_census]
     pp[, path_type := fifelse(path_idx == 0L, "Observed", "Modelled")]
-    pp <- merge(pp, dates_dt[, .(CensusID, Year)], by = "CensusID")
-    pp <- pp[CensusID >= first_census]
-
-    # ── Colour palette: charcoal for observed, gradient of greens for paths ───
-    n_mod <- uniqueN(pp[path_idx != 0L, path_idx])
-    mod_pal <- colorRampPalette(c("#a8d8c2", COL_MOD))(max(n_mod, 1L))
-    path_ids <- sort(unique(pp$path_idx))
-    path_col <- setNames(c(COL_OBS, mod_pal), c(0L, path_ids[path_ids != 0L]))
-
-    # ── Facet labeller ────────────────────────────────────────────────────────
-    path_labeller <- labeller(path_idx = function(x) {
-        ifelse(x == "0", "Observed (path 0)", paste0("Path ", x))
-    })
-
-    ggplot(pp, aes(
-        x      = Year,
-        y      = BA,
-        group  = interaction(stemID, path_idx),
-        colour = factor(path_idx)
-    )) +
-        geom_line(
-            data = pp[path_type == "Modelled"],
-            linewidth = 0.55, alpha = 0.55
-        ) +
-        geom_line(
-            data      = pp[path_type == "Observed"],
-            linewidth = 1.1
-        ) +
-        geom_point(
-            data = pp[path_type == "Observed"],
-            size = 1.8, shape = 21, fill = "white", stroke = 0.8
-        ) +
-        scale_colour_manual(values = path_col, guide = "none") +
+    lab_w <- setNames(sprintf("Path %d (p = %.2f)", top$path_idx, top$w), top$path_idx)
+    path_labeller <- labeller(path_idx = function(x) ifelse(x == "0", "Exported reconstruction", lab_w[x]))
+    # Lines only for stems seen in >= 2 censuses (single points need none).
+    # (filtering on a count keeps every column even when no stem qualifies)
+    pp[, n_obs := .N, by = .(path_idx, stemID)]
+    pp_lines <- pp[n_obs > 1L]
+    ggplot(pp, aes(x = Year, y = BA, group = stemID, colour = path_type)) +
+        geom_line(data = pp_lines, linewidth = 0.8) +
+        geom_point(size = 1.6, shape = 21, fill = "white", stroke = 0.7) +
+        scale_colour_manual(values = c(Observed = COL_OBS, Modelled = COL_MOD), guide = "none") +
         scale_x_continuous(breaks = scales::pretty_breaks(4)) +
         scale_y_continuous(labels = scales::label_comma()) +
-        facet_wrap(
-            ~path_idx,
-            scales    = "free_y",
-            ncol      = 2,
-            labeller  = path_labeller
-        ) +
+        facet_wrap(~path_idx, scales = "free_y", ncol = 2, labeller = path_labeller) +
         labs(
-            title = paste0("BA trajectories \u00b7 treeID ", tid),
-            subtitle = paste0(
-                "Each panel = one posterior reconstruction path  \u00b7  ",
-                "Path 0 = observed record (charcoal)  \u00b7  ",
-                n_mod, " modelled path(s)"
-            ),
-            x = "Year",
-            y = expression("BA (m"^2 * ")"),
-            caption = "Modelled paths in green; observed in charcoal"
+            title = paste0("BA trajectories · treeID ", tid),
+            subtitle = "One line per stem · posterior paths ordered by probability",
+            x = "Year", y = expression("BA (m"^2 * ")")
         ) +
         theme_forest()
 }
 
-# ── Render: one page per focal tree in a single multi-page PDF ────────────────
-
-# Five treeIDs are selected automatically for Figure 3 from those with
-# 10 posterior paths, so the figure shows trees with identity ambiguity.
-# Replace the selection logic below if you want a fixed manual set instead.
-inc <- all_paths[, .(N_paths = uniqueN(path_idx)), by = treeID][N_paths == 10]$treeID
-
-set.seed(42)
-focal_trees <- sample(inc, 5L, replace = FALSE)
+path_counts_tree <- multi[treeID %in% sampled_trees, .N, by = treeID]
+set.seed(mc_seed)
+focal_trees <- sample(path_counts_tree[N >= 5L]$treeID, 5L)
 
 fig3_path <- file.path(out_dir, "fig3_BA_trajectories.pdf")
 pdf(fig3_path, width = 9, height = 8)
 for (tid in focal_trees) {
     pg <- build_tree_page(
-        tid          = tid,
-        all_paths_dt = all_paths,
-        stem_dt_all  = stem_dt,
-        census_dates = census_pairs,
-        dates_dt     = dates,
-        first_census = first_plot_census
+        tid = tid,
+        paths_dt = comp_f,
+        exported_dt = exp_stems,
+        dates_dt = dates,
+        first_census = first_plot_census,
+        weights = multi[, .(treeID, path_idx, w)]
     )
     if (!is.null(pg)) print(pg)
 }
 dev.off()
 cat("[Fig3] Written:", fig3_path, "\n")
 
-# ── Save Figures 1 and 2 ──────────────────────────────────────────────────────
 ggsave(file.path(out_dir, "fig1_BA_stock.pdf"), fig1, width = 8, height = 4.5)
 ggsave(file.path(out_dir, "fig2_BA_fluxes.pdf"), fig2, width = 8, height = 10)
-cat("[Figs] fig1_stock.pdf and fig2_fluxes.pdf saved to", out_dir, "\n")
+cat("[Figs] fig1_BA_stock.pdf and fig2_BA_fluxes.pdf saved to", out_dir, "\n")

@@ -18,10 +18,22 @@ workspace_root <- getwd()
 # Key definitions used throughout
 #   Individual   : one unique treeID. A tree may have multiple
 #                  stems, but it is counted once as one individual.
-#   Alive stem   : Rstatus == "A" with valid (gx, gy) coordinates.
+#   Alive stem   : Rstatus == "A". Trees without (gx, gy) are placed at the
+#                  centre of their 20 m quadrat (Sec. 3).
+#   DBH          : Cushman et al. 2014 taper-corrected diameter at 1.3 m, as
+#                  in basal_area_uncertainty.R and biomass_stocks_fluxes.R
+#                  (use_taper_for_ba = FALSE uses the diameter measured at the
+#                  point of measurement instead). Alive stems whose DBH was
+#                  missed in the field keep a DBH from their own
+#                  measurements: interpolated in time between two of them;
+#                  after the last one, its growth trend continued (Sec. 2-3),
+#                  the same rule as the other two scripts.
 #   Basal area   : π/4 × (DBH mm / 1000)² m² per stem;
 #                  summed across all alive stems per treeID.
-#   Per-hectare  : bootstrapped mean across super-quadrats
+#   Per-hectare  : bootstrapped mean across super-quadrats (20 m quadrats are
+#                  treated as independent: no significant spatial
+#                  autocorrelation at 5–100 m on BCI; Muller-Landau et al.
+#                  2014, Réjou-Méchain et al. 2014)
 #
 # Script organisation
 #   Sec. 1  – Libraries & constants
@@ -36,7 +48,8 @@ workspace_root <- getwd()
 #   Sec. 10 – Per-hectare estimates, multiple quadrat sizes
 #   Sec. 11 – Diversity indices          (most recent census)
 #   Sec. 12 – Temporal trends, bootstrapped per-ha (all censuses)
-#   Sec. 13 – Diversity indices across all censuses
+#   Sec. 12b– Change between censuses, paired quadrat bootstrap
+#   Sec. 13 – Diversity indices across all censuses (+ rarefied richness)
 #   Sec. 14 – DBH size-class distribution (Census 2 vs. Census 9)
 #
 # Dependencies: data.table, boot, HDInterval
@@ -78,11 +91,67 @@ N_CENSUSES <- 9L
 BOOT_R <- 4999L # number of bootstrap replicates
 set.seed(42) # for reproducibility
 
+# ---- Diameter used for basal area and size classes --------------------
+# TRUE (default): Cushman et al. 2014 taper-corrected diameter at 1.3 m, the
+#   diameter used by basal_area_uncertainty.R and biomass_stocks_fluxes.R, so
+#   stand basal area here equals the exported stock of basal_area_uncertainty.R.
+#   It raises the basal area of buttressed trees measured above 1.3 m.
+# FALSE: DBH as measured at the point of measurement (POM).
+use_taper_for_ba <- TRUE
+
 # ============================================================
 # SECTION 2: HELPER FUNCTIONS
 # ============================================================
 # All functions are defined here so they are available
 # throughout the remainder of the script.
+
+# ---- Hard check that stays visible in interactive (line-by-line) runs --
+# On failure: prints a ❌ line (count + examples), raises an immediate
+# warning, and only then stops. On success it prints a ✓ line.
+bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
+    if (isTRUE(all(ok))) {
+        cat("✓", msg, "\n")
+        return(invisible(TRUE))
+    }
+    n_txt <- if (!is.null(n_bad)) sprintf(" [%d case(s)]", n_bad) else ""
+    ex_txt <- if (length(examples) > 0L) {
+        paste0(" | examples: ", paste(head(unique(examples), 10), collapse = ", "))
+    } else {
+        ""
+    }
+    full_msg <- paste0("CHECK FAILED: ", msg, n_txt, ex_txt)
+    cat("❌", full_msg, "\n")
+    warning(full_msg, call. = FALSE, immediate. = TRUE)
+    stop(full_msg, call. = FALSE)
+}
+
+# ---- DBH of an alive stem whose measurement was missed ----------------
+# Rstatus "A" without a DBH = alive, measurement missed in the field. The DBH
+# comes from the stem's own measurements (dates t_meas, DBHs d_meas) at the
+# dates t_new:
+#   • between two measurements: linear interpolation in time;
+#   • after the last measurement: the growth trend of the last two
+#     measurements continued in time. A negative trend (shrinkage: usually a
+#     measurement or POM problem) is not extrapolated, and a stem measured
+#     only once keeps that value;
+#   • before the first measurement: the first measurement.
+# Same function in basal_area_uncertainty.R and biomass_stocks_fluxes.R.
+dbh_from_own_measurements <- function(t_meas, d_meas, t_new) {
+    o <- order(t_meas)
+    t_meas <- t_meas[o]
+    d_meas <- d_meas[o]
+    n <- length(t_meas)
+    if (n == 1L) {
+        return(rep(d_meas, length(t_new)))
+    }
+    out <- approx(t_meas, d_meas, xout = t_new, rule = 2)$y
+    after <- t_new > t_meas[n]
+    if (any(after)) {
+        growth <- max((d_meas[n] - d_meas[n - 1L]) / (t_meas[n] - t_meas[n - 1L]), 0)
+        out[after] <- d_meas[n] + growth * (t_new[after] - t_meas[n])
+    }
+    out
+}
 
 # ---- Modal value ----------------------------------------------------
 # Returns the most frequent element of x. Used to assign a single
@@ -191,7 +260,7 @@ names(census_list) <- paste0("bci.stem", bci_nums)
 rec <- rbindlist(census_list, fill = TRUE, idcol = "censusID")
 rec <- rec[!is.na(quadrat)] # remove stems with no quadrat assignment
 rm(census_list, bci_nums)
-gc()
+invisible(gc())
 
 # ---- Species / taxonomy table ---------------------------------------
 load(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.rdata"))
@@ -250,12 +319,81 @@ taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
 
 # NOTE: dbh should be in cm for the equation.
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
-rec[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
-rec[, dbh_raw := dbh]
-rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
+rec[, dbh_raw := dbh] # as measured at the POM (mm)
+rec[, dbh_t := taper_2014(dbh_mm = dbh_raw, hom = hom)]
+# Diameter used downstream (basal area, size classes): see use_taper_for_ba.
+if (use_taper_for_ba) {
+    rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
+}
+message(sprintf(
+    "Basal area and size classes use %s DBH.",
+    if (use_taper_for_ba) "taper-corrected (1.3 m)" else "measured (POM)"
+))
 
 # with(rec[CensusID == 9], plot(dbh_raw, dbh))
 # abline(a = 0, b = 1, col = "red")
+
+# ---- Alive stems without a measured DBH -------------------------------
+# Rstatus "A" without a DBH means the stem was alive but its measurement was
+# missed in the field. It stays in the stand with a DBH from its own
+# measurements (dbh_from_own_measurements(), Sec. 2): interpolated in time
+# between two measurements; after the last one, its growth trend continued
+# (never shrinking). This is the rule of basal_area_uncertainty.R and
+# biomass_stocks_fluxes.R. Only stems never measured have no diameter (basal
+# area 0); they are still counted as alive stems / trees.
+rec[, dbh_filled := FALSE]
+need_ids <- rec[Rstatus == "A" & is.na(dbh), unique(stemID)]
+if (length(need_ids) > 0L) {
+    fill <- rec[stemID %in% need_ids, {
+        t_num <- as.numeric(ExactDate)
+        meas <- !is.na(dbh)
+        target <- Rstatus == "A" & is.na(dbh)
+        out <- dbh
+        if (any(meas) && any(target)) {
+            out[target] <- dbh_from_own_measurements(t_num[meas], dbh[meas], t_num[target])
+        }
+        .(CensusID, dbh_new = out, filled = target & !is.na(out))
+    }, by = stemID]
+    rec[fill, on = .(stemID, CensusID), `:=`(dbh = i.dbh_new, dbh_filled = i.filled)]
+    rm(fill)
+}
+message(sprintf(
+    "Alive stem-census rows without a measured DBH: %d | given a DBH from the stem's own measurements: %d | never measured (no diameter): %d",
+    rec[Rstatus == "A" & (is.na(dbh_raw)), .N], rec[dbh_filled == TRUE, .N],
+    rec[Rstatus == "A" & is.na(dbh), .N]
+))
+rm(need_ids)
+
+# ---- Trees without coordinates ------------------------------------------
+# Every tree has a quadrat, but a few alive trees have no (gx, gy). Quadrat
+# codes are "XXYY" (20 m column XX, row YY; checked below against every tree
+# that has coordinates), so these trees are placed at the centre of their
+# quadrat instead of being dropped from every summary.
+q_code <- function(gx, gy) {
+    sprintf(
+        "%02d%02d",
+        pmin(as.integer(floor(gx / BASE_Q_M)), PLOT_X_M / BASE_Q_M - 1L),
+        pmin(as.integer(floor(gy / BASE_Q_M)), PLOT_Y_M / BASE_Q_M - 1L)
+    )
+}
+xy_rows <- rec[!is.na(gx) & !is.na(gy)]
+bad_q <- xy_rows[quadrat != q_code(gx, gy)]
+bio_check(
+    nrow(bad_q) == 0L && rec[, all(grepl("^[0-9]{4}$", quadrat))],
+    "Quadrat codes are 'XXYY' 20 m cells consistent with (gx, gy)",
+    examples = bad_q$treeID, n_bad = nrow(bad_q)
+)
+rm(xy_rows, bad_q)
+no_xy <- rec[Rstatus == "A" & (is.na(gx) | is.na(gy)), .(trees_without_xy = uniqueN(treeID)), by = CensusID][order(CensusID)]
+if (nrow(no_xy) > 0L) {
+    message("Alive trees without coordinates, placed at their quadrat centre (per census):")
+    print(no_xy)
+}
+rm(no_xy)
+rec[is.na(gx) | is.na(gy), `:=`(
+    gx = as.integer(substr(quadrat, 1L, 2L)) * BASE_Q_M + BASE_Q_M / 2,
+    gy = as.integer(substr(quadrat, 3L, 4L)) * BASE_Q_M + BASE_Q_M / 2
+)]
 
 # ---- Stem-level basal area (m²) -------------------------------------
 # BA = π/4 × (DBH in m)²; DBH is stored in mm, hence ÷ 1000.
@@ -285,9 +423,10 @@ census_meta <- data.table(
 # Collapses the stem-level table to one row per individual
 # (unique treeID) per census.
 #
-# Filtering rules applied before aggregation:
+# Filtering rule applied before aggregation:
 #   • Rstatus == "A"        : resolved alive status only
-#   • !is.na(gx) & !is.na(gy) : valid spatial coordinates required
+#   (every tree has coordinates here: missing ones were set to the quadrat
+#   centre in Sec. 3)
 #
 # Tree-level columns produced:
 #   ba_m2   – sum of basal areas of all alive stems for that treeID
@@ -300,7 +439,7 @@ census_meta <- data.table(
 # treeID in the most recent census, so .N on that table always gives
 # the individual (treeID) count.
 
-rec_alive <- rec[Rstatus == "A" & !is.na(gx) & !is.na(gy)]
+rec_alive <- rec[Rstatus == "A"]
 
 by_cols <- c(
     "censusID", "CensusID", "treeID",
@@ -411,7 +550,7 @@ cat(sprintf(
     "  TOP 10 SPECIES BY IMPORTANCE VALUE — Census %d\n",
     N_CENSUSES
 ))
-cat("  (IV = rel. abundance %% + rel. BA %%; max = 200)\n")
+cat("  (IV = rel. abundance % + rel. BA %; max = 200)\n")
 cat(strrep("-", 64), "\n")
 print(head(spp_sum[
     order(-IV),
@@ -678,6 +817,10 @@ cat(sprintf("  Simpson's reciprocal (1/D):        %.2f\n", 1 / D_conc))
 #
 # n_trees in the output refers to unique treeIDs per census
 # (i.e. individuals, not stems).
+#
+# NOTE: each census CI is computed on its own. Because the same quadrats are
+# measured in every census, overlapping CIs do NOT mean "no change"; use the
+# paired change estimates of Section 12b to compare censuses.
 
 message("Computing bootstrapped per-ha temporal trends ...")
 
@@ -718,11 +861,71 @@ print(census_boot_dt[, .(
 )])
 
 # ============================================================
+# SECTION 12b: CHANGE BETWEEN CENSUSES — PAIRED QUADRAT BOOTSTRAP
+# ============================================================
+# Change is estimated from per-quadrat differences (same 20 m quadrat,
+# later census minus earlier census), and the mean difference is bootstrapped
+# over quadrats. Pairing removes the spatial variation shared by both censuses,
+# which the independent per-census CIs of Section 12 cannot do.
+# Pairs: every consecutive census pair (2->3 ... 8->9) and 2->9 (whole period).
+# A change is called an increase / decrease only when its 95 % CI excludes 0.
+
+message("Computing paired change between censuses ...")
+
+change_pairs <- c(
+    lapply(2:(N_CENSUSES - 1L), function(i) all_cids[c(i, i + 1L)]),
+    list(c(FIRST_ID, LAST_ID))
+)
+change_dt <- rbindlist(lapply(change_pairs, function(pr) {
+    sq_a <- make_superquad(rec_tree[censusID == pr[1]], BASE_Q_M)
+    sq_b <- make_superquad(rec_tree[censusID == pr[2]], BASE_Q_M)
+    d <- merge(
+        sq_a[, .(sqid, trees_a = trees_ha, ba_a = ba_ha)],
+        sq_b[, .(sqid, trees_b = trees_ha, ba_b = ba_ha)],
+        by = "sqid"
+    )
+    ct <- boot_mean_ci(d$trees_b - d$trees_a)
+    cb <- boot_mean_ci(d$ba_b - d$ba_a)
+    data.table(
+        from = census_meta[censusID == pr[1], census_year],
+        to = census_meta[censusID == pr[2], census_year],
+        d_trees_ha = ct["mean"], d_trees_lo = ct["ci_lo"], d_trees_hi = ct["ci_hi"],
+        d_ba_ha = cb["mean"], d_ba_lo = cb["ci_lo"], d_ba_hi = cb["ci_hi"]
+    )
+}))
+call_change <- function(lo, hi) fifelse(lo > 0, "increase", fifelse(hi < 0, "decrease", "no clear change"))
+change_dt[, `:=`(
+    trees_change = call_change(d_trees_lo, d_trees_hi),
+    ba_change = call_change(d_ba_lo, d_ba_hi)
+)]
+
+cat("\n", strrep("=", 72), "\n")
+cat("  CHANGE BETWEEN CENSUSES — paired quadrat bootstrap (95 % CI)\n")
+cat(strrep("=", 72), "\n")
+print(change_dt[, .(
+    from, to,
+    d_trees_ha = round(d_trees_ha, 1), d_trees_lo = round(d_trees_lo, 1), d_trees_hi = round(d_trees_hi, 1), trees_change,
+    d_ba_ha = round(d_ba_ha, 3), d_ba_lo = round(d_ba_lo, 3), d_ba_hi = round(d_ba_hi, 3), ba_change
+)])
+
+# ============================================================
 # SECTION 13: DIVERSITY INDICES ACROSS ALL CENSUSES (2–9)
 # ============================================================
 # Recomputes Shannon-Wiener, Pielou's evenness, and Simpson's indices
 # for each census using unique treeIDs as the abundance measure,
 # consistent with the individual-based convention used throughout.
+#
+# Species richness grows with the number of individuals counted, so raw S is
+# not comparable between censuses with different abundances. S_rarefied is
+# the expected richness in a random sample of n_rarefy individuals (the
+# smallest census abundance among Censuses 2–9; individual-based rarefaction,
+# Hurlbert 1971): E[S_n] = sum_i [1 - C(N - N_i, n) / C(N, n)].
+
+rarefy_richness <- function(counts, n) {
+    N <- sum(counts)
+    sum(1 - exp(lchoose(N - counts, n) - lchoose(N, n)))
+}
+n_rarefy <- min(rec_tree[censusID %in% all_cids[-1], .N, by = censusID]$N)
 
 census_div_list <- lapply(all_cids[-1], function(cid) {
     ct <- rec_tree[censusID == cid]
@@ -730,7 +933,8 @@ census_div_list <- lapply(all_cids[-1], function(cid) {
         return(NULL)
     }
     # Species proportional abundances based on individual (treeID) counts
-    pi_v <- ct[, .N, by = sp][, N / sum(N)]
+    sp_counts <- ct[, .N, by = sp]$N
+    pi_v <- sp_counts / sum(sp_counts)
     S <- uniqueN(ct$sp)
     H <- -sum(pi_v * log(pi_v))
     D_c <- sum(pi_v^2)
@@ -739,7 +943,9 @@ census_div_list <- lapply(all_cids[-1], function(cid) {
         censusID    = cid,
         census_num  = meta$census_num,
         census_year = meta$census_year,
+        n_trees     = nrow(ct),
         S_richness  = S,
+        S_rarefied  = round(rarefy_richness(sp_counts, n_rarefy), 1),
         H_shannon   = round(H, 4),
         J_evenness  = round(H / log(S), 4),
         D1mD        = round(1 - D_c, 4),
@@ -751,6 +957,7 @@ setorder(census_div_dt, census_num)
 
 cat("\n", strrep("=", 64), "\n")
 cat("  DIVERSITY INDICES ACROSS ALL CENSUSES (2–9)\n")
+cat(sprintf("  (S_rarefied = expected richness in %d individuals)\n", n_rarefy))
 cat(strrep("=", 64), "\n")
 print(census_div_dt)
 
@@ -769,6 +976,8 @@ print(census_div_dt)
 # Size classes (mm), left-closed right-open intervals [lower, upper):
 #   10–20, 20–30, 30–50, 50–70, 70–100,
 #   100–150, 150–200, 200–300, 300–500, ≥500
+# The distribution uses measured diameters only (interpolated DBHs are
+# excluded) and follows use_taper_for_ba (taper-corrected by default).
 
 breaks_mm <- c(10, 20, 30, 50, 70, 100, 150, 200, 300, 500, Inf)
 labels_mm <- c(
@@ -777,8 +986,8 @@ labels_mm <- c(
 )
 
 stems_c2c9 <- rbind(
-    rec_alive[censusID == FIRST_ID, .(censusID, dbh)],
-    rec_alive[censusID == LAST_ID, .(censusID, dbh)]
+    rec_alive[censusID == FIRST_ID & !dbh_filled, .(censusID, dbh)],
+    rec_alive[censusID == LAST_ID & !dbh_filled, .(censusID, dbh)]
 )
 stems_c2c9 <- merge(
     stems_c2c9,
