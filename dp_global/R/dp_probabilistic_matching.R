@@ -4,14 +4,19 @@
 ############################################################
 # When the DP state space is too large:
 #   1. Pairwise log-likelihoods (same bio model as DP)
-#   2. Augment cost matrix with mortality/recruitment slots
-#   3. Draw n_samples stochastic assignments via Gumbel-noise greedy
+#   2. Augment cost matrix with mortality/recruitment slots (enough of them
+#      for an assignment without forbidden links to exist)
+#   3. Draw n_samples stochastic assignments via Gumbel-noise greedy; a pair
+#      whose greedy assignment uses a forbidden (-Inf) link is re-solved
+#      exactly (enforce_feasible_assignment), so the hard limits hold; a
+#      violation no assignment can avoid is chosen as the DP does (hard
+#      penalty + likelihood without the hard gate)
 #   4. Stitch per-pair assignments backward from anchor
-#   5. Repair growth violations at SAMPLE level (hard-rate + ME cumulative-shrinkage)
-#   6. Compute marginal posterior probabilities
-#   7. Growth-aware greedy conflict resolution (anchor-outward census ordering,
-#      rejects candidate IDs that would violate growth bounds against already-
-#      resolved adjacent censuses)
+#   5. Repair growth violations at SAMPLE level (hard-rate; the ME
+#      cumulative-shrinkage layer is off when n_sigma_me = Inf)
+#   6. Compute marginal posterior probabilities (Top-K, entropy)
+#   7. Export ONE coherent trajectory: the consensus (maximum-expected-
+#      accuracy) sample (select_consensus_trajectory)
 #   8. Re-stamp anchor TrueStemID rows
 #
 # All Bio_* parameters are read directly from tree_data columns (no new
@@ -245,9 +250,24 @@ match_stems_probabilistic <- function(tree_data,
             use_bio_hard_growth = use_bio_hard_growth_in_prob
         )
         aug <- augment_cost_matrix(L, dbh_curr, dbh_next, iv, bio)
+        .k_raised <- attr(aug, "k_raised")
+        if (!is.null(.k_raised)) {
+            vcat(prefix, sprintf(
+                "Census pair C%d-C%d: %d death/recruit slot(s) added (K %d -> %d) so that no forbidden link is forced",
+                obs_census[i], obs_census[i + 1L], .k_raised[2L] - .k_raised[1L], .k_raised[1L], .k_raised[2L]
+            ))
+        }
+        # Same matrix without the hard gates: used only when no assignment
+        # avoids every forbidden link (see enforce_feasible_assignment())
+        L_free <- compute_pairwise_log_likelihood(dbh_curr, dbh_next, iv, bio,
+            -Inf, Inf,
+            use_bio_hard_shrink = FALSE,
+            use_bio_hard_growth = FALSE
+        )
 
         pair_data[[i]] <- list(
             log_cost = aug,
+            fallback = fallback_log_cost(aug, L_free, dbh_next, iv, bio),
             n_curr   = length(dbh_curr),
             n_next   = length(dbh_next)
         )
@@ -275,15 +295,21 @@ match_stems_probabilistic <- function(tree_data,
         # Last pair (closest to anchor): no conditioning available
         last_pair <- n_census - 1L
         .cost_last <- pair_data[[last_pair]]$log_cost
+        .fb_last <- pair_data[[last_pair]]$fallback
         if (.any_pins && !is.null(pin_info[[last_pair]])) {
             .cost_last <- apply_pin_mask(
                 .cost_last, pin_info[[last_pair]], .next_obs_to_anchor_pos,
                 pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
             )
+            .fb_last <- apply_pin_mask(
+                .fb_last, pin_info[[last_pair]], .next_obs_to_anchor_pos,
+                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
+            )
         }
         per_pair_assignments[[last_pair]] <- greedy_assignment_gumbel(
             .cost_last,
-            temperature = temperature
+            temperature = temperature,
+            fallback = .fb_last
         )
         if (.any_pins) {
             .next_obs_to_anchor_pos <- propagate_track_backward(
@@ -312,16 +338,22 @@ match_stems_probabilistic <- function(tree_data,
                     )
                 }
 
+                fb_i <- pair_data[[i]]$fallback
                 if (.any_pins && !is.null(pin_info[[i]])) {
                     cost_i <- apply_pin_mask(
                         cost_i, pin_info[[i]], .next_obs_to_anchor_pos,
+                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
+                    )
+                    fb_i <- apply_pin_mask(
+                        fb_i, pin_info[[i]], .next_obs_to_anchor_pos,
                         pair_data[[i]]$n_curr, pair_data[[i]]$n_next
                     )
                 }
 
                 per_pair_assignments[[i]] <- greedy_assignment_gumbel(
                     cost_i,
-                    temperature = temperature
+                    temperature = temperature,
+                    fallback = fb_i
                 )
                 if (.any_pins) {
                     .next_obs_to_anchor_pos <- propagate_track_backward(
@@ -333,6 +365,18 @@ match_stems_probabilistic <- function(tree_data,
         }
 
         all_samples[[s]] <- per_pair_assignments
+    }
+    .n_unavoidable <- sum(vapply(all_samples, function(sa) {
+        sum(vapply(sa, function(a) {
+            nf <- attr(a, "n_forbidden")
+            if (is.null(nf)) 0L else as.integer(nf)
+        }, integer(1)))
+    }, integer(1)))
+    if (.n_unavoidable > 0L) {
+        vcat(prefix, sprintf(
+            "Unavoidable forbidden link(s) in the sampled assignments: %d across %d samples (chosen by likelihood, as the DP's hard_penalty)",
+            .n_unavoidable, n_samples
+        ))
     }
 
     # --- Stitch assignments backward from anchor ---------------------------
@@ -383,6 +427,28 @@ match_stems_probabilistic <- function(tree_data,
         min_rate = eff_min_growth,
         max_rate = eff_max_growth
     )
+
+    # --- Export one coherent trajectory ------------------------------------
+    # ReconstructedStemID = the consensus (maximum-expected-accuracy) sample,
+    # not the per-census marginal resolution above. Top-K and entropy columns
+    # stay marginal; DP_PosteriorReconstructedProb = share of samples giving
+    # the observation the exported ID (same meaning as before).
+    .cons <- select_consensus_trajectory(stitched, obs_data)
+    .chosen <- stitched[[.cons$index]]
+    for (ci in seq_len(n_census)) {
+        .n <- obs_data[[ci]]$n
+        if (.n == 0L) next
+        .ids <- as.integer(.chosen[[ci]][seq_len(.n)])
+        .p <- vapply(seq_len(.n), function(oi) {
+            mean(vapply(stitched, function(s) isTRUE(as.integer(s[[ci]][oi]) == .ids[oi]), logical(1)))
+        }, numeric(1))
+        data.table::set(tree_data, as.integer(obs_data[[ci]]$idx), "ReconstructedStemID", .ids)
+        data.table::set(tree_data, as.integer(obs_data[[ci]]$idx), "DP_PosteriorReconstructedProb", .p)
+    }
+    vcat(prefix, sprintf(
+        "Consensus trajectory exported: sample %d of %d | predecessor agreement %.3f | partition share %.3f",
+        .cons$index, length(stitched), .cons$agreement, .cons$part_freq
+    ))
 
     # --- Diagnostic check: count residual growth violations from greedy
     #     conflict resolution.  With growth-aware resolver + pin-consistent
@@ -604,6 +670,22 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
     recruit_avail <- max(0L, K - n_curr)
     if (recruit_avail < must_recruit) K <- K + (must_recruit - recruit_avail)
 
+    # Enough slots for an assignment without forbidden links. With M = the
+    # largest set of allowed survival links (maximum matching on finite L),
+    # the n_curr - M stems left need death columns (K - n_next) and the
+    # n_next - M left need recruit rows (K - n_curr): feasible iff
+    # K >= n_curr + n_next - M. The count above only looks at stems with NO
+    # allowed link, so it misses e.g. two stems whose only allowed successor
+    # is the same stem, and a forbidden link was then forced. At
+    # K = n_curr + n_next - M every allowed assignment has exactly M
+    # survivals, which keeps the engine's maximum-survival design; pairs
+    # that were already feasible keep their K.
+    K_before <- K
+    if (n_curr > 0L && n_next > 0L && K < n_curr + n_next) {
+        M <- max_allowed_matching(is.finite(L))
+        if (K < n_curr + n_next - M) K <- n_curr + n_next - M
+    }
+
     # Augmented matrix: K rows × K cols
     # Rows 1..n_curr are real current stems; rows (n_curr+1)..K are virtual recruit sources
     # Cols 1..n_next are real next stems; cols (n_next+1)..K are virtual death sinks
@@ -660,7 +742,82 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
         }
     }
 
+    if (K > K_before) attr(A, "k_raised") <- c(K_before, K)
     A
+}
+
+# ---- Largest set of allowed survival links ---------------------------------
+# Size of a maximum matching in the bipartite graph of allowed links
+# (ok[i, j] = TRUE when stem i at census c may be stem j at census c+1).
+# A greedy pass gives a lower bound; the exact solve (lpSolve::lp.assign)
+# runs only when that bound leaves stems unmatched on the smaller side.
+max_allowed_matching <- function(ok) {
+    n_curr <- nrow(ok)
+    n_next <- ncol(ok)
+    if (!any(ok)) {
+        return(0L)
+    }
+    used <- logical(n_next)
+    m_greedy <- 0L
+    for (i in seq_len(n_curr)) {
+        j <- which(ok[i, ] & !used)[1L]
+        if (!is.na(j)) {
+            used[j] <- TRUE
+            m_greedy <- m_greedy + 1L
+        }
+    }
+    if (m_greedy == min(n_curr, n_next)) {
+        return(m_greedy)
+    }
+    if (!requireNamespace("lpSolve", quietly = TRUE)) {
+        stop("max_allowed_matching() needs the 'lpSolve' package: install.packages(\"lpSolve\")")
+    }
+    n <- max(n_curr, n_next)
+    w <- matrix(0, n, n)
+    w[seq_len(n_curr), seq_len(n_next)] <- ok * 1
+    sol <- lpSolve::lp.assign(w, direction = "max")
+    if (sol$status != 0L) {
+        return(m_greedy)
+    }
+    max(m_greedy, as.integer(round(sol$objval)))
+}
+
+# ---- Cost matrix without the hard limits ----------------------------------
+# The augmented matrix A with its forbidden cells filled as the DP would
+# score them before adding hard_penalty: survival links with the likelihood
+# without the hard growth gates (L_free = compute_pairwise_log_likelihood()
+# with no gates), recruits above the size cap with their size likelihood.
+# Cells with no such value (a missing DBH) stay -Inf. Used only by
+# enforce_feasible_assignment(), when no assignment avoids every forbidden
+# link, so that the unavoidable violation is the most likely one.
+fallback_log_cost <- function(A, L_free, dbh_next, interval_years, bio) {
+    n_curr <- nrow(L_free)
+    n_next <- ncol(L_free)
+    K <- nrow(A)
+    fb <- A
+    if (n_curr > 0L && n_next > 0L) {
+        blk <- fb[seq_len(n_curr), seq_len(n_next), drop = FALSE]
+        forb <- !is.finite(blk)
+        blk[forb] <- L_free[forb]
+        fb[seq_len(n_curr), seq_len(n_next)] <- blk
+    }
+    if (n_curr < K && n_next > 0L) {
+        # same recruit likelihood as augment_cost_matrix(), without the cap
+        p_recruit <- 1 - exp(-bio$recruit_lambda * interval_years)
+        p_recruit <- max(1e-12, min(1 - 1e-12, p_recruit))
+        ll <- rep(-Inf, n_next)
+        okd <- is.finite(dbh_next) & dbh_next > 0
+        ll[okd] <- log(p_recruit) + dlnorm(dbh_next[okd],
+            meanlog = bio$recruit_meanlog,
+            sdlog = bio$recruit_sdlog, log = TRUE
+        )
+        rows <- (n_curr + 1L):K
+        for (j in seq_len(n_next)) {
+            forb <- !is.finite(fb[rows, j])
+            fb[rows[forb], j] <- ll[j]
+        }
+    }
+    fb
 }
 
 # ---- Condition cost matrix with lookahead --------------------------------
@@ -807,11 +964,14 @@ propagate_track_backward <- function(assignment, next_obs_to_anchor_pos,
 #   log_cost_matrix  K×K matrix of log-likelihoods (augmented with
 #                    mortality/recruitment slots so it is square).
 #   temperature      Gumbel noise scale; higher = more random.
+#   fallback         optional K×K fallback_log_cost() matrix (pin-masked like
+#                    log_cost_matrix), used by enforce_feasible_assignment()
+#                    only when a forbidden link cannot be avoided.
 #
 # RETURNS
 #   Integer vector of length K: assignment[row] = assigned column index.
 
-greedy_assignment_gumbel <- function(log_cost_matrix, temperature = 1.0) {
+greedy_assignment_gumbel <- function(log_cost_matrix, temperature = 1.0, fallback = NULL) {
     K <- nrow(log_cost_matrix)
     stopifnot(ncol(log_cost_matrix) == K)
 
@@ -837,7 +997,57 @@ greedy_assignment_gumbel <- function(log_cost_matrix, temperature = 1.0) {
         used_cols[best_idx] <- TRUE
     }
 
-    assignment
+    # Greedy can be forced into a forbidden (-Inf) cell when a row has no
+    # allowed column left; re-solve such a pair exactly (same noisy scores).
+    enforce_feasible_assignment(noisy, assignment, fallback = fallback, noise = noise)
+}
+
+# ---- Enforce the hard limits on a sampled assignment ----------------------
+# A cell scored -Inf is a forbidden link: growth outside the hard bounds (the
+# same bounds as the DP), a recruit above the recruit size cap, or a pinned
+# row sent to the wrong track. If the greedy assignment uses one, the pair is
+# re-solved exactly (lpSolve::lp.assign) on the SAME noisy scores, with -Inf
+# replaced by a large penalty so that an unavoidable violation (data that no
+# assignment can satisfy) is kept to a minimum, as the DP's hard_penalty does.
+# As in the DP, each forbidden link costs 1e6 (fewest violations first) plus
+# its log-likelihood without the hard gate and the same Gumbel noise
+# (`fallback` + `noise`), so the unavoidable violation is the most likely one
+# (a mild shrink before a severe one). Cells without a fallback value (a
+# pinned row sent to another track, a missing DBH) cost 2e6: a pin is kept
+# rather than broken. Assignments without forbidden cells are returned
+# unchanged, and no random numbers are drawn, so all other samples are
+# identical to the greedy result. The result carries attr "n_forbidden" when
+# it still uses a forbidden link.
+#
+# INPUTS   noisy       K×K matrix of perturbed log-scores (may contain -Inf)
+#          assignment  K-length integer vector from the greedy pass
+#          fallback    optional K×K fallback_log_cost() matrix
+#          noise       the K×K Gumbel noise added to form `noisy`
+# RETURNS  K-length integer vector: assignment[row] = col
+enforce_feasible_assignment <- function(noisy, assignment, fallback = NULL, noise = NULL) {
+    K <- nrow(noisy)
+    n_forbidden <- function(a) sum(!is.finite(noisy[cbind(seq_len(K), a)]))
+    if (n_forbidden(assignment) == 0L) {
+        return(assignment)
+    }
+    if (!requireNamespace("lpSolve", quietly = TRUE)) {
+        stop("enforce_feasible_assignment() needs the 'lpSolve' package: install.packages(\"lpSolve\")")
+    }
+    score <- noisy
+    bad <- !is.finite(score)
+    fb <- rep(-Inf, sum(bad))
+    if (!is.null(fallback)) fb <- fallback[bad] + if (is.null(noise)) 0 else noise[bad]
+    score[bad] <- ifelse(is.finite(fb), -1e6 + pmax(fb, -1e5), -2e6)
+    sol <- lpSolve::lp.assign(-score, direction = "min")
+    if (sol$status != 0L) {
+        best <- assignment
+    } else {
+        exact <- max.col(sol$solution > 0.5, ties.method = "first")
+        best <- if (n_forbidden(exact) <= n_forbidden(assignment)) exact else assignment
+    }
+    n_left <- n_forbidden(best)
+    if (n_left > 0L) attr(best, "n_forbidden") <- n_left
+    best
 }
 
 # ---- Repair stitched samples BEFORE marginal aggregation -----------------
@@ -1362,6 +1572,57 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
     # NA-DBH rows keep ReconstructedStemID = NA (no observation to match)
 
     tree_data
+}
+
+# ---- Consensus trajectory from the posterior samples ---------------------
+# The exported reconstruction must be ONE coherent trajectory. Resolving each
+# census separately from marginal probabilities (above) mixes samples and,
+# when marginals are diffuse, fragments stems (one-census stems, gaps that
+# are later gap-filled and double counted).
+#
+# This picks the sample with maximum expected accuracy: for every observation
+# its predecessor in the sample (the observation with the same track ID at the
+# previous observed census, or none) is scored by how often the samples choose
+# that same predecessor; the sample with the highest total wins. Ties go to
+# the most frequent partition, then to the lowest sample index. When one
+# partition dominates the samples it is also the MEA sample.
+#
+# INPUTS   stitched  list of samples; each a list of per-census ID vectors
+#          obs_data  per-census observation data (uses $n)
+# RETURNS  list(index = chosen sample, agreement = mean predecessor frequency
+#          of the chosen sample, part_freq = frequency of its partition)
+select_consensus_trajectory <- function(stitched, obs_data) {
+    n_s <- length(stitched)
+    n_census <- length(obs_data)
+    n_obs <- vapply(obs_data, function(x) as.integer(x$n), integer(1))
+    score <- numeric(n_s)
+    n_scored <- 0L
+    if (n_census >= 2L) {
+        for (ci in 2:n_census) {
+            if (n_obs[ci] == 0L) next
+            # predecessor index (0 = none) of each observation in each sample
+            pred <- vapply(stitched, function(s) {
+                match(s[[ci]][seq_len(n_obs[ci])], s[[ci - 1L]][seq_len(n_obs[ci - 1L])], nomatch = 0L)
+            }, integer(n_obs[ci]))
+            if (is.null(dim(pred))) pred <- matrix(pred, nrow = 1L)
+            for (oi in seq_len(n_obs[ci])) {
+                freq <- tabulate(pred[oi, ] + 1L, nbins = n_obs[ci - 1L] + 1L) / n_s
+                score <- score + freq[pred[oi, ] + 1L]
+            }
+            n_scored <- n_scored + n_obs[ci]
+        }
+    }
+    sig <- vapply(stitched, function(s) {
+        ids <- unlist(lapply(seq_len(n_census), function(ci) s[[ci]][seq_len(n_obs[ci])]))
+        paste(match(ids, unique(ids)), collapse = ",")
+    }, character(1))
+    part_freq <- as.numeric(table(sig)[sig]) / n_s
+    best <- order(-round(score, 10), -part_freq, seq_len(n_s))[1L]
+    list(
+        index = best,
+        agreement = if (n_scored > 0L) score[best] / n_scored else 1,
+        part_freq = part_freq[best]
+    )
 }
 
 # ---- Repair growth violations from marginal resolution -------------------
