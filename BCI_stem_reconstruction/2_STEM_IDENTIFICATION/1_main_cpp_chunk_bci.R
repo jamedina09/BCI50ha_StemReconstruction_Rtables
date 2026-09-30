@@ -230,7 +230,12 @@ PIN_TRUESTEMID <- TRUE
 # probabilistic matcher.  A trajectory is severed when cumulative shrinkage
 # exceeds n_sigma_me * sqrt(SD(d_start)^2 + SD(d_curr)^2).  Lower = sever
 # sooner.  Only active when USE_BIO_HARD_SHRINK_IN_PROB = TRUE.
-PROB_N_SIGMA_ME <- 2.5
+# Inf (default) disables it: a severed observation becomes a one-census stem
+# (a recruit that dies at once), which fragments trajectories and double
+# counts basal area once gaps are filled. The DP applies no such rule. The
+# hard shrink/growth limits shared with the DP are enforced during sampling
+# instead (enforce_feasible_assignment() in dp_probabilistic_matching.R).
+PROB_N_SIGMA_ME <- Inf
 
 ############################################################
 ### 3.3) Chunking & posterior sampling settings

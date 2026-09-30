@@ -811,9 +811,20 @@ finalize_posterior_paths <- function(out,
             lk <- map_by_tag[[tag_key]]
             v <- samples_dt$ReconstructedStemID
             hit <- !is.na(v) & as.character(v) %in% names(lk)
-            if (any(hit)) {
-                v[hit] <- lk[as.character(v[hit])]
-                samples_dt[, ReconstructedStemID := as.integer(v)]
+            # IDs missing from the map (tracks used only in some samples,
+            # sample-level break IDs) get fresh IDs above the renumbered range,
+            # the same ID for the same raw value in every sample. Left raw, a
+            # small engine ID could equal a renumbered ID and merge two
+            # different stems into one label.
+            unmapped <- !is.na(v) & !hit
+            new_v <- v
+            new_v[hit] <- lk[as.character(v[hit])]
+            if (any(unmapped)) {
+                raw_ids <- sort(unique(v[unmapped]))
+                new_v[unmapped] <- max(lk) + match(v[unmapped], raw_ids)
+            }
+            if (any(hit) || any(unmapped)) {
+                samples_dt[, ReconstructedStemID := as.integer(new_v)]
             }
         }
 
