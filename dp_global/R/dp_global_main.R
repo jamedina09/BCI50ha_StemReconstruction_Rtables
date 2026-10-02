@@ -121,13 +121,18 @@ species <- NULL
 # A row is treated as an "orphan terminal" when ALL of the following hold:
 #   - ReconstructedStemID is NA after the engine has run
 #   - DBH is NA (death/break events typically have no measurement)
-#   - Status is one of "dead", "stem dead", "broken below"
+#   - Status is one of "dead", "stem dead", "broken below", "missing"
 #
 # For each such row we copy the most recent prior non-NA ReconstructedStemID
 # from the same (Tag, OriginalStemID) group (LOCF). Biologically, a terminal
 # event ends the trajectory of the most recent prior identity carrying the
 # same OriginalStemID; without this fill these rows would be dropped from
-# any downstream trajectory.
+# any downstream trajectory. A "missing" record after the stem's earlier
+# records is likewise that stem's record (99.9% of BCI "missing" rows follow
+# a record of the same StemID); without the fill it would become a stem of its
+# own that never lives. Stage 3 reads "missing" as no data, so no status
+# changes. Rows with no earlier record of their StemID are left NA (LOCF only
+# looks backward).
 #
 # Returns the (potentially modified) data.table with `ReconstructionMethod`
 # set to "carried_terminal" on rows that were filled.
@@ -153,7 +158,7 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
     .term_mask <- is.na(out$ReconstructedStemID) &
         is.na(out$DBH) &
         !is.na(out$Status) &
-        out$Status %in% c("dead", "stem dead", "broken below")
+        out$Status %in% c("dead", "stem dead", "broken below", "missing")
     if (!any(.term_mask)) {
         return(out)
     }
@@ -242,27 +247,323 @@ apply_orphan_stem_backfill <- function(out, verbose = TRUE) {
     out
 }
 
-## ---- 9) Shared post-engine helper: broken-below invariant pass --------
-# Enforce two invariants on the final reconstruction:
+## ---- 8a) Shared post-engine helper: rows left behind by the pin sweep ----
+# The TrueStemID sweep sets ReconstructedStemID := TrueStemID on pinned rows
+# only. When the engine linked pinned rows to unpinned measurements of the
+# same stem, those unpinned rows keep another ID and the stem is cut in two
+# (a death plus a recruit that the engine never made). Typical sources:
+#   - Step 3a.5 pins the alive rows of a StemID that has a death record; the
+#     stem's earlier rows sit under an older StemID (the database renumbered
+#     21-28% of stems at every census before 2010) and have no pin (tree
+#     100015: StemID 100015 in 1982 -> 638594 in 1985, dead 1990);
+#   - the DP resprout segment split offsets the pre-segment IDs, including
+#     tracks it had labelled with a pin, so after the sweep the pinned rows
+#     hold the pin and their unpinned track-mates the offset ID.
+# The posterior samples keep the engine's links, so these cuts inflated the
+# exported BA Loss and Gain and put the exported line outside the identity
+# Monte Carlo ribbon.
 #
-#   R1 (split-on-break): within a (Tag, series) group ordered by CensusID,
-#       a row with Status == "broken below" and !is.na(DBH) MUST have a
-#       ReconstructedStemID that does not equal any prior row's
-#       ReconstructedStemID in the same series.  When violated, mint a
-#       fresh ID (max(existing)+1, monotonic per-call) and propagate it
-#       forward through subsequent rows of the series that currently share
-#       the pre-split ID, until the next break event or the next pinned
-#       TrueStemID row.  Tag method = "bb_split" (first row) /
+# Rule, per engine track (measured rows of one Tag and
+# ReconstructedStemID_PreSweep), cut into segments at every broken-below row
+# with a DBH (R1: a new stem starts there) and after every NA-R barrier census
+# (no measured stem but a stump / R-coded record: the whole tree died back):
+#   - the segment's pinned rows all hold their pin and share ONE value P;
+#   - an unpinned measured row of the segment holding another ID T joins P,
+#     with every row of T (measured or not), when all measured rows of T are
+#     in this segment, no row of T carries a pin, and P has no row in any
+#     census of T (no collision).
+# Keys that hold two measurements in one census are not engine tracks and
+# are skipped. Pinned rows never move, so ReconstructedStemID == TrueStemID
+# still holds; tracks with two pin values or a pin that is not held (Fix-2
+# rollback) are left as they are; the links restored are the engine's own.
+# Moved rows get ReconstructionMethod = "pin_track"; TrueStemID is unchanged.
+# Runs first in the post-engine chain, after the sweeps, so the backfills,
+# apply_terminal_to_host() and the broken-below invariants see whole stems.
+# Idempotent: a moved ID T no longer exists.
+apply_pin_track_rejoin <- function(out, verbose = TRUE) {
+    if (is.null(out) || nrow(out) == 0L) {
+        return(out)
+    }
+    needed <- c("Tag", "CensusID", "DBH", "Status", "TrueStemID", "ReconstructedStemID", "ReconstructedStemID_PreSweep")
+    if (!all(needed %in% names(out))) {
+        return(out)
+    }
+    tg <- as.character(out$Tag)
+    cen <- as.integer(out$CensusID)
+    rid <- as.integer(out$ReconstructedStemID)
+    pre <- as.integer(out$ReconstructedStemID_PreSweep)
+    pin <- as.integer(out$TrueStemID)
+    sts <- as.character(out$Status)
+    tsm <- if ("ListOfTSM" %in% names(out)) as.character(out$ListOfTSM) else rep(NA_character_, nrow(out))
+    meas <- !is.na(out$DBH)
+
+    # NA-R barrier censuses: no measured stem, but a stump / R-coded record.
+    r_na <- !meas & ((!is.na(sts) & sts == "broken below") |
+        (!is.na(tsm) & grepl("\\b(R|RP|RF|RT|QR|OR)\\b", tsm, perl = TRUE)))
+    bar <- data.table::data.table(tag = tg, cen = cen, meas = meas, r_na = r_na)[,
+        .(n_meas = sum(meas), n_rna = sum(r_na)),
+        by = .(tag, cen)
+    ][n_meas == 0L & n_rna > 0L]
+
+    # Engine tracks and their segments.
+    m <- data.table::data.table(.row = which(meas & !is.na(pre) & !is.na(rid)))
+    if (nrow(m) == 0L) {
+        return(out)
+    }
+    m[, `:=`(
+        tag = tg[.row], cen = cen[.row], rid = rid[.row], pre = pre[.row], pin = pin[.row],
+        bb = !is.na(sts[.row]) & sts[.row] == "broken below"
+    )]
+    m[, nb := 0L]
+    if (nrow(bar) > 0L) {
+        bl <- split(bar$cen, bar$tag)
+        m[tag %in% names(bl), nb := findInterval(cen - 0.5, sort(bl[[tag[1L]]])), by = tag]
+    }
+    data.table::setorder(m, tag, pre, cen)
+    m[, seg := cumsum(bb) + nb, by = .(tag, pre)]
+    mixed <- m[, .N, by = .(tag, pre, cen)][N > 1L, unique(paste(tag, pre))]
+    m <- m[!paste(tag, pre) %in% mixed]
+
+    # Segments whose pinned rows share one held pin value P.
+    sg <- m[, {
+        p <- pin[!is.na(pin)]
+        ok <- length(p) > 0L && all(rid[!is.na(pin)] == p) && data.table::uniqueN(p) == 1L
+        .(P = if (ok) p[1L] else NA_integer_)
+    }, by = .(tag, pre, seg)][!is.na(P)]
+    cand <- m[sg, on = .(tag, pre, seg), nomatch = 0L][is.na(pin) & rid != P]
+    n_moved_ids <- 0L
+    n_moved_rows <- 0L
+    n_collide <- 0L
+    if (nrow(cand) > 0L) {
+        # An ID T moves only if all its measured rows are candidates of one segment
+        # and none of its rows carries a pin.
+        all_rows <- data.table::data.table(.row = seq_along(rid), tag = tg, rid = rid, cen = cen, pin = pin, meas = meas)[!is.na(rid)]
+        tstat <- all_rows[, .(n_meas = sum(meas), n_pin = sum(!is.na(pin))), by = .(tag, rid)]
+        ct <- cand[, .(n_c = .N, n_seg = data.table::uniqueN(paste(pre, seg)), P = P[1L], n_P = data.table::uniqueN(P)), by = .(tag, rid)]
+        ct <- tstat[ct, on = .(tag, rid)][n_c == n_meas & n_seg == 1L & n_P == 1L & n_pin == 0L]
+        if (nrow(ct) > 0L) {
+            rows_T <- all_rows[ct[, .(tag, rid, P)], on = .(tag, rid), nomatch = 0L]
+            # collision with rows that already hold P, or with another ID joining P
+            occ <- unique(all_rows[, .(tag, P = rid, cen)])
+            rows_T[, hit := FALSE]
+            rows_T[occ, on = .(tag, P, cen), hit := TRUE]
+            rows_T[, dup := .N > 1L, by = .(tag, P, cen)]
+            bad_T <- unique(rows_T[hit | dup, .(tag, rid)])
+            n_collide <- nrow(bad_T)
+            rows_T <- rows_T[!bad_T, on = .(tag, rid)]
+            if (nrow(rows_T) > 0L) {
+                val <- if (is.integer(out$ReconstructedStemID)) as.integer(rows_T$P) else as.numeric(rows_T$P)
+                data.table::set(out, i = rows_T$.row, j = "ReconstructedStemID", value = val)
+                if (!("ReconstructionMethod" %in% names(out))) out[, ReconstructionMethod := NA_character_]
+                data.table::set(out, i = rows_T$.row, j = "ReconstructionMethod", value = "pin_track")
+                n_moved_ids <- data.table::uniqueN(rows_T[, .(tag, rid)])
+                n_moved_rows <- nrow(rows_T)
+            }
+        }
+    }
+    if (isTRUE(verbose)) {
+        message(sprintf(
+            "[apply_pin_track_rejoin] %d left-behind ID(s) rejoined their track's pin (%d row(s)); %d skipped for a collision.",
+            n_moved_ids, n_moved_rows, n_collide
+        ))
+    }
+    out
+}
+
+## ---- 8b) Shared post-engine helper: terminal records back to their stem --
+# An unmeasured dead / stem dead / broken-below record that comes BEFORE the
+# first evidence of life of the identity it carries (or sits on an identity
+# that never lives) is not the start of a stem: it is the death / break record
+# of a stem that ended just before. The BCI database usually stores such a
+# record under a NEW StemID (the StemID of the resprout measured later), so
+# the pre-DP pins (Step 1(a) StemTag pins, Step 3b propagation) and the
+# TrueStemID sweep put it on the resprout's identity, where R2 then cuts it
+# off into a stem that never lives. The engine itself had usually placed it
+# on the stem that broke (ReconstructedStemID_PreSweep).
+#
+# Rule, per group of such records (same Tag, identity and database StemID):
+#   (a) the engine's choice: the group's ReconstructedStemID_PreSweep, if that
+#       identity has evidence of life (DBH or raw "alive") and its last
+#       evidence of life is before the group's first record. If that engine
+#       ID no longer lives (its track was relabelled, e.g. by
+#       apply_pin_track_rejoin()), the current ID of the engine track's last
+#       measured row before the record is used instead;
+#   (b) otherwise the one stem that ended just before: the only identity of
+#       the tag whose last evidence of life is in census c1 - 1 (c1 = the
+#       group's first record), when exactly one unresolved group starts at c1;
+#   (c) otherwise the records stay where they are (a never-alive stem).
+# A target must have no row in any census of the group (no collision).
+# Only unmeasured rows move, so measured trajectories, DBH and statuses are
+# unchanged, and each record keeps its own Status (DFstatus downstream).
+# Moved rows get ReconstructionMethod = "terminal_to_host"; under (a)
+# SweepRollbackToPreSweep is set to TRUE because the engine's own choice is
+# restored. TrueStemID is not changed (the sweep is not re-run after this
+# pass, as for the broken-below invariants).
+# Runs after apply_orphan_stem_backfill() and before
+# apply_broken_below_invariants(). Idempotent: a moved record sits after its
+# new stem's life, so it is no longer a candidate.
+apply_terminal_to_host <- function(out, verbose = TRUE) {
+    if (is.null(out) || nrow(out) == 0L) {
+        return(out)
+    }
+    needed <- c("Tag", "CensusID", "Status", "DBH", "ReconstructedStemID")
+    if (!all(needed %in% names(out))) {
+        return(out)
+    }
+    src_col <- if ("StemID" %in% names(out)) {
+        "StemID"
+    } else if ("OriginalStemID" %in% names(out)) {
+        "OriginalStemID"
+    } else {
+        NULL
+    }
+    has_pre <- "ReconstructedStemID_PreSweep" %in% names(out)
+    rid <- as.integer(out$ReconstructedStemID)
+    cen <- as.integer(out$CensusID)
+    tg <- as.character(out$Tag)
+    sts <- as.character(out$Status)
+    alive_ev <- !is.na(out$DBH) | (!is.na(sts) & sts == "alive")
+    is_term <- is.na(out$DBH) & !is.na(rid) & !is.na(sts) & sts %in% c("dead", "stem dead", "broken below")
+    if (!any(is_term)) {
+        return(out)
+    }
+
+    # Evidence-of-life span of every identity that lives.
+    live <- alive_ev & !is.na(rid)
+    span <- if (any(live)) {
+        data.table::data.table(tag = tg[live], host = rid[live], cen = cen[live])[,
+            .(h_first = min(cen), h_last = max(cen)),
+            by = .(tag, host)
+        ]
+    } else {
+        data.table::data.table(tag = character(0), host = integer(0), h_first = integer(0), h_last = integer(0))
+    }
+    # Candidate records: before their identity's first life, or on an identity that never lives.
+    cand <- data.table::data.table(
+        .row = which(is_term), tag = tg[is_term], host = rid[is_term], cen = cen[is_term],
+        src = if (is.null(src_col)) NA_character_ else as.character(out[[src_col]][is_term]),
+        pre = if (has_pre) as.integer(out$ReconstructedStemID_PreSweep[is_term]) else NA_integer_
+    )
+    cand <- span[cand, on = .(tag, host)]
+    cand <- cand[is.na(h_first) | cen < h_first]
+    if (nrow(cand) == 0L) {
+        return(out)
+    }
+    data.table::setnames(cand, "host", "rid")
+    cand[, grp := .GRP, by = .(tag, rid, src)]
+    G <- cand[, .(
+        tag = tag[1L], rid = rid[1L], c1 = min(cen), cens = list(sort(unique(cen))),
+        pre = if (all(!is.na(pre)) && data.table::uniqueN(pre) == 1L) pre[1L] else NA_integer_
+    ), by = grp]
+
+    # Rows already present per (tag, identity, census), plus claims made here.
+    occ <- unique(data.table::data.table(tag = tg, host = rid, cen = cen)[!is.na(host)])
+    data.table::setkey(occ, tag, host, cen)
+    claimed <- character(0)
+    collides <- function(t, h, cs) {
+        nrow(occ[data.table::CJ(tag = t, host = h, cen = cs), nomatch = 0L]) > 0L ||
+            any(paste(t, h, cs, sep = "\r") %in% claimed)
+    }
+    target <- rep(NA_integer_, nrow(G))
+    rule <- rep(NA_character_, nrow(G))
+
+    # (a) the engine's own choice. When that engine ID no longer lives (a later
+    # step relabelled the track, e.g. apply_pin_track_rejoin()), follow the
+    # engine track: the current ID of its last measured row before c1.
+    ga_in <- G[!is.na(pre), .(grp, tag, host = pre, c1, rid)]
+    if (has_pre && nrow(ga_in) > 0L) {
+        trk <- data.table::data.table(
+            tag = tg, pre = as.integer(out$ReconstructedStemID_PreSweep), cen = cen, cur = rid
+        )[!is.na(out$DBH) & !is.na(pre) & !is.na(cur)]
+        dead_host <- ga_in[!span, on = .(tag, host), which = TRUE]
+        if (length(dead_host) > 0L && nrow(trk) > 0L) {
+            q <- ga_in[dead_host, .(k = dead_host, tag, pre = host, c1)]
+            last <- trk[q, on = .(tag, pre, cen < c1), .(k, cur = x.cur, cen = x.cen), nomatch = 0L][order(k, -cen)][, .SD[1L], by = k]
+            ga_in[last$k, host := last$cur]
+        }
+    }
+    ga <- span[ga_in[host != rid, .(grp, tag, host, c1)], on = .(tag, host), nomatch = 0L][h_last < c1]
+    for (k in seq_len(nrow(ga))) {
+        gi <- match(ga$grp[k], G$grp)
+        cs <- G$cens[[gi]]
+        if (!collides(ga$tag[k], ga$host[k], cs)) {
+            target[gi] <- ga$host[k]
+            rule[gi] <- "a"
+            claimed <- c(claimed, paste(ga$tag[k], ga$host[k], cs, sep = "\r"))
+        }
+    }
+
+    # (b) the one stem that ended just before, when exactly one group starts then
+    un <- G[is.na(target)]
+    if (nrow(un) > 0L) {
+        starts <- un[, .(n_groups = .N), by = .(tag, c1)]
+        ends <- span[, .(tag, host, c1 = h_last + 1L)]
+        cb <- ends[un[, .(grp, tag, c1, rid)], on = .(tag, c1), nomatch = 0L, allow.cartesian = TRUE][host != rid]
+        if (nrow(cb) > 0L) {
+            cb[, free := !vapply(seq_len(.N), function(k) collides(tag[k], host[k], G$cens[[match(grp[k], G$grp)]]), logical(1))]
+            cb <- starts[cb[free == TRUE], on = .(tag, c1)]
+            one <- cb[, .(n_host = .N, host = host[1L], n_groups = n_groups[1L]), by = grp][n_host == 1L & n_groups == 1L]
+            for (k in seq_len(nrow(one))) {
+                gi <- match(one$grp[k], G$grp)
+                cs <- G$cens[[gi]]
+                if (!collides(G$tag[gi], one$host[k], cs)) {
+                    target[gi] <- one$host[k]
+                    rule[gi] <- "b"
+                    claimed <- c(claimed, paste(G$tag[gi], one$host[k], cs, sep = "\r"))
+                }
+            }
+        }
+    }
+
+    moved <- data.table::data.table(grp = G$grp, target = target, rule = rule)[!is.na(target)]
+    if (nrow(moved) > 0L) {
+        rows <- cand[moved, on = "grp"]
+        val <- if (is.integer(out$ReconstructedStemID)) as.integer(rows$target) else as.numeric(rows$target)
+        data.table::set(out, i = rows$.row, j = "ReconstructedStemID", value = val)
+        if (!("ReconstructionMethod" %in% names(out))) out[, ReconstructionMethod := NA_character_]
+        data.table::set(out, i = rows$.row, j = "ReconstructionMethod", value = "terminal_to_host")
+        if ("SweepRollbackToPreSweep" %in% names(out) && any(rows$rule == "a")) {
+            data.table::set(out, i = rows$.row[rows$rule == "a"], j = "SweepRollbackToPreSweep", value = TRUE)
+        }
+    }
+    if (isTRUE(verbose)) {
+        message(sprintf(
+            "[apply_terminal_to_host] %d group(s) / %d row(s): engine choice %d / %d, only ending stem %d / %d, left as never-alive %d / %d.",
+            nrow(G), nrow(cand),
+            sum(rule %in% "a"), cand[grp %in% moved[rule == "a", grp], .N],
+            sum(rule %in% "b"), cand[grp %in% moved[rule == "b", grp], .N],
+            sum(is.na(rule)), cand[!grp %in% moved$grp, .N]
+        ))
+    }
+    out
+}
+
+## ---- 9) Shared post-engine helper: broken-below invariant pass --------
+# Enforce two invariants on the final reconstruction, per reconstructed
+# trajectory: the rows of one (Tag, ReconstructedStemID), ordered by CensusID.
+#
+#   R1 (split-on-break): a row with Status == "broken below" and
+#       !is.na(DBH) that has an earlier row on its trajectory MUST start a
+#       new identity.  Mint a fresh ID (max(existing)+1, monotonic per-call)
+#       and carry it forward through the later rows of the trajectory until
+#       the next such break row.  Tag method = "bb_split" (first row) /
 #       "bb_split_carry" (carried forward).
 #
 #   R2 (terminate-on-stump): a row with Status == "broken below" and
-#       is.na(DBH) terminates the trajectory.  Any later row in the same
-#       series that has !is.na(DBH) and currently shares the terminator's
-#       ReconstructedStemID MUST be re-IDed.  Mint a fresh ID and propagate
-#       analogously.  Tag method = "bb_post_terminator_split" /
+#       is.na(DBH) terminates the trajectory.  Any later row of the same
+#       trajectory that has !is.na(DBH) MUST be re-IDed.  Mint a fresh ID
+#       and propagate analogously.  Tag method = "bb_post_terminator_split" /
 #       "bb_post_terminator_split_carry".  NA-DBH dead/BB/stem-dead corpse
 #       rows already labelled by `apply_carried_terminal_backfill` keep
 #       their ID (LOCF on terminator is allowed).
+#
+# Why the trajectory (and not StemTag) is the group: StemTags only exist from
+# the 2010 census on (C7+). Grouping by StemTag put a stem's pre-2010 rows
+# (StemTag NA) and its 2010+ rows (StemTag set) in different groups, so a
+# break measured in 2010 was never compared with the trunk it continued
+# (e.g. tag 082883: a 155 mm trunk and its 30 mm resprout stayed one stem),
+# and in the all-NA pre-2010 group the rows of different stems interleaved,
+# so a split could stop carrying forward early (e.g. tag 053376).
 #
 # Pinned rows (non-NA TrueStemID) are normally respected, BUT when a pin
 # conflicts with the contract (typical case: BCI driver pre-stamps
@@ -275,9 +576,6 @@ apply_orphan_stem_backfill <- function(out, verbose = TRUE) {
 # idempotent: running it twice on the same input yields the same output
 # as one run.
 #
-# Series key: prefer StemTag (mirrors `broken_below_tags.csv` diagnostic)
-# then OriginalStemID then StemID.
-#
 # This function operates only on the MAP-level table.  Posterior CSVs need
 # the same operator applied per-sample with `path_sig` recomputation; that
 # is handled separately at the posterior writer site.
@@ -289,16 +587,7 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
     if (!all(needed %in% names(out))) {
         return(out)
     }
-    series_col <- if ("StemTag" %in% names(out)) {
-        "StemTag"
-    } else if ("OriginalStemID" %in% names(out)) {
-        "OriginalStemID"
-    } else if ("StemID" %in% names(out)) {
-        "StemID"
-    } else {
-        return(out)
-    }
-    data.table::setorderv(out, c("Tag", series_col, "CensusID"))
+    data.table::setorderv(out, c("Tag", "ReconstructedStemID", "CensusID"))
     if (!("ReconstructionMethod" %in% names(out))) {
         out[, ReconstructionMethod := NA_character_]
     }
@@ -313,8 +602,9 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
     dbh <- out$DBH
     trueid <- if (has_true) as.integer(out$TrueStemID) else rep(NA_integer_, nrow(out))
 
-    # Group row indices by (Tag, series) — preserves the setorderv ordering.
-    groups <- out[, .(.idxs = list(.I)), by = c("Tag", series_col)]
+    # Group row indices by trajectory (Tag, ReconstructedStemID), in census
+    # order (the setorderv above). Rows without an identity are not grouped.
+    groups <- out[!is.na(ReconstructedStemID), .(.idxs = list(.I)), by = .(Tag, ReconstructedStemID)]
 
     n_r1 <- 0L
     n_r2 <- 0L
@@ -494,7 +784,9 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
 #      new_id = 1, the next gets 2, and so on through .N.
 #   4. Apply the mapping to: ReconstructedStemID,
 #      ReconstructedStemID_PreSweep, DP_PosteriorTop{k}ID columns
-#      (always), and TrueStemID ONLY on rows whose ReconstructionMethod
+#      (always; in the last two, engine labels that are no longer a final ID
+#      get their own numbers after .N, so they never read as another stem),
+#      and TrueStemID ONLY on rows whose ReconstructionMethod
 #      %in% ENGINE_MINTED_INTO_TRUESTEMID (provisional_dp, bb_split,
 #      bb_split_carry, bb_post_terminator_split,
 #      bb_post_terminator_split_carry — those rows hold engine-minted
@@ -645,11 +937,31 @@ renumber_engine_minted_ids <- function(out,
 
         # Apply mapping
         rid[ix] <- translate(rid_g)
+        # Audit columns (engine labels) can hold labels that are no longer a
+        # final ID (post-engine steps relabelled the track, e.g.
+        # apply_pin_track_rejoin()). Left raw they could equal another stem's
+        # new 1..N number, so they get their own numbers after N, shared by
+        # ReconstructedStemID_PreSweep and the Top-K ID columns. The returned
+        # mapping (used for the posterior paths) is unchanged.
+        audit_vals <- c(if (has_pre_sweep) presweep[ix], unlist(lapply(pst_cols, `[`, ix), use.names = FALSE))
+        unmapped <- sort(unique(audit_vals[!is.na(audit_vals) & !(as.character(audit_vals) %in% names(map_lookup))]))
+        audit_lookup <- map_lookup
+        if (length(unmapped) > 0L) {
+            extra <- length(map_lookup) + seq_along(unmapped)
+            names(extra) <- as.character(unmapped)
+            audit_lookup <- c(map_lookup, extra)
+        }
+        translate_audit <- function(v) {
+            out_v <- v
+            hit <- !is.na(v)
+            if (any(hit)) out_v[hit] <- audit_lookup[as.character(v[hit])]
+            out_v
+        }
         if (has_pre_sweep) {
-            presweep[ix] <- translate(presweep[ix])
+            presweep[ix] <- translate_audit(presweep[ix])
         }
         for (cn in posterior_id_cols) {
-            pst_cols[[cn]][ix] <- translate(pst_cols[[cn]][ix])
+            pst_cols[[cn]][ix] <- translate_audit(pst_cols[[cn]][ix])
         }
         # TrueStemID: only on rows whose method indicates engine-minted-into-TrueStemID
         if (has_true) {

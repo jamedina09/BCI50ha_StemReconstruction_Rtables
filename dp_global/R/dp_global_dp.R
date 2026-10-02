@@ -726,40 +726,18 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 }
             }
 
-            # ---- R-boundary splitting for LIVE R-coded censuses ----
+            # ---- R-boundary splitting for LIVE R-coded rows ----
             # The NA-R barrier above handles censuses with 0 live stems.
-            # This block handles censuses where R-coded stems HAVE non-NA DBH:
-            # the tree broke but the field team recorded DBH > 0 on the R row.
-            # The R census marks an identity boundary: the R-coded stem IS the old
-            # organism (last record), and any track that continues into censuses AFTER
-            # the R census must be severed (post-R rows get new synthetic IDs).
-            for (.cc_fb in .pre_censuses_fb) {
-                .live_rows_fb <- which(out$CensusID == .cc_fb & !is.na(out$DBH))
-                if (length(.live_rows_fb) == 0L) next
-                .live_tsm_fb <- if (.has_tsm_fb) out$ListOfTSM[.live_rows_fb] else rep(NA_character_, length(.live_rows_fb))
-                .any_r_live_tsm <- any(!is.na(.live_tsm_fb) & grepl(.resprout_regex_fb, .live_tsm_fb, perl = TRUE))
-                .any_r_live_status <- if (.has_status_fb) any(!is.na(out$Status[.live_rows_fb]) & out$Status[.live_rows_fb] == "broken below") else FALSE
-                .any_r_live <- .any_r_live_tsm | .any_r_live_status
-                if (!.any_r_live) next
-                # This census has live R-coded stems → sever tracks continuing after R
-                .cens_before_rfb <- .pre_censuses_fb[.pre_censuses_fb < .cc_fb]
-                if (length(.cens_before_rfb) == 0L) next
-                .ids_before_and_r_rfb <- unique(out$ReconstructedStemID[out$CensusID <= .cc_fb & !is.na(out$ReconstructedStemID)])
-                .ids_after_rfb <- unique(out$ReconstructedStemID[out$CensusID > .cc_fb & !is.na(out$ReconstructedStemID)])
-                .crossing_rfb <- intersect(.ids_before_and_r_rfb, .ids_after_rfb)
-                .cur_max_fb <- suppressWarnings(max(out$ReconstructedStemID, na.rm = TRUE))
-                if (!is.finite(.cur_max_fb)) .cur_max_fb <- 0L
-                if (length(.crossing_rfb) > 0L) {
-                    for (.old_rfb in .crossing_rfb) {
-                        .new_rfb <- as.integer(.cur_max_fb) + 1L
-                        .cur_max_fb <- .new_rfb
-                        out[
-                            CensusID > .cc_fb & ReconstructedStemID == .old_rfb,
-                            ReconstructedStemID := .new_rfb
-                        ]
-                    }
-                }
-            }
+            # A measured R-coded / broken-below row starts a new stem: only that
+            # stem's track is split, and its rows BEFORE the R census get a new
+            # ID, so the R row and its continuation keep the matcher's ID and
+            # agree with the anchor pins (see split_live_resprout_tracks()).
+            # The anchor census is left to apply_broken_below_invariants() (R1).
+            out <- split_live_resprout_tracks(
+                out,
+                censuses = .pre_censuses_fb[.pre_censuses_fb < anchor_start],
+                id_floor = suppressWarnings(max(original_tree_data$TrueStemID, na.rm = TRUE))
+            )
         }
 
         finalize_out(out)
@@ -2770,6 +2748,87 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
     vcat(prefix, "--- DONE --- ", sum(!is.na(tree_data$ReconstructedStemID)), " observations mapped to ", length(unique(tree_data$ReconstructedStemID[!is.na(tree_data$ReconstructedStemID)])), " identity track(s) in ", sprintf("%.2fs", tic() - t_start))
     return(tree_data)
+}
+
+# split_live_resprout_tracks()
+#
+# Used by the probabilistic paths only: do_fallback() above and the drivers'
+# DP-error handlers. A measured row with a resprout code (R, RP, RF, RT, QR,
+# OR) or Status "broken below" starts a new stem, and the stem that broke ends
+# at the census before it (the rule of apply_broken_below_invariants() R1).
+# Only that stem's track is split; the tree's other stems keep the matcher's
+# links, as they do in the posterior samples. (The DP instead splits the whole
+# tree at its first resprout census, in its export and in its samples.)
+#
+# The rows BEFORE the R census get the new ID, as in the DP resprout segment
+# split and the NA-R barrier, so the R row and its continuation keep the
+# matcher's ID: the anchor TrueStemID that the final sweep in finalize_out()
+# restores. Renaming the rows after the R census instead let that sweep re-join
+# the anchor to the stem that broke, stranding the censuses in between as
+# one-census stems counted twice in stock (e.g. tag 152256, census 6).
+#
+# The stem that broke is found through ReconstructedStemID_PreSweep (the
+# matcher's own track): its last measured row before the R census. That row's
+# current ID is used, because the matcher's sweep may have moved a pinned R
+# row to its TrueStemID and the NA-R barrier may already have relabelled the
+# track. It is split only when that ID continues at or after the R census, and
+# not when one of its rows before the break is pinned: the database links that
+# stem across the break, and pins win.
+#
+# Inputs:
+#   out      : matcher output with CensusID, DBH, ReconstructedStemID and,
+#              when present, ListOfTSM, Status, TrueStemID,
+#              ReconstructionMethod, ReconstructedStemID_PreSweep.
+#   censuses : censuses at which an R row may split its track (pre-anchor).
+#   id_floor : new IDs are minted above max(ReconstructedStemID, id_floor) so
+#              they cannot collide with TrueStemIDs of rows appended later.
+#
+# Returns `out` (also modified by reference).
+split_live_resprout_tracks <- function(out, censuses, id_floor = NULL) {
+    if (is.null(out) || nrow(out) == 0L || length(censuses) == 0L) {
+        return(out)
+    }
+    n <- nrow(out)
+    resprout_regex <- "\\b(R|RP|RF|RT|QR|OR)\\b"
+    has_code <- if ("ListOfTSM" %in% names(out)) {
+        !is.na(out$ListOfTSM) & grepl(resprout_regex, out$ListOfTSM, perl = TRUE)
+    } else {
+        rep(FALSE, n)
+    }
+    is_bb <- if ("Status" %in% names(out)) {
+        !is.na(out$Status) & out$Status == "broken below"
+    } else {
+        rep(FALSE, n)
+    }
+    r_rows <- which(!is.na(out$DBH) & out$CensusID %in% censuses & (has_code | is_bb))
+    if (length(r_rows) == 0L) {
+        return(out)
+    }
+    r_rows <- r_rows[order(out$CensusID[r_rows])]
+    track_col <- if ("ReconstructedStemID_PreSweep" %in% names(out)) "ReconstructedStemID_PreSweep" else "ReconstructedStemID"
+    method <- if ("ReconstructionMethod" %in% names(out)) out$ReconstructionMethod else rep(NA_character_, n)
+    pinned <- if ("TrueStemID" %in% names(out)) {
+        !is.na(out$TrueStemID) & !(method %in% "provisional_dp")
+    } else {
+        rep(FALSE, n)
+    }
+    cur_max <- suppressWarnings(max(c(out$ReconstructedStemID, id_floor), na.rm = TRUE))
+    if (!is.finite(cur_max)) cur_max <- 0L
+    for (ri in r_rows) {
+        trk <- as.integer(out[[track_col]][ri])
+        if (is.na(trk)) next
+        cc <- out$CensusID[ri]
+        prev <- which(out[[track_col]] %in% trk & !is.na(out$DBH) & out$CensusID < cc)
+        if (length(prev) == 0L) next
+        id <- out$ReconstructedStemID[prev[which.max(out$CensusID[prev])]]
+        if (is.na(id)) next
+        before <- which(out$CensusID < cc & out$ReconstructedStemID %in% id)
+        if (any(pinned[before])) next
+        if (!any(out$CensusID >= cc & out$ReconstructedStemID %in% id)) next
+        cur_max <- cur_max + 1L
+        data.table::set(out, i = before, j = "ReconstructedStemID", value = as.integer(cur_max))
+    }
+    out
 }
 
 # Summary of what's available in posteriors

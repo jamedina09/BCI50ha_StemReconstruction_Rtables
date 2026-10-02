@@ -826,28 +826,14 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             )
             if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
             out[, DP_FallbackReason := paste0("error:", substr(msg, 1, 200))]
-            # R-boundary splitting: sever tracks that cross live R-coded censuses
-            .r_regex_eh <- "\\b(R|RP|RF|RT|QR|OR)\\b"
-            if ("ListOfTSM" %in% names(out)) {
-                .pre_cc_eh <- sort(unique(out$CensusID[out$CensusID <= ANCHOR_START_CENSUS]))
-                for (.cc_eh in .pre_cc_eh) {
-                    .lr_eh <- which(out$CensusID == .cc_eh & !is.na(out$DBH))
-                    if (length(.lr_eh) == 0L) next
-                    .tsm_eh <- out$ListOfTSM[.lr_eh]
-                    if (!any(!is.na(.tsm_eh) & grepl(.r_regex_eh, .tsm_eh, perl = TRUE))) next
-                    .before_eh <- .pre_cc_eh[.pre_cc_eh < .cc_eh]
-                    if (length(.before_eh) == 0L) next
-                    .ids_bef <- unique(out$ReconstructedStemID[out$CensusID %in% .before_eh & !is.na(out$ReconstructedStemID)])
-                    .ids_aft <- unique(out$ReconstructedStemID[out$CensusID >= .cc_eh & !is.na(out$ReconstructedStemID)])
-                    .cross <- intersect(.ids_bef, .ids_aft)
-                    .mx_eh <- suppressWarnings(max(out$ReconstructedStemID, na.rm = TRUE))
-                    if (!is.finite(.mx_eh)) .mx_eh <- 0L
-                    for (.old_eh in .cross) {
-                        .mx_eh <- .mx_eh + 1L
-                        out[CensusID %in% .before_eh & ReconstructedStemID == .old_eh, ReconstructedStemID := as.integer(.mx_eh)]
-                    }
-                }
-            }
+            # R-boundary splitting, as in do_fallback(): a measured R-coded /
+            # broken-below row starts a new stem; only that stem's track is split
+            # (split_live_resprout_tracks() in dp_global_dp.R).
+            out <- split_live_resprout_tracks(
+                out,
+                censuses = sort(unique(out$CensusID[out$CensusID < ANCHOR_START_CENSUS])),
+                id_floor = suppressWarnings(max(dtg$TrueStemID, na.rm = TRUE))
+            )
             # Append post-anchor rows with proper labeling (mirrors finalize_out / propagate_post_anchor_given)
             if (nrow(.post_anchor_eh) > 0L) {
                 .post <- data.table::copy(.post_anchor_eh)
@@ -2042,11 +2028,21 @@ run_main_chunked <- function() {
                     # ---- Post-engine helper chain (all helpers in dp_global/R/dp_global_main.R) ----
                     # 1. Posterior bins: adds DP_PosteriorBin column.
                     out_chunk <- maybe_add_posterior_bins(out_chunk)
+                    # 1b. Pin the track, not just the row: unpinned measurements the engine
+                    #     linked to pinned rows, left on another ID by the TrueStemID sweep,
+                    #     rejoin the track's single pin (no crossing of broken-below + DBH rows
+                    #     or NA-R barriers; no collisions). Pinned rows never move.
+                    out_chunk <- apply_pin_track_rejoin(out_chunk, verbose = FALSE)
                     # 2. Carried-terminal backfill: LOCF of ReconstructedStemID onto
                     #    NA-DBH terminal rows (dead/stem dead/broken below).
                     out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
                     # 3. Orphan-stem backfill: fills NA-DBH, NA-TrueStemID rows from StemID.
                     out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
+                    # 3b. Terminal records back to their stem: an unmeasured dead / stem dead /
+                    #     broken-below record that precedes the first life of its identity goes to
+                    #     the stem that ended just before (the engine's pre-sweep choice, else the
+                    #     only stem ending then); otherwise it stays (never-alive stem).
+                    out_chunk <- apply_terminal_to_host(out_chunk, verbose = FALSE)
                     # 4. Broken-below invariants (R1 split-at-resurrection, R2 post-terminator).
                     #    May mint new ReconstructedStemIDs tagged bb_split / bb_post_terminator_split.
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
