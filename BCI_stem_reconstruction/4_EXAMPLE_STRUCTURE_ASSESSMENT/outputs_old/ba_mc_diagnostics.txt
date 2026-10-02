@@ -1,0 +1,3 @@
+CHECK OK: Every stem-census row has an ExactDate (dated in stage 3)
+CHECK OK: At least two censuses are available
+CHECK OK: One measurement per stem and census in the exported reconstruction

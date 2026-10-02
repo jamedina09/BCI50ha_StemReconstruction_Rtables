@@ -29,7 +29,7 @@ workspace_root <- getwd()
 home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 
 # Choose the run subfolder by its directory name.
-run_code <- list.files(home_dir)
+run_code <- list.files(home_dir)[2]
 
 # Derived paths -----------------------------------------------------------------
 chunks_path <- file.path(home_dir, run_code) # Feather input directory
