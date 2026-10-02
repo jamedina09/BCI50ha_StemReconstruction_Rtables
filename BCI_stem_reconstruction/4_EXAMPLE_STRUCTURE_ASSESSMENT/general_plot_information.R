@@ -344,16 +344,19 @@ message(sprintf(
 rec[, dbh_filled := FALSE]
 need_ids <- rec[Rstatus == "A" & is.na(dbh), unique(stemID)]
 if (length(need_ids) > 0L) {
-    fill <- rec[stemID %in% need_ids, {
-        t_num <- as.numeric(ExactDate)
-        meas <- !is.na(dbh)
-        target <- Rstatus == "A" & is.na(dbh)
-        out <- dbh
-        if (any(meas) && any(target)) {
-            out[target] <- dbh_from_own_measurements(t_num[meas], dbh[meas], t_num[target])
-        }
-        .(CensusID, dbh_new = out, filled = target & !is.na(out))
-    }, by = stemID]
+    fill <- rec[stemID %in% need_ids,
+        {
+            t_num <- as.numeric(ExactDate)
+            meas <- !is.na(dbh)
+            target <- Rstatus == "A" & is.na(dbh)
+            out <- dbh
+            if (any(meas) && any(target)) {
+                out[target] <- dbh_from_own_measurements(t_num[meas], dbh[meas], t_num[target])
+            }
+            .(CensusID, dbh_new = out, filled = target & !is.na(out))
+        },
+        by = stemID
+    ]
     rec[fill, on = .(stemID, CensusID), `:=`(dbh = i.dbh_new, dbh_filled = i.filled)]
     rm(fill)
 }

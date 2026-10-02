@@ -60,7 +60,7 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Choose the run folder inside the output directory and locate its posterior
 # files. Only directories are candidates (the folder may also hold a .zip
 # archive of the same run).
-run_code <- basename(list.dirs(home_dir, recursive = FALSE, full.names = TRUE))
+run_code <- basename(list.dirs(home_dir, recursive = FALSE, full.names = TRUE))[2]
 bio_check(
     length(run_code) == 1L,
     sprintf("Exactly one DP run folder in %s", home_dir),
