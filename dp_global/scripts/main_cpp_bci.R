@@ -486,8 +486,10 @@ out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 #   Both backfill helpers live in dp_global/R/dp_global_main.R.
 # ----------------------------------------------------------------
 out <- maybe_add_posterior_bins(out)
+out <- apply_pin_track_rejoin(out) # rows left behind by the TrueStemID sweep rejoin their track's pin
 out <- apply_carried_terminal_backfill(out)
 out <- apply_orphan_stem_backfill(out)
+out <- apply_terminal_to_host(out) # terminal records back to the stem that ended
 out <- apply_broken_below_invariants(out)
 
 # Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,

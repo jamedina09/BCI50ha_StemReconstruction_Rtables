@@ -796,28 +796,14 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             )
             if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
             out[, DP_FallbackReason := paste0("error:", substr(msg, 1, 200))]
-            # R-boundary splitting: sever tracks that cross live R-coded censuses
-            .r_regex_eh <- "\\b(R|RP|RF|RT|QR|OR)\\b"
-            if ("ListOfTSM" %in% names(out)) {
-                .pre_cc_eh <- sort(unique(out$CensusID[out$CensusID <= ANCHOR_START_CENSUS]))
-                for (.cc_eh in .pre_cc_eh) {
-                    .lr_eh <- which(out$CensusID == .cc_eh & !is.na(out$DBH))
-                    if (length(.lr_eh) == 0L) next
-                    .tsm_eh <- out$ListOfTSM[.lr_eh]
-                    if (!any(!is.na(.tsm_eh) & grepl(.r_regex_eh, .tsm_eh, perl = TRUE))) next
-                    .before_eh <- .pre_cc_eh[.pre_cc_eh < .cc_eh]
-                    if (length(.before_eh) == 0L) next
-                    .ids_bef <- unique(out$ReconstructedStemID[out$CensusID %in% .before_eh & !is.na(out$ReconstructedStemID)])
-                    .ids_aft <- unique(out$ReconstructedStemID[out$CensusID >= .cc_eh & !is.na(out$ReconstructedStemID)])
-                    .cross <- intersect(.ids_bef, .ids_aft)
-                    .mx_eh <- suppressWarnings(max(out$ReconstructedStemID, na.rm = TRUE))
-                    if (!is.finite(.mx_eh)) .mx_eh <- 0L
-                    for (.old_eh in .cross) {
-                        .mx_eh <- .mx_eh + 1L
-                        out[CensusID %in% .before_eh & ReconstructedStemID == .old_eh, ReconstructedStemID := as.integer(.mx_eh)]
-                    }
-                }
-            }
+            # R-boundary splitting, as in do_fallback(): a measured R-coded /
+            # broken-below row starts a new stem; only that stem's track is split
+            # (split_live_resprout_tracks() in dp_global_dp.R).
+            out <- split_live_resprout_tracks(
+                out,
+                censuses = sort(unique(out$CensusID[out$CensusID < ANCHOR_START_CENSUS])),
+                id_floor = suppressWarnings(max(dtg$TrueStemID, na.rm = TRUE))
+            )
             # Append post-anchor rows with proper labeling (mirrors finalize_out / propagate_post_anchor_given)
             if (nrow(.post_anchor_eh) > 0L) {
                 .post <- data.table::copy(.post_anchor_eh)
@@ -1204,6 +1190,9 @@ run_main <- function() {
     #      ReconstructionMethod = "carried_terminal" on filled rows.
     #      Shared helper defined in dp_global/R/dp_global_main.R; mirrors
     #      Step 9b in main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
+    #      First, unpinned measurements left behind by the TrueStemID sweep
+    #      rejoin their engine track's single pin (apply_pin_track_rejoin()).
+    out <- apply_pin_track_rejoin(out)
     out <- apply_carried_terminal_backfill(out)
 
     # 5.5c Born-orphan stem backfill. Rows with NA Recon, NA TrueStemID,
@@ -1213,6 +1202,7 @@ run_main <- function() {
     #      tag ReconstructionMethod = "given_orphan". Mirrors Step 9c in
     #      main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
     out <- apply_orphan_stem_backfill(out)
+    out <- apply_terminal_to_host(out) # terminal records back to the stem that ended
 
     # 5.5d Broken-below invariant pass. Enforce R1 (split-on-break) and R2
     #      (terminate-on-stump) per `apply_broken_below_invariants` in
