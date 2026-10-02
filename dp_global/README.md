@@ -372,8 +372,8 @@ Columns:
 | Column | Type | Description |
 |--------|------|-------------|
 | `path_sig` | character | Dash-separated `ReconstructedStemID` values across all observations, ordered by census |
-| `path_count` | integer | Number of posterior samples that produced this exact path |
-| `path_prob` | numeric | Normalised probability of this path (sums to 1 across all rows) |
+| `path_count` | integer | Number of posterior samples that produced this exact path. `path_count / n_samples` is the path's posterior probability (use this for sampling and Monte Carlo) |
+| `path_prob` | numeric | Reference only (sums to 1 across all rows). DP: draws re-weighted by their own sampling probability (`logp`), which double counts it; probabilistic engine: equals `path_count / n_samples` |
 | `recon` | character | Compact mapping of `ObsRowID:ReconstructedStemID` pairs, semicolon-separated |
 
 Each row represents a **unique reconstruction** (unique identity assignment across all censuses). Posterior samples with identical paths are aggregated into `path_count` / `path_prob`. The `ObsRowID` values in the `recon` column correspond to the `obs_row_id` column in the main reconstruction CSV, providing the join key between posterior paths and per-observation data (Tag, CensusID, OriginalStemID, DBH).
@@ -388,13 +388,19 @@ After the engine returns and the post-engine helpers run (`apply_pin_track_rejoi
 
 `path_prob` uses logp-weighted sample weights when the engine attaches a `logp` column to the staged samples (DP path); when no `logp` is present (probabilistic path), `path_prob = path_count / n_samples`.
 
+**The two engines' draws, and how to use them together.**
+
+- *DP:* the samples are drawn by backward sampling from the exact DP posterior, so `path_count / n_samples` already is the posterior probability of each path. Likely trajectories repeat (median 4 unique paths per multi-path tree; about half of all paths are drawn more than once). Because each draw was already chosen with its own probability `exp(logp)`, `path_prob` (which re-weights by `exp(logp)`) is roughly proportional to the square of the path's probability and must not be used for sampling.
+- *Probabilistic engine (`dp_probabilistic_matching.R`):* the samples are approximate. Each is a noisy (Gumbel-perturbed) assignment per census pair, stitched across censuses, repaired for growth violations and filtered for pin consistency. With many stems and censuses almost every draw differs somewhere, so nearly every path has `path_count = 1` and weight `1 / n_samples` (0.005 with 200 samples). There is no single most probable path; the exported reconstruction is the most representative draw (`select_consensus_trajectory()`). The spread is a heuristic for identity uncertainty, not a calibrated posterior.
+- *Using both together:* weight every path by `path_count / sum(path_count)` within its tree, whatever the engine. Drawing one path per tree with these weights is the same as picking one of the tree's draws uniformly, so trees from both engines can be sampled together (as `BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/basal_area_uncertainty.R` does). `DP_PosteriorReconstructedProb` in the reconstruction table has the same meaning for both engines: the share of samples that give the observation its exported ID.
+
 ### MAP vs posterior-sampled paths 🔀
 
 **What these two outputs represent**
 
 - **`ReconstructedStemID` (main output)** is the *MAP joint assignment* (MAP — Maximum a posteriori) decoded by the DP (a deterministic Viterbi-style backtrace of the most probable full path). This is written per-observation in the main `stem_reconstruction_*.csv` as the best joint reconstruction under the model.
 
-- **Per-path posterior summary (`*_paths.<feather|rds|csv>`)** is an *empirical* summary of full reconstructions produced by the posterior sampler (only generated when `posterior_samples > 0`). Each row is a unique path observed among draws and `path_prob` is the normalized sampling weight for that unique path (sums to 1 across sampled unique paths).
+- **Per-path posterior summary (`*_paths.<feather|rds|csv>`)** is an *empirical* summary of full reconstructions produced by the posterior sampler (only generated when `posterior_samples > 0`). Each row is a unique path observed among draws; `path_count / n_samples` is its posterior probability (`path_prob` is a reference column, see above).
 
 **Why they can differ**
 

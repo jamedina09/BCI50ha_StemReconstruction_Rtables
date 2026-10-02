@@ -23,16 +23,35 @@
 #
 # DESIGN
 # ------
-# Exported reconstruction : the stem IDs of the R tables (the DP's Viterbi
-#                           decoding plus stage-2 post-processing). Used for
-#                           every tree with no identity uncertainty and as the
-#                           reference line in the figures.
-# Posterior paths         : 200 backward-sampled posterior draws per tag,
-#                           collapsed into unique paths with their sample
-#                           counts (DATA/POSTERIORS/posterior_sampled_paths.rds).
-#                           Path weights = path_count / sum(path_count).
-#                           (path_prob is NOT used: it re-weights samples by
-#                           their own probability and double counts.)
+# Exported reconstruction : the stem IDs of the R tables (DP trees: the DP's
+#                           Viterbi decoding; probabilistic trees: the most
+#                           representative of their draws; both plus stage-2
+#                           post-processing). Used for every tree with no
+#                           identity uncertainty and as the reference line in
+#                           the figures.
+# Posterior paths         : 200 posterior draws per tag, collapsed into unique
+#                           paths with their sample counts
+#                           (DATA/POSTERIORS/posterior_sampled_paths.rds).
+#                           Path weights = path_count / sum(path_count), i.e.
+#                           every one of a tree's 200 draws is equally likely.
+#                           (path_prob is NOT used: for DP trees it re-weights
+#                           each draw by its own probability and double counts.)
+# Two engines, one sample : both engines' draws are used together, the same
+#                           way. DP trees (dp_global_dp.R) are drawn by backward
+#                           sampling from the exact DP posterior, so likely
+#                           trajectories repeat (path_count > 1). Trees routed
+#                           to the probabilistic engine (dp_probabilistic_matching.R:
+#                           palms and other forced species, stranglers, trees
+#                           whose state space is too large) are drawn
+#                           approximately: a noisy assignment per census pair,
+#                           stitched, growth-repaired and filtered by pins.
+#                           Almost every such draw differs somewhere, so nearly
+#                           every path has path_count = 1 (weight 1/200). Either
+#                           way, one draw per tree per realization is taken with
+#                           probability path_count / 200. The probabilistic
+#                           draws are an approximation, not a calibrated
+#                           posterior; their trees are counted separately in
+#                           the diagnostics.
 # Splice                  : a path covers the DP window of its tree. Measured
 #                           observations outside that window were placed
 #                           deterministically by stage 2 (DB StemID kept,
@@ -43,10 +62,6 @@
 # Monte Carlo             : each realization draws one path per multi-path tree
 #                           (independently, by weight) and aggregates BA at
 #                           quadrat and plot level.
-# Probabilistic engine    : trees reconstructed by dp_probabilistic_matching.R
-#                           (instead of the DP) are sampled or held at the
-#                           exported reconstruction according to
-#                           sample_probabilistic_trees (see the note there).
 #
 # ANCHOR CENSUSES AND SCOPE
 # -------------------------
@@ -116,20 +131,6 @@ write_quadrat_realizations <- TRUE # all quadrat-level realizations in one feath
 
 # Report the stage-2 method of spliced observations.
 report_splice_methods <- TRUE
-
-# Trees reconstructed by the probabilistic engine (dp_probabilistic_matching.R)
-# have posterior samples drawn per census pair and then repaired: every sampled
-# link that fails the growth checks (hard rate, or cumulative shrinkage beyond
-# 3 SD of measurement error) is cut, and the earlier measurement gets a new,
-# sample-specific stem ID (repair_stitched_growth_violations()). A cut turns
-# one measurement into a one-census stem (recruit + death) while its own stem
-# becomes alive-but-unmeasured in that census. That is growth quality control,
-# not identity uncertainty: in 1982–2005 it adds ~5–8 % to plot BA Loss and
-# ~15–25 % to plot BA Gain, and double counts BA in the stock.
-# FALSE (recommended): these trees keep the exported reconstruction in every
-# realization (their identity uncertainty is not quantified).
-# TRUE: sample their paths as they are, including those cuts.
-sample_probabilistic_trees <- TRUE
 
 out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -468,7 +469,9 @@ cat("[BA] exported quadrat stock:", nrow(map_quadrat_stock), "quadrat×census ro
 post_full <- as.data.table(readRDS(post_file))
 post_full[, treeID := as.character(treeID)]
 post_full[, n_paths := .N, by = treeID]
-# Sample frequencies are the posterior probabilities of the unique paths.
+# Sample frequencies are the posterior probabilities of the unique paths, for
+# both engines (DP draws often repeat; probabilistic draws are nearly all
+# unique, so their paths weigh 1/200 each).
 post_full[, w := path_count / sum(path_count), by = treeID]
 bio_check(
     post_full[, abs(sum(w) - 1) < 1e-9, by = treeID][, all(V1)],
@@ -488,14 +491,11 @@ s2 <- as.data.table(readRDS(stage2_file))[, .(
     treeID = as.character(TreeID), StemPaths = as.integer(obs_row_id),
     method = as.character(ReconstructionMethod)
 )]
+# Both engines are sampled together; the engine is only used to report them.
 prob_trees <- intersect(multi_trees, s2[method == "probabilistic", unique(treeID)])
-if (!sample_probabilistic_trees) {
-    multi_trees <- setdiff(multi_trees, prob_trees)
-    multi <- multi[treeID %in% multi_trees]
-}
 cat(
-    "[BA] multi-path trees from the probabilistic engine:", length(prob_trees),
-    if (sample_probabilistic_trees) "(sampled)\n" else "(exported reconstruction, not sampled)\n"
+    "[BA] multi-path trees:", length(multi_trees), "| DP engine:", length(multi_trees) - length(prob_trees),
+    "| probabilistic engine:", length(prob_trees), "(both sampled the same way)\n"
 )
 
 # Parse every path into (observation, stem label). Path labels get a "p"
@@ -797,9 +797,6 @@ diag_line(
     sprintf(" (of which probabilistic engine: %d)", length(intersect(sampled_trees, prob_trees)))
 )
 diag_line("  multi path, fallback to exported reconstruction: ", length(fallback_trees))
-if (!sample_probabilistic_trees) {
-    diag_line("  multi path, probabilistic engine, held at the exported reconstruction (not sampled): ", length(prob_trees))
-}
 diag_line("  multi path, not analysed (no quadrat / no measured observation): ", length(no_obs_trees))
 diag_line("analysed trees without a posterior (single-stem tags, exported reconstruction): ", length(setdiff(unique(rec$treeID), post_full$treeID)))
 diag_line("")
@@ -815,10 +812,24 @@ if (!is.null(splice_methods)) {
     }
 }
 diag_line("")
-diag_line("## Exported reconstruction vs posterior (sampled trees)")
-diag_line(sprintf("mean posterior probability of the exported partition: %.3f", exp_prob[, mean(p_exported)]))
-diag_line(sprintf("share of trees where the exported partition is among the sampled paths: %.3f", exp_prob[, mean(p_exported > 0)]))
-diag_line(sprintf("share of trees where it is the most probable path: %.3f", exp_prob[, mean(p_exported >= p_best - 1e-12)]))
+diag_line("## Exported reconstruction vs posterior (sampled trees, by engine)")
+diag_line("Both engines are sampled the same way (path_count / sum(path_count)).")
+diag_line("DP draws are exact posterior samples and repeat; probabilistic draws are")
+diag_line("approximate and nearly all unique, so a 'most probable path' exists only for DP trees.")
+exp_prob[, engine := fifelse(treeID %in% prob_trees, "probabilistic", "DP")]
+path_stats <- multi[treeID %in% sampled_trees, .(n_paths = .N, once = sum(path_count == 1L)), by = treeID]
+path_stats[, engine := fifelse(treeID %in% prob_trees, "probabilistic", "DP")]
+for (e in c("DP", "probabilistic")) {
+    ep <- exp_prob[engine == e]
+    ps <- path_stats[engine == e]
+    if (nrow(ep) == 0L) next
+    diag_line(sprintf(
+        "  %-13s trees %6d | median unique paths per tree %5.0f | paths drawn once %5.1f %% | mean posterior probability of the exported partition %.3f | exported partition among the sampled paths %.3f%s",
+        e, nrow(ep), median(ps$n_paths), 100 * sum(ps$once) / sum(ps$n_paths), ep[, mean(p_exported)], ep[, mean(p_exported > 0)],
+        if (e == "DP") sprintf(" | most probable path %.3f", ep[, mean(p_exported >= p_best - 1e-12)]) else ""
+    ))
+}
+rm(path_stats)
 diag_line("")
 diag_line("## Invariance")
 diag_line(sprintf("largest |MC plot stock - exported stock|: %.6f m2 (alive-but-unmeasured stems only)", stock_dev))

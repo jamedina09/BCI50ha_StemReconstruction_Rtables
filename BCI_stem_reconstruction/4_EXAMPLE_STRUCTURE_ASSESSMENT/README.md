@@ -45,18 +45,41 @@ Purpose:
 
 Key processing steps:
 
-- Load posterior stem reconstruction data.
-- Separate deterministic MAP-equivalent paths from ambiguous trees with multiple reconstruction
-  paths.
-- Run Monte Carlo realizations that sample one path per ambiguous tree proportional to path
-  probability.
+- Load the exported reconstruction (R tables) and the posterior paths
+  (`DATA/POSTERIORS/posterior_sampled_paths.rds`).
+- Separate trees with a single path (no identity uncertainty) from trees with several paths.
+- Complete every path with the stage-2 links of observations outside its window (splice).
+- Run Monte Carlo realizations that draw one path per multi-path tree, independently, with
+  weight `path_count / sum(path_count)`.
 - Aggregate basal area stocks and fluxes at tree and quadrat scales.
-- Report MAP estimates and empirical MC uncertainty (95% CI).
+- Report the exported reconstruction and the empirical MC uncertainty (95 % interval).
+
+Posterior weights and the two engines:
+
+- Every tree has 200 posterior draws, collapsed into unique paths. `path_count` is the number
+  of draws that produced a path, so `path_count / 200` is its posterior probability and each
+  draw is equally likely. `path_prob` is **not** used: for DP trees it re-weights each draw by
+  its own probability, which counts that probability twice.
+- DP trees are sampled by backward sampling from the exact DP posterior, so likely
+  trajectories repeat (median 4 unique paths per multi-path tree, some drawn many times).
+- Trees routed to the probabilistic engine (`dp_probabilistic_matching.R`: palms and other
+  forced species, stranglers, trees whose state space is too large) get approximate draws: a
+  noisy assignment per census pair, stitched, repaired for growth violations and filtered by
+  pins. Almost every draw differs somewhere, so nearly every path is unique and weighs 1/200
+  (0.005). These trees have no single most probable path; their exported reconstruction is the
+  most representative draw.
+- Both engines are sampled together and in the same way (one draw per tree per realization).
+  The probabilistic draws are an approximation rather than a calibrated posterior; the
+  diagnostics report both engines separately (trees, unique paths, share of paths drawn once,
+  and how often the exported partition is among the sampled paths).
 
 Key assumptions and scope:
 
 - Uncertainty applies only to pre-anchor intervals because post-anchor censuses have confirmed
   stem identity. The anchor census used in this script is `ANCHOR_START_CENSUS = 7`.
+- Only identity uncertainty is quantified. Trees are drawn independently, so their variations
+  largely cancel at plot level and the ribbon is narrow; it does not include sampling
+  (quadrat) uncertainty or model/systematic error.
 - The script writes several outputs to `outputs/`, including MAP feather tables, MC realization
   feather files, summary files, and diagnostic figures.
 
@@ -78,6 +101,12 @@ Monte Carlo realizations and summaries:
 
 Figures:
 
-- `fig1_BA_stock.pdf` — forest-level BA stock: MAP vs MC.
-- `fig2_BA_fluxes.pdf` — forest-level BA fluxes: MAP vs MC.
+- `fig1_BA_stock.pdf` — forest-level BA stock: exported reconstruction vs MC.
+- `fig2_BA_fluxes.pdf` — forest-level BA fluxes: exported reconstruction vs MC.
+
+Diagnostics:
+
+- `ba_mc_diagnostics.txt` — tree counts (single path, sampled, fallback, by engine), splice
+  counts, the exported partition vs the posterior per engine, invariance checks and the MC
+  error of the 95 % interval bounds.
 - `fig3_BA_trajectories.pdf` — individual-tree BA trajectories for a selected subset.

@@ -6,13 +6,16 @@
 #
 # Posterior columns (one row per unique reconstruction path of a tag):
 #   path_sig   : signature of the path (sequence of ReconstructedStemIDs)
-#   path_count : number of the DP's posterior samples that produced this path.
-#                The samples are drawn by backward sampling from the DP
-#                posterior, so path_count / sum(path_count) is the posterior
-#                probability estimate to use for Monte Carlo sampling.
-#   path_prob  : kept for reference only. The engine re-weights each sample by
-#                exp(logp) before summing, so path_prob is proportional to
-#                count x p (roughly p^2) and must NOT be used for sampling.
+#   path_count : number of the tag's posterior samples that produced this path.
+#                path_count / sum(path_count) is the posterior probability to
+#                use for Monte Carlo sampling, for both engines. DP samples are
+#                drawn by backward sampling from the exact DP posterior and
+#                often repeat; probabilistic-engine samples are approximate and
+#                nearly all unique (path_count = 1, weight 1/200).
+#   path_prob  : kept for reference only. For DP tags the engine re-weights
+#                each sample by exp(logp) before summing, so path_prob is
+#                proportional to count x p (roughly p^2) and must NOT be used
+#                for sampling; for probabilistic tags it equals the count share.
 #   recon      : "ObsRowID:ReconstructedStemID;..." identity of every
 #                observation in the path
 # =============================================================================
