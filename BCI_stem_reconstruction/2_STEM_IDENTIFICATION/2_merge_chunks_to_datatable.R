@@ -28,8 +28,17 @@ workspace_root <- getwd()
 # Update this path if the prior run folder has moved.
 home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 
-# Choose the run subfolder by its directory name.
-run_code <- list.files(home_dir)[2]
+# Run subfolder to merge, selected by name: home_dir can hold several runs.
+# Update it for each new run; it must be the same run as in
+# 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R.
+run_code <- "20261001_220145_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
+if (!file.exists(file.path(home_dir, run_code, "run_finished.txt"))) {
+    run_msg <- sprintf("CHECK FAILED: run folder %s not found in %s, or the run did not finish (no run_finished.txt)", run_code, home_dir)
+    cat("❌", run_msg, "\n")
+    warning(run_msg, call. = FALSE, immediate. = TRUE)
+    stop(run_msg, call. = FALSE)
+}
+cat("✓ Run folder", run_code, "found and finished\n")
 
 # Derived paths -----------------------------------------------------------------
 chunks_path <- file.path(home_dir, run_code) # Feather input directory

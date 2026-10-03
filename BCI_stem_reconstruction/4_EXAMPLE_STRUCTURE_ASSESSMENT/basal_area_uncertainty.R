@@ -493,6 +493,8 @@ s2 <- as.data.table(readRDS(stage2_file))[, .(
 )]
 # Both engines are sampled together; the engine is only used to report them.
 prob_trees <- intersect(multi_trees, s2[method == "probabilistic", unique(treeID)])
+# Single-stem tags (no reconstruction, hence no posterior), for the diagnostics.
+single_stem_trees <- s2[method == "single_stem_tag_no_reconstructed", unique(treeID)]
 cat(
     "[BA] multi-path trees:", length(multi_trees), "| DP engine:", length(multi_trees) - length(prob_trees),
     "| probabilistic engine:", length(prob_trees), "(both sampled the same way)\n"
@@ -798,7 +800,13 @@ diag_line(
 )
 diag_line("  multi path, fallback to exported reconstruction: ", length(fallback_trees))
 diag_line("  multi path, not analysed (no quadrat / no measured observation): ", length(no_obs_trees))
-diag_line("analysed trees without a posterior (single-stem tags, exported reconstruction): ", length(setdiff(unique(rec$treeID), post_full$treeID)))
+no_post_trees <- setdiff(unique(rec$treeID), post_full$treeID)
+diag_line("analysed trees without a posterior (exported reconstruction in every realization): ", length(no_post_trees))
+diag_line("  single-stem tags: ", sum(no_post_trees %in% single_stem_trees))
+diag_line(
+    "  multi-stem trees (no sampled paths, e.g. measured in only one census up to the anchor): ",
+    sum(!no_post_trees %in% single_stem_trees)
+)
 diag_line("")
 diag_line("## Measured observations of multi-path trees (all censuses)")
 for (r in seq_len(nrow(U[, .N, by = position]))) {

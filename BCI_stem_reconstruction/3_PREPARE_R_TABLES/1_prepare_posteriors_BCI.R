@@ -57,15 +57,14 @@ bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
 workspace_root <- getwd()
 home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 
-# Choose the run folder inside the output directory and locate its posterior
-# files. Only directories are candidates (the folder may also hold a .zip
-# archive of the same run).
-run_code <- basename(list.dirs(home_dir, recursive = FALSE, full.names = TRUE))[2]
+# Run folder to consolidate, selected by name: the output directory can hold
+# several runs (and .zip archives of them). Update it for each new run; it must
+# be the same run as in 2_merge_chunks_to_datatable.R.
+run_code <- "20261001_220145_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
 bio_check(
-    length(run_code) == 1L,
-    sprintf("Exactly one DP run folder in %s", home_dir),
-    examples = run_code,
-    n_bad = length(run_code)
+    dir.exists(file.path(home_dir, run_code, "posteriors")),
+    sprintf("Run folder %s exists in %s and has a posteriors/ folder", run_code, home_dir),
+    examples = run_code
 )
 post_dir <- normalizePath(file.path(home_dir, run_code, "posteriors"), winslash = "/", mustWork = FALSE)
 

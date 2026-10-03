@@ -10,10 +10,14 @@
 #      whose greedy assignment uses a forbidden (-Inf) link is re-solved
 #      exactly (enforce_feasible_assignment), so the hard limits hold; a
 #      violation no assignment can avoid is chosen as the DP does (hard
-#      penalty + likelihood without the hard gate)
+#      penalty + likelihood without the hard gate). TrueStemID pins of every
+#      stem are honoured while sampling: a pinned obs joins the track that
+#      carries its pin and never one that carries another pin
+#      (apply_pin_mask for anchor stems, apply_track_pin_mask for all)
 #   4. Stitch per-pair assignments backward from anchor
 #   5. Repair growth violations at SAMPLE level (hard-rate; the ME
-#      cumulative-shrinkage layer is off when n_sigma_me = Inf)
+#      cumulative-shrinkage layer is off when n_sigma_me = Inf); pinned
+#      observations are never severed
 #   6. Compute marginal posterior probabilities (Top-K, entropy)
 #   7. Export ONE coherent trajectory: the consensus (maximum-expected-
 #      accuracy) sample (select_consensus_trajectory)
@@ -42,6 +46,7 @@ match_stems_probabilistic <- function(tree_data,
                                       use_bio_hard_growth_in_prob = TRUE, # if FALSE, ignore Bio_Max_Growth hard gate
                                       pin_truestemid = TRUE, # pin obs with known TrueStemID to their track
                                       n_sigma_me = 3, # ME cumulative-shrinkage threshold (n * SD); lower = sever sooner
+                                      return_samples = FALSE, # TRUE: attach samples as attr "DP_Posterior_Samples" instead of staging them
                                       verbose = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
@@ -236,6 +241,31 @@ match_stems_probabilistic <- function(tree_data,
         }
     }
 
+    # --- Pins of every observation, for the track-pin mask ------------------
+    # pin_info above covers only pins that point to a stem present at the
+    # anchor. Pins on stems that end before the anchor (Step 3a.5 / Step 3b
+    # StemID pins, trees last measured before 2010) were applied only to the
+    # exported table by the pin sweep, so the samples could group those
+    # observations differently from the export. pin_val[[i]][j] is the
+    # TrueStemID of obs j at census i (NA when not pinned; provisional anchor
+    # IDs are not pins). While sampling backward, every next-census obs carries
+    # the pin of its track (its own pin, or one inherited from a later census
+    # of the same sample): a pinned obs must join the obs that carries its pin
+    # and may not join an obs that carries another pin (apply_track_pin_mask).
+    pin_val <- vector("list", n_census)
+    .any_track_pins <- FALSE
+    if (isTRUE(pin_truestemid)) {
+        .is_prov_row <- tree_data$ReconstructionMethod %in% "provisional_dp"
+        for (i in seq_len(n_census)) {
+            .idx <- obs_data[[i]]$idx
+            v <- as.integer(tree_data$TrueStemID[.idx])
+            v[.is_prov_row[.idx]] <- NA_integer_
+            v[!is.na(v) & duplicated(v)] <- NA_integer_ # duplicate-pin guard: keep first
+            pin_val[[i]] <- v
+            if (i < n_census && any(!is.na(v))) .any_track_pins <- TRUE
+        }
+    }
+
     # --- Per-pair log-likelihood matrices (backward) -----------------------
     # For each pair (c, c+1) compute the pairwise + augmented cost matrix
     pair_data <- vector("list", n_census - 1L)
@@ -291,6 +321,8 @@ match_stems_probabilistic <- function(tree_data,
         # Initialize anchor-position mapping: at anchor, obs j IS position j
         .n_anchor_obs <- obs_data[[n_census]]$n
         .next_obs_to_anchor_pos <- seq_len(.n_anchor_obs)
+        # Pin carried by the track of each next-census obs (anchor: its own pin)
+        .next_track_pin <- pin_val[[n_census]]
 
         # Last pair (closest to anchor): no conditioning available
         last_pair <- n_census - 1L
@@ -306,6 +338,16 @@ match_stems_probabilistic <- function(tree_data,
                 pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
             )
         }
+        if (.any_track_pins) {
+            .cost_last <- apply_track_pin_mask(
+                .cost_last, pin_val[[last_pair]], .next_track_pin,
+                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
+            )
+            .fb_last <- apply_track_pin_mask(
+                .fb_last, pin_val[[last_pair]], .next_track_pin,
+                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
+            )
+        }
         per_pair_assignments[[last_pair]] <- greedy_assignment_gumbel(
             .cost_last,
             temperature = temperature,
@@ -314,6 +356,12 @@ match_stems_probabilistic <- function(tree_data,
         if (.any_pins) {
             .next_obs_to_anchor_pos <- propagate_track_backward(
                 per_pair_assignments[[last_pair]], .next_obs_to_anchor_pos,
+                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
+            )
+        }
+        if (.any_track_pins) {
+            .next_track_pin <- propagate_track_pin(
+                per_pair_assignments[[last_pair]], pin_val[[last_pair]], .next_track_pin,
                 pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
             )
         }
@@ -349,6 +397,16 @@ match_stems_probabilistic <- function(tree_data,
                         pair_data[[i]]$n_curr, pair_data[[i]]$n_next
                     )
                 }
+                if (.any_track_pins) {
+                    cost_i <- apply_track_pin_mask(
+                        cost_i, pin_val[[i]], .next_track_pin,
+                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
+                    )
+                    fb_i <- apply_track_pin_mask(
+                        fb_i, pin_val[[i]], .next_track_pin,
+                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
+                    )
+                }
 
                 per_pair_assignments[[i]] <- greedy_assignment_gumbel(
                     cost_i,
@@ -358,6 +416,12 @@ match_stems_probabilistic <- function(tree_data,
                 if (.any_pins) {
                     .next_obs_to_anchor_pos <- propagate_track_backward(
                         per_pair_assignments[[i]], .next_obs_to_anchor_pos,
+                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
+                    )
+                }
+                if (.any_track_pins) {
+                    .next_track_pin <- propagate_track_pin(
+                        per_pair_assignments[[i]], pin_val[[i]], .next_track_pin,
                         pair_data[[i]]$n_curr, pair_data[[i]]$n_next
                     )
                 }
@@ -388,7 +452,8 @@ match_stems_probabilistic <- function(tree_data,
     stitched <- repair_stitched_growth_violations(
         stitched, obs_data, intervals, eff_min_growth, eff_max_growth,
         me_sd1_a = 0.0062, me_sd1_b = 0.0904, n_sigma_me = n_sigma_me,
-        use_bio_hard_shrink = use_bio_hard_shrink_in_prob
+        use_bio_hard_shrink = use_bio_hard_shrink_in_prob,
+        pinned = if (isTRUE(pin_truestemid)) lapply(pin_val, function(v) !is.na(v)) else NULL
     )
     .sample_breaks <- attr(stitched, "sample_level_breaks")
     .sample_me_breaks <- attr(stitched, "sample_level_me_breaks")
@@ -557,7 +622,7 @@ match_stems_probabilistic <- function(tree_data,
 
     # --- Export posterior samples (same format as DP) -----------------------
     if (n_samples > 0L) {
-        export_probabilistic_posteriors(
+        .samples_dt <- export_probabilistic_posteriors(
             stitched, tree_data, obs_data, obs_census,
             tag_val = tag_val,
             n_samples = length(stitched),
@@ -565,8 +630,10 @@ match_stems_probabilistic <- function(tree_data,
             posterior_samples_format = posterior_samples_format,
             verbose = verbose,
             prefix = prefix,
-            vcat = vcat
+            vcat = vcat,
+            stage = !isTRUE(return_samples)
         )
+        if (isTRUE(return_samples)) attr(tree_data, "DP_Posterior_Samples") <- .samples_dt
     }
 
     tree_data
@@ -954,6 +1021,54 @@ propagate_track_backward <- function(assignment, next_obs_to_anchor_pos,
     curr
 }
 
+# apply_track_pin_mask: TrueStemID pins of any stem (not only those present at
+# the anchor). A pinned obs r (pin q) at the current census must join the
+# next-census obs whose track carries pin q (when exactly one does), and may
+# not join an obs whose track carries a different pin. Unpinned obs and obs
+# whose pin no next track carries are free (they may join an unpinned track,
+# e.g. the same stem under an older, renumbered StemID, or die).
+#
+# INPUTS
+#   cost_matrix     K×K augmented log-cost matrix
+#   pin_curr        integer vector length n_curr: TrueStemID of each current
+#                   obs, NA when not pinned
+#   next_track_pin  integer vector length n_next: pin carried by the track of
+#                   each next-census obs in this sample (NA = unpinned track)
+#   n_curr, n_next  number of real observations at current / next census
+#
+# RETURNS  modified cost_matrix
+apply_track_pin_mask <- function(cost_matrix, pin_curr, next_track_pin,
+                                 n_curr, n_next) {
+    if (n_curr == 0L || length(pin_curr) == 0L || all(is.na(pin_curr))) {
+        return(cost_matrix)
+    }
+    ntp <- next_track_pin[seq_len(n_next)]
+    for (r in which(!is.na(pin_curr[seq_len(n_curr)]))) {
+        q <- pin_curr[r]
+        other <- which(!is.na(ntp) & ntp != q)
+        if (length(other) > 0L) cost_matrix[r, other] <- -Inf
+        same <- which(!is.na(ntp) & ntp == q)
+        if (length(same) == 1L) cost_matrix[r, -same] <- -Inf
+    }
+    cost_matrix
+}
+
+# propagate_track_pin: after an assignment is drawn, the pin carried by the
+# track of each current-census obs: its own pin, else the pin of the next obs
+# it joins (NA when it dies or joins an unpinned track).
+#
+# RETURNS  integer vector length n_curr
+propagate_track_pin <- function(assignment, pin_curr, next_track_pin,
+                                n_curr, n_next) {
+    out <- as.integer(pin_curr[seq_len(n_curr)])
+    for (r in seq_len(n_curr)) {
+        if (!is.na(out[r])) next
+        col <- assignment[r]
+        if (col <= n_next) out[r] <- next_track_pin[col]
+    }
+    out
+}
+
 # ---- Gumbel-noise greedy assignment --------------------------------------
 # Draw one stochastic assignment from an augmented log-cost matrix using the
 # Gumbel-max trick.  Each row is assigned to the highest-scoring available
@@ -1075,6 +1190,12 @@ enforce_feasible_assignment <- function(noisy, assignment, fallback = NULL, nois
 # it a new unique break-ID.  Up to max_passes iterations per sample (a
 # break can shorten trajectories and expose new violations).
 #
+# Pinned observations (TrueStemID, `pinned`) are never severed: the database
+# identity wins over the growth limits, as the pin sweep enforces in the
+# exported table. If the earlier observation is pinned, the later one is
+# severed instead (unless it is pinned too or sits at the anchor census); a
+# link between two pinned observations is kept.
+#
 # Returns the modified stitched list (same structure).
 
 repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
@@ -1083,12 +1204,14 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                                               me_sd1_b = 0.0904,
                                               n_sigma_me = 3,
                                               max_passes = 10L,
-                                              use_bio_hard_shrink = TRUE) {
+                                              use_bio_hard_shrink = TRUE,
+                                              pinned = NULL) {
     n_samples <- length(stitched)
     n_census <- length(obs_data)
     if (n_census < 2L) {
         return(stitched)
     }
+    is_pinned <- function(e) !is.null(pinned) && isTRUE(pinned[[e$ci]][e$oi])
 
     # Global break-ID counter: start above the max ID in any sample to
     # avoid collisions when marginals aggregate across samples.
@@ -1156,10 +1279,17 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
 
                     # --- Layer 1: hard-rate check --------------------------
                     if (rate < min_rate || rate > max_rate) {
-                        break_base <- break_base + 1L
-                        stitched[[s]][[entries[[r - 1L]]$ci]][entries[[r - 1L]]$oi] <- break_base
-                        breaks_this_pass <- breaks_this_pass + 1L
-                        break # re-evaluate shortened trajectory in next pass
+                        sev <- entries[[r - 1L]]
+                        if (is_pinned(sev)) {
+                            sev <- if (!is_pinned(entries[[r]]) && entries[[r]]$ci < n_census) entries[[r]] else NULL
+                        }
+                        if (!is.null(sev)) {
+                            break_base <- break_base + 1L
+                            stitched[[s]][[sev$ci]][sev$oi] <- break_base
+                            breaks_this_pass <- breaks_this_pass + 1L
+                            break # re-evaluate shortened trajectory in next pass
+                        }
+                        # both observations pinned: the database links them; keep the link
                     }
 
                     # --- Layer 2: ME cumulative-shrinkage check ------------
@@ -1168,8 +1298,8 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                     if (isTRUE(use_bio_hard_shrink) && d_curr < d_prev) {
                         cumul_shrink <- cumul_shrink + (d_prev - d_curr)
                         thresh <- n_sigma_me * sqrt(me_sd(d_run_start)^2 + me_sd(d_curr)^2)
-                        if (cumul_shrink > thresh) {
-                            # Sever at the start of the shrinkage run
+                        if (cumul_shrink > thresh && !is_pinned(entries[[shrink_run_start]])) {
+                            # Sever at the start of the shrinkage run (never a pinned observation)
                             break_base <- break_base + 1L
                             stitched[[s]][[entries[[shrink_run_start]]$ci]][entries[[shrink_run_start]]$oi] <- break_base
                             breaks_this_pass <- breaks_this_pass + 1L
@@ -1716,11 +1846,16 @@ repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
 
 # ---- Export posterior samples (mirrors DP format) -------------------------
 
+# stage = FALSE: build samples_dt and return it without writing the staging
+# file (used when a DP resprout-split segment falls back to this matcher; the
+# split pairs the two segments' draws and stages them once per tag).
+# Returns samples_dt invisibly.
 export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
                                             obs_census, tag_val, n_samples,
                                             posterior_samples_path,
                                             posterior_samples_format,
-                                            verbose, prefix, vcat) {
+                                            verbose, prefix, vcat,
+                                            stage = TRUE) {
     fmt <- match.arg(posterior_samples_format, c("rds", "feather", "csv"))
 
     out_dir_local <- if (!is.null(posterior_samples_path)) {
@@ -1731,7 +1866,7 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
     if (is.null(out_dir_local) || !nzchar(out_dir_local)) out_dir_local <- tempdir()
 
     out_dir_post <- file.path(out_dir_local, "posteriors")
-    if (!dir.exists(out_dir_post)) dir.create(out_dir_post, recursive = TRUE, showWarnings = FALSE)
+    if (isTRUE(stage) && !dir.exists(out_dir_post)) dir.create(out_dir_post, recursive = TRUE, showWarnings = FALSE)
 
     ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
     out_path_base <- file.path(
@@ -1764,6 +1899,9 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
     }
     samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
     samples_dt <- samples_dt[order(Sample, CensusID)]
+    if (!isTRUE(stage)) {
+        return(invisible(samples_dt))
+    }
 
     # ---- Recommended architecture (see dp_global/improvements.md) ----
     # Stage raw samples_dt (engine ID space). The post-engine pipeline will
@@ -1792,4 +1930,5 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
         "Posterior sampling: staged %d samples for tag %s to %s",
         n_samples, as.character(tag_val), staging_path
     ))
+    invisible(samples_dt)
 }
