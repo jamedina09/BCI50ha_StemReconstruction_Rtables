@@ -63,11 +63,12 @@ Posterior weights and the two engines:
 - DP trees are sampled by backward sampling from the exact DP posterior, so likely
   trajectories repeat (median 4 unique paths per multi-path tree, some drawn many times).
 - Trees routed to the probabilistic engine (`dp_probabilistic_matching.R`: palms and other
-  forced species, stranglers, trees whose state space is too large) get approximate draws: a
-  noisy assignment per census pair, stitched, repaired for growth violations and filtered by
-  pins. Almost every draw differs somewhere, so nearly every path is unique and weighs 1/200
-  (0.005). These trees have no single most probable path; their exported reconstruction is the
-  most representative draw.
+  forced species, stranglers, trees the DP cannot solve because the state space is too large
+  or no assignment is feasible) get approximate draws: a noisy assignment per census pair
+  that respects the database pins (two stems with different pins are never joined),
+  stitched and repaired for growth violations. Almost every draw differs somewhere, so nearly
+  every path is unique and weighs 1/200 (0.005). These trees have no single most probable
+  path; their exported reconstruction is the most representative draw.
 - Both engines are sampled together and in the same way (one draw per tree per realization).
   The probabilistic draws are an approximation rather than a calibrated posterior; the
   diagnostics report both engines separately (trees, unique paths, share of paths drawn once,
