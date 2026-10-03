@@ -2,7 +2,8 @@
 # dp_probabilistic_matching.R
 # Probabilistic greedy matching fallback for large state spaces
 ############################################################
-# When the DP state space is too large:
+# When the DP cannot be used (state space too large, a dead end with no
+# feasible state, species or growth-form routing; see do_fallback()):
 #   1. Pairwise log-likelihoods (same bio model as DP)
 #   2. Augment cost matrix with mortality/recruitment slots (enough of them
 #      for an assignment without forbidden links to exist)
@@ -13,15 +14,22 @@
 #      penalty + likelihood without the hard gate). TrueStemID pins of every
 #      stem are honoured while sampling: a pinned obs joins the track that
 #      carries its pin and never one that carries another pin
-#      (apply_pin_mask for anchor stems, apply_track_pin_mask for all)
+#      (apply_pin_mask for anchor stems, apply_track_pin_mask for all); when
+#      the masks forbid links a pair's slots relied on, the pair gets extra
+#      death/recruit slots (pin_masked_pair), so two stems with different
+#      pins are never forced into one track
 #   4. Stitch per-pair assignments backward from anchor
 #   5. Repair growth violations at SAMPLE level (hard-rate; the ME
 #      cumulative-shrinkage layer is off when n_sigma_me = Inf); pinned
 #      observations are never severed
-#   6. Compute marginal posterior probabilities (Top-K, entropy)
-#   7. Export ONE coherent trajectory: the consensus (maximum-expected-
+#   6. Drop samples that break a pin to an anchor stem
+#      (filter_pin_consistent_samples; all are kept when too few remain)
+#   7. Compute marginal posterior probabilities (Top-K, entropy)
+#   8. Export ONE coherent trajectory: the consensus (maximum-expected-
 #      accuracy) sample (select_consensus_trajectory)
-#   8. Re-stamp anchor TrueStemID rows
+#   9. Pin sweep: every row with a TrueStemID (not a provisional anchor)
+#      gets ReconstructedStemID = TrueStemID; the engine's value is kept in
+#      ReconstructedStemID_PreSweep
 #
 # All Bio_* parameters are read directly from tree_data columns (no new
 # estimation needed — they are already computed by dp_global_bio.R).
@@ -299,7 +307,12 @@ match_stems_probabilistic <- function(tree_data,
             log_cost = aug,
             fallback = fallback_log_cost(aug, L_free, dbh_next, iv, bio),
             n_curr   = length(dbh_curr),
-            n_next   = length(dbh_next)
+            n_next   = length(dbh_next),
+            # kept for pin_masked_pair(), which may rebuild the pair with more slots
+            dbh_curr = dbh_curr,
+            dbh_next = dbh_next,
+            iv       = iv,
+            L_free   = L_free
         )
     }
 
@@ -309,6 +322,7 @@ match_stems_probabilistic <- function(tree_data,
     all_samples <- vector("list", n_samples)
     use_lookahead <- is.finite(prob_lookahead_weight) && prob_lookahead_weight > 0 &&
         n_census >= 3L && K >= 4L
+    .n_pin_slots <- 0L # pair draws that needed extra slots for the pins (pin_masked_pair)
 
     for (s in seq_len(n_samples)) {
         # For each census pair (working backward from anchor-1 to 1),
@@ -328,25 +342,25 @@ match_stems_probabilistic <- function(tree_data,
         last_pair <- n_census - 1L
         .cost_last <- pair_data[[last_pair]]$log_cost
         .fb_last <- pair_data[[last_pair]]$fallback
-        if (.any_pins && !is.null(pin_info[[last_pair]])) {
-            .cost_last <- apply_pin_mask(
-                .cost_last, pin_info[[last_pair]], .next_obs_to_anchor_pos,
-                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
-            )
-            .fb_last <- apply_pin_mask(
-                .fb_last, pin_info[[last_pair]], .next_obs_to_anchor_pos,
-                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
-            )
-        }
-        if (.any_track_pins) {
-            .cost_last <- apply_track_pin_mask(
-                .cost_last, pin_val[[last_pair]], .next_track_pin,
-                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
-            )
-            .fb_last <- apply_track_pin_mask(
-                .fb_last, pin_val[[last_pair]], .next_track_pin,
-                pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
-            )
+        if (.any_pins || .any_track_pins) {
+            .mp <- pin_masked_pair(.cost_last, .fb_last, pair_data[[last_pair]], bio, function(m) {
+                if (.any_pins && !is.null(pin_info[[last_pair]])) {
+                    m <- apply_pin_mask(
+                        m, pin_info[[last_pair]], .next_obs_to_anchor_pos,
+                        pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
+                    )
+                }
+                if (.any_track_pins) {
+                    m <- apply_track_pin_mask(
+                        m, pin_val[[last_pair]], .next_track_pin,
+                        pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
+                    )
+                }
+                m
+            })
+            .cost_last <- .mp$cost
+            .fb_last <- .mp$fb
+            .n_pin_slots <- .n_pin_slots + .mp$grown
         }
         per_pair_assignments[[last_pair]] <- greedy_assignment_gumbel(
             .cost_last,
@@ -387,25 +401,25 @@ match_stems_probabilistic <- function(tree_data,
                 }
 
                 fb_i <- pair_data[[i]]$fallback
-                if (.any_pins && !is.null(pin_info[[i]])) {
-                    cost_i <- apply_pin_mask(
-                        cost_i, pin_info[[i]], .next_obs_to_anchor_pos,
-                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
-                    )
-                    fb_i <- apply_pin_mask(
-                        fb_i, pin_info[[i]], .next_obs_to_anchor_pos,
-                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
-                    )
-                }
-                if (.any_track_pins) {
-                    cost_i <- apply_track_pin_mask(
-                        cost_i, pin_val[[i]], .next_track_pin,
-                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
-                    )
-                    fb_i <- apply_track_pin_mask(
-                        fb_i, pin_val[[i]], .next_track_pin,
-                        pair_data[[i]]$n_curr, pair_data[[i]]$n_next
-                    )
+                if (.any_pins || .any_track_pins) {
+                    .mp <- pin_masked_pair(cost_i, fb_i, pair_data[[i]], bio, function(m) {
+                        if (.any_pins && !is.null(pin_info[[i]])) {
+                            m <- apply_pin_mask(
+                                m, pin_info[[i]], .next_obs_to_anchor_pos,
+                                pair_data[[i]]$n_curr, pair_data[[i]]$n_next
+                            )
+                        }
+                        if (.any_track_pins) {
+                            m <- apply_track_pin_mask(
+                                m, pin_val[[i]], .next_track_pin,
+                                pair_data[[i]]$n_curr, pair_data[[i]]$n_next
+                            )
+                        }
+                        m
+                    })
+                    cost_i <- .mp$cost
+                    fb_i <- .mp$fb
+                    .n_pin_slots <- .n_pin_slots + .mp$grown
                 }
 
                 per_pair_assignments[[i]] <- greedy_assignment_gumbel(
@@ -440,6 +454,12 @@ match_stems_probabilistic <- function(tree_data,
         vcat(prefix, sprintf(
             "Unavoidable forbidden link(s) in the sampled assignments: %d across %d samples (chosen by likelihood, as the DP's hard_penalty)",
             .n_unavoidable, n_samples
+        ))
+    }
+    if (.n_pin_slots > 0L) {
+        vcat(prefix, sprintf(
+            "Pins: %d census-pair draw(s) across %d samples got extra death/recruit slots so that no two stems with different pins were joined",
+            .n_pin_slots, n_samples
         ))
     }
 
@@ -703,8 +723,10 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
 }
 
 # ---- Augment cost matrix with mortality/recruitment ----------------------
+# K_min: optional smallest K, used by pin_masked_pair() when a sample's pin
+# masks forbid survival links that the K sized here relied on.
 
-augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
+augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio, K_min = NULL) {
     n_curr <- length(dbh_curr)
     n_next <- length(dbh_next)
 
@@ -752,6 +774,7 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio) {
         M <- max_allowed_matching(is.finite(L))
         if (K < n_curr + n_next - M) K <- n_curr + n_next - M
     }
+    if (!is.null(K_min) && K < K_min) K <- as.integer(K_min)
 
     # Augmented matrix: K rows × K cols
     # Rows 1..n_curr are real current stems; rows (n_curr+1)..K are virtual recruit sources
@@ -1067,6 +1090,53 @@ propagate_track_pin <- function(assignment, pin_curr, next_track_pin,
         if (col <= n_next) out[r] <- next_track_pin[col]
     }
     out
+}
+
+# pin_masked_pair: one census pair's cost and fallback matrices with this
+# sample's pin masks (apply_pin_mask, apply_track_pin_mask) applied.
+# augment_cost_matrix() sizes each pair (K) for the growth limits only, so
+# that the largest set of allowed survival links fits. The pin masks can then
+# forbid links that this K relied on: one stem at C6 pinned to A and one stem
+# at C7 pinned to B give a 1x1 matrix (13.8 -> 15.5 cm is allowed growth, so
+# no death slot) whose only link the mask forbids, and every sample had to
+# join A to B (tag 150279). The pin sweep then separated the pinned rows, but
+# the unpinned rows of that track kept its label, which can be another stem's
+# pin. When the masked survival links (largest allowed set M) need more
+# death/recruit slots than K has, the pair is rebuilt with
+# K = n_curr + n_next - M (the rule augment_cost_matrix() applies to
+# growth-forbidden links) and masked again, so one pinned stem ends and the
+# other starts. Pairs with enough slots are returned exactly as masked before
+# (same matrices, so the same random numbers are drawn).
+#
+# INPUTS  cost, fb  K×K cost (lookahead included) and fallback matrices
+#         pd        pair_data entry (n_curr, n_next, dbh_curr, dbh_next, iv, L_free)
+#         bio       bio parameter list
+#         mask      function(m): this sample's pin masks applied to a matrix
+# RETURNS list(cost, fb, grown): both matrices masked; grown = TRUE when the
+#         pair got extra slots
+pin_masked_pair <- function(cost, fb, pd, bio, mask) {
+    mc <- mask(cost)
+    mf <- mask(fb)
+    n_curr <- pd$n_curr
+    n_next <- pd$n_next
+    if (n_curr == 0L || n_next == 0L) {
+        return(list(cost = mc, fb = mf, grown = FALSE))
+    }
+    ok <- is.finite(mc[seq_len(n_curr), seq_len(n_next), drop = FALSE])
+    K_need <- n_curr + n_next - max_allowed_matching(ok)
+    if (K_need <= nrow(cost)) {
+        return(list(cost = mc, fb = mf, grown = FALSE))
+    }
+    # survival block keeps the lookahead adjustment; slots as in augment_cost_matrix()
+    grown <- augment_cost_matrix(cost[seq_len(n_curr), seq_len(n_next), drop = FALSE],
+        pd$dbh_curr, pd$dbh_next, pd$iv, bio,
+        K_min = K_need
+    )
+    list(
+        cost = mask(grown),
+        fb = mask(fallback_log_cost(grown, pd$L_free, pd$dbh_next, pd$iv, bio)),
+        grown = TRUE
+    )
 }
 
 # ---- Gumbel-noise greedy assignment --------------------------------------

@@ -95,7 +95,7 @@ Because it examines every possibility, the DP always finds the mathematically op
 
 #### Probabilistic greedy matcher (fallback)
 
-When the state space is too large for exact enumeration, the probabilistic matcher draws hundreds of Gumbel-noise-perturbed samples, stitches them backward from the anchor, repairs biological constraint violations, and votes across surviving samples. The vote share becomes the posterior probability per observation. The same biological cost model and pruning bounds used by the DP apply here.
+When the DP cannot be used (the state space is too large for exact enumeration, or no assignment satisfies its constraints), the probabilistic matcher draws hundreds of Gumbel-noise-perturbed samples, stitches them backward from the anchor and repairs biological constraint violations. Database pins (`TrueStemID`) constrain every sample, and two stems with different pins are never joined. The exported reconstruction is the most representative sample (the one whose links agree most with the other samples), and the share of samples that agree with it is the posterior probability per observation. The same biological cost model and pruning bounds used by the DP apply here.
 
 #### When each algorithm runs
 
@@ -104,6 +104,7 @@ When the state space is too large for exact enumeration, the probabilistic match
 | ≤ 6 observed stems per census | Exact DP |
 | 7+ observed stems in any census | Probabilistic matcher |
 | Species / growth forms in `FALLBACK_GROWTH_FORMS` | Probabilistic matcher |
+| DP finds no feasible assignment (e.g. pins it cannot honour) | Probabilistic matcher (automatic fallback) |
 | DP hits a runtime error | Probabilistic matcher (automatic fallback) |
 
 For tags split by an R-event (resprout/breakage codes R, RP, RF, RT, QR, OR), each segment chooses its algorithm independently. See `dp_global/README.md` for the full algorithm reference including the DP_MAX_STATES state-space tables, biological cost model, measurement error model, and posterior path format.
