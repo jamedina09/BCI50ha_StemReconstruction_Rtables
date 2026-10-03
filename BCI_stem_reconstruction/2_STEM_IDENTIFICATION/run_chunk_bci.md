@@ -9,6 +9,10 @@ This guide explains how to launch and manage chunked stem-identification runs fo
 To start a new chunked run, use the following command:
 
 ```sh
+
+cd "/Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables"
+caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R --DP_MAX_STATES=10000 --PROB_SPECIES=oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe --DP_FALLBACK_GROWTH_FORMS=strangler --POSTERIOR_SAMPLE_SEED=42 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=18 --DP_CHUNK_SIZE=18 --USE_MEASUREMENT_ERROR=FALSE --BASE_OUT_DIR=/Users/medinaja/outputs_bci_stem_identification
+
 Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
   --DP_MAX_STATES=10000 \
   --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \

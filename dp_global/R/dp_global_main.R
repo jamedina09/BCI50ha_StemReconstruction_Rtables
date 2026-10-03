@@ -685,6 +685,110 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
 }
 
 # -------------------------------------------------------------------------
+# apply_pins_to_samples()
+#
+# Per-sample version of the TrueStemID pin treatment the exported table gets
+# after the engine: the pin sweep (pinned rows take their pin; a pin that would
+# put two rows on one ID in a census is rolled back, as Fix 2 does) followed by
+# apply_pin_track_rejoin() (the rest of a sampled track joins its single pin).
+# Engines that do not honour every pin while sampling (the DP with a
+# provisional anchor, the pre segment of a resprout split, pins joining a
+# broken-below row to its continuation across the split) otherwise produce
+# samples that group pinned rows differently from the export, so the export is
+# not among the sampled paths. Only pinned links change: unpinned links, where
+# the identity uncertainty lies, keep their per-sample variation.
+#
+# Pins are database identities. A row is pinned when TrueStemID is non-NA; its
+# pin is TrueStemID, except on rows whose TrueStemID was rewritten by the
+# broken-below pass or the renumbering (engine-minted methods), where it is the
+# row's own StemID (every database pin is the row's own StemID).
+#
+# Rejoin, per sample: each sampled track is cut into segments at every
+# broken-below row with a DBH and after every NA-R barrier census; when a
+# segment's pinned rows all hold one pin P, the track's remaining rows join P
+# if they all lie in that segment, none carries a pin, and P has no row in
+# their censuses. Runs before apply_bb_invariants_to_samples() (R1/R2), as in
+# the export. Labels are re-encoded per tag, consistently across samples.
+#
+# Inputs: samples_dt (Sample, CensusID, ReconstructedStemID, ObsRowID) and the
+# tag's rows of the final table (obs_row_id, CensusID, DBH, Status, TrueStemID,
+# ReconstructionMethod, and StemID or OriginalStemID).
+# Returns samples_dt with ReconstructedStemID re-encoded.
+apply_pins_to_samples <- function(samples_dt, tree_data) {
+    if (is.null(samples_dt) || nrow(samples_dt) == 0L || is.null(tree_data) || nrow(tree_data) == 0L) {
+        return(samples_dt)
+    }
+    src_col <- if ("StemID" %in% names(tree_data)) "StemID" else if ("OriginalStemID" %in% names(tree_data)) "OriginalStemID" else NULL
+    need <- c("obs_row_id", "CensusID", "DBH", "Status", "TrueStemID")
+    if (is.null(src_col) || !all(need %in% names(tree_data)) ||
+        !all(c("Sample", "CensusID", "ReconstructedStemID", "ObsRowID") %in% names(samples_dt))) {
+        return(samples_dt)
+    }
+    minted <- c("provisional_dp", "bb_split", "bb_split_carry", "bb_post_terminator_split", "bb_post_terminator_split_carry")
+    td <- data.table::as.data.table(tree_data)
+    mth <- if ("ReconstructionMethod" %in% names(td)) as.character(td$ReconstructionMethod) else rep(NA_character_, nrow(td))
+    sts <- as.character(td$Status)
+    tsm <- if ("ListOfTSM" %in% names(td)) as.character(td$ListOfTSM) else rep(NA_character_, nrow(td))
+    pin_all <- ifelse(is.na(td$TrueStemID), NA_integer_,
+        ifelse(mth %in% minted, suppressWarnings(as.integer(as.character(td[[src_col]]))), as.integer(td$TrueStemID))
+    )
+    meta <- unique(data.table::data.table(
+        ObsRowID = td$obs_row_id, pin = pin_all,
+        bb = !is.na(td$DBH) & !is.na(sts) & sts == "broken below"
+    )[!is.na(ObsRowID)], by = "ObsRowID")
+    if (!any(!is.na(meta$pin))) {
+        return(samples_dt)
+    }
+    # NA-R barrier censuses: no measured row, but a stump / R-coded record
+    r_na <- is.na(td$DBH) & ((!is.na(sts) & sts == "broken below") |
+        (!is.na(tsm) & grepl("\\b(R|RP|RF|RT|QR|OR)\\b", tsm, perl = TRUE)))
+    bar <- data.table::data.table(c = as.integer(td$CensusID), meas = !is.na(td$DBH), r_na = r_na)[,
+        .(n_meas = sum(meas), n_rna = sum(r_na)),
+        by = c
+    ][n_meas == 0L & n_rna > 0L, sort(c)]
+
+    s <- data.table::data.table(.row = seq_len(nrow(samples_dt)), Sample = samples_dt$Sample, c = as.integer(samples_dt$CensusID),
+        ObsRowID = samples_dt$ObsRowID, lab = as.integer(samples_dt$ReconstructedStemID))
+    s <- meta[s, on = "ObsRowID"]
+    s[is.na(bb), bb := FALSE]
+    # 1. sweep: pinned rows take their pin; duplicates of a pin within a census keep the sampled label
+    s[, dup := !is.na(pin) & (duplicated(data.table::data.table(Sample, c, pin)) | duplicated(data.table::data.table(Sample, c, pin), fromLast = TRUE))]
+    s[, holds := !is.na(pin) & !dup]
+    s[, new := fifelse(holds, paste0("P", pin), paste0("S", lab))]
+    # 2. rejoin: segments of each sampled track (cut at broken-below + DBH rows and after barriers)
+    data.table::setorder(s, Sample, lab, c)
+    s[, nb := if (length(bar) > 0L) findInterval(c - 0.5, bar) else 0L]
+    s[, seg := cumsum(bb) + nb, by = .(Sample, lab)]
+    sg <- s[, .(P = {
+        p <- unique(pin[!is.na(pin)])
+        if (length(p) == 1L && all(holds[!is.na(pin)])) paste0("P", p) else NA_character_
+    }), by = .(Sample, lab, seg)]
+    s <- sg[s, on = .(Sample, lab, seg)]
+    rest <- s[new == paste0("S", lab)] # rows still carrying the sampled label after the sweep
+    if (nrow(rest) > 0L) {
+        mv <- rest[, .(ok = all(is.na(pin)) && data.table::uniqueN(seg) == 1L && !is.na(P[1L]), P = P[1L], cs = list(c)), by = .(Sample, lab)][ok == TRUE]
+        if (nrow(mv) > 0L) {
+            occ <- unique(s[holds == TRUE, .(Sample, P = new, c)])[, occupied := TRUE]
+            cand <- mv[, .(c = unlist(cs)), by = .(Sample, lab, P)]
+            cand[occ, on = .(Sample, P, c), occupied := i.occupied]
+            cand[, dup2 := .N > 1L, by = .(Sample, P, c)]
+            bad <- unique(cand[occupied %in% TRUE | dup2, .(Sample, lab)])
+            mv <- mv[!bad, on = .(Sample, lab)]
+            if (nrow(mv) > 0L) s[mv, on = .(Sample, lab), new := fifelse(new == paste0("S", lab), i.P, new)]
+        }
+    }
+    # 3. re-encode: sampled labels keep their value; pins get values above every sampled label
+    top <- suppressWarnings(max(as.integer(samples_dt$ReconstructedStemID), na.rm = TRUE))
+    if (!is.finite(top)) top <- 0L
+    pl <- sort(unique(s$new[startsWith(s$new, "P")]))
+    s[, enc := fifelse(startsWith(new, "P"), top + match(new, pl), suppressWarnings(as.integer(substring(new, 2L))))]
+    data.table::setorder(s, .row)
+    out <- data.table::copy(samples_dt)
+    out[, ReconstructedStemID := as.integer(s$enc)]
+    out
+}
+
+# -------------------------------------------------------------------------
 # apply_bb_invariants_to_samples()
 #
 # Per-sample relabel of broken-below contract violations on a posterior
@@ -1139,6 +1243,9 @@ finalize_posterior_paths <- function(out,
                 samples_dt[, ReconstructedStemID := as.integer(new_v)]
             }
         }
+
+        # ---- (2a) Database pins, as the export applies them after the engine ----
+        samples_dt <- apply_pins_to_samples(samples_dt, tree_data_for_tag)
 
         # ---- (2) Re-run bb invariants in renumbered ID space ----
         samples_dt <- apply_bb_invariants_to_samples(

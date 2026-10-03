@@ -61,6 +61,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            posterior_samples_format = c("rds", "feather", "csv"),
                                                            posterior_samples_path = NULL,
                                                            posterior_sample_seed = NULL,
+                                                           # TRUE: return the drawn samples as attr "DP_Posterior_Samples"
+                                                           # instead of staging them (used by the resprout segment split)
+                                                           posterior_return_samples = FALSE,
                                                            # --- pruning options (conservative hard guards) ---
                                                            prune_hard = TRUE,
                                                            prune_min_growth = NULL,
@@ -665,8 +668,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             use_bio_hard_growth_in_prob = use_bio_hard_growth_in_prob,
             n_sigma_me = prob_n_sigma_me,
             pin_truestemid = pin_truestemid,
+            return_samples = posterior_return_samples,
             verbose = verbose
         )
+        # Samples handed back to a resprout split (attributes do not survive
+        # finalize_out's rbindlist, so they are re-attached below)
+        .samples_fb <- attr(out, "DP_Posterior_Samples")
         if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
         out[, DP_FallbackReason := reason]
 
@@ -740,7 +747,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             )
         }
 
-        finalize_out(out)
+        .res_fb <- finalize_out(out)
+        if (!is.null(.samples_fb)) attr(.res_fb, "DP_Posterior_Samples") <- .samples_fb
+        .res_fb
     }
 
     # Preserve original dataset in case we scope DP to only pre-anchor censuses
@@ -1153,7 +1162,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             meas_sd2 = meas_sd2,
             meas_p_big = meas_p_big,
             fallback_growth_forms = fallback_growth_forms,
-            posterior_samples = 0L, # disable DP posteriors in sub-calls
+            # Each segment draws its own samples and hands them back; they are
+            # paired below and staged once for the tag (a segment's own staging
+            # file would be overwritten by the other segment's).
+            posterior_samples = posterior_samples,
+            posterior_return_samples = TRUE,
             posterior_samples_format = posterior_samples_format,
             posterior_samples_path = posterior_samples_path,
             posterior_sample_seed = posterior_sample_seed,
@@ -1213,6 +1226,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 .sub_args
             )
         )
+        .samples_post <- attr(out_post, "DP_Posterior_Samples")
+        .fixed_post <- segment_fixed_assignment(out_post, anchor_start)
 
         # Pre-resprout sub-call: censuses <= r_boundary with provisional anchor
         # Includes the R census (old stem's last record) as the terminal observation.
@@ -1220,7 +1235,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         .pre_anchor <- suppressWarnings(
             max(.pre_data$CensusID[!is.na(.pre_data$DBH)], na.rm = TRUE)
         )
+        .samples_pre <- NULL
+        .fixed_pre <- NULL
         if (is.finite(.pre_anchor)) {
+            # A different seed than the post segment: the two segments' draws
+            # are paired by index and must be independent.
+            .sub_args_pre <- .sub_args
+            if (!is.null(posterior_sample_seed)) .sub_args_pre$posterior_sample_seed <- as.integer(posterior_sample_seed) + 1L
             out_pre <- do.call(
                 match_stems_dp_global_backward_marginals_batch,
                 c(
@@ -1232,9 +1253,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                         slack_require_anchor_recruitable = FALSE,
                         slack_require_anchor_eps = slack_require_anchor_eps
                     ),
-                    .sub_args
+                    .sub_args_pre
                 )
             )
+            .samples_pre <- attr(out_pre, "DP_Posterior_Samples")
+            .fixed_pre <- segment_fixed_assignment(out_pre, as.integer(.pre_anchor))
             # Offset pre-segment IDs so they do not clash with post-segment IDs
             .max_post_id <- suppressWarnings(
                 max(out_post$ReconstructedStemID, na.rm = TRUE)
@@ -1269,7 +1292,34 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             combined <- out_post
         }
         if ("obs_row_id" %in% names(combined)) data.table::setorder(combined, obs_row_id)
-        return(finalize_out(combined))
+        .res_split <- finalize_out(combined)
+        # Posterior samples of the whole tag: draw k of the post segment paired
+        # with draw k of the pre segment (exact: after the whole-tree split the
+        # two segments are independent).
+        if (!is.null(posterior_samples) && as.integer(posterior_samples) > 0L) {
+            .paired <- pair_segment_posterior_samples(
+                .samples_pre, .samples_post, .fixed_pre, .fixed_post,
+                tag = tag_val
+            )
+            if (!is.null(.paired)) {
+                if (isTRUE(posterior_return_samples)) {
+                    attr(.res_split, "DP_Posterior_Samples") <- .paired
+                } else {
+                    .stage_path <- stage_posterior_samples(
+                        .paired,
+                        tag = tag_val, engine = "dp_resprout_split",
+                        posterior_samples_path = posterior_samples_path,
+                        posterior_samples_format = match.arg(posterior_samples_format)
+                    )
+                    attr(.res_split, "DP_Posterior_Staging_File") <- .stage_path
+                    vcat(prefix, sprintf(
+                        "Posterior sampling: paired the two segments' draws (%d samples) and staged them to %s",
+                        data.table::uniqueN(.paired$Sample), .stage_path
+                    ))
+                }
+            }
+        }
+        return(.res_split)
     }
 
     # (R-coded observations continue existing tracks — no extra track slots needed.)
@@ -2545,30 +2595,36 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # (4) write the final paths file. This guarantees per-sample bb-minted
         # IDs are derived from renumbered track IDs (cf. Fallback limitation
         # described in improvements.md).
-        ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
-        out_dir_post <- file.path(out_dir_local, "posteriors")
-        staging_dir <- file.path(out_dir_post, ".staging")
-        if (!dir.exists(staging_dir)) dir.create(staging_dir, recursive = TRUE, showWarnings = FALSE)
-        staging_path <- file.path(staging_dir, paste0(
-            "tag_", ifelse(is.na(tag_local), "NA", tag_local),
-            "_samples_raw_", ts_local, ".rds"
-        ))
         sampling_profile$finished <- Sys.time()
-        saveRDS(list(
-            engine = "dp",
-            tag_val = tag_local,
-            batch_ts = ts_local,
-            posterior_samples_format = fmt,
-            posterior_samples_path = out_dir_local,
-            samples_dt = samples_dt,
-            sampling_profile = sampling_profile
-        ), file = staging_path)
-        vcat(prefix, sprintf(
-            "Posterior sampling: staged %d samples for tag %s to %s",
-            posterior_samples, as.character(tag_local), staging_path
-        ))
+        if (isTRUE(posterior_return_samples)) {
+            # Resprout-split segment: hand the samples back (attached before
+            # returning) so the split can pair them with the other segment's.
+            .posterior_samples_dt <- samples_dt
+        } else {
+            ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
+            out_dir_post <- file.path(out_dir_local, "posteriors")
+            staging_dir <- file.path(out_dir_post, ".staging")
+            if (!dir.exists(staging_dir)) dir.create(staging_dir, recursive = TRUE, showWarnings = FALSE)
+            staging_path <- file.path(staging_dir, paste0(
+                "tag_", ifelse(is.na(tag_local), "NA", tag_local),
+                "_samples_raw_", ts_local, ".rds"
+            ))
+            saveRDS(list(
+                engine = "dp",
+                tag_val = tag_local,
+                batch_ts = ts_local,
+                posterior_samples_format = fmt,
+                posterior_samples_path = out_dir_local,
+                samples_dt = samples_dt,
+                sampling_profile = sampling_profile
+            ), file = staging_path)
+            vcat(prefix, sprintf(
+                "Posterior sampling: staged %d samples for tag %s to %s",
+                posterior_samples, as.character(tag_local), staging_path
+            ))
+            attr(tree_data, "DP_Posterior_Staging_File") <- staging_path
+        }
         attr(tree_data, "DP_Sampling_Profile") <- sampling_profile
-        attr(tree_data, "DP_Posterior_Staging_File") <- staging_path
     }
 
     # If DP was scoped to pre-anchor only, merge original post-anchor rows back into the returned dataset
@@ -2746,6 +2802,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
     }
 
+    if (exists(".posterior_samples_dt", inherits = FALSE)) {
+        attr(tree_data, "DP_Posterior_Samples") <- .posterior_samples_dt
+    }
+
     vcat(prefix, "--- DONE --- ", sum(!is.na(tree_data$ReconstructedStemID)), " observations mapped to ", length(unique(tree_data$ReconstructedStemID[!is.na(tree_data$ReconstructedStemID)])), " identity track(s) in ", sprintf("%.2fs", tic() - t_start))
     return(tree_data)
 }
@@ -2829,6 +2889,115 @@ split_live_resprout_tracks <- function(out, censuses, id_floor = NULL) {
         data.table::set(out, i = before, j = "ReconstructedStemID", value = as.integer(cur_max))
     }
     out
+}
+
+# ---- Posterior samples of a resprout-split tag ----------------------------
+# The resprout segment split solves a tag as two independent sub-problems:
+# censuses up to the first resprout census (pre) and the censuses after it
+# (post); every stem ends at the split. Each sub-call draws its own samples
+# (posterior_return_samples = TRUE) and hands them back. Because the segments
+# are independent, pairing draw k of one with draw k of the other is an exact
+# draw of the whole tag.
+
+# segment_fixed_assignment(): the exported grouping of a segment's measured
+# observations (up to its anchor), used as a single fixed draw when the
+# segment drew no samples (e.g. one census only). Returns NULL when empty.
+segment_fixed_assignment <- function(seg_out, max_census) {
+    if (is.null(seg_out) || nrow(seg_out) == 0L || !all(c("obs_row_id", "DBH", "CensusID", "ReconstructedStemID") %in% names(seg_out))) {
+        return(NULL)
+    }
+    fx <- seg_out[!is.na(DBH) & !is.na(obs_row_id) & !is.na(ReconstructedStemID) & CensusID <= max_census,
+        .(CensusID = as.integer(CensusID), ObsRowID = obs_row_id, ReconstructedStemID = as.integer(ReconstructedStemID))
+    ]
+    if (nrow(fx) == 0L) NULL else fx
+}
+
+# pair_segment_posterior_samples(): one samples_dt for the whole tag.
+#   samples_pre / samples_post : the segments' samples_dt (NULL if none)
+#   fixed_pre / fixed_post     : segment_fixed_assignment() of each segment,
+#                                used when that segment has no samples
+# Samples are renumbered 1..n per segment and paired by index; a segment with
+# fewer draws (the probabilistic matcher can drop pin-inconsistent ones, a
+# fixed segment has one) is recycled. Pre-segment labels are shifted above
+# every post-segment label, so the two segments never share a label. logp is
+# the sum of the segments' logp when every draw has one, otherwise dropped
+# (path_prob then equals the count share). Returns NULL when both are empty.
+pair_segment_posterior_samples <- function(samples_pre, samples_post,
+                                           fixed_pre = NULL, fixed_post = NULL,
+                                           tag = NA) {
+    prep <- function(s, fixed, part) {
+        if (!is.null(s) && nrow(s) > 0L) {
+            s <- data.table::as.data.table(s)
+            d <- s[, .(
+                Sample, CensusID = as.integer(CensusID), ObsRowID,
+                ReconstructedStemID = as.integer(ReconstructedStemID),
+                logp = if ("logp" %in% names(s)) as.numeric(logp) else NA_real_
+            )]
+        } else if (!is.null(fixed) && nrow(fixed) > 0L) {
+            d <- data.table::as.data.table(fixed)[, .(Sample = 1L, CensusID, ObsRowID, ReconstructedStemID, logp = 0)]
+        } else {
+            return(NULL)
+        }
+        d[, Sample := match(Sample, sort(unique(Sample)))]
+        d[, .part := part]
+        d
+    }
+    post <- prep(samples_post, fixed_post, "post")
+    pre <- prep(samples_pre, fixed_pre, "pre")
+    if (is.null(post) && is.null(pre)) {
+        return(NULL)
+    }
+    if (!is.null(pre) && !is.null(post)) {
+        off <- suppressWarnings(max(post$ReconstructedStemID, na.rm = TRUE))
+        if (is.finite(off)) pre[, ReconstructedStemID := ReconstructedStemID + as.integer(off)]
+    }
+    parts <- Filter(Negate(is.null), list(post, pre))
+    n_target <- max(vapply(parts, function(d) max(d$Sample), integer(1)))
+    expand <- function(d) {
+        n <- max(d$Sample)
+        idx <- data.table::data.table(k = seq_len(n_target))
+        idx[, Sample := ((k - 1L) %% n) + 1L]
+        out <- d[idx, on = "Sample", allow.cartesian = TRUE]
+        out[, Sample := k][, k := NULL]
+        out
+    }
+    res <- data.table::rbindlist(lapply(parts, expand), use.names = TRUE)
+    lp <- res[, .(lp = logp[1L]), by = .(Sample, .part)][, .(logp = if (anyNA(lp)) NA_real_ else sum(lp)), by = Sample]
+    res[, logp := NULL]
+    if (!anyNA(lp$logp)) res <- lp[res, on = "Sample"]
+    res[, .part := NULL]
+    res[, Tag := tag]
+    data.table::setcolorder(res, intersect(c("Tag", "Sample", "CensusID", "ReconstructedStemID", "ObsRowID", "logp"), names(res)))
+    res[order(Sample, CensusID, ObsRowID)]
+}
+
+# stage_posterior_samples(): write a tag's raw samples to the staging folder
+# read by finalize_posterior_paths() (same layout as the engines' own files).
+# Returns the staging path.
+stage_posterior_samples <- function(samples_dt, tag, engine,
+                                    posterior_samples_path,
+                                    posterior_samples_format = "rds") {
+    out_dir_local <- if (!is.null(posterior_samples_path)) posterior_samples_path else get0("out_dir", ifnotfound = NULL)
+    if (is.null(out_dir_local) || !nzchar(out_dir_local)) out_dir_local <- getwd()
+    ts_local <- get0("BATCH_TS", ifnotfound = format(Sys.time(), "%Y%m%d_%H%M%S"))
+    staging_dir <- file.path(out_dir_local, "posteriors", ".staging")
+    if (!dir.exists(staging_dir)) dir.create(staging_dir, recursive = TRUE, showWarnings = FALSE)
+    staging_path <- file.path(staging_dir, paste0(
+        "tag_", ifelse(is.na(tag), "NA", tag), "_samples_raw_", ts_local, ".rds"
+    ))
+    saveRDS(list(
+        engine = engine,
+        tag_val = tag,
+        batch_ts = ts_local,
+        posterior_samples_format = posterior_samples_format,
+        posterior_samples_path = out_dir_local,
+        samples_dt = samples_dt,
+        sampling_profile = list(
+            posterior_samples = data.table::uniqueN(samples_dt$Sample),
+            started = Sys.time(), finished = Sys.time()
+        )
+    ), file = staging_path)
+    staging_path
 }
 
 # Summary of what's available in posteriors
