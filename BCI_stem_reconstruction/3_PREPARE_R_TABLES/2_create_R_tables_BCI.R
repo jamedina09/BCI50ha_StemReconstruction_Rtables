@@ -18,12 +18,14 @@
 #    3. Map raw Status values to raw codes A/D/N           (Section 4)
 #    4. Validate encounter histories before propagation      (Section 5)
 #    5. Propagate no-data states into complete histories     (Section 6)
-#    6. Correct PD/PG anomalies; fill each stem's lifespan   (Sections 7–8)
+#    6. Check first records; fill each stem's lifespan       (Sections 7–8)
 #    7. Assert no D/G is stranded between two A's            (Section 9)
 #    8. Derive tree-level histories; apply tree-aware D/G    (Section 10)
 #    9. Assess biology across all history versions          (Section 11)
-#   10. Data-quality diagnostics and status × DBH audit    (Sections 12–13)
+#   10. Data-quality diagnostics; DBH cleaning and audit   (Sections 12–13)
 #   11. Export per-census R tables (species table, Section 15, is commented out)
+# The status and DBH rules live in rstatus_functions.R (same folder), which
+# tests/test_Rstatus.R also uses.
 ################################################################################
 # Variable summary:
 #   Status               raw field record, mapped to A/D/N (Section 4)
@@ -31,30 +33,39 @@
 #   new_status           propagated stem history before D/G remap
 #   corrected_new_status final stem history after tree-level D/G adjustment
 #   tree_histories       tree-level history aggregated from stem histories
-#   DBHs                 numeric matrix of stem DBH measurements by census
+#   DBHs                 numeric matrix of raw stem DBH measurements by census
+#   DBHs_clean           DBHs without the DBH of P/G/D cells (exported dbh)
 #   Rstatus              exported per-census corrected stem status
-#   DFstatus             legacy ForestGEO status field for prior stems
+#   DFstatus             raw field status (legacy ForestGEO name), never modified
 ################################################################################
 # BIOLOGICAL CONTRACT (checked with bio_check() before export)
 #   Stem identity  : taken from the DP reconstruction (stage 2) and never
 #                    changed here. Suspected identity breaks are only reported
 #                    (CHECKS/dp_identity_break_candidates.csv).
-#   Evidence of life: a raw "alive" record or any record with a measured DBH.
-#   A (alive)      : from a stem's first to its last evidence of life. Gaps in
-#                    between are filled with A: alive later => never dead.
-#   P (prior)      : stem not yet in the population. Stems never recorded
-#                    alive ("phantoms") stay P in every census and are NEVER
-#                    evidence that their tree is alive.
+#   Evidence of life: a raw "alive" record, or a DBH on a "broken below",
+#                    "missing" or status-less record.
+#   Dead record    : "dead" / "stem dead" (with or without DBH) and "broken
+#                    below" without DBH. A DBH on a dead record is a real
+#                    measurement only if the stem is alive later.
+#   P (prior)      : only before a stem's first record.
+#   A (alive)      : from a stem's first record to its last evidence of life.
+#                    Missed censuses and false deaths in between are A:
+#                    alive later => never dead.
+#   Dead (G or D)  : after the last evidence of life, from the first census
+#                    without one; a stem never alive is dead from its first
+#                    record.
 #   Tree alive at census j: some stem of the tree is A at j OR at any later
 #                    census. A tree that loses all its registered stems and
 #                    later has a living stem was alive the whole time; it was
 #                    just not registered.
-#   G (dead stem)  : stem past its own life while its tree is alive at j.
-#   D (dead tree)  : stem past its own life and no stem of the tree is A at j
-#                    or later. D is absorbing: nothing in the tree lives after.
-#   Legal stem transitions: PP PA AA AG AD GG GD DD
-#   Legal tree transitions: PP PA AA AD DD
-#   Everything else is illegal (e.g. DG, DA, GA, PD, PG, AP).
+#   G (dead stem)  : dead stem while its tree is alive at j.
+#   D (dead tree)  : dead stem and no stem of the tree is A at j or later.
+#                    D is absorbing: nothing in the tree lives after.
+#   DBH            : kept on A; removed on P, G and D (list in CHECKS); never
+#                    imputed.
+#   Legal stem transitions: PP PA PG PD AA AG AD GG GD DD
+#   Legal tree transitions: PP PA PD AA AD DD
+#   Everything else is illegal (e.g. DG, DA, GA, AP).
 ################################################################################
 
 # ========================================================================
@@ -160,8 +171,11 @@ bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
 # ── Legal status transitions (biological contract, see header) ──────────────
 # Single source of truth for every validator in Sections 5–13.
 status_codes <- c("A", "D", "G", "P")
-valid_stem_trans <- c("PP", "PA", "AA", "AG", "AD", "GG", "GD", "DD")
-valid_tree_trans <- c("PP", "PA", "AA", "AD", "DD")
+valid_stem_trans <- c("PP", "PA", "PG", "PD", "AA", "AG", "AD", "GG", "GD", "DD")
+valid_tree_trans <- c("PP", "PA", "PD", "AA", "AD", "DD")
+
+# Status and DBH rules (shared with tests/test_Rstatus.R)
+source(file.path(main_path, "BCI_stem_reconstruction", "3_PREPARE_R_TABLES", "rstatus_functions.R"))
 
 # Convert a set of legal 2-letter transitions into the list of illegal
 # (first, second) pairs expected by check_histories().
@@ -771,12 +785,11 @@ if (length(diffs) > 0) {
 # Section 6 and G in Section 10; neither comes from raw data.
 
 # --------------------------------------------------------------------
-# Transform English status codes to single letters
+# Raw records -> codes A / D / N (rstatus_raw_code(), rstatus_functions.R)
 # --------------------------------------------------------------------
-# Gather Status AND DBH from all censuses into one long data.table.
-# DBH is needed because a measured DBH is evidence of life (see the rules
-# further down): any record with a DBH is treated as alive, and a
-# "broken below" record without DBH is treated as dead.
+# Gather Status AND DBH from all censuses into one long data.table. The DBH
+# matters because a DBH on a "broken below", "missing" or status-less record
+# is evidence of life: the stem (or its resprout) was measured.
 DT_Status <- rbindlist(lapply(seq_along(ViewFullTable_split), function(i) {
   ViewFullTable_split[[i]][, .(StemID, Status, DBH, census = i)]
 }), use.names = TRUE, fill = TRUE)
@@ -786,37 +799,28 @@ bio_check(
   "Census numbering in DT_Status is 1..n in order"
 )
 
-## Replace english words by corresponding codes ####
 # ------------------------------------------------------------------------
-# Apply the DBH evidence rules BEFORE the wide pivot
-# ------------------------------------------------------------------------
-# RULE 1 — a measured DBH is evidence of life. Any record with a DBH is set
-#   to "alive", whatever its status text: "broken below" measured on the
-#   resprout, and the rare "dead" / "stem dead" / "missing" / NA-status
-#   record that carries a DBH. This single rule replaces the old
-#   per-section DBH exceptions, so a record with a DBH can never end up as
-#   D, G or P.
-#
-# RULE 2 — "broken below" WITHOUT a DBH is treated as dead. Evidence from
-#   the BCI run of 2026-09-28: of 98,508 broken-below cells without DBH,
-#   only 18 were ever followed by the same stem alive. When that happens,
-#   the lifespan rule (Section 8) turns this D back into A; when the tree
-#   lives on through other stems, Section 10 turns it into G.
-#
-# WHY HERE (and not later as a string gsub on the encounter histories):
-#   The rules need the per-census DBH value. Applying them on the long
-#   DT_Status table keeps each rule local to a single observation
-#   (StemID × census) and avoids any matrix indexing later. After this
-#   step the Status field no longer contains "broken below".
-#
-# "dead" / "stem dead" without DBH are taken as terminal here (mapped to
-# "D" below). Section 8 backfills any "D" contradicted by a later "A".
+# Rules, applied to each stem x census record by rstatus_raw_code():
+#   A  "alive" (with or without DBH), and "broken below" / "missing" / no
+#      status WITH a DBH (measured, so alive).
+#   D  "dead" and "stem dead" (with or without DBH), and "broken below"
+#      without DBH. Evidence from the BCI run of 2026-09-28: of 98,508
+#      broken-below cells without DBH, only 18 were ever followed by the same
+#      stem alive. A D followed later by an A is a false death: the lifespan
+#      rule (Section 8) turns it into A; when the tree lives on through other
+#      stems, Section 10 turns a real death into G.
+#   N  "missing" or no status without DBH, and no row (no record).
+# A DBH on a "dead" / "stem dead" record stays on a D. It is a real
+# measurement only if the stem is alive later (false death, Section 8 makes
+# the cell A and the DBH is kept); otherwise the stem is truly dead and the
+# DBH is removed in Section 13 (user rule of 2026-10-04).
+# P is assigned in Section 6 and G in Section 10; neither comes from raw data.
 # ------------------------------------------------------------------------
 table(DT_Status$Status, useNA = "ifany")
 
 # Every raw status must be one this script knows how to interpret. Unknown
-# values would otherwise fall through to "D" in Step 4 below (a silent,
-# unsupported death), so stop and ask for the new value to be mapped.
+# values would get no defined meaning (rstatus_raw_code() also refuses them),
+# so stop and ask for the new value to be mapped.
 known_raw_status <- c("alive", "dead", "stem dead", "broken below", "missing")
 unknown_status <- setdiff(unique(na.omit(DT_Status$Status)), known_raw_status)
 bio_check(
@@ -826,9 +830,8 @@ bio_check(
   n_bad = length(unknown_status)
 )
 
-# Rule 1 treats a DBH as proof of life, so every DBH must be a real
-# measurement: a 0 or negative "no value" placeholder would create life
-# where there is none.
+# A DBH can be evidence of life, so every DBH must be a real measurement: a
+# 0 or negative "no value" placeholder would create life where there is none.
 bad_dbh <- DT_Status[!is.na(DBH) & DBH <= 0]
 bio_check(
   nrow(bad_dbh) == 0L,
@@ -838,22 +841,25 @@ bio_check(
 )
 rm(bad_dbh)
 
-# RULE 1: DBH present → alive (log how many records of each status change)
+# Log the records the DBH decides: non-"alive" records that are alive because
+# of their DBH, and dead records that carry a DBH.
 dbh_alive_tab <- DT_Status[
-  !is.na(DBH) & (is.na(Status) | Status != "alive"),
+  !is.na(DBH) & (is.na(Status) | Status %in% c("broken below", "missing")),
   .N,
   by = .(raw_status = Status)
 ][order(-N)]
-DT_Status[!is.na(DBH) & (is.na(Status) | Status != "alive"), Status := "alive"]
-cat("\n🔧 Records with a measured DBH set to 'alive' (by raw status):\n")
+dead_dbh_tab <- DT_Status[!is.na(DBH) & Status %in% c("dead", "stem dead"), .N, by = .(raw_status = Status)][order(-N)]
+cat("\n🔧 Records alive because of their DBH (by raw status):\n")
 print(dbh_alive_tab)
-print_to_log("Records with a measured DBH set to 'alive' (by raw status):", log_file, new_message = TRUE)
+cat("🔧 Dead records with a DBH (kept as dead records; DBH kept only if the stem is alive later):\n")
+print(dead_dbh_tab)
+print_to_log("Records alive because of their DBH (by raw status):", log_file, new_message = TRUE)
 print_to_log(capture.output(print(dbh_alive_tab)), log_file, new_message = FALSE)
+print_to_log("Dead records with a DBH (DBH kept only if the stem is alive later):", log_file, new_message = TRUE)
+print_to_log(capture.output(print(dead_dbh_tab)), log_file, new_message = FALSE)
+cat(sprintf("🔧 'broken below' without DBH coded as dead: %d records\n", DT_Status[Status %in% "broken below" & is.na(DBH), .N]))
 
-# RULE 2: broken below without DBH → dead
-n_broken_no_dbh <- DT_Status[Status == "broken below" & is.na(DBH), .N]
-DT_Status[Status == "broken below" & is.na(DBH), Status := "dead"]
-cat(sprintf("🔧 'broken below' without DBH set to 'dead': %d records\n", n_broken_no_dbh))
+DT_Status[, code := rstatus_raw_code(Status, DBH)]
 
 # The pivot below must place exactly one value in each StemID × census cell;
 # with duplicates dcast() would silently count values instead.
@@ -862,11 +868,16 @@ bio_check(
   "One Status value per StemID × census before the pivot"
 )
 
+# Show frequency of raw status values by census
+sum_status_pre <- DT_Status[, .(nobs = .N), by = census:Status][order(Status, census)]
+cat("\n📊 Full Status by Census before transformation:\n")
+sum_status_pre[, .N, by = .(Status, census)][N > 1]
+
 # Pivot long to wide: one row per StemID, one column per census
 original_status_wide <- dcast(DT_Status,
   formula = StemID ~ census,
-  value.var = "Status"
-) # fill cells with Status values
+  value.var = "code"
+) # fill cells with the codes A / D / N
 
 # Find reordering indices: match master stem order (unique_StemID) to current rows
 idx <- match(
@@ -876,62 +887,15 @@ idx <- match(
 
 # Reorder rows to align with unique_StemID
 original_status_wide <- original_status_wide[idx] # subset/reorder using idx
-# head(original_status_wide)
 original_status_full <- as.matrix(original_status_wide[, -1])
 original_status <- original_status_full # Create working copy (preserve original)
-head(original_status_full)
 head(original_status_wide)
-
-tail(original_status_full)
 tail(original_status_wide)
 
-# Then proceed using original_status_full_dt as the status matrix
-
-# Show frequency of status values before transformation
-cat("\n📊 Full Status values before transformation:\n")
-print(table(c(original_status), useNA = "ifany"))
-
-# Show frequency of status by census values before transformation
-sum_status_pre <- DT_Status[, .(nobs = .N), by = census:Status][order(Status, census)]
-cat("\n📊 Full Status by Census before transformation:\n")
-sum_status_pre[, .N, by = .(Status, census)][N > 1]
-
-## Replace english words by corresponding codes ####
-# Transform verbose English status terms into single-letter codes
-# This standardizes the status vocabulary across different ForestGEO sites
-
-# Step 1: "alive" → "A" (exact match, so no other status text is altered)
-original_status[original_status %in% "alive"] <- "A"
-
-# Step 2: NA (not measured) → "N" (temporary placeholder)
-# "N" represents either "Prior" (census not started) or real missing data
-# We'll distinguish between these in Section 6
-original_status[is.na(original_status)] <- "N"
-
-# Step 2b: Raw "missing" values should be treated as no-data, not dead.
-# A raw "missing" observation does not imply the stem was confirmed dead.
-original_status[original_status == "missing"] <- "N"
-
-# Step 3: "broken below" was fully resolved before the pivot (DBH → alive,
-# no DBH → dead). G is never assigned from raw data: it is derived from
-# tree context in Section 10 only.
 bio_check(
-  !any(original_status == "broken below", na.rm = TRUE),
-  "No raw 'broken below' left after the DBH evidence rules"
+  identical(original_status_wide$StemID, unique_StemID$StemID) && all(original_status %in% c("A", "D", "N")),
+  "Raw code matrix is in master stem order and holds only A, D and N"
 )
-
-table(original_status, useNA = "ifany")
-
-# Step 4: Everything else → "D"
-# This catches: "dead", "stem dead", and any remaining non-A/N statuses.
-# None of these records has a DBH (Rule 1 above made those "alive"), so
-# the only stems that fall into "D" here are genuine deads or terminal
-# statuses that were not explicitly marked as missing/no-data.
-# The "D" label is treated as REAL unless the same stem reappears as
-# "A" in a later census, in which case the lifespan rule in Section 8
-# backfills it (alive later => never dead).
-unique(as.vector(original_status))
-original_status[] <- ifelse(!original_status %in% c("A", "N"), "D", original_status)
 
 # Show frequency of status codes AFTER transformation
 cat("\n📊 Status codes after transformation:\n")
@@ -1034,7 +998,7 @@ invalid_transitions <- list(
   c("D", "A"), # dead then alive: resolved by the lifespan rule (Section 8)
   c("A", "N"), # alive then no record: death inferred, AN -> AD (Section 6)
   c("D", "N"), # dead then no record: stays dead, DN -> DD (Section 6)
-  c("N", "D") # first seen dead: never alive -> P (Sections 6-7)
+  c("N", "D") # no record, then dead: dead from the first census without evidence of life (Sections 6, 10)
 )
 
 # ----------------------------
@@ -1150,66 +1114,24 @@ print_to_log(
 # ========================================================================
 # SECTION 6: STATUS PROPAGATION RULES
 # ========================================================================
-# Resolve placeholder "N" values so each stem history is fully defined.
-#   - ^N → P   not yet in the population
-#   - PN → PP
-#   - AN → AD  no record after alive: death inferred (undone in Section 8
-#              if the stem is recorded alive later)
-#   - DN → DD
+# Resolve placeholder "N" values so each stem history is fully defined
+# (rstatus_propagate(), rstatus_functions.R):
+#   - ^N → P, PN → PP  P until the stem's first record (not yet recruited),
+#                      e.g. "NAAA" → "PAAA" (recruited in census 2)
+#   - AN → AD          no record after alive: dead from the first census
+#                      without a record (undone in Section 8 if the stem is
+#                      recorded alive later), e.g. "AANN" → "AADD"
+#   - DN → DD          no record after a dead record: stays dead
 # No G exists yet (G is derived from tree context in Section 10), so there is
 # no G propagation rule here.
-
-# --------------------------------------------------------------------
-## RULE 1: First census N → P (Prior = not yet recruited)
-# --------------------------------------------------------------------
-# Example: "NAAA" → "PAAA" (recruited in census 2)
+cat("\n Patterns to propagate (before):\n")
 tbl_sorted <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
-print(tbl_sorted[grepl("^N", tbl_sorted$x), ])
-cat("\n Rule 1: First census N → P...")
-new_status <- gsub("^N", "P", new_status)
-tbl_sorted <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
-print(tbl_sorted[grepl("^N", tbl_sorted$x), ])
-print(tbl_sorted[grepl("^P", tbl_sorted$x), ])
-
-# --------------------------------------------------------------------
-## RULE 2: Propagate status 'P' forward until stem is first censused
-# --------------------------------------------------------------------
-# Pattern: PN → PP (not yet recruited)
-print(tbl_sorted[grepl("PN", tbl_sorted$x), ])
-cat("\n Applying Rule 2 (PN→PP)...\n")
-while (any(grep("PN", new_status))) {
-  new_status <- gsub("PN", "PP", new_status)
-}
-tbl_sorted <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
-print(tbl_sorted[grepl("PN", tbl_sorted$x), ])
-print(tbl_sorted[grepl("P", tbl_sorted$x), ])
-
-# --------------------------------------------------------------------
-## RULE 3: Propagate Alive forward (AN → AD, interim assignment)
-# --------------------------------------------------------------------
-print(tbl_sorted[grepl("AN", tbl_sorted$x), ])
-cat("\n Applying Rule 3 (AN→AD)...\n")
-while (any(grep("AN", new_status))) {
-  new_status <- gsub("AN", "AD", new_status)
-}
-tbl_sorted <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
-print(tbl_sorted[grepl("AN", tbl_sorted$x), ])
-print(tbl_sorted[grepl("AD", tbl_sorted$x), ])
-
-# --------------------------------------------------------------------
-## RULE 4: Propagate status 'D' forward (DN → DD) ####
-# --------------------------------------------------------------------
-# Once a stem/tree is dead (D), it stays dead unless explicitly recorded otherwise
-# Pattern: "AADN" → "AADD"
-# Example: Stem died in census 3, still dead in census 4 (no data)
-print(tbl_sorted[grepl("DN", tbl_sorted$x), ])
-cat("\n Applying Rule 4 (DN→DD)...\n")
-while (any(grep("DN", new_status))) {
-  new_status <- gsub("DN", "DD", new_status)
-}
-tbl_sorted <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
-print(tbl_sorted[grepl("DN", tbl_sorted$x), ])
-print(tbl_sorted[grepl("DD", tbl_sorted$x), ])
+print(tbl_sorted[grepl("^N|PN|AN|DN", tbl_sorted$x), ])
+new_status <- rstatus_propagate(new_status)
+bio_check(
+  !any(grepl("N", new_status, fixed = TRUE)),
+  "No N (no-record placeholder) left after propagation"
+)
 
 # --------------------------------------------------------------------
 # Final status propagation summary
@@ -1261,8 +1183,8 @@ print(head(comparison_tbl[before_propagation != after_propagation], 20))
 # VALIDATION: stem histories after propagation (informational)
 # -------------------------------------------------------------
 # Checked against the legal stem transitions of the biological contract
-# (valid_stem_trans, Section 1). PD/PG and DA are EXPECTED here: they are
-# resolved by Sections 7 and 8, and enforced with bio_check() afterwards.
+# (valid_stem_trans, Section 1). DA is EXPECTED here (false deaths): it is
+# resolved by Section 8 and enforced with bio_check() afterwards.
 ###############################################################
 histories_after_propagation <- as.vector(tbl_sorted_after_propagation$code_after_propagation)
 unique(unlist(strsplit(histories_after_propagation, "")))
@@ -1277,20 +1199,23 @@ issues <- check_histories(
 if (nrow(issues) == 0) {
   cat("No issues detected in any histories.\n")
 } else {
-  cat("Detected issues (expected before Sections 7-8):\n")
+  cat("Detected issues (expected before Section 8):\n")
   issues <- unique(issues)
   data.frame(sort(unique(issues$Issue)))
 }
 
 # ========================================================================
-# SECTION 7: CORRECT PRIOR-TO-DEAD/GONE INCONSISTENCIES
+# SECTION 7: FIRST RECORDS — P ONLY BEFORE A STEM'S FIRST RECORD
 # ========================================================================
-# A stem cannot die before it has lived. A D that comes before the stem's
-# first A (e.g. a stem first recorded dead, or only ever recorded dead) is
-# not a death: the stem was not yet in the population, so the cell is P.
-# fix_PD_PG_inconsistencies() rewrites PD -> PP (logged in log_PD_PG.txt);
-# the rule below the call also covers a D in census 1, where no P precedes it.
-# No D cell can carry a DBH here: Section 4 made every measured record "alive".
+# P means "not yet recorded": after Section 6 it only fills the censuses
+# before a stem's first record (asserted below). A stem whose first record
+# is dead is in the population from that record:
+#   - alive later: the dead record was a false death, and the lifespan rule
+#     (Section 8) makes it A;
+#   - never alive: dead from its first record, G or D in Section 10.
+# (User decision of 2026-10-04. Before, both cases were P: a dead record
+# before the first A was rewritten to P, so never-alive stems were P in every
+# census.) The DBH matrix built here is used by Sections 8, 10 and 13.
 
 # ------------------------------------------------------------------------
 # Build DBH matrix aligned with new_status / unique_StemID order
@@ -1308,485 +1233,35 @@ DBHs_dt <- dcast(DT_DBH, formula = StemID ~ census, value.var = "DBH")
 DBHs_dt <- DBHs_dt[match(unique_StemID$StemID, DBHs_dt$StemID)]
 DBHs <- as.matrix(DBHs_dt[, -1])
 
-# ------------------------------------------------------------------------
-# HELPER FUNCTION: fix_PD_PG_inconsistencies
-# ------------------------------------------------------------------------
-# PURPOSE
-#   Detect every (stem, census) cell where the propagated status is D or G
-#   AND the previous census' status is P. Optionally use DBH as evidence
-#   to decide what to do with each cell.
-#
-# PARAMETERS
-#   status_vec : character vector of encounter histories (one element per
-#                stem; each string of length = n_censuses, characters in
-#                {A, D, G, P, N}).
-#   dbh_matrix : numeric matrix, rows aligned with status_vec, columns =
-#                censuses. NA = not measured.
-#   stem_ids   : optional character vector of StemIDs (same length as
-#                status_vec) used only for the log.
-#   dbh_aware  : logical.
-#                  * FALSE — naive mode: every PD / PG → PP regardless of DBH
-#                    (matches the legacy behavior).
-#                  * TRUE  — DBH-aware mode: cells where the D/G has NO DBH
-#                    are rewritten to P (PD/PG → PP). Cells where the D/G
-#                    HAS a DBH are LEFT UNCHANGED and FLAGGED.
-#   log_file   : path of the audit log written for both modes (always
-#                lists every PD/PG cell found, with its disposition).
-#   verbose    : print summary to console.
-#
-# RETURNS
-#   list(
-#     status_vec = corrected character vector,
-#     n_changed  = number of cells rewritten to "P",
-#     n_flagged  = number of cells flagged (DBH-aware mode only),
-#     flagged    = data.table of every PD/PG cell with disposition
-#   )
-# ------------------------------------------------------------------------
-fix_PD_PG_inconsistencies <- function(status_vec,
-                                      dbh_matrix,
-                                      stem_ids = NULL,
-                                      dbh_aware = TRUE,
-                                      flag_dbh_action = c("promote_to_A", "keep"),
-                                      log_file = file.path(CHECK_folder, "log_PD_PG.txt"),
-                                      verbose = TRUE) {
-  # ----------------------------------------------------------------------
-  # ARGUMENTS
-  #   status_vec      : char vector of encounter histories (one per stem)
-  #   dbh_matrix      : numeric matrix [stem x census]; NA = not measured
-  #   stem_ids        : optional StemIDs for the log
-  #   dbh_aware       : TRUE  -> DBH evidence drives the decision per cell
-  #                     FALSE -> legacy gsub: every PD/PG -> PP
-  #   flag_dbh_action : what to do with PD/PG cells that DO have a DBH
-  #                     (only used when dbh_aware = TRUE):
-  #                       "promote_to_A" -> rewrite cell to "A" (the stem
-  #                                          was alive: there's a DBH)
-  #                       "keep"         -> leave cell alone, just log it
-  #   log_file        : audit log (one row per unique PD/PG cell)
-  #
-  # DISPOSITION CODES IN THE LOG
-  #   rewrite_to_P : PD/PG without DBH -> P
-  #   promote_to_A : PD/PG  with DBH -> A  (dbh_aware + "promote_to_A")
-  #   flagged_keep : PD/PG  with DBH left unchanged (dbh_aware + "keep")
-  # ----------------------------------------------------------------------
-  flag_dbh_action <- match.arg(flag_dbh_action)
-  stopifnot(is.character(status_vec))
-  status_lengths <- nchar(status_vec)
-  if (length(unique(status_lengths)) != 1L) {
-    stop("fix_PD_PG_inconsistencies: all encounter histories must have the same length.")
-  }
-  n_censuses <- status_lengths[1]
-  n_stems <- length(status_vec)
-  if (!is.matrix(dbh_matrix) || nrow(dbh_matrix) != n_stems || ncol(dbh_matrix) != n_censuses) {
-    stop(sprintf(
-      "fix_PD_PG_inconsistencies: dbh_matrix must be %d x %d (got %d x %d).",
-      n_stems, n_censuses, nrow(dbh_matrix), ncol(dbh_matrix)
-    ))
-  }
-  if (is.null(stem_ids)) stem_ids <- as.character(seq_len(n_stems))
-
-  # IMPLEMENTATION (single matrix scan + bounded vectorized iteration):
-  #   - Each pass is one full vectorized matrix scan (O(n_stems * n_censuses)
-  #     in C) plus matrix-index assignment of the changed cells.
-  #   - Iteration is needed because rewrite_to_P creates new PD/PG cells
-  #     one column to the right (PDDD -> PPDD -> PPPD -> PPPP). The loop
-  #     is bounded by n_censuses-1 and converges quickly because each pass
-  #     touches an ever-smaller subset of cells.
-  #   - Per-pass index records are appended to plain integer/numeric lists
-  #     and the `flagged` data.table is built ONCE at the end (avoids
-  #     per-iteration data.table allocation).
-  #
-  # Status -> character matrix for cell-level edits (rows=stems, cols=censuses)
-  smat <- do.call(rbind, strsplit(status_vec, "", fixed = TRUE))
-
-  # Per-pass record buffers (plain vectors, cheap to grow via list()).
-  rec_rows <- vector("list")
-  rec_cols <- vector("list")
-  rec_codes <- vector("list")
-  rec_dbh <- vector("list")
-  rec_action <- vector("list")
-
-  n_rewrite_P <- 0L
-  n_promote_A <- 0L
-  n_flag_keep <- 0L
-  iter <- 0L
-
-  repeat {
-    iter <- iter + 1L
-    prev <- smat[, 1:(n_censuses - 1), drop = FALSE]
-    curr <- smat[, 2:n_censuses, drop = FALSE]
-
-    hits <- which(prev == "P" & (curr == "D" | curr == "G"), arr.ind = TRUE)
-    if (nrow(hits) == 0L) break
-
-    cell_rows <- hits[, 1]
-    cell_cols <- hits[, 2] + 1L
-    cell_codes <- smat[cbind(cell_rows, cell_cols)] # "D" or "G"
-    cell_dbh <- dbh_matrix[cbind(cell_rows, cell_cols)]
-    has_dbh <- !is.na(cell_dbh)
-
-    if (!dbh_aware) {
-      action <- rep("rewrite_to_P", length(cell_rows))
-    } else {
-      action <- ifelse(has_dbh,
-        if (flag_dbh_action == "promote_to_A") "promote_to_A" else "flagged_keep",
-        "rewrite_to_P"
-      )
-    }
-
-    # On flagged_keep mode, cells with DBH stay PD/PG forever -> the loop
-    # would never end. Detect: if every hit is flagged_keep, we're done
-    # after recording them once.
-    is_P <- action == "rewrite_to_P"
-    is_A <- action == "promote_to_A"
-    is_K <- action == "flagged_keep"
-
-    if (any(is_P)) smat[cbind(cell_rows[is_P], cell_cols[is_P])] <- "P"
-    if (any(is_A)) smat[cbind(cell_rows[is_A], cell_cols[is_A])] <- "A"
-
-    n_rewrite_P <- n_rewrite_P + sum(is_P)
-    n_promote_A <- n_promote_A + sum(is_A)
-
-    # Record only cells that were actually edited this pass (rewrite/promote);
-    # flagged_keep cells are recorded once on the final pass below.
-    keep_now <- is_P | is_A
-    if (any(keep_now)) {
-      k <- length(rec_rows) + 1L
-      rec_rows[[k]] <- cell_rows[keep_now]
-      rec_cols[[k]] <- cell_cols[keep_now]
-      rec_codes[[k]] <- cell_codes[keep_now]
-      rec_dbh[[k]] <- cell_dbh[keep_now]
-      rec_action[[k]] <- action[keep_now]
-    }
-
-    # If this pass produced no edits (all hits were flagged_keep), record
-    # those once and exit.
-    if (!any(is_P) && !any(is_A)) {
-      if (any(is_K)) {
-        n_flag_keep <- n_flag_keep + sum(is_K)
-        k <- length(rec_rows) + 1L
-        rec_rows[[k]] <- cell_rows[is_K]
-        rec_cols[[k]] <- cell_cols[is_K]
-        rec_codes[[k]] <- cell_codes[is_K]
-        rec_dbh[[k]] <- cell_dbh[is_K]
-        rec_action[[k]] <- action[is_K]
-      }
-      break
-    }
-  }
-
-  # Build flagged data.table ONCE from the accumulated index buffers.
-  flagged <- if (length(rec_rows) > 0L) {
-    all_rows <- unlist(rec_rows, use.names = FALSE)
-    data.table(
-      stem_idx = all_rows,
-      StemID   = stem_ids[all_rows],
-      census   = unlist(rec_cols, use.names = FALSE),
-      pattern  = paste0("P", unlist(rec_codes, use.names = FALSE)),
-      DBH      = unlist(rec_dbh, use.names = FALSE),
-      action   = unlist(rec_action, use.names = FALSE)
-    )
-  } else {
-    data.table(
-      stem_idx = integer(), StemID = character(),
-      census = integer(), pattern = character(), DBH = numeric(),
-      action = character()
-    )
-  }
-
-  # Reassemble status vector (vectorized; ~50x faster than apply)
-  new_vec <- do.call(paste0, lapply(seq_len(n_censuses), function(j) smat[, j]))
-
-  # Write log
-  if (!is.null(log_file)) {
-    con <- file(log_file, open = "w")
-    on.exit(close(con), add = TRUE)
-    writeLines(c(
-      paste0("# log_PD_PG.txt  - generated ", format(Sys.time())),
-      paste0("# mode            : ", if (dbh_aware) "DBH-aware" else "naive (gsub-equivalent)"),
-      paste0("# flag_dbh_action : ", flag_dbh_action),
-      paste0("# n_stems         : ", n_stems),
-      paste0("# n_censuses      : ", n_censuses),
-      paste0("# iterations      : ", iter),
-      paste0("# n_rewrite_to_P  : ", n_rewrite_P, "  (PD/PG without DBH -> P)"),
-      paste0("# n_promote_to_A  : ", n_promote_A, "  (PD/PG  with DBH -> A)"),
-      paste0("# n_flagged_keep  : ", n_flag_keep, "  (PD/PG  with DBH left unchanged)"),
-      "#"
-    ), con)
-    if (nrow(flagged) > 0L) {
-      writeLines("# per-cell disposition (one row per unique PD/PG cell):", con)
-      write.table(flagged, con,
-        sep = "\t", quote = FALSE,
-        row.names = FALSE, col.names = TRUE
-      )
-    } else {
-      writeLines("# no PD/PG cells found.", con)
-    }
-  }
-
-  if (verbose) {
-    cat(sprintf(
-      "fix_PD_PG_inconsistencies: mode=%s flag_dbh_action=%s | rewrite_to_P=%d | promote_to_A=%d | flagged_keep=%d | iters=%d\n",
-      if (dbh_aware) "DBH-aware" else "naive",
-      flag_dbh_action, n_rewrite_P, n_promote_A, n_flag_keep, iter
-    ))
-    if (n_flag_keep > 0L) {
-      cat(sprintf(
-        "  ⚠ %d PD/PG cell(s) with DBH left unchanged. See: %s\n",
-        n_flag_keep, log_file
-      ))
-    }
-    if (n_promote_A > 0L) {
-      cat(sprintf(
-        "  ℹ %d PD/PG cell(s) with DBH promoted to A. See: %s\n",
-        n_promote_A, log_file
-      ))
-    }
-  }
-
-  list(
-    status_vec = new_vec,
-    n_rewrite_P = n_rewrite_P,
-    n_promote_A = n_promote_A,
-    n_flag_keep = n_flag_keep,
-    flagged = flagged
-  )
-}
-
-# ------------------------------------------------------------------------
-# Apply the correction
-# ------------------------------------------------------------------------
-cat("\n🔍 PD / PG patterns BEFORE correction:\n")
-tbl_sorted_stem <- sort_table_status(new_status, sort_by = "x", decreasing = FALSE)
-print(tbl_sorted_stem[grepl("PD|PG", tbl_sorted_stem$x), ])
-
-# DBH-aware behaviour:
-#   PD / PG cell with no DBH        → rewritten to P (rewrite_to_P)
-#                                     → the "D" or "G" was a propagated
-#                                       N→D/G that has no measurement to
-#                                       support it; demote back to Prior.
-#   PD / PG cell WITH a DBH         → promoted to A (promote_to_A)
-#                                     → now a no-op: Section 4 (Rule 1)
-#                                       already turned every record with
-#                                       a DBH into "alive", so no D/G cell
-#                                       can carry a DBH. Kept as a guard;
-#                                       its count must be 0 in the log.
-#   flag_dbh_action = "keep"        → disabled here; would log the cell
-#                                     and leave it untouched ("flagged_keep").
-# Toggle dbh_aware = FALSE to reproduce the legacy gsub("PD|PG","PP")
-# behaviour (no DBH inspection, all PD/PG → PP).
-PD_PG_fix <- fix_PD_PG_inconsistencies(
-  status_vec = new_status,
-  dbh_matrix = DBHs,
-  stem_ids = unique_StemID$StemID,
-  dbh_aware = TRUE,
-  log_file = file.path(CHECK_folder, "log_PD_PG.txt"),
-  verbose = TRUE,
-  flag_dbh_action = "promote_to_A"
-)
-
-new_status <- PD_PG_fix$status_vec
-
-# Any D before the stem's first A becomes P, wherever it sits (including
-# census 1, where no P precedes it, and stems never recorded alive, whose
-# first A is "never"). This makes "first seen dead" consistent: the stem
-# enters the population at its first evidence of life, not before.
-pre_smat <- do.call(rbind, strsplit(new_status, "", fixed = TRUE))
-pre_is_A <- (pre_smat == "A") * 1L
-pre_first_A <- ifelse(rowSums(pre_is_A) > 0L, max.col(pre_is_A, ties.method = "first"), ncol(pre_smat) + 1L)
-pre_life_D <- pre_smat == "D" & col(pre_smat) < pre_first_A
+first_rec_dead <- grepl("^P*D", new_status)
+has_A <- grepl("A", new_status, fixed = TRUE)
 cat(sprintf(
-  "🔧 D cells before the stem's first life set to P: %d (in %d stems)\n",
-  sum(pre_life_D), sum(rowSums(pre_life_D) > 0L)
+  "🔎 Stems whose first record is dead: %d (alive later → A from that record: %d; never alive → G/D from that record: %d)\n",
+  sum(first_rec_dead), sum(first_rec_dead & has_A), sum(first_rec_dead & !has_A)
 ))
-pre_smat[pre_life_D] <- "P"
-new_status <- do.call(paste0, lapply(seq_len(ncol(pre_smat)), function(j) pre_smat[, j]))
-rm(pre_smat, pre_is_A, pre_first_A, pre_life_D)
-
+cat(sprintf("🔎 Stems never recorded (P in every census): %d\n", sum(grepl("^P+$", new_status))))
+p_after_record <- grep("[ADG]P", new_status)
 bio_check(
-  PD_PG_fix$n_promote_A == 0L,
-  "No D/G cell carries a DBH after Section 4 (promote_to_A count is 0)",
-  n_bad = PD_PG_fix$n_promote_A
+  length(p_after_record) == 0L,
+  "P only before a stem's first record (no P after A or D)",
+  examples = unique_StemID$StemID[p_after_record],
+  n_bad = length(p_after_record)
 )
-pd_pg_idx <- grep("PD|PG", new_status)
-bio_check(
-  length(pd_pg_idx) == 0L,
-  "No stem goes directly from P to D/G (never-alive stems stay P)",
-  examples = unique_StemID$StemID[pd_pg_idx],
-  n_bad = length(pd_pg_idx)
-)
+rm(first_rec_dead, has_A, p_after_record)
 
 # ========================================================================
 # SECTION 8: LIFESPAN RULE — RESOLVE RESURRECTIONS (D→A, G→A)
 # ========================================================================
-# Biological contract: a stem is alive from its first to its last evidence
-# of life (raw "alive" or measured DBH). Every A cell at this point is such
-# a record, so any D/G followed later by an A was not a real death: it is
-# backfilled to A (alive later => never dead), however long the gap.
+# Biological contract: a stem is alive from its first record to its last
+# evidence of life (Section 4). Every A cell at this point is evidence of
+# life, so any D/G followed later by an A was not a real death (a false
+# death, including a dead first record of a stem alive later): it is
+# backfilled to A (alive later => never dead), however long the gap. A DBH
+# on such a false-death record is a real measurement and is kept.
 # fix_resurrections() is therefore called with dbh_aware = FALSE (backfill
 # all). The DBH-aware mode demoted raw "alive" records without DBH to D,
 # which contradicted the contract and was undone again by the old Section 9.
 # Every case is audited in log_resurrections.txt.
-
-# ------------------------------------------------------------------------
-# HELPER FUNCTION: fix_resurrections
-# ------------------------------------------------------------------------
-fix_resurrections <- function(status_vec,
-                              dbh_matrix,
-                              stem_ids = NULL,
-                              dbh_aware = TRUE,
-                              log_file = file.path(CHECK_folder, "log_resurrections.txt"),
-                              verbose = TRUE) {
-  # PARAMETERS
-  #   status_vec : char vector of encounter histories (one per stem)
-  #   dbh_matrix : numeric matrix [stem x census], NA = not measured
-  #   stem_ids   : optional StemIDs for the log
-  #   dbh_aware  : TRUE  -> per-cell decision uses DBH evidence
-  #                FALSE -> lifespan rule: every DA/GA -> AA (backfill all);
-  #                         the mode used by this script
-  #   log_file   : audit log path
-  #
-  # RETURNS list with corrected status_vec + counts + flagged data.table.
-  #
-  # IMPLEMENTATION (single matrix pass + vectorized string ops):
-  #   1. Build status matrix once.
-  #   2. Find ALL (i, j) cells where smat[i, j-1] in {D,G} and smat[i, j] = A.
-  #      Each such cell is an immediate D->A / G->A transition.
-  #   3. Classify each cell by DBH at j:
-  #        has DBH  -> backfill_to_A   (the A is real; earlier D/G is wrong)
-  #        no  DBH  -> demote_to_DG    (the A is a zombie)
-  #   4. Apply demotes by direct matrix-index assignment (single vectorized op).
-  #   5. Apply backfills via gsub("DA|GA","AA",...) loop on the string vector
-  #      (only on rows that actually need backfilling; vectorized C code).
-  #   6. Write a single log of all classified cells (no per-pass overhead).
-  stopifnot(is.character(status_vec))
-  status_lengths <- nchar(status_vec)
-  if (length(unique(status_lengths)) != 1L) {
-    stop("fix_resurrections: all encounter histories must have the same length.")
-  }
-  n_censuses <- status_lengths[1]
-  n_stems <- length(status_vec)
-  if (!is.matrix(dbh_matrix) || nrow(dbh_matrix) != n_stems || ncol(dbh_matrix) != n_censuses) {
-    stop(sprintf(
-      "fix_resurrections: dbh_matrix must be %d x %d (got %d x %d).",
-      n_stems, n_censuses, nrow(dbh_matrix), ncol(dbh_matrix)
-    ))
-  }
-  if (is.null(stem_ids)) stem_ids <- as.character(seq_len(n_stems))
-
-  # ---- single matrix scan -----------------------------------------------
-  smat <- do.call(rbind, strsplit(status_vec, "", fixed = TRUE))
-
-  prev <- smat[, 1:(n_censuses - 1), drop = FALSE]
-  curr <- smat[, 2:n_censuses, drop = FALSE]
-  hits <- which((prev == "D" | prev == "G") & curr == "A", arr.ind = TRUE)
-
-  if (nrow(hits) == 0L) {
-    if (verbose) cat("fix_resurrections: no D->A / G->A cells found.\n")
-    return(list(
-      status_vec = status_vec, n_backfill = 0L, n_demote = 0L,
-      flagged = data.table()
-    ))
-  }
-
-  cell_rows <- hits[, 1]
-  cell_cols <- hits[, 2] + 1L # the "A" cell column
-  prev_cols <- hits[, 2] # the "D"/"G" cell column
-  prev_codes <- smat[cbind(cell_rows, prev_cols)]
-  cell_dbh <- dbh_matrix[cbind(cell_rows, cell_cols)]
-  has_dbh <- !is.na(cell_dbh)
-
-  if (!dbh_aware) {
-    action <- rep("backfill_to_A", length(cell_rows))
-  } else {
-    action <- ifelse(has_dbh, "backfill_to_A", "demote_to_DG")
-  }
-  is_back <- action == "backfill_to_A"
-  is_dem <- action == "demote_to_DG"
-  n_backfill <- sum(is_back)
-  n_demote <- sum(is_dem)
-
-  # ---- apply demotes (one vectorized matrix assignment) -----------------
-  if (n_demote > 0L) {
-    smat[cbind(cell_rows[is_dem], cell_cols[is_dem])] <- prev_codes[is_dem]
-  }
-
-  # ---- rebuild string vector (vectorized; ~50x faster than apply) -------
-  new_vec <- do.call(paste0, lapply(seq_len(n_censuses), function(j) smat[, j]))
-
-  # ---- apply backfills via gsub on the rows that need it ----------------
-  # After demotes, rows with backfill cells still contain "DA" or "GA".
-  # gsub propagates DDDA -> DDAA -> DAAA -> AAAA in a small loop on a
-  # subset of rows only.
-  if (n_backfill > 0L) {
-    back_rows <- unique(cell_rows[is_back])
-    sub <- new_vec[back_rows]
-    while (any(grepl("DA|GA", sub, fixed = FALSE))) {
-      sub <- gsub("DA|GA", "AA", sub)
-    }
-    new_vec[back_rows] <- sub
-  }
-
-  # ---- build log --------------------------------------------------------
-  flagged <- data.table(
-    stem_idx = cell_rows,
-    StemID   = stem_ids[cell_rows],
-    census   = cell_cols,
-    pattern  = paste0(prev_codes, "A"),
-    DBH      = cell_dbh,
-    action   = action
-  )
-
-  if (!is.null(log_file)) {
-    con <- file(log_file, open = "w")
-    on.exit(close(con), add = TRUE)
-    writeLines(c(
-      paste0("# log_resurrections.txt - generated ", format(Sys.time())),
-      paste0("# mode            : ", if (dbh_aware) "DBH-aware" else "naive (gsub-equivalent)"),
-      paste0("# n_stems         : ", n_stems),
-      paste0("# n_censuses      : ", n_censuses),
-      paste0(
-        "# n_backfill_to_A : ", n_backfill,
-        if (dbh_aware) {
-          "  (D/G->A transitions backfilled; the A cell had a DBH)"
-        } else {
-          "  (D/G->A transitions backfilled; the whole D/G run before each A becomes A)"
-        }
-      ),
-      paste0("# n_demote_to_DG  : ", n_demote, "  (A rewritten to D/G; cell had no DBH; DBH-aware mode only)"),
-      "#"
-    ), con)
-    if (nrow(flagged) > 0L) {
-      writeLines("# per-cell disposition (one row per D->A or G->A cell):", con)
-      write.table(flagged, con,
-        sep = "\t", quote = FALSE,
-        row.names = FALSE, col.names = TRUE
-      )
-    } else {
-      writeLines("# no resurrection cells found.", con)
-    }
-  }
-
-  if (verbose) {
-    cat(sprintf(
-      "fix_resurrections: mode=%s | backfill_to_A=%d | demote_to_DG=%d\n",
-      if (dbh_aware) "DBH-aware" else "naive",
-      n_backfill, n_demote
-    ))
-    if (n_demote > 0L) {
-      cat(sprintf(
-        "  ⚠ %d zombie A cell(s) demoted (no DBH after D/G). See: %s\n",
-        n_demote, log_file
-      ))
-    }
-  }
-
-  list(
-    status_vec = new_vec,
-    n_backfill = n_backfill,
-    n_demote = n_demote,
-    flagged = flagged
-  )
-}
 
 # ------------------------------------------------------------------------
 # Apply the correction
@@ -1925,7 +1400,8 @@ dev.off()
 #   - GD is a valid transition (the tree dies after the stem did);
 #   - DG is NOT valid: D means the whole tree is dead, and a dead tree
 #     cannot come back to life;
-#   - never-alive P stems ("phantoms") no longer keep a dead tree alive;
+#   - a stem never alive (dead from its first record) has no A, so it never
+#     keeps its tree alive;
 #   - single-stem trees get D directly (tree_last_A = the stem's own).
 # A and P cells are never modified.
 
@@ -1993,7 +1469,7 @@ new_status_split <- setNames(
 #      - If future A exists → tree is "A" (alive but unregistered: a stem
 #        of the tree is recorded alive later)
 #      - If no future A → tree is "D" (no stem of the tree lives again;
-#        P stems here are never-alive phantoms)
+#        P stems here are recorded later only as dead, or never)
 #   4. If only D/G (no P, no A) → tree is "D"
 # This per-tree loop is an independent implementation of the contract; it is
 # compared cell by cell with the vectorized Section 10.5 result (check I4).
@@ -2067,9 +1543,10 @@ tree_exists_check <- function(stem_states) {
         valid[t] <- TRUE # tree exists due to future alive stem
       } else if (any(row %in% c("D", "G"))) {
         # P + D/G and no future A → flagged. Under the biological contract
-        # this is simply a DEAD tree whose P stems are never-alive phantoms,
-        # so the check is NOT enforced inside compute_tree_for_row(); it only
-        # feeds the informational RUN_TREE_EXISTS_DIAGNOSTIC count below.
+        # this is simply a DEAD tree whose P stems are never alive (recorded
+        # later only as dead, or never recorded), so the check is NOT
+        # enforced inside compute_tree_for_row(); it only feeds the
+        # informational RUN_TREE_EXISTS_DIAGNOSTIC count below.
         valid[t] <- FALSE
       } else {
         # Only P → valid
@@ -2105,8 +1582,8 @@ compute_tree_for_row <- function(stem_strings) {
   )
   # NOTE: tree_exists_check() is intentionally DISABLED here.
   # When enabled it returns NA for any tree with P + D/G and no future A.
-  # Under the contract those are simply dead trees holding never-alive
-  # (phantom) P stems, so tree_state() codes them D, which is correct.
+  # Under the contract those are simply dead trees holding P stems that are
+  # never alive, so tree_state() codes them D, which is correct.
   # The strict variant is kept as compute_tree_for_row_checking() below
   # and is exercised by the optional RUN_TREE_EXISTS_DIAGNOSTIC block in
   # Section 10.3 to quantify how many trees would be flagged.
@@ -2143,8 +1620,9 @@ tree_histories_list <- lapply(new_status_split, compute_tree_for_row)
 # Optional diagnostic: re-run with the strict tree_exists_check() guard and
 # count the trees it would reject. Those are trees with P + D stems and no
 # future A: under the contract they are simply DEAD trees whose P stems are
-# never-alive phantoms, so the count is informational (dead trees that hold
-# phantom stems), not an error. Set to FALSE to skip (it re-runs the tree loop).
+# never alive, so the count is informational (dead trees that hold stems
+# recorded later only as dead, or never), not an error. Set to FALSE to skip
+# (it re-runs the tree loop).
 RUN_TREE_EXISTS_DIAGNOSTIC <- TRUE
 if (RUN_TREE_EXISTS_DIAGNOSTIC) {
   tree_histories_list_checking <- lapply(new_status_split, compute_tree_for_row_checking)
@@ -2157,8 +1635,8 @@ if (RUN_TREE_EXISTS_DIAGNOSTIC) {
 }
 
 # Validate results: every tree history must use only legal tree transitions.
-# A tree whose stems were never alive stays all-P (never in the population),
-# which is legal.
+# A tree never recorded stays all-P; a tree recorded only as dead is P until
+# its first record and D from then on (PD is legal).
 tree_hist_vec <- unlist(tree_histories_list, use.names = TRUE)
 tree_pairs_ok <- Reduce(`&`, lapply(
   seq_len(length(ViewFullTable_split) - 1L),
@@ -2166,13 +1644,13 @@ tree_pairs_ok <- Reduce(`&`, lapply(
 ))
 bio_check(
   all(tree_pairs_ok),
-  "Every tree history uses only legal tree transitions (PP PA AA AD DD)",
+  sprintf("Every tree history uses only legal tree transitions (%s)", paste(valid_tree_trans, collapse = " ")),
   examples = names(tree_hist_vec)[!tree_pairs_ok],
   n_bad = sum(!tree_pairs_ok)
 )
 cat(sprintf(
-  "   trees never alive (all P): %d of %d\n",
-  sum(!grepl("A", tree_hist_vec, fixed = TRUE)), length(tree_hist_vec)
+  "   trees never alive: %d of %d (never recorded, all P: %d)\n",
+  sum(!grepl("A", tree_hist_vec, fixed = TRUE)), length(tree_hist_vec), sum(grepl("^P+$", tree_hist_vec))
 ))
 
 # Match tree status to each stem's TreeID
@@ -2211,9 +1689,10 @@ if (!is.null(names(split_chars_new_status))) {
 #   G  if j <= tree_last_A   the tree is alive now or later (possibly
 #                            unregistered): stem dead, tree alive
 #   D  if j >  tree_last_A   no stem of the tree lives again: tree dead
-# Never-alive P stems have stem_last_A = 0, so they can never keep a dead
-# tree alive. Single-stem trees get D directly. A and P cells are NEVER
-# touched (checked below).
+# A stem never alive has stem_last_A = 0, so it can never keep a dead tree
+# alive. Single-stem trees get D directly. A and P cells are NEVER touched
+# (checked below). The rule itself is rstatus_tree_dg() (rstatus_functions.R);
+# stem_info_dt below recomputes the tree life span for the checks.
 # ------------------------------------------------------------------
 bio_check(
   nrow(new_status_matrix) == nrow(unique_StemID),
@@ -2246,14 +1725,16 @@ stem_info_dt[, `:=`(
 ), by = TreeID]
 
 col_idx <- matrix(seq_len(n_cens), nrow = n_stems, ncol = n_cens, byrow = TRUE)
-tree_first_A_mat <- matrix(stem_info_dt$tree_first_A, nrow = n_stems, ncol = n_cens)
 tree_last_A_mat <- matrix(stem_info_dt$tree_last_A, nrow = n_stems, ncol = n_cens)
 tree_alive_cell <- col_idx <= tree_last_A_mat
 dead_cell <- new_status_matrix == "D" | new_status_matrix == "G"
 
-corrected_new_status_matrix <- new_status_matrix
-corrected_new_status_matrix[dead_cell & tree_alive_cell] <- "G"
-corrected_new_status_matrix[dead_cell & !tree_alive_cell] <- "D"
+corrected_new_status_matrix <- rstatus_tree_dg(new_status_matrix, TreeID_vec)
+bio_check(
+  all(corrected_new_status_matrix[dead_cell & tree_alive_cell] == "G") &&
+    all(corrected_new_status_matrix[dead_cell & !tree_alive_cell] == "D"),
+  "rstatus_tree_dg() gives G when the tree is alive then or later and D otherwise"
+)
 n_to_G <- sum(dead_cell & tree_alive_cell & new_status_matrix != "G")
 n_to_D <- sum(dead_cell & !tree_alive_cell & new_status_matrix != "D")
 
@@ -2313,11 +1794,15 @@ bio_check(
 )
 
 # I4: the tree status implied by the corrected stems (P before the tree's
-# first A, A from first to last A, D after) must equal tree_histories,
-# computed independently by tree_state() in Section 10.3.
+# first record, A from then to its last A, D after) must equal
+# tree_histories, computed independently by tree_state() in Section 10.3.
+is_rec_num <- (corrected_new_status_matrix != "P") * 1L
+stem_info_dt[, stem_first_rec := ifelse(rowSums(is_rec_num) > 0L, max.col(is_rec_num, ties.method = "first"), never_cens)]
+stem_info_dt[, tree_first_rec := min(stem_first_rec), by = TreeID]
+tree_first_rec_mat <- matrix(stem_info_dt$tree_first_rec, nrow = n_stems, ncol = n_cens)
 tree_derived <- matrix("P", nrow = n_stems, ncol = n_cens)
-tree_derived[col_idx >= tree_first_A_mat & col_idx <= tree_last_A_mat] <- "A"
-tree_derived[tree_last_A_mat > 0L & col_idx > tree_last_A_mat] <- "D"
+tree_derived[col_idx >= tree_first_rec_mat & col_idx <= tree_last_A_mat] <- "A"
+tree_derived[col_idx >= tree_first_rec_mat & col_idx > tree_last_A_mat] <- "D"
 tree_derived_vec <- do.call(paste0, lapply(seq_len(n_cens), function(j) tree_derived[, j]))
 i4_bad <- which(tree_derived_vec != as.vector(tree_histories))
 bio_check(
@@ -2393,7 +1878,7 @@ if (sum(same_first_last) > 0L) {
 
 rm(
   stem_info_dt, AP_in, AP_out, single_stem_row, TreeID_vec,
-  is_A_num, has_A, is_D_num, has_D, col_idx, tree_first_A_mat,
+  is_A_num, has_A, is_D_num, has_D, col_idx, tree_first_rec_mat, is_rec_num,
   tree_last_A_mat, tree_alive_cell, dead_cell, tree_derived,
   tree_derived_vec, n_to_G, n_to_D, i1_bad, i2_bad, i3_bad, i4_bad, i5_bad,
   never_cens
@@ -2469,7 +1954,7 @@ writeLines(c(
   paste0("# biology_assessment.txt  - generated ", format(Sys.time())),
   paste0("# legal stem transitions: ", paste(valid_stem_trans, collapse = " ")),
   paste0("# legal tree transitions: ", paste(valid_tree_trans, collapse = " ")),
-  "# illegal: every other 2-letter substring (e.g. DG, DA, GA, PD, PG, AP)",
+  "# illegal: every other 2-letter substring (e.g. DG, DA, GA, AP)",
   "# G = stem dead, tree alive now or later; D = tree dead (absorbing)",
   ""
 ), con)
@@ -2519,7 +2004,7 @@ writeLines(c(
   strrep("=", 72),
   "EXPECTED RESULTS",
   "  1. original_status   : MAY contain any illegal transitions (raw).",
-  "  2. new_status        : 0 illegal rows (no DA/GA, PD/PG, A[DG]+A).",
+  "  2. new_status        : 0 illegal rows (no DA/GA, no P after a record, no A[DG]+A).",
   "  3. corrected_new_st. : 0 illegal rows; GD valid, DG illegal (tree-aware D/G, Section 10.5).",
   "  4. tree_histories    : 0 illegal rows under the tree transitions (no tree D->A).",
   "  Tree-level zombie cells: 0.",
@@ -2641,23 +2126,30 @@ setorder(X, original_status)
 fwrite(X, file = file.path(CHECK_folder, "status_changed.csv"))
 cat("  ✓ Saved: status_changed.csv\n")
 
-## DIAGNOSTIC 3: Flag stems that never showed alive status ####
-# Stems that are P in every census ("phantoms"): recorded only as dead /
-# missing, or rows the DP could not place (StemID "TreeID_NA"). By the
-# contract they never entered the population and never keep a tree alive.
-# Could indicate: 1) stems that died before being censused alive, 2) data
-# quality issues.
-
+## DIAGNOSTIC 3: Stems never alive and stems never recorded ####
+# (a) Never alive: recorded only as dead (e.g. a broken-below record without
+#     DBH, then dead). P until their first record, then G or D; they never
+#     keep a tree alive. Could indicate stems that died before being
+#     measured, or data quality issues.
+# (b) Never recorded: P in every census. Their only rows are "missing" or
+#     empty placeholder rows (StemID "TreeID_NA": a tree row with a date but
+#     no stem, status or DBH). Kept in the R tables as all-P stems (user
+#     decision of 2026-10-04) and listed here.
 problem.ID <- unique_StemID$StemID[
-  grepl("^P+$", corrected_new_status)
+  !grepl("A", corrected_new_status, fixed = TRUE) & grepl("[GD]", corrected_new_status)
 ]
-
-cat(sprintf("  Stems never alive (all P): %d\n", length(problem.ID)))
-
+cat(sprintf("  Stems never alive (recorded only as dead; G/D from the first record): %d\n", length(problem.ID)))
 fwrite(as.data.table(ViewFullTable)[StemID %in% problem.ID],
   file = file.path(CHECK_folder, "subset_stems_never_alive.csv")
 )
 cat("  ✓ Saved: subset_stems_never_alive.csv\n")
+
+problem.ID <- unique_StemID$StemID[grepl("^P+$", corrected_new_status)]
+cat(sprintf("  Stems never recorded (P in every census): %d\n", length(problem.ID)))
+fwrite(as.data.table(ViewFullTable)[StemID %in% problem.ID],
+  file = file.path(CHECK_folder, "subset_stems_never_recorded.csv")
+)
+cat("  ✓ Saved: subset_stems_never_recorded.csv\n")
 
 ## DIAGNOSTIC 4 (retired): the old "G then A" export searched the RAW
 ## histories for G, but G is never assigned from raw data (it is derived
@@ -2848,8 +2340,9 @@ rm(
 # SECTION 13: STATUS × DBH SUPPORT SUMMARY
 # ========================================================================
 # Audit the final corrected_new_status_matrix before export: verify that
-# no illegal transitions remain, that A/P cells are preserved, and
-# summarise status codes by whether a DBH measurement exists.
+# no illegal transitions remain and that A/P cells are preserved; remove the
+# DBH of P/G/D cells (exported dbh = DBHs_clean); summarise status codes by
+# whether a DBH measurement exists.
 
 bio_check(
   is.matrix(corrected_new_status_matrix) &&
@@ -2891,13 +2384,56 @@ bio_check(
 
 rm(final_pairs, illegal, stranded, AP_in, AP_out)
 
+# ---- DBH cleaning: a DBH is kept only on A cells ---------------------------
+# A DBH can only sit on a P/G/D cell when it was recorded on a "dead" /
+# "stem dead" record of a stem that is never alive later: the stem is truly
+# dead, so the DBH is removed from the exported dbh (rstatus_clean_dbh()) and
+# listed with its raw record in CHECKS/dbh_removed_dead_records.csv (user
+# decision of 2026-10-04). The DBH of a false-death record (stem alive later,
+# so A) is a real measurement and is kept. No DBH is ever imputed.
+dbh_fix <- rstatus_clean_dbh(corrected_new_status_matrix, DBHs)
+DBHs_clean <- dbh_fix$dbh
+rm_idx <- which(dbh_fix$removed, arr.ind = TRUE)
+dbh_removed_dt <- data.table(
+  row = rm_idx[, 1], census = rm_idx[, 2],
+  TreeID = unique_StemID$TreeID[rm_idx[, 1]],
+  StemID = unique_StemID$StemID[rm_idx[, 1]],
+  DBH_removed = DBHs[rm_idx],
+  Rstatus = corrected_new_status_matrix[rm_idx]
+)
+dbh_removed_dt[, `:=`(
+  raw_status = mapply(function(i, j) ViewFullTable_split[[j]]$Status[i], row, census),
+  codes = mapply(function(i, j) ViewFullTable_split[[j]]$ListOfTSM[i], row, census),
+  original_status = original_status[row],
+  corrected_history = corrected_new_status[row]
+)]
+fwrite(dbh_removed_dt[, -"row"], file.path(CHECK_folder, "dbh_removed_dead_records.csv"))
+dead_dbh_cells <- DT_Status[!is.na(DBH) & Status %in% c("dead", "stem dead"), .(row = match(StemID, unique_StemID$StemID), census)]
+dead_dbh_R <- corrected_new_status_matrix[cbind(dead_dbh_cells$row, dead_dbh_cells$census)]
+cat(sprintf(
+  "🔧 DBH on dead / stem dead records: %d | removed (stem never alive later): %d | kept (false death, stem alive later): %d\n",
+  nrow(dead_dbh_cells), sum(dead_dbh_R != "A"), sum(dead_dbh_R == "A")
+))
+cat("  ✓ Saved: dbh_removed_dead_records.csv\n")
+bio_check(
+  nrow(dbh_removed_dt) == sum(dead_dbh_R != "A") && all(dbh_removed_dt$raw_status %in% c("dead", "stem dead")),
+  "DBH is removed only from dead / stem dead records of stems never alive later",
+  examples = dbh_removed_dt[!raw_status %in% c("dead", "stem dead"), StemID],
+  n_bad = dbh_removed_dt[!raw_status %in% c("dead", "stem dead"), .N]
+)
+bio_check(
+  identical(DBHs_clean[corrected_new_status_matrix == "A"], DBHs[corrected_new_status_matrix == "A"]),
+  "Every raw DBH of an A cell is kept unchanged"
+)
+rm(dbh_fix, rm_idx, dead_dbh_cells, dead_dbh_R)
+
 # ---- (c) status × DBH × census summary -----------------------------------
 n_cens <- ncol(corrected_new_status_matrix)
 
 # Long-format cell-level table (one row per stem×census).
 cells_dt <- data.table(
   status  = as.vector(corrected_new_status_matrix),
-  has_DBH = !is.na(as.vector(DBHs)),
+  has_DBH = !is.na(as.vector(DBHs_clean)), # exported dbh
   census  = rep(seq_len(n_cens), each = nrow(corrected_new_status_matrix))
 )
 
@@ -2962,8 +2498,8 @@ writeLines(c(
   "## EXPECTATIONS (red flags if violated)",
   "   - status = 'P' & has_DBH = TRUE   should be 0  (P means not yet recruited)",
   "   - status = 'A' & has_DBH = FALSE  is OK but downstream MUST interpolate DBH",
-  "   - status = 'D' & has_DBH = TRUE   should be 0  (a measured DBH is evidence of life)",
-  "   - status = 'G' & has_DBH = TRUE   should be 0  (a measured DBH is evidence of life)",
+  "   - status = 'D' & has_DBH = TRUE   should be 0  (DBH of truly dead stems removed: dbh_removed_dead_records.csv)",
+  "   - status = 'G' & has_DBH = TRUE   should be 0  (DBH of truly dead stems removed: dbh_removed_dead_records.csv)",
   "",
   "## PER-CENSUS (wide pivot)"
 ), con)
@@ -3033,7 +2569,7 @@ cat("\nStatus × DBH overall summary:\n")
 print(summary_overall)
 bio_check(
   sum(n_P_with_DBH, n_D_with_DBH, n_G_with_DBH) == 0L,
-  "No P, D or G cell carries a DBH (a measured DBH is evidence of life)",
+  "No P, D or G cell carries a DBH in the exported dbh",
   n_bad = sum(n_P_with_DBH, n_D_with_DBH, n_G_with_DBH)
 )
 bio_check(
@@ -3051,12 +2587,20 @@ rm(
 # ========================================================================
 # SECTION 14: EXPORT CENSUS TABLES
 # ========================================================================
-# Rename and subset each census table to ForestGEO R-table format, set
-# the legacy DFstatus field for prior stems, then save each census as
-# both a .Rdata object and a .csv file.
+# Write Rstatus and the cleaned dbh (Section 13) into each census table,
+# rename and subset it to ForestGEO R-table format, then save each census as
+# both a .Rdata object and a .csv file. DFstatus is exported exactly as the
+# raw Status.
 
+# Rows of every census table are in unique_StemID order (checked in
+# Section 3), so the status and cleaned DBH matrices align column by column.
 for (census in seq_along(ViewFullTable_split)) {
+  bio_check(
+    identical(ViewFullTable_split[[census]]$StemID, unique_StemID$StemID),
+    sprintf("Census %d rows are in master stem order before Rstatus and dbh are written", census)
+  )
   ViewFullTable_split[[census]]$new_status <- corrected_new_status_matrix[, census]
+  ViewFullTable_split[[census]]$DBH <- DBHs_clean[, census]
 }
 
 # ========================================================================
@@ -3337,11 +2881,14 @@ for (census in seq_along(ViewFullTable_split)) {
   # Rename columns from database format to ForestGEO R format
   # Example: TreeID → treeID, Mnemonic → sp, PX → gx, etc.
   setnames(X, old = ViewFullTable_columns_to_keep, new = new_names_columns_to_keep)
-  # Set DFstatus field for stems with "prior" status
-  # DFstatus is a legacy field used in older ForestGEO analyses and holds the
-  # raw field status. Only P rows WITHOUT a raw record get DFstatus="prior";
-  # a never-alive stem keeps its raw record (e.g. "dead") for traceability.
-  X[Rstatus == "P" & is.na(DFstatus), DFstatus := "prior"]
+  # DFstatus is the raw field status of the dataset (legacy ForestGEO name),
+  # exported exactly as recorded, NA where the dataset has no record. It is
+  # never modified (fixed rule); Rstatus holds the corrected status.
+  raw_status_census <- ViewFullTable_split[[census]]$Status[match(X$stemID, ViewFullTable_split[[census]]$StemID)]
+  bio_check(
+    identical(as.character(X$DFstatus), as.character(raw_status_census)),
+    sprintf("Census %d: DFstatus is the raw Status, unchanged", census)
+  )
   bio_check(
     all(X$Rstatus %in% status_codes),
     sprintf("Census %d: Rstatus only takes values in {A, D, G, P}", census),
