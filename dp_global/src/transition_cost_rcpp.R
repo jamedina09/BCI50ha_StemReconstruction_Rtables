@@ -66,7 +66,11 @@ transition_cost_tracks_bio_batch_rcpp <- function(
   recruit_max_dbh,
   recruit_lambda,
   eps_tiebreak,
-  hard_penalty = 1e6
+  hard_penalty = 1e6,
+  round_t = FALSE,
+  round_tp1 = FALSE,
+  round_max_dbh = 5.5,
+  round_width = 0.5
 ) {
     # cat("C++ version called\n")
     if (is.list(track_dbh_tp1)) {
@@ -99,7 +103,11 @@ transition_cost_tracks_bio_batch_rcpp <- function(
         recruit_max_dbh = recruit_max_dbh,
         recruit_lambda = recruit_lambda,
         eps_tiebreak = eps_tiebreak,
-        hard_penalty = hard_penalty
+        hard_penalty = hard_penalty,
+        round_t = round_t,
+        round_tp1 = round_tp1,
+        round_max_dbh = round_max_dbh,
+        round_width = round_width
     )
     return(result)
 }
@@ -138,7 +146,11 @@ transition_cost_paired_rcpp <- function(
   recruit_max_dbh,
   recruit_lambda,
   eps_tiebreak,
-  hard_penalty = 1e6
+  hard_penalty = 1e6,
+  round_t = FALSE,
+  round_tp1 = FALSE,
+  round_max_dbh = 5.5,
+  round_width = 0.5
 ) {
     transition_cost_paired_rcpp_cpp(
         tdbh0_mat = tdbh0_mat,
@@ -165,6 +177,10 @@ transition_cost_paired_rcpp <- function(
         recruit_max_dbh = recruit_max_dbh,
         recruit_lambda = recruit_lambda,
         eps_tiebreak = eps_tiebreak,
-        hard_penalty = hard_penalty
+        hard_penalty = hard_penalty,
+        round_t = round_t,
+        round_tp1 = round_tp1,
+        round_max_dbh = round_max_dbh,
+        round_width = round_width
     )
 }

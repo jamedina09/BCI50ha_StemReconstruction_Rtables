@@ -80,6 +80,7 @@ Rscript dp_global/scripts/main_cpp_bci.R --WHICH_TAG=123375
 | `--POSTERIOR_SAMPLES` | `200` | Posterior path samples drawn per tag (0 to disable) |
 | `--USE_BIO_HARD_SHRINK_IN_PROB` | `TRUE` | Hard shrink gate in probabilistic matcher; set `FALSE` for confirmed large-shrinkage events |
 | `--USE_BIO_HARD_GROWTH_IN_PROB` | `TRUE` | Hard growth gate in probabilistic matcher; set `FALSE` to allow exceptional growth |
+| `--DBH_ROUND_CENSUSES` | `1,2` (BCI driver `1_main_cpp_chunk_bci.R`) | Censuses whose small-stem DBH (< 55 mm) was recorded in 5 mm classes, rounded down (BCI 1982, 1985); both engines read such a DBH as a size within its class. `none` turns it off |
 
 ### How the two algorithms work
 

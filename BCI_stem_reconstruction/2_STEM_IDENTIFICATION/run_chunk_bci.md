@@ -30,6 +30,7 @@ caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_c
 - `MANUAL_CORES`/`MANUAL_CORES_VALUE`: Enable and set the number of parallel workers.
 - `DP_CHUNK_SIZE`: Number of tags processed per parallel chunk (match to core count for efficiency).
 - `USE_MEASUREMENT_ERROR`: Whether to use per-census DBH measurement error (set FALSE for speed).
+- `DBH_ROUND_CENSUSES` (default `"1,2"`, not needed on the command line): censuses whose small-stem DBH (< 55 mm) was recorded in 5 mm classes, rounded down (BCI 1982 and 1985). The engines read such a DBH as a size within its class, so a 5 mm class step is not taken as an impossible growth jump that splits one stem into a death and a recruit. The run log shows `✓ DBH rounded down to 5 mm classes …` (the data are checked at run time) and the output folder name carries `NME_R12`. `--DBH_ROUND_CENSUSES=none` turns it off.
 - `BASE_OUT_DIR`: Root directory for all output (a timestamped subdirectory is created for each run).
 
 After all chunks finish, run `2_merge_chunks_to_datatable.R` to merge per-chunk Feather files into the final dataset.

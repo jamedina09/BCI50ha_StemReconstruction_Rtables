@@ -52,6 +52,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            meas_sd1_b = 0.0904,
                                                            meas_sd2 = 4.64,
                                                            meas_p_big = 0.05,
+                                                           # --- DBH recorded in classes and rounded down (e.g. BCI 1982 and 1985 below 55 mm) ---
+                                                           dbh_round_censuses = integer(0), # CensusIDs whose small-stem DBH was rounded down
+                                                           dbh_round_max = 5.5, # only DBH below this (cm) was rounded
+                                                           dbh_round_width = 0.5, # class width (cm)
                                                            # --- growth-form based fallback ---
                                                            # vector of values in `growth_form` column that should trigger
                                                            # immediate probabilistic fallback and avoid DP entirely
@@ -668,6 +672,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             use_bio_hard_growth_in_prob = use_bio_hard_growth_in_prob,
             n_sigma_me = prob_n_sigma_me,
             pin_truestemid = pin_truestemid,
+            dbh_round_censuses = dbh_round_censuses,
+            dbh_round_max = dbh_round_max,
+            dbh_round_width = dbh_round_width,
             return_samples = posterior_return_samples,
             verbose = verbose
         )
@@ -1161,6 +1168,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             meas_sd1_b = meas_sd1_b,
             meas_sd2 = meas_sd2,
             meas_p_big = meas_p_big,
+            dbh_round_censuses = dbh_round_censuses,
+            dbh_round_max = dbh_round_max,
+            dbh_round_width = dbh_round_width,
             fallback_growth_forms = fallback_growth_forms,
             # Each segment draws its own samples and hands them back; they are
             # paired below and staged once for the tag (a segment's own staging
@@ -2091,7 +2101,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                     recruit_sdlog = Bio_Recruit_Sdlog_unit,
                     recruit_max_dbh = Bio_Recruit_MaxDBH_unit,
                     recruit_lambda = Bio_Recruitment_lambda,
-                    eps_tiebreak = eps_tiebreak
+                    eps_tiebreak = eps_tiebreak,
+                    # --- DBH rounded down to classes at flagged censuses ---
+                    round_t = cc %in% dbh_round_censuses,
+                    round_tp1 = next_cc %in% dbh_round_censuses,
+                    round_max_dbh = dbh_round_max,
+                    round_width = dbh_round_width
                 )
                 transition_cost_calls <- transition_cost_calls + 1L
                 if (verbose) transition_cost_time <- transition_cost_time + (tic() - t_tc0)

@@ -44,8 +44,12 @@ build_out_dir_name <- function() {
         "DP_U"
     )
 
-    # Measurement error label
+    # Measurement error label (+ "R<censuses>" when DBH rounded down to classes
+    # at those censuses is modelled, e.g. NME_R12 for BCI 1982 and 1985)
     me_part <- if (isTRUE(USE_MEASUREMENT_ERROR)) "ME" else "NME"
+    if (exists("DBH_ROUND_CENSUSES_INT") && length(DBH_ROUND_CENSUSES_INT) > 0L) {
+        me_part <- paste0(me_part, "_R", paste(sort(DBH_ROUND_CENSUSES_INT), collapse = ""))
+    }
 
     max_growth_hard_ <- switch(MAX_GROWTH_HARD_SOURCE,
         "fixed" = paste0("g", encode_num(MAX_GROWTH_FIXED)),

@@ -77,7 +77,7 @@ parse_args <- function() {
                     "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
                     "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
                     "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL",
-                    "TAG_FILTER_FILE"
+                    "TAG_FILTER_FILE", "DBH_ROUND_CENSUSES"
                 )
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
@@ -139,6 +139,20 @@ SPECIES_COL <- NULL
 # _SOURCE controls whether the bound is estimated from data ("data") or fixed ("fixed").
 # _FIXED is the fallback value used when _SOURCE = "fixed" or data are too sparse.
 USE_MEASUREMENT_ERROR <- TRUE
+# DBH recorded in classes and rounded down: CensusIDs (comma-separated). In BCI
+# 1982 and 1985 (censuses 1 and 2) saplings were measured in 5 mm increments,
+# rounded down (CTFS R Package growth tutorial, `rnd` argument; Piponiot et al.
+# 2024 Appendix S1, as in biomass_stocks_fluxes.R Section 10b: DBH < 5.5 cm).
+# The data agree: 100% / 99.9% of DBH < 50 mm are multiples of 5 mm, against
+# ~20% from 1990 on; a recorded 50 mm stands for 50-54.9 mm. The engines treat such a DBH d as a true size in
+# [d, d + DBH_ROUND_WIDTH_MM): the expected growth uses the class mid-point and
+# the growth variance gains WIDTH^2 / 12 per rounded value, so a 10 -> 15 mm
+# step between 1982 and 1985 is no longer read as an impossible jump that splits
+# one stem into a death and a recruit. A visible check confirms the rounding in
+# the data at run time. --DBH_ROUND_CENSUSES=none turns it off.
+DBH_ROUND_CENSUSES <- "1,2"
+DBH_ROUND_MAX_MM <- 55
+DBH_ROUND_WIDTH_MM <- 5
 MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_GROWTH_FIXED <- 5
 MAX_SHRINK_HARD_SOURCE <- "fixed"
@@ -440,6 +454,25 @@ for (name in names(overrides)) {
     assign(match_var, new_val, envir = globalenv())
     message("[dp_global main_cpp_chunk_bci.R] Overriding ", match_var, " = ", as.character(new_val))
 }
+
+# CensusIDs whose small-stem DBH was rounded down to classes (see DBH_ROUND_CENSUSES);
+# "", "none", "off", FALSE or NA turn the rounding treatment off.
+DBH_ROUND_CENSUSES_INT <- local({
+    v <- DBH_ROUND_CENSUSES
+    if (is.null(v) || length(v) == 0L || all(is.na(v)) || isFALSE(v) ||
+        tolower(trimws(as.character(v[1L]))) %in% c("", "none", "off", "false", "na")) {
+        integer(0)
+    } else if (is.numeric(v)) {
+        as.integer(v)
+    } else {
+        out <- suppressWarnings(as.integer(trimws(strsplit(as.character(v[1L]), "[,;]")[[1]])))
+        if (anyNA(out)) {
+            .msg <- sprintf("CHECK FAILED: DBH_ROUND_CENSUSES = '%s' is not a comma-separated list of CensusIDs", as.character(v[1L]))
+            cat("❌", .msg, "\n"); warning(.msg); stop(.msg)
+        }
+        out
+    }
+})
 
 # Use canonical ALL-CAPS variables (e.g., WHICH_TAG, INPUT_FILE) everywhere.
 
@@ -777,6 +810,9 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             posterior_samples_path = POSTERIOR_SAMPLES_PATH,
             posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
             use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+            dbh_round_censuses = DBH_ROUND_CENSUSES_INT,
+            dbh_round_max = DBH_ROUND_MAX_MM / 10, # mm -> cm (engine units)
+            dbh_round_width = DBH_ROUND_WIDTH_MM / 10,
             # prune controls
             # You can always define very wide based on the parameter data you have.
             prune_hard = TRUE,
@@ -822,6 +858,9 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
                 use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
                 pin_truestemid = isTRUE(PIN_TRUESTEMID),
+                dbh_round_censuses = DBH_ROUND_CENSUSES_INT,
+                dbh_round_max = DBH_ROUND_MAX_MM / 10,
+                dbh_round_width = DBH_ROUND_WIDTH_MM / 10,
                 verbose = isTRUE(DP_VERBOSE)
             )
             if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
@@ -1481,6 +1520,23 @@ run_main_chunked <- function() {
     )]
 
     xraw_multi_stems <- xraw[single_stem_tags == FALSE]
+
+    # Visible check: censuses flagged in DBH_ROUND_CENSUSES must show the
+    # rounding (nearly all small-stem DBH values multiples of the class width).
+    if (length(DBH_ROUND_CENSUSES_INT) > 0L) {
+        .rd <- xraw[!is.na(DBH) & DBH < DBH_ROUND_MAX_MM, .(share = mean(DBH %% DBH_ROUND_WIDTH_MM == 0), n = .N), by = .(CensusID = as.integer(CensusID))][order(CensusID)]
+        .rd_flag <- .rd[CensusID %in% DBH_ROUND_CENSUSES_INT]
+        if (nrow(.rd_flag) < length(DBH_ROUND_CENSUSES_INT) || any(.rd_flag$share < 0.9)) {
+            .msg <- sprintf("CHECK FAILED: DBH_ROUND_CENSUSES = %s, but the share of DBH < %s mm that are multiples of %s mm is %s",
+                paste(DBH_ROUND_CENSUSES_INT, collapse = ","), DBH_ROUND_MAX_MM, DBH_ROUND_WIDTH_MM, paste(sprintf("C%d %.3f", .rd$CensusID, .rd$share), collapse = ", "))
+            cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+        }
+        .msg <- sprintf("DBH rounded down to %s mm classes below %s mm at census(es) %s (share of multiples: %s; other censuses: %s)",
+            DBH_ROUND_WIDTH_MM, DBH_ROUND_MAX_MM, paste(DBH_ROUND_CENSUSES_INT, collapse = ","),
+            paste(sprintf("C%d %.3f", .rd_flag$CensusID, .rd_flag$share), collapse = ", "),
+            paste(sprintf("C%d %.3f", .rd[!CensusID %in% DBH_ROUND_CENSUSES_INT, CensusID], .rd[!CensusID %in% DBH_ROUND_CENSUSES_INT, share]), collapse = ", "))
+        cat("✓", .msg, "\n"); log_msg(.msg)
+    }
     xraw_multi_stems[, `:=`(
         ExactDate = as.IDate(ExactDate),
         DBH_mm_original_backup = DBH,
