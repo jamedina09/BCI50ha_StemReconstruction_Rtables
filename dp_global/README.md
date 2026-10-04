@@ -495,6 +495,18 @@ $$\text{SD1}(D) = a \cdot D + b$$
 
 **Effect on likelihood:** For DBH→DBH transitions, observed growth becomes a **4-component mixture** (combining measurement errors at t₀ and t₁), evaluated via log-sum-exp.
 
+### DBH recorded in classes (rounded down)
+
+In BCI 1982 and 1985 (censuses 1 and 2), saplings were measured in 5 mm increments, rounded down. Sources: the CTFS R Package growth tutorial — *"The argument rnd indicates that dbhs<50 mm are rounded down to 5-mm, necessary because saplings at BCI in 1982 and 1985 were measuring in 5-mm increments"* ([CTFS tutorial: growth changes](https://ctfs.si.edu/ctfsdev/CTFSRPackageNew/index.php/web/tutorials/GrowthChange/index.html)) — and Piponiot et al. 2024 (Appendix S1 R code: 1985 stems with DBH < 5.5 cm recorded in 5 mm classes, rounded down), which `BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/biomass_stocks_fluxes.R` follows (Section 10b). The data agree: 100% (1982) and 99.9% (1985) of DBH values below 50 mm are multiples of 5 mm, against about 20% (chance) from 1990 on; between 50 and 55 mm, 93% (1982) and 73% (1985), mostly recorded 50 mm (a floored 50–54.9 mm), against about 22% later; the mean 1985→1990 increment of small stems (5.4 mm) is about twice that of later intervals (2.0–2.5 mm), the bias of a floored 1985 value, while 1982→1985 (both floored) shows none. A recorded value below 55 mm (the classes 10, 15, …, 50 mm) is therefore treated as rounded. With the narrow Gaussian growth model (σ₀ ≈ 0.04 cm/yr for many species) a 5 mm class step read as growth is a 4σ+ event, so the engines split one database stem into a death and a recruit (about 2,300 same-`StemID` pairs, 1,761 of them at 1982→1985, in run 20261003).
+
+When a census is flagged (`dbh_round_censuses`; BCI driver `DBH_ROUND_CENSUSES = "1,2"`), a DBH $d$ below `dbh_round_max` (5.5 cm) at that census is read as a true size in $[d, d + w)$ with $w$ = `dbh_round_width` (0.5 cm). For a link with rounded flags $r_0, r_1 \in \{0, 1\}$:
+
+$$g_{\text{mid}} = g + \frac{(r_1 - r_0)\, w/2}{\Delta t}, \qquad \sigma_{\text{eff}}^2 = \sigma(D_0 + r_0 w/2)^2 + \frac{(r_0 + r_1)\, w^2/12}{\Delta t^2}$$
+
+and the growth likelihood (step D5, and every component of the measurement-error mixture) uses $g_{\text{mid}}$, $\mu(D_0 + r_0 w/2)$ and $\sigma_{\text{eff}}$. The hard growth limits (D1, D2) stay on the measured growth $g$: rounding changes how likely a link is, never which links are allowed. Censuses that are not flagged, and stems at or above `dbh_round_max`, are scored exactly as before (bit-identical). The same rule is applied by the probabilistic matcher (`compute_pairwise_log_likelihood()`). The BCI driver checks at run time that every flagged census shows the rounding in the data (`✓ DBH rounded down to 5 mm classes …`, otherwise ❌ and stop).
+
+Validation (sandbox, 2026-10-03; 4,574 tags): same-`StemID` splits in the 2,274 tags that had one 2,276 → 567 (1982→1985: 1,761 → 243); 6.9% of the other affected tags and 17.7% of the affected probabilistic tags change their export, mostly by merging 1982/85 fragments; no new implausible links; tags without a small stem in 1982 or 1985 are identical, and with the option off every tag is identical.
+
 ---
 
 ## Core Algorithm Details
@@ -585,6 +597,8 @@ $\mu(D_0) = \begin{cases}
 
 **Without measurement error:**
 $\text{cost} += \frac{(g - \mu(D_0))^2}{2\sigma(D_0)^2} + \log \sigma(D_0) + \frac{1}{2}\log(2\pi)$
+
+(At a census flagged as rounded, $g$, $D_0$ and $\sigma$ are replaced by $g_{\text{mid}}$, $D_0 + r_0 w/2$ and $\sigma_{\text{eff}}$; see *DBH recorded in classes* above.)
 
 **With measurement error (Chave et al. 2004):**
 
@@ -1201,7 +1215,7 @@ When the DP cannot be used for a tree (any reason in the fallback list above: a 
 
 **Algorithm:**
 
-1. **Pairwise log-likelihoods**: For each adjacent census pair, computes a log-likelihood matrix between all observed stems using the same biological model as the DP (Gaussian growth likelihood with size-dependent mean and variance, survival probability, soft shrinkage/growth penalties from `Bio_*` columns).
+1. **Pairwise log-likelihoods**: For each adjacent census pair, computes a log-likelihood matrix between all observed stems using the same biological model as the DP (Gaussian growth likelihood with size-dependent mean and variance, survival probability, soft shrinkage/growth penalties from `Bio_*` columns). DBH rounded down to classes at flagged censuses (`dbh_round_censuses`) is treated as in the DP (see *DBH recorded in classes*).
 
 2. **Cost matrix augmentation** (`augment_cost_matrix()`): Expands the pairwise likelihood matrix to K×K by adding virtual mortality slots (for stems disappearing) and virtual recruitment slots (for new stems appearing), using the same mortality hazard and recruitment size/rate distributions as the DP. K is raised until an assignment without forbidden links exists: with M the largest set of allowed survival links, K ≥ n_curr + n_next − M, so every allowed assignment keeps M survivals (the engine's maximum-survival design).
 
@@ -1616,6 +1630,7 @@ out <- add_dp_posterior_bins(
 | Posterior samples of a resprout-split tag (paired segments) | `pair_segment_posterior_samples()`, `segment_fixed_assignment()`, `stage_posterior_samples()` | `dp_global/R/dp_global_dp.R` |
 | Pins of every stem while sampling (probabilistic) | `apply_track_pin_mask()`, `propagate_track_pin()` | `dp_global/R/dp_probabilistic_matching.R` |
 | Extra death/recruit slots when pins forbid a pair's links (probabilistic) | `pin_masked_pair()`, `augment_cost_matrix(K_min = …)` | `dp_global/R/dp_probabilistic_matching.R` |
+| DBH recorded in classes, rounded down (BCI 1982/1985 < 55 mm) | `transition_cost_paired_rcpp(round_t, round_tp1, …)`, `compute_pairwise_log_likelihood(round_curr, round_next, …)`; argument `dbh_round_censuses` | `dp_global/src/transition_cost_rcpp.cpp`, `dp_global/R/dp_global_dp.R`, `dp_global/R/dp_probabilistic_matching.R` |
 | Carried-terminal backfill (post-engine) | `apply_carried_terminal_backfill()` | `dp_global/R/dp_global_main.R` |
 | Orphan-stem backfill (post-engine) | `apply_orphan_stem_backfill()` | `dp_global/R/dp_global_main.R` |
 | Rows left behind by the pin sweep rejoin their track's pin (post-engine) | `apply_pin_track_rejoin()` | `dp_global/R/dp_global_main.R` |

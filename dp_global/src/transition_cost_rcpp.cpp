@@ -82,7 +82,11 @@ Rcpp::NumericVector transition_cost_tracks_bio_batch_rcpp_cpp(
     double recruit_max_dbh,
     double recruit_lambda,
     double eps_tiebreak,
-    double hard_penalty
+    double hard_penalty,
+    bool round_t = false,
+    bool round_tp1 = false,
+    double round_max_dbh = 5.5,
+    double round_width = 0.5
 ) {
     int K = track_dbh_t.size();
     int n_batch = mat_tp1.nrow();
@@ -179,7 +183,21 @@ Rcpp::NumericVector transition_cost_tracks_bio_batch_rcpp_cpp(
 
             double g = (d1 - d0) / interval_years;
 
-            // Hard biological constraints
+            // DBH recorded in classes of width round_width and rounded down
+            // (round_t / round_tp1: the census is flagged; only stems below
+            // round_max_dbh were rounded, e.g. BCI 1982 and 1985 below 55 mm).
+            // The true DBH lies in [d, d + round_width): the expected growth moves
+            // to the class mid-points and its variance gains round_width^2 / 12
+            // per rounded measurement. Without flagged censuses nothing changes.
+            bool r0 = round_t && d0 < round_max_dbh;
+            bool r1 = round_tp1 && d1 < round_max_dbh;
+            double g_mid = g + ((r1 ? 0.5 * round_width : 0.0) - (r0 ? 0.5 * round_width : 0.0)) / interval_years;
+            double var_round = ((r0 ? 1.0 : 0.0) + (r1 ? 1.0 : 0.0)) * round_width * round_width / 12.0 /
+                               (interval_years * interval_years);
+            double d0_mid = d0 + (r0 ? 0.5 * round_width : 0.0);
+
+            // Hard biological constraints (on the measured DBHs: rounding changes
+            // how likely a link is, never which links are allowed)
             bool hard = false;
             if (std::isfinite(max_shrink) && (g < max_shrink)) hard = true;
             if (std::isfinite(max_growth) && (g > max_growth)) hard = true;
@@ -190,9 +208,9 @@ Rcpp::NumericVector transition_cost_tracks_bio_batch_rcpp_cpp(
             }
 
             // Size-dependent growth variance
-            double sigma_d = sigma0 + sigma1 * d0;
+            double sigma_d = sigma0 + sigma1 * d0_mid;
             sigma_d = std::max(sigma_d, 1e-6);
-            double mu = mu_growth(d0);
+            double mu = mu_growth(d0_mid);
 
             if (use_measurement_error) {
                 // Measurement-error-aware likelihood
@@ -219,19 +237,21 @@ Rcpp::NumericVector transition_cost_tracks_bio_batch_rcpp_cpp(
 
                 std::vector<double> sd_tot(4);
                 for (int j = 0; j < 4; j++) {
-                    sd_tot[j] = std::sqrt(sigma_d*sigma_d + sd_meas_mix[j]*sd_meas_mix[j]);
+                    sd_tot[j] = (var_round > 0.0) ? std::sqrt(sigma_d*sigma_d + var_round + sd_meas_mix[j]*sd_meas_mix[j])
+                                             : std::sqrt(sigma_d*sigma_d + sd_meas_mix[j]*sd_meas_mix[j]);
                 }
 
                 std::vector<double> ll(4);
                 for (int j = 0; j < 4; j++) {
-                    ll[j] = std::log(wt_meas_mix[j]) + dnorm_log(g, mu, sd_tot[j]);
+                    ll[j] = std::log(wt_meas_mix[j]) + dnorm_log(g_mid, mu, sd_tot[j]);
                 }
 
                 cost[i] -= log_sum_exp(ll);
             } else {
-                // Gaussian growth likelihood
-                double diff = g - mu;
-                cost[i] += diff*diff / (2.0 * sigma_d*sigma_d) + std::log(sigma_d) + 0.5 * std::log(2.0 * M_PI);
+                // Gaussian growth likelihood (process SD plus rounding, if any)
+                double sd_g = (var_round > 0.0) ? std::sqrt(sigma_d*sigma_d + var_round) : sigma_d;
+                double diff = g_mid - mu;
+                cost[i] += diff*diff / (2.0 * sd_g*sd_g) + std::log(sd_g) + 0.5 * std::log(2.0 * M_PI);
             }
 
             // Soft penalty for shrinkage
@@ -335,7 +355,11 @@ Rcpp::NumericVector transition_cost_paired_rcpp_cpp(
     double recruit_max_dbh,
     double recruit_lambda,
     double eps_tiebreak,
-    double hard_penalty
+    double hard_penalty,
+    bool round_t = false,
+    bool round_tp1 = false,
+    double round_max_dbh = 5.5,
+    double round_width = 0.5
 ) {
     int K = tdbh0_mat.ncol();
     int n_pairs = tdbh0_mat.nrow();
@@ -414,7 +438,21 @@ Rcpp::NumericVector transition_cost_paired_rcpp_cpp(
                 // DBH -> DBH (growth)
                 double g = (d1 - d0) / interval_years;
 
-                // Hard biological constraints
+                // DBH recorded in classes of width round_width and rounded down
+                // (round_t / round_tp1: the census is flagged; only stems below
+                // round_max_dbh were rounded, e.g. BCI 1982 and 1985 below 55 mm).
+                // The true DBH lies in [d, d + round_width): the expected growth moves
+                // to the class mid-points and its variance gains round_width^2 / 12
+                // per rounded measurement. Without flagged censuses nothing changes.
+                bool r0 = round_t && d0 < round_max_dbh;
+                bool r1 = round_tp1 && d1 < round_max_dbh;
+                double g_mid = g + ((r1 ? 0.5 * round_width : 0.0) - (r0 ? 0.5 * round_width : 0.0)) / interval_years;
+                double var_round = ((r0 ? 1.0 : 0.0) + (r1 ? 1.0 : 0.0)) * round_width * round_width / 12.0 /
+                                   (interval_years * interval_years);
+                double d0_mid = d0 + (r0 ? 0.5 * round_width : 0.0);
+
+                // Hard biological constraints (on the measured DBHs: rounding changes
+                // how likely a link is, never which links are allowed)
                 bool hard = false;
                 if (std::isfinite(max_shrink) && (g < max_shrink)) hard = true;
                 if (std::isfinite(max_growth) && (g > max_growth)) hard = true;
@@ -422,8 +460,8 @@ Rcpp::NumericVector transition_cost_paired_rcpp_cpp(
                 if (hard) {
                     cost[i] += hard_penalty;
                 } else {
-                    double sigma_d = std::max(sigma0 + sigma1 * d0, 1e-6);
-                    double mu = mu_growth(d0);
+                    double sigma_d = std::max(sigma0 + sigma1 * d0_mid, 1e-6);
+                    double mu = mu_growth(d0_mid);
 
                     if (use_measurement_error) {
                         double s_small0 = meas_sd1(d0);
@@ -448,16 +486,18 @@ Rcpp::NumericVector transition_cost_paired_rcpp_cpp(
 
                         std::vector<double> sd_tot(4);
                         for (int j = 0; j < 4; j++)
-                            sd_tot[j] = std::sqrt(sigma_d*sigma_d + sd_meas_mix[j]*sd_meas_mix[j]);
+                            sd_tot[j] = (var_round > 0.0) ? std::sqrt(sigma_d*sigma_d + var_round + sd_meas_mix[j]*sd_meas_mix[j])
+                                             : std::sqrt(sigma_d*sigma_d + sd_meas_mix[j]*sd_meas_mix[j]);
 
                         std::vector<double> ll(4);
                         for (int j = 0; j < 4; j++)
-                            ll[j] = std::log(wt_meas_mix[j]) + dnorm_log(g, mu, sd_tot[j]);
+                            ll[j] = std::log(wt_meas_mix[j]) + dnorm_log(g_mid, mu, sd_tot[j]);
 
                         cost[i] -= log_sum_exp(ll);
                     } else {
-                        double diff = g - mu;
-                        cost[i] += diff*diff / (2.0 * sigma_d*sigma_d) + std::log(sigma_d) + 0.5 * std::log(2.0 * M_PI);
+                        double sd_g = (var_round > 0.0) ? std::sqrt(sigma_d*sigma_d + var_round) : sigma_d;
+                        double diff = g_mid - mu;
+                        cost[i] += diff*diff / (2.0 * sd_g*sd_g) + std::log(sd_g) + 0.5 * std::log(2.0 * M_PI);
                     }
 
                     // Soft penalty for shrinkage

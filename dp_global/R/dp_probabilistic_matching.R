@@ -54,6 +54,9 @@ match_stems_probabilistic <- function(tree_data,
                                       use_bio_hard_growth_in_prob = TRUE, # if FALSE, ignore Bio_Max_Growth hard gate
                                       pin_truestemid = TRUE, # pin obs with known TrueStemID to their track
                                       n_sigma_me = 3, # ME cumulative-shrinkage threshold (n * SD); lower = sever sooner
+                                      dbh_round_censuses = integer(0), # CensusIDs whose small-stem DBH was rounded down (classes)
+                                      dbh_round_max = 5.5, # only DBH below this (cm) was rounded
+                                      dbh_round_width = 0.5, # class width (cm)
                                       return_samples = FALSE, # TRUE: attach samples as attr "DP_Posterior_Samples" instead of staging them
                                       verbose = FALSE) {
     tree_data <- tree_data[order(CensusID)]
@@ -282,10 +285,14 @@ match_stems_probabilistic <- function(tree_data,
         dbh_next <- obs_data[[i + 1L]]$dbh
         iv <- intervals[i]
 
+        .round_curr <- obs_census[i] %in% dbh_round_censuses
+        .round_next <- obs_census[i + 1L] %in% dbh_round_censuses
         L <- compute_pairwise_log_likelihood(dbh_curr, dbh_next, iv, bio,
             eff_min_growth, eff_max_growth,
             use_bio_hard_shrink = use_bio_hard_shrink_in_prob,
-            use_bio_hard_growth = use_bio_hard_growth_in_prob
+            use_bio_hard_growth = use_bio_hard_growth_in_prob,
+            round_curr = .round_curr, round_next = .round_next,
+            round_max = dbh_round_max, round_width = dbh_round_width
         )
         aug <- augment_cost_matrix(L, dbh_curr, dbh_next, iv, bio)
         .k_raised <- attr(aug, "k_raised")
@@ -300,7 +307,9 @@ match_stems_probabilistic <- function(tree_data,
         L_free <- compute_pairwise_log_likelihood(dbh_curr, dbh_next, iv, bio,
             -Inf, Inf,
             use_bio_hard_shrink = FALSE,
-            use_bio_hard_growth = FALSE
+            use_bio_hard_growth = FALSE,
+            round_curr = .round_curr, round_next = .round_next,
+            round_max = dbh_round_max, round_width = dbh_round_width
         )
 
         pair_data[[i]] <- list(
@@ -664,7 +673,11 @@ match_stems_probabilistic <- function(tree_data,
 compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
                                             bio, min_growth, max_growth,
                                             use_bio_hard_shrink = TRUE,
-                                            use_bio_hard_growth = TRUE) {
+                                            use_bio_hard_growth = TRUE,
+                                            round_curr = FALSE,
+                                            round_next = FALSE,
+                                            round_max = 5.5,
+                                            round_width = 0.5) {
     n_curr <- length(dbh_curr)
     n_next <- length(dbh_next)
     L <- matrix(-Inf, nrow = n_curr, ncol = n_next)
@@ -684,6 +697,16 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
             if (!is.finite(d1)) next
 
             g <- (d1 - d0) / interval_years
+            # DBH rounded down to classes of round_width at flagged censuses
+            # (only below round_max): the true DBH lies in [d, d + round_width),
+            # as in transition_cost_rcpp.cpp: the likelihood uses the class
+            # mid-points and adds round_width^2 / 12 per rounded measurement to
+            # the variance. The hard gates stay on the measured DBHs.
+            r0 <- isTRUE(round_curr) && d0 < round_max
+            r1 <- isTRUE(round_next) && d1 < round_max
+            g_mid <- g + ((if (r1) 0.5 * round_width else 0) - (if (r0) 0.5 * round_width else 0)) / interval_years
+            var_round <- (r0 + r1) * round_width^2 / 12 / interval_years^2
+            d0_mid <- d0 + (if (r0) 0.5 * round_width else 0)
             # Hard growth constraints — infeasible edge
             if (is.finite(min_growth) && g < min_growth) next
             if (is.finite(max_growth) && g > max_growth) next
@@ -692,10 +715,11 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
             # Bio hard growth gate (conditionally applied)
             if (isTRUE(use_bio_hard_growth) && is.finite(bio$max_growth_bio) && g > bio$max_growth_bio) next
 
-            # Growth likelihood (Gaussian)
-            sigma_d <- max(bio$sigma0 + bio$sigma1 * d0, 1e-6)
-            mu <- mu_growth_fn(d0)
-            ll_growth <- dnorm(g, mean = mu, sd = sigma_d, log = TRUE)
+            # Growth likelihood (Gaussian; process SD plus rounding, if any)
+            sigma_d <- max(bio$sigma0 + bio$sigma1 * d0_mid, 1e-6)
+            mu <- mu_growth_fn(d0_mid)
+            sd_g <- if (var_round > 0) sqrt(sigma_d^2 + var_round) else sigma_d
+            ll_growth <- dnorm(g_mid, mean = mu, sd = sd_g, log = TRUE)
 
             # Survival probability
             hazard <- bio$h0 * exp(bio$beta_mort * d0)

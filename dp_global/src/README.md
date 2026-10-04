@@ -40,11 +40,13 @@ print(costs)
 
 See `R/transition_cost_rcpp.R` for detailed parameter descriptions and expected types.
 
+Optional arguments `round_t`, `round_tp1` (default `FALSE`), `round_max_dbh` (5.5 cm) and `round_width` (0.5 cm): when census t (or t+1) recorded DBH in classes rounded down, a DBH below `round_max_dbh` is read as a true size in `[d, d + round_width)` — the growth likelihood uses the class mid-points and adds `round_width^2 / 12` per rounded value to the growth variance, while the hard growth limits stay on the measured values. With both flags `FALSE` the costs are bit-identical to the version without these arguments. The DP sets the flags from `dbh_round_censuses` (see `dp_global/README.md`, *DBH recorded in classes*).
+
 ## Performance
 
 ## Stem Identity Renumbering
 
-All drivers in the dp_global workflow use a universal post-engine helper chain: `maybe_add_posterior_bins()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. After these steps, all `ReconstructedStemID` values are renumbered **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. **Negative or zero IDs are never produced.**
+All drivers in the dp_global workflow use a universal post-engine helper chain: `maybe_add_posterior_bins()`, `apply_pin_track_rejoin()`, `apply_carried_terminal_backfill()`, `apply_orphan_stem_backfill()`, `apply_terminal_to_host()`, `apply_broken_below_invariants()`, `renumber_engine_minted_ids()`, and finally `finalize_posterior_paths()`. After these steps, all `ReconstructedStemID` values are renumbered **sequentially from 1 to N within each tag**, ordered by the earliest census in which each stem appears. If multiple stems first appear in the same census, the largest DBH at that census gets the lower ID, with ties broken by original ID. **Negative or zero IDs are never produced.**
 
 The C++ implementation is the sole backend for transition-cost computation in the DP workflow. It is substantially faster than an equivalent pure-R loop implementation would be, due to direct C++ iteration, manual statistical functions, and reduced function-call overhead.
 
