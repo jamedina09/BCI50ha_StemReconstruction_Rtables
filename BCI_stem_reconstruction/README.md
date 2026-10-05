@@ -12,16 +12,21 @@ This directory contains a four-stage workflow to reconstruct stem identities for
 1. **Stem identification** (`2_STEM_IDENTIFICATION/`)
 
 - Runs the chunked DP reconstruction engine on prepared inputs.
-- Merges chunk outputs into consolidated reconstructed stem results.
+- Merges chunk outputs into the final reconstructed stem table, after joining
+  trunks that the engine split only because their point of measurement moved
+  or one diameter was recorded wrongly.
 
 1. **R table creation** (`3_PREPARE_R_TABLES/`)
 
-- Converts reconstructed paths into ForestGEO-compatible stem tables.
-- Exports final `stemN` tables, species tables, and QC/check files.
+- Consolidates the posterior samples of the reconstruction.
+- Converts the reconstructed stems into ForestGEO-compatible stem tables.
+- Exports final `stemN` tables and QC/check files (the species table used in
+  stage 4 is not written here; see `3_PREPARE_R_TABLES/README.md`).
 
 1. **Example structure assessment** (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)
 
-- Demonstrates downstream analyses (biomass and basal-area stocks/fluxes).
+- Demonstrates downstream analyses (plot summaries, biomass and basal-area
+  stocks/fluxes).
 - Includes uncertainty propagation from posterior reconstruction paths.
 
 ## Main data flow
@@ -34,7 +39,8 @@ Raw BCI census and taxonomy data
 
 ## Key output locations
 
-- `DATA/PROCESSED/` and helper prepared inputs from stage 1
+- `DATA/PROCESSED/` prepared inputs from stage 1, and the final reconstructed
+  stem table and rejoin files from stage 2
 - `DATA/<run_code>/` merged reconstruction outputs from stage 2
 - `DATA/POSTERIORS/`, `DATA/RTABLES/`, `DATA/CHECKS/` outputs from stage 3
 - `4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/` example analysis products
