@@ -28,16 +28,16 @@ Merges completed chunk outputs into final files.
   outside its hard growth bounds: the point of measurement of the trunk moved
   (e.g. 1982 diameters taken around buttresses) or one diameter was recorded
   wrongly. An ended stem is joined to the stem of the same tree that starts in
-  the next census when both measurements share the database StemID, or when
-  the new stem would be an impossible recruit (above the recruit limit) with a
-  single candidate (`apply_measurement_rejoin()`; rules in
+  the next census when the new stem would be an impossible recruit (it starts
+  above the recruit limit) and the ended stem is the only candidate; database
+  StemIDs are not used (`apply_measurement_rejoin()`; rules in
   `dp_global/R/measurement_rejoin.R` and `dp_global/README.md`;
   `ReconstructionMethod = "measurement_rejoin"`). The joined stem keeps one of
   its two IDs, so the tree's IDs skip one number per join.
 - Writes the final reconstructed stem table
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds` (the
   input of stage 3), the joins to `DATA/PROCESSED/measurement_rejoin_audit.csv`
-  and the observation pairs for the posterior samples to
+  and the joined observation pairs, for the posterior samples, to
   `DATA/PROCESSED/measurement_rejoin_pairs.csv`.
 
 ## Notes
