@@ -1,16 +1,16 @@
 ################################################################################
 # FORESTGEO STEM TABLE CREATION SCRIPT
 ################################################################################
-# Purpose: Build ForestGEO Rtables and a species table from a reconstructed
-# census dataset plus taxonomy input.
+# Purpose: Build the ForestGEO R tables (one per census) from the
+# reconstructed census dataset of stage 2.
 #
 # Inputs:
-#   - DATA/
+#   - DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds
 #
 # Outputs:
-#   - DATA/RTABLES/[site].stem[n].Rdata
-#   - DATA/RTABLES/[site].spptable.rdata
+#   - DATA/RTABLES/[site].stem[n].Rdata (and [site].stem[n].csv)
 #   - DATA/CHECKS/ diagnostic CSV files
+#   (the species-table export, Section 15, is commented out)
 #
 # Main pipeline:
 #    1. Setup and load input data                          (Sections 1–2)
@@ -66,10 +66,11 @@
 #   DBH            : exported as recorded on every record, A, G or D (G/D
 #                    cells with a DBH: CHECKS/dbh_on_dead_records.csv); a P
 #                    cell never has one; never imputed.
-#   ExactDate      : every recorded date is kept. A missing date is imputed
-#                    only on A rows, measured rows and a stem's first G/D
-#                    row; P rows and later G/D rows have a date only when one
-#                    was recorded (Section 14).
+#   ExactDate      : the field date exactly as recorded (NA where there is no
+#                    record); never imputed, like dbh and DFstatus.
+#   date           : days since 1960-01-01 (the ForestGEO convention) on every
+#                    row: the recorded date, else the modal field date of the
+#                    tree, quadrat or census in that census (Section 14).
 #   Location       : one (gx, gy, quadrat) per tree, the same in every census
 #                    and for every stem (Section 14).
 #   stemID         : the reconstructed stem number within its tree (1, 2,
@@ -241,7 +242,7 @@ ViewFullTable_columns_to_keep <- c(
   "CensusID", "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
   "QuadratName", "PX", "PY", # spatial location in plot (meters)
   "DBH", "HOM",
-  "ExactDate", # "Date",
+  "ExactDate", "Date", # raw field date; Date = filled date (days since 1960-01-01)
   "ListOfTSM",
   "Status", # raw field status + measurement codes
   "new_status", # date + script-computed corrected status
@@ -254,7 +255,7 @@ new_names_columns_to_keep <- c(
   "CensusID", "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
   "quadrat", "gx", "gy", # gx/gy = plot coordinates in meters
   "dbh", "hom",
-  "ExactDate", # "date",
+  "ExactDate", "date", # ExactDate raw; date = days since 1960-01-01, every row
   "codes",
   "DFstatus", # DFstatus = raw field status (legacy name)
   "Rstatus", # date + script-computed corrected status
@@ -274,8 +275,8 @@ bio_check(
 # ========================================================================
 # SECTION 2: LOAD INPUT DATA
 # ========================================================================
-# Load the reconstructed census table and taxonomy table, coerce key types,
-# and write diagnostic reports for raw value distributions.
+# Load the reconstructed census table, coerce key types, and write
+# diagnostic reports for raw value distributions.
 
 ################################################################################
 # HELPER FUNCTION: show_levels
@@ -688,7 +689,7 @@ ViewFullTable_split <- lapply(ViewFullTable_split_unbalanced, function(X) {
   idx <- match(unique_StemID$StemID, X$StemID)
   X <- X[idx]
   # FILL FIXED ATTRIBUTES: Copy all fixed columns from master list
-  # This ensures taxonomy, coordinates, etc. are consistent across censuses
+  # This keeps species code, quadrat and IDs identical across censuses
   X[, (fixed_columns) := unique_StemID]
   # FILL CENSUS IDENTIFIERS: Propagate census info to all rows
   # unique(na.omit()) extracts the single non-NA value for this census
@@ -2597,11 +2598,11 @@ rm(
 # ========================================================================
 # SECTION 14: EXPORT CENSUS TABLES
 # ========================================================================
-# Write Rstatus into each census table, assign one location per tree, impute
-# the missing dates that are needed, rename and subset each table to the
-# ForestGEO R-table format, then save each census as both a .Rdata object and
-# a .csv file. dbh and DFstatus are exported exactly as recorded; stemID is
-# the reconstructed stem number within its tree.
+# Write Rstatus into each census table, assign one location per tree, fill
+# the date column, rename and subset each table to the ForestGEO R-table
+# format, then save each census as both a .Rdata object and a .csv file. dbh,
+# DFstatus and ExactDate are exported exactly as recorded; stemID is the
+# reconstructed stem number within its tree.
 
 # Rows of every census table are in unique_StemID order (checked in
 # Section 3), so the status and DBH matrices align column by column.
@@ -2746,25 +2747,26 @@ rm(location_fix, loc_check)
 cat("✓ Location assignment complete.\n\n")
 
 # ========================================================================
-# DATES: keep every recorded ExactDate; impute only where a date is needed
+# DATES: ExactDate exported raw; `date` filled on every row
 # ========================================================================
-# ExactDate is the field date of a record. Every recorded date is kept (none
-# is removed or replaced). A missing date is imputed only on rows that need
-# one (user decision of 2026-10-04):
-#   - A rows (alive; e.g. a missed measurement, whose DBH stage 4
-#     interpolates in time),
-#   - rows with a DBH,
-#   - the first G/D row of a stem (the census in which it is found dead).
-# P rows and later G/D rows stay NA unless the data recorded a date; stage-4
-# scripts fill the dates they need themselves.
-# The imputed date is the MODE (not the median) because it is always a day on
-# which the field crew was actually recording; a median can fall on a day
-# nobody was in the field. Votes come only from dates recorded in the data
-# (never from dates imputed here), and ties go to the earliest tied date so
-# every run gives the same answer. Sources, in order, within each census:
-#   (1) the same tree    : stems of one tree are measured together
-#   (2) the same quadrat : crews census a quadrat within a few days
-#   (3) the whole census : last resort (e.g. trees without a quadrat)
+# ExactDate is the field date of a record and is exported exactly as
+# recorded (NA where there is no record), like dbh and DFstatus (user
+# decision of 2026-10-04).
+# `date` is the ForestGEO R-table date: days since 1960-01-01, the convention
+# of the ForestGEO database (its Date field, equal to ExactDate on every
+# record) and of the CTFS / fgeo R functions, which compute census intervals
+# from it (a recruit's interval starts at its P row, a death's ends at its
+# first G/D row, so every row needs one). It is the recorded date where there
+# is one; otherwise the MODE of the recorded dates of, in order,
+#   (1) the same tree, same census   : stems of one tree are measured together
+#   (2) the same quadrat, same census: crews census a quadrat within days
+#   (3) the whole census             : last resort (e.g. trees without a quadrat)
+# The mode (not the median or mean) is always a day on which the field crew
+# was recording. Votes come only from recorded dates, and ties go to the
+# earliest tied date so every run gives the same answer. (Condit's Dryad
+# tables fill `date` with the mean recorded date of the quadrat: the two agree
+# within about a day in 1985-2015, while in 1982 one quadrat's records span
+# months, so the tree's own date is closer.)
 # ========================================================================
 
 # Modal date of a vector; ties → earliest date.
@@ -2785,42 +2787,41 @@ date_mode_by <- function(dt, by_col, date_col) {
   cnt[cnt[, .I[1L], by = by_col]$V1, c(by_col, date_col), with = FALSE]
 }
 
-impute_tree_dates <- function(split_list,
-                              need_list,
-                              tree_col = "TreeID",
-                              date_col = "ExactDate",
-                              quadrat_col = "QuadratName") {
+# Filled date of every row of every census (a list of Date vectors, one per
+# census); ExactDate itself is not changed.
+fill_tree_dates <- function(split_list,
+                            tree_col = "TreeID",
+                            date_col = "ExactDate",
+                            quadrat_col = "QuadratName") {
   lapply(seq_along(split_list), function(i) {
-    dt <- copy(split_list[[i]])
+    dt <- split_list[[i]]
     dates <- dt[[date_col]]
     n_recorded <- sum(!is.na(dates))
-    n_need <- sum(is.na(dates) & need_list[[i]])
     # Only dates recorded in the data vote.
     recorded <- dt[!is.na(dates)]
 
     # (1) same tree, same census
     ref_tree <- date_mode_by(recorded, tree_col, date_col)
-    need <- is.na(dates) & need_list[[i]]
+    need <- is.na(dates)
     dates[need] <- ref_tree[[date_col]][match(dt[[tree_col]][need], ref_tree[[tree_col]])]
     n_tree <- sum(need & !is.na(dates))
 
     # (2) same quadrat, same census
     ref_quad <- date_mode_by(recorded[!is.na(recorded[[quadrat_col]])], quadrat_col, date_col)
-    need <- is.na(dates) & need_list[[i]]
+    need <- is.na(dates)
     dates[need] <- ref_quad[[date_col]][match(dt[[quadrat_col]][need], ref_quad[[quadrat_col]])]
     n_quad <- sum(need & !is.na(dates))
 
     # (3) whole census
-    need <- is.na(dates) & need_list[[i]]
+    need <- is.na(dates)
     dates[need] <- date_mode(recorded[[date_col]])
     n_census <- sum(need & !is.na(dates))
 
-    set(dt, j = date_col, value = dates)
     cat(sprintf(
-      "  [impute_tree_dates] census %d: %d recorded | %d needed -> %d from tree, %d from quadrat, %d from census mode | %d left NA (P / later G/D rows without a record)\n",
-      i, n_recorded, n_need, n_tree, n_quad, n_census, sum(is.na(dates))
+      "  [fill_tree_dates] census %d: %d recorded | filled %d from tree, %d from quadrat, %d from census mode | %d without a date\n",
+      i, n_recorded, n_tree, n_quad, n_census, sum(is.na(dates))
     ))
-    dt
+    dates
   })
 }
 
@@ -2830,49 +2831,57 @@ census_date_window <- rbindlist(lapply(seq_along(ViewFullTable_split), function(
   data.table(census = i, lo = min(d, na.rm = TRUE), hi = max(d, na.rm = TRUE))
 }))
 
-# Rows that need a date: A rows, measured rows and the first G/D row of each
-# stem (G and D are absorbing, so that is a dead cell after a non-dead one).
-is_dead <- corrected_new_status_matrix == "G" | corrected_new_status_matrix == "D"
-first_dead <- is_dead & cbind(TRUE, !is_dead[, -ncol(is_dead), drop = FALSE])
-need_date <- corrected_new_status_matrix == "A" | !is.na(DBHs) | first_dead
 recorded_dates <- lapply(ViewFullTable_split, function(dt) dt$ExactDate)
+raw_date_field <- lapply(ViewFullTable_split, function(dt) dt$Date) # database Date (days since 1960-01-01)
 
-cat("📅 Imputing the missing ExactDate of A, measured and first G/D rows (modal field date)...\n")
-ViewFullTable_split <- impute_tree_dates(
-  ViewFullTable_split,
-  lapply(seq_len(ncol(need_date)), function(i) need_date[, i])
-)
+cat("📅 Filling the date column (days since 1960-01-01; modal field date of tree, quadrat, census)...\n")
+filled_dates <- fill_tree_dates(ViewFullTable_split)
+date_origin <- as.Date("1960-01-01")
+for (i in seq_along(ViewFullTable_split)) {
+  set(ViewFullTable_split[[i]], j = "Date", value = as.numeric(filled_dates[[i]] - date_origin))
+}
 
 dates_long <- rbindlist(lapply(seq_along(ViewFullTable_split), function(i) {
-  ViewFullTable_split[[i]][, .(StemID, census = i, ExactDate, recorded = recorded_dates[[i]], need = need_date[, i])]
+  ViewFullTable_split[[i]][, .(
+    StemID, census = i, ExactDate, recorded = recorded_dates[[i]],
+    date = Date, raw_date = raw_date_field[[i]]
+  )]
 }))
-changed <- dates_long[!is.na(recorded) & (is.na(ExactDate) | ExactDate != recorded)]
+changed <- dates_long[!((is.na(ExactDate) & is.na(recorded)) | (!is.na(ExactDate) & !is.na(recorded) & ExactDate == recorded))]
 bio_check(
   nrow(changed) == 0L,
-  "Every recorded date is kept unchanged (no date is removed or replaced)",
+  "ExactDate is exported exactly as recorded (no date imputed, removed or replaced)",
   examples = changed$StemID,
   n_bad = nrow(changed)
 )
-na_dates <- dates_long[need == TRUE & is.na(ExactDate)]
+na_dates <- dates_long[is.na(date)]
 bio_check(
   nrow(na_dates) == 0L,
-  "Every A row, measured row and first G/D row has an ExactDate",
+  "Every row has a date",
   examples = na_dates$StemID,
   n_bad = nrow(na_dates)
 )
-extra_dates <- dates_long[need == FALSE & is.na(recorded) & !is.na(ExactDate)]
+off_record <- dates_long[!is.na(recorded) & date != as.numeric(recorded - date_origin)]
 bio_check(
-  nrow(extra_dates) == 0L,
-  "P rows and later G/D rows have a date only when it was recorded",
-  examples = extra_dates$StemID,
-  n_bad = nrow(extra_dates)
+  nrow(off_record) == 0L,
+  "date equals ExactDate (days since 1960-01-01) wherever a date was recorded",
+  examples = off_record$StemID,
+  n_bad = nrow(off_record)
+)
+off_db <- dates_long[!is.na(raw_date) & date != raw_date]
+bio_check(
+  nrow(off_db) == 0L,
+  "date equals the database's Date field wherever it was recorded",
+  examples = off_db$StemID,
+  n_bad = nrow(off_db)
 )
 cat(sprintf(
-  "📅 ExactDate: %d recorded | %d imputed (A, measured or first G/D rows) | %d NA (P and later G/D rows without a record)\n",
-  dates_long[!is.na(recorded), .N], dates_long[is.na(recorded) & !is.na(ExactDate), .N], dates_long[is.na(ExactDate), .N]
+  "📅 ExactDate: %d recorded (exported as is) | date: %d recorded + %d filled = every row\n",
+  dates_long[!is.na(recorded), .N], dates_long[!is.na(recorded), .N], dates_long[is.na(recorded), .N]
 ))
-dates_long <- census_date_window[dates_long[!is.na(ExactDate)], on = "census"]
-out_window <- dates_long[ExactDate < lo | ExactDate > hi]
+dates_long[, date_d := date_origin + date]
+dates_long <- census_date_window[dates_long, on = "census"]
+out_window <- dates_long[date_d < lo | date_d > hi]
 bio_check(
   nrow(out_window) == 0L,
   "Every date lies inside its census's recorded date window",
@@ -2880,17 +2889,17 @@ bio_check(
   n_bad = nrow(out_window)
 )
 setkey(dates_long, StemID, census)
-dates_long[, prev_date := shift(ExactDate), by = StemID]
-non_monotonic <- dates_long[!is.na(prev_date) & ExactDate <= prev_date]
+dates_long[, prev_date := shift(date), by = StemID]
+non_monotonic <- dates_long[!is.na(prev_date) & date <= prev_date]
 bio_check(
   nrow(non_monotonic) == 0L,
-  "Dates strictly increase from census to census for every stem (dated rows)",
+  "Dates strictly increase from census to census for every stem",
   examples = non_monotonic$StemID,
   n_bad = nrow(non_monotonic)
 )
 rm(
-  dates_long, changed, na_dates, extra_dates, out_window, non_monotonic, census_date_window,
-  is_dead, first_dead, need_date, recorded_dates
+  dates_long, changed, na_dates, off_record, off_db, out_window, non_monotonic, census_date_window,
+  recorded_dates, raw_date_field, filled_dates
 )
 
 cat("✓ Dates complete.\n\n")
