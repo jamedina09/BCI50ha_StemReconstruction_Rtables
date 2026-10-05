@@ -235,7 +235,8 @@ lab_long <- touched[, .(kv = unlist(strsplit(recon, ";", fixed = TRUE))), by = .
 lab_long <- obs_info[, .(tag, obs, c)][lab_long, on = .(tag, obs)]
 collisions <- lab_long[, .N, by = .(tag, recon, lab, c)][N > 1L]
 bio_check(nrow(collisions) == 0L, "No sampled stem holds two observations of one census after the rejoin",
-    examples = unique(collisions$tag), n_bad = nrow(collisions))
+    examples = unique(collisions$tag), n_bad = nrow(collisions)
+)
 rm(obs_info, samples_before, touched, lab_long, collisions)
 
 # =============================================================================
