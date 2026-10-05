@@ -113,7 +113,11 @@ the reference implementation (default: all but two).
 - `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`
 - QC exports in `BCI_stem_reconstruction/DATA/CHECKS/`, among them
   `dbh_on_dead_records.csv`, `location_conflicts.csv`,
-  `subset_stems_never_alive.csv` and `subset_stems_never_recorded.csv`
+  `subset_stems_never_alive.csv`, `subset_stems_never_recorded.csv` and
+  `duplicate_measurements.csv` (likely duplicates: two stems of one tree
+  measured on the same date at heights at least 0.5 m apart, taper-corrected
+  DBHs within 20 %; the trunk measured at the old and the new height when its
+  point of measurement was raised)
 
 The species table is not written by this stage (Section 15 of
 `2_create_R_tables_BCI.R` is commented out). The stage-4 scripts read
