@@ -26,42 +26,41 @@ tree <- function(rows, tag = "T1") {
 run <- function(x, ...) apply_measurement_rejoin(x, max_shrink = -0.5, max_growth = 5, recruit_max_mm = 260, verbose = FALSE, ...)
 stems <- function(r) r$dt[!is.na(DBH), uniqueN(ReconstructedStemID)]
 
-test_that("buttressed trunk with the same database StemID is joined (route A)", {
-  x <- tree(list(list(1, "s1", 1, 1775, 1.3, "alive", NA, NA), list(2, "s1", 2, 1140, 1.3, "alive", NA, NA), list(3, "s1", 2, 1134, 6.5, "alive", "B", NA)))
+test_that("buttressed trunk restarting above the recruit limit is joined; StemIDs are not used", {
+  # different database StemIDs (renumbered): joined
+  x <- tree(list(list(1, "s1", 1, 1775, 1.3, "alive", NA, NA), list(2, "s9", 2, 1140, 1.3, "alive", NA, NA), list(3, "s9", 2, 1134, 6.5, "alive", "B", NA)))
   r <- run(x)
   expect_equal(nrow(r$pairs), 1L)
+  expect_equal(r$pairs$route, "impossible_recruit")
   expect_equal(stems(r), 1L)
   expect_equal(r$dt[CensusID == 1, ReconstructionMethod], "measurement_rejoin")
   expect_identical(r$dt[, .(DBH, HOM, Status, StemID, TrueStemID)], x[, .(DBH, HOM, Status, StemID, TrueStemID)]) # nothing else changes
+  # the same tree with one database StemID gives exactly the same result
+  y <- copy(x)[, StemID := "s1"]
+  expect_identical(run(y)$dt$ReconstructedStemID, r$dt$ReconstructedStemID)
 })
 
-test_that("renumbered trunk starting above the recruit limit is joined (route B)", {
-  x <- tree(list(list(1, "s1", 1, 1187, 3.8, "alive", NA, NA), list(2, "s9", 2, 900, 3.8, "alive", NA, NA)))
-  r <- run(x)
-  expect_equal(r$pairs$route, "B")
-  expect_equal(stems(r), 1L)
-})
-
-test_that("small stem that drops to the census minimum stays split (dieback / resprout)", {
-  r <- run(tree(list(list(1, "s1", 1, 40, 1.3, "alive", NA, NA), list(2, "s1", 2, 10, 1.3, "alive", NA, NA))))
+test_that("a new stem below the recruit limit stays split, even with the same database StemID", {
+  r <- run(tree(list(list(1, "s1", 1, 300, 1.3, "alive", NA, NA), list(2, "s1", 2, 200, 1.3, "alive", NA, NA))))
   expect_equal(nrow(r$pairs), 0L)
+  expect_equal(stems(r), 2L)
+})
+
+test_that("an earlier stem below 10 cm stays split", {
+  r <- run(tree(list(list(1, "s1", 1, 90, 1.3, "alive", NA, NA), list(2, "s1", 2, 280, 1.3, "alive", NA, NA))))
   expect_equal(r$candidates$why, "earlier stem below min_dbh")
 })
 
 test_that("broken trunk (size ratio below 0.4) stays split", {
-  r <- run(tree(list(list(1, "s1", 1, 602, 1.3, "alive", NA, NA), list(2, "s1", 2, 68, 1.3, "alive", NA, NA))))
+  r <- run(tree(list(list(1, "s1", 1, 1000, 1.3, "alive", NA, NA), list(2, "s1", 2, 300, 1.3, "alive", NA, NA))))
   expect_equal(r$candidates$why, "size ratio below ratio_min")
 })
 
-test_that("same StemID: an upward recording error is joined (no upper ratio bound on route A)", {
-  r <- run(tree(list(list(1, "s1", 1, 391, 1.3, "alive", NA, NA), list(2, "s1", 2, 642, 1.3, "alive", NA, NA))))
-  expect_equal(r$pairs$route, "A")
-  expect_equal(stems(r), 1L)
-})
-
-test_that("route B: a much larger new stem with another StemID stays split", {
+test_that("a new stem more than 1.5 times larger stays split (also an upward recording error)", {
   r <- run(tree(list(list(1, "s1", 1, 250, 1.3, "alive", NA, NA), list(2, "s9", 2, 498, 1.3, "alive", NA, NA))))
-  expect_equal(r$candidates$why, "size ratio above ratio_max_b (route B)")
+  expect_equal(r$candidates$why, "size ratio above ratio_max")
+  r <- run(tree(list(list(1, "s1", 1, 391, 1.3, "alive", NA, NA), list(2, "s1", 2, 642, 1.3, "alive", NA, NA))))
+  expect_equal(r$candidates$why, "size ratio above ratio_max")
 })
 
 test_that("a break or resprout code on the later measurement keeps the stems apart (rule R1)", {
@@ -75,7 +74,7 @@ test_that("a break or resprout code on the later measurement keeps the stems apa
 })
 
 test_that("a split the engine chose inside the growth bounds is left alone", {
-  x <- tree(list(list(1, "s1", 1, 200, 1.3, "alive", NA, NA), list(2, "s1", 2, 199, 1.3, "alive", NA, NA)))
+  x <- tree(list(list(1, "s1", 1, 300, 1.3, "alive", NA, NA), list(2, "s1", 2, 290, 1.3, "alive", NA, NA)))
   r <- run(x)
   expect_equal(r$candidates$why, "link inside the growth bounds")
   expect_equal(nrow(r$pairs), 0L)
@@ -95,7 +94,7 @@ test_that("no join when the ending stem has a later record or the new stem an ea
   expect_equal(nrow(r$pairs), 0L)
 })
 
-test_that("route B needs a unique candidate: two stems ending at the same census stay split", {
+test_that("a unique candidate is needed: two stems ending at the same census stay split", {
   r <- run(tree(list(
     list(1, "s1", 1, 900, 1.3, "alive", NA, NA), list(1, "s2", 3, 880, 1.3, "alive", NA, NA),
     list(2, "s9", 2, 700, 1.3, "alive", NA, NA)
@@ -106,6 +105,8 @@ test_that("route B needs a unique candidate: two stems ending at the same census
 test_that("idempotent", {
   x <- tree(list(list(1, "s1", 1, 1775, 1.3, "alive", NA, NA), list(2, "s1", 2, 1140, 1.3, "alive", NA, NA)))
   r1 <- run(x)
+  expect_equal(nrow(r1$pairs), 1L)
+  expect_identical(r1$obs_pairs[, .(obs0, obs1)], data.table(obs0 = 1L, obs1 = 2L)) # the posterior gets the export joins
   r2 <- run(r1$dt)
   expect_equal(nrow(r2$pairs), 0L)
   expect_identical(r2$dt, r1$dt)
