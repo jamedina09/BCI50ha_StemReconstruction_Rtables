@@ -14,32 +14,31 @@
 #
 # What: join an ended stem s0 (last measurement at census c) with a stem s1 of
 # the same tree that starts at c + 1, when
-#   1. the link is outside the hard growth bounds (the engine could not
-#      consider it) and there is evidence that they are one stem:
-#      A  both measurements carry the same database StemID, or
-#      B  s1 starts above the recruit limit (an impossible recruit) and s0 is
-#         the only stem of the tree ending at c;
-#   2. the later measurement has no break / resprout status or code (rule R1:
+#   1. s1 is an impossible recruit: it starts at or above the recruit limit
+#      (no new stem starts that large) in a tree measured before;
+#   2. s0 is the only stem of the tree whose measurements end at c (the only
+#      candidate);
+#   3. the link is outside the hard growth bounds (the engine could not
+#      consider it);
+#   4. the later measurement has no break / resprout status or code (rule R1:
 #      a broken-below record with a DBH starts a new stem, so it is never
 #      joined to the stem before it);
-#   3. s0 was >= min_dbh_mm and the taper-corrected size ratio d1 / d0 is
-#      >= ratio_min (BCI: no large stem between 0.29 and 0.49; buttress cases
-#      reach 0.49, broken trunks and resprouts stay below 0.3; small stems that
-#      drop to ~10 mm died back and resprouted). Route B also needs
-#      d1 / d0 <= ratio_max_b: without the database's identity a much larger
-#      "continuation" is a different stem;
-#   4. clean end/start: s0 has no row after c and s1 none before c + 1 (no
+#   5. s0 was >= min_dbh_mm and the taper-corrected size ratio d1 / d0 lies in
+#      [ratio_min, ratio_max] (BCI: buttress cases reach 0.49, broken trunks
+#      and resprouts stay below 0.3; a much larger "continuation" is a
+#      different stem);
+#   6. clean end/start: s0 has no row after c and s1 none before c + 1 (no
 #      census gets two rows), the two stems carry at most one distinct
 #      TrueStemID pin, and neither stem takes part in another candidate join.
-# A split the engine chose inside the growth bounds is left as it is: the
-# engine weighed that link against the tree's other stems, and joining it in
-# every posterior sample would make every pre-2010 same-StemID link certain.
+# The database StemIDs are not used: before the anchor they are the identity
+# the reconstruction replaces, and pins are used only to keep two pinned stems
+# apart. A split the engine chose inside the growth bounds is left as it is.
 # Relabelled rows keep every column except ReconstructedStemID (they take the
 # id of the stem carrying the pin, else of the later stem) and
-# ReconstructionMethod (= "measurement_rejoin"). Posterior samples: every
-# eligible observation pair is joined in each sample where it is split with a
-# clean end/start and at most one pin, so export and posterior follow the same
-# rule. Idempotent: a second call finds nothing to join.
+# ReconstructionMethod (= "measurement_rejoin"). Posterior samples: the
+# observation pairs joined in the export are joined in each sample where they
+# are split with a clean end/start and at most one pin. Idempotent: a second
+# call finds nothing to join.
 #
 # Used by 2_STEM_IDENTIFICATION/2_merge_chunks_to_datatable.R (export) and
 # 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R (posterior samples).
@@ -67,7 +66,7 @@ mr_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
 .mr_obs <- function(dt) {
     dt[single_stem_tags %in% FALSE & !is.na(ReconstructedStemID), .(
         row = .mr_row, Tag = as.character(Tag), c = as.integer(as.character(CensusID)),
-        rs = as.character(ReconstructedStemID), sid = as.character(StemID), d = DBH,
+        rs = as.character(ReconstructedStemID), d = DBH,
         tc = dbh_with_best_candidate_taper_corrected, t = as.numeric(ExactDate),
         R = Status %in% "broken below" | grepl(.mr_r_regex, fcoalesce(as.character(ListOfTSM), ""), perl = TRUE),
         pin = as.character(TrueStemID), obs = as.integer(obs_row_id)
@@ -75,21 +74,21 @@ mr_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
 }
 
 # Eligibility of an observation pair (vectorised): returns the reason.
-.mr_eligibility <- function(route, d0, ratio, g_tc, R1, max_shrink, max_growth, min_dbh_mm, ratio_min, ratio_max_b) {
+.mr_eligibility <- function(d0, ratio, g_tc, R1, max_shrink, max_growth, min_dbh_mm, ratio_min, ratio_max) {
     outside <- g_tc < max_shrink | g_tc > max_growth
     fcase(
         R1, "break/resprout code on the later measurement",
         !outside, "link inside the growth bounds",
         d0 < min_dbh_mm, "earlier stem below min_dbh",
         ratio < ratio_min, "size ratio below ratio_min",
-        route == "B" & ratio > ratio_max_b, "size ratio above ratio_max_b (route B)",
+        ratio > ratio_max, "size ratio above ratio_max",
         default = "join"
     )
 }
 
 # Candidate pairs in the current table, with the reason each is joined or kept apart.
 measurement_rejoin_candidates <- function(dt, max_shrink, max_growth, recruit_max_mm, min_dbh_mm = 100,
-                                          ratio_min = 0.4, ratio_max_b = 1.5) {
+                                          ratio_min = 0.4, ratio_max = 1.5) {
     w <- .mr_obs(dt)
     span <- dt[single_stem_tags %in% FALSE & !is.na(ReconstructedStemID),
         .(any_first = min(as.integer(as.character(CensusID))), any_last = max(as.integer(as.character(CensusID)))),
@@ -99,18 +98,13 @@ measurement_rejoin_candidates <- function(dt, max_shrink, max_growth, recruit_ma
     fm <- m[m[, .I[which.min(c)], by = .(Tag, rs)]$V1]
     lm <- m[m[, .I[which.max(c)], by = .(Tag, rs)]$V1]
     pins <- w[!is.na(pin), .(pins = list(unique(pin))), by = .(Tag, rs)]
-    # A: consecutive measurements of one database StemID on two stems
-    setorder(m, Tag, sid, c)
-    m[, `:=`(row0 = shift(row), c0 = shift(c), rs0 = shift(rs)), by = .(Tag, sid)]
-    A <- m[!is.na(c0) & c == c0 + 1L & rs != rs0, .(Tag, row0, row1 = row, route = "A")]
-    # B: impossible recruit with exactly one stem of the tree ending just before
+    # impossible recruit with exactly one stem of the tree ending just before
     tag_first <- m[, .(tag_first = min(c)), by = Tag]
     s1 <- span[fm[, .(Tag, rs, c1 = c, row1 = row, d1 = d)], on = .(Tag, rs)][tag_first, on = "Tag", nomatch = 0L]
     s1 <- s1[c1 > tag_first & d1 >= recruit_max_mm & any_first == c1]
     s0 <- span[lm[, .(Tag, rs, c0 = c, row0 = row)], on = .(Tag, rs)][any_last == c0]
     B <- s0[, .(Tag, c1 = c0 + 1L, row0)][s1[, .(Tag, c1, row1)], on = .(Tag, c1), nomatch = 0L]
-    B <- B[B[, .I[.N == 1L], by = .(Tag, row1)]$V1, .(Tag, row0, row1, route = "B")]
-    P <- unique(rbind(A, B)[, .(route = if ("A" %in% route) "A" else "B", rB = "B" %in% route), by = .(Tag, row0, row1)])
+    P <- B[B[, .I[.N == 1L], by = .(Tag, row1)]$V1, .(Tag, row0, row1, route = "impossible_recruit")]
     if (!nrow(P)) return(P)
     key <- w[, .(row, c, rs, d, tc, t, R, obs)]
     k0 <- copy(key); setnames(k0, paste0(names(k0), "0"))
@@ -123,7 +117,7 @@ measurement_rejoin_candidates <- function(dt, max_shrink, max_growth, recruit_ma
     P <- pins[, .(Tag, rs1 = rs, p1 = pins)][P, on = .(Tag, rs1)]
     P[, `:=`(g_tc = (tc1 - tc0) / 10 / ((t1 - t0) / 365.25), ratio = tc1 / tc0)]
     P[, n_pins := mapply(function(a, b) length(unique(c(unlist(a), unlist(b)))), p0, p1)]
-    P[, why := .mr_eligibility(route, d0, ratio, g_tc, R1, max_shrink, max_growth, min_dbh_mm, ratio_min, ratio_max_b)]
+    P[, why := .mr_eligibility(d0, ratio, g_tc, R1, max_shrink, max_growth, min_dbh_mm, ratio_min, ratio_max)]
     P[why == "join" & rs0 == rs1, why := "already joined"]
     P[why == "join" & (last0 != c0 | first1 != c1), why := "not a clean end/start"]
     P[why == "join" & n_pins > 1L, why := "two different pins"]
@@ -135,25 +129,17 @@ measurement_rejoin_candidates <- function(dt, max_shrink, max_growth, recruit_ma
 }
 
 # Stage-2 table -> list(dt = repaired table, pairs = joined pairs, candidates = first pass,
-# obs_pairs = eligible observation pairs for the posterior samples).
+# obs_pairs = the joined observation pairs, for the posterior samples).
 apply_measurement_rejoin <- function(dt, max_shrink, max_growth, recruit_max_mm, min_dbh_mm = 100,
-                                     ratio_min = 0.4, ratio_max_b = 1.5,
+                                     ratio_min = 0.4, ratio_max = 1.5,
                                      max_iter = 10L, verbose = TRUE) {
     dt <- data.table::copy(data.table::as.data.table(dt))
     dt[, .mr_row := .I]
     rs_class <- class(dt$ReconstructedStemID)
-    # eligible observation pairs (route A at observation level, independent of the export's links)
-    w <- .mr_obs(dt)[!is.na(d)]
-    setorder(w, Tag, sid, c)
-    w[, `:=`(obs0 = shift(obs), c0 = shift(c), d0 = shift(d), tc0 = shift(tc), t0 = shift(t)), by = .(Tag, sid)]
-    op <- w[!is.na(c0) & c == c0 + 1L, .(Tag, obs0, obs1 = obs, c0, c1 = c, d0, d1 = d,
-        g_tc = (tc - tc0) / 10 / ((t - t0) / 365.25), ratio = tc / tc0, R1 = R)]
-    op[, why := .mr_eligibility("A", d0, ratio, g_tc, R1, max_shrink, max_growth, min_dbh_mm, ratio_min, ratio_max_b)]
-    obs_pairs <- op[why == "join", .(Tag, obs0, obs1, c0, c1, route = "A")]
     pairs <- list()
     first <- NULL
     for (it in seq_len(max_iter)) {
-        P <- measurement_rejoin_candidates(dt, max_shrink, max_growth, recruit_max_mm, min_dbh_mm, ratio_min, ratio_max_b)
+        P <- measurement_rejoin_candidates(dt, max_shrink, max_growth, recruit_max_mm, min_dbh_mm, ratio_min, ratio_max)
         if (is.null(first)) first <- P
         J <- if (nrow(P)) P[why == "join"] else P
         if (!nrow(J)) break
@@ -167,12 +153,13 @@ apply_measurement_rejoin <- function(dt, max_shrink, max_growth, recruit_max_mm,
     }
     dt[, .mr_row := NULL]
     pairs <- data.table::rbindlist(pairs, fill = TRUE)
-    # route-B joins of the export are added to the posterior pairs
-    if (nrow(pairs)) obs_pairs <- unique(rbind(obs_pairs, pairs[route == "B", .(Tag, obs0, obs1, c0, c1, route)]), by = c("Tag", "obs0", "obs1"))
+    # the posterior samples get the same observation pairs as the export
+    obs_pairs <- if (nrow(pairs)) unique(pairs[, .(Tag, obs0, obs1, c0, c1, route)]) else
+        data.table::data.table(Tag = character(), obs0 = integer(), obs1 = integer(), c0 = integer(), c1 = integer(), route = character())
     if (isTRUE(verbose)) {
         cat(sprintf(
-            "[measurement_rejoin] %d stem pair(s) joined in %d tree(s): A (same StemID) %d, B (impossible recruit) %d\n",
-            nrow(pairs), data.table::uniqueN(pairs$Tag), sum(pairs$route == "A"), sum(pairs$route == "B")
+            "[measurement_rejoin] %d stem pair(s) joined in %d tree(s) (impossible recruit with a single candidate)\n",
+            nrow(pairs), data.table::uniqueN(pairs$Tag)
         ))
         if (!is.null(first) && nrow(first)) print(first[, .N, by = .(why)][order(-N)])
     }
