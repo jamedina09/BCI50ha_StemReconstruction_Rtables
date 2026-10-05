@@ -864,11 +864,11 @@ dbh_alive_tab <- DT_Status[
 dead_dbh_tab <- DT_Status[!is.na(DBH) & Status %in% c("dead", "stem dead"), .N, by = .(raw_status = Status)][order(-N)]
 cat("\n🔧 Records alive because of their DBH (by raw status):\n")
 print(dbh_alive_tab)
-cat("🔧 Dead records with a DBH (kept as dead records; DBH kept only if the stem is alive later):\n")
+cat("🔧 Dead records with a DBH (dead records; the DBH is kept; the stem is A there only if alive later):\n")
 print(dead_dbh_tab)
 print_to_log("Records alive because of their DBH (by raw status):", log_file, new_message = TRUE)
 print_to_log(capture.output(print(dbh_alive_tab)), log_file, new_message = FALSE)
-print_to_log("Dead records with a DBH (DBH kept only if the stem is alive later):", log_file, new_message = TRUE)
+print_to_log("Dead records with a DBH (dead records; the DBH is kept; the stem is A there only if alive later):", log_file, new_message = TRUE)
 print_to_log(capture.output(print(dead_dbh_tab)), log_file, new_message = FALSE)
 cat(sprintf("🔧 'broken below' without DBH coded as dead: %d records\n", DT_Status[Status %in% "broken below" & is.na(DBH), .N]))
 
@@ -2344,9 +2344,54 @@ fwrite(stem_dead_D, file.path(CHECK_folder, "stem_dead_exported_D.csv"))
 cat(sprintf("  Raw 'stem dead' exported as D (tree dead): %d cells\n", nrow(stem_dead_D)))
 cat("  ✓ Saved: stem_dead_exported_D.csv\n")
 
+## DIAGNOSTIC 12: Likely duplicate measurements (report only) ####
+# When the point of measurement (POM) of a trunk was raised, the crew could
+# measure the trunk at the old and at the new height in the same census, and
+# the database kept the two records as two stems. Signature: two stems of one
+# tree, both >= 10 cm, measured on the same date of one census at heights of
+# measurement at least 0.5 m apart, with taper-corrected DBHs within 20 % of
+# each other. Two similar stems measured at the same height cannot be told
+# from a duplicate, and 1982 has no HOM records, so neither is listed.
+#   one_series_starts_or_ends_here : one of the two stems is first or last
+#     measured in this census (the old-height series stops, or the new one
+#     starts): the clearest duplicates
+#   impossible_recruit : one of the two stems starts here at >= 26 cm in a tree
+#     measured before (the duplicate is what the rejoin could not join)
+# Nothing is changed here.
+dup_obs <- ViewFullTable[!is.na(DBH) & DBH >= 100 & !is.na(ExactDate), .(
+  TreeID, Tag, census = CensusID, ExactDate, StemID, Raw_StemID, DBH,
+  HOM = fcoalesce(as.numeric(HOM), 1.3), tc = dbh_with_best_candidate_taper_corrected
+)]
+dup_span <- ViewFullTable[!is.na(DBH), .(first_census = min(CensusID), last_census = max(CensusID)), by = StemID]
+dup_tree_first <- ViewFullTable[!is.na(DBH), .(tree_first = min(CensusID)), by = TreeID]
+dup <- dup_obs[dup_obs, on = .(TreeID, census, ExactDate), allow.cartesian = TRUE, nomatch = 0L][
+  i.HOM - HOM >= 0.5 & pmin(tc, i.tc) / pmax(tc, i.tc) >= 0.8
+]
+dup <- dup[, .(
+  TreeID, Tag, census, ExactDate,
+  StemID_low = StemID, Raw_StemID_low = Raw_StemID, DBH_low = DBH, HOM_low = HOM,
+  StemID_high = i.StemID, Raw_StemID_high = i.Raw_StemID, DBH_high = i.DBH, HOM_high = i.HOM,
+  dbh_ratio = round(pmin(tc, i.tc) / pmax(tc, i.tc), 3)
+)]
+dup <- dup_span[, .(StemID_low = StemID, first_low = first_census, last_low = last_census)][dup, on = "StemID_low"]
+dup <- dup_span[, .(StemID_high = StemID, first_high = first_census, last_high = last_census)][dup, on = "StemID_high"]
+dup <- dup_tree_first[dup, on = "TreeID"]
+dup[, one_series_starts_or_ends_here := (first_low == census) != (first_high == census) | (last_low == census) != (last_high == census)]
+dup[, impossible_recruit := census > tree_first & ((first_low == census & DBH_low >= 260) | (first_high == census & DBH_high >= 260))]
+dup[, tree_first := NULL]
+setcolorder(dup, c("TreeID", "Tag", "census", "ExactDate"))
+setorder(dup, census, TreeID)
+fwrite(dup, file.path(CHECK_folder, "duplicate_measurements.csv"))
+cat(sprintf(
+  "  Likely duplicate measurements (same tree, census and date; HOM >= 0.5 m apart; DBH within 20%%): %d pairs in %d trees | one series starts or ends there: %d | with an impossible recruit: %d\n",
+  nrow(dup), uniqueN(dup$TreeID), dup[one_series_starts_or_ends_here == TRUE, .N], dup[impossible_recruit == TRUE, .N]
+))
+cat("  ✓ Saved: duplicate_measurements.csv\n")
+
 rm(
   diag_long, deaths_dt, death_evidence, unregistered_dt, deaths_1,
-  recruits_dt, recruits_1, id_breaks, large_recruits, stem_dead_D
+  recruits_dt, recruits_1, id_breaks, large_recruits, stem_dead_D,
+  dup_obs, dup_span, dup_tree_first, dup
 )
 
 # ========================================================================
@@ -2919,7 +2964,7 @@ check_dates[, c("n_dates") :=
 by = .(CensusID, TreeID)
 ]
 
-fwrite(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)], file.path(CHECK_folder, "repeated_dates.csv"))
+fwrite(unique(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)]), file.path(CHECK_folder, "repeated_dates.csv"))
 
 export_stem_order <- vector("list", length(ViewFullTable_split))
 for (census in seq_along(ViewFullTable_split)) {
