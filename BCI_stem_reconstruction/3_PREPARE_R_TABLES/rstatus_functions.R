@@ -10,14 +10,14 @@
 #                        A or D -> D                                (Section 6)
 #   fix_resurrections()  alive later => never dead                  (Section 8)
 #   rstatus_tree_dg()    dead stem -> G (tree alive) or D (tree dead) (Section 10)
-#   rstatus_clean_dbh()  no DBH on P / G / D                         (Section 13)
 #
 # Rules (user decisions of 2026-10-04):
 #   Evidence of life : an "alive" record (with or without DBH), or a DBH on a
 #                      "broken below", "missing" or status-less record.
 #   Dead record      : "dead", "stem dead" (with or without DBH) and
 #                      "broken below" without DBH. A DBH on a dead record is
-#                      kept only if the stem is alive later (false death).
+#                      not evidence of life (the stem is A there only if it
+#                      is alive later); the DBH itself is kept.
 #   No record        : "missing" or no status without DBH, or no row.
 #   P                : only before a stem's first record.
 #   A                : from the first record to the last evidence of life
@@ -26,7 +26,8 @@
 #                      first census without evidence of life (G or D).
 #   Tree alive at c  : some stem of the tree is A at c or at a later census.
 #   G / D            : dead stem with its tree alive / dead at that census.
-#   DBH              : kept on A; removed (NA) on P, G and D; never imputed.
+#   DBH              : exported as recorded on every record (A, G or D); a P
+#                      cell never has one; never imputed.
 # ========================================================================
 
 # Raw field record -> "A" (evidence of life), "D" (dead record) or "N" (no
@@ -241,24 +242,16 @@ rstatus_tree_dg <- function(status_matrix, tree_id) {
   out
 }
 
-# Step 4: a DBH is kept only on A cells. On P, G and D it is removed (it can
-# only be there on a dead record of a stem that is never alive later).
-rstatus_clean_dbh <- function(rstatus_matrix, dbh_matrix) {
-  removed <- rstatus_matrix != "A" & !is.na(dbh_matrix)
-  dbh_matrix[removed] <- NA
-  list(dbh = dbh_matrix, removed = removed)
-}
-
 # All steps for one table of stems (used by tests/test_Rstatus.R).
 #   status, dbh : matrices [stem x census] of raw Status and DBH
 #   tree_id     : one value per stem
-# Returns list(Rstatus, dbh, removed): matrices of the same shape.
+# Returns list(Rstatus, dbh): matrices of the same shape; dbh is the raw DBH,
+# exported unchanged (Step 4: no DBH is removed or imputed).
 compute_rstatus <- function(status, dbh, tree_id) {
   code <- matrix(rstatus_raw_code(as.vector(status), as.vector(dbh)), nrow = nrow(status))
   h <- do.call(paste0, as.data.frame(code, stringsAsFactors = FALSE))
   h <- rstatus_propagate(h)
   h <- fix_resurrections(h, dbh, dbh_aware = FALSE, log_file = NULL, verbose = FALSE)$status_vec
   R <- rstatus_tree_dg(do.call(rbind, strsplit(h, "", fixed = TRUE)), tree_id)
-  d <- rstatus_clean_dbh(R, dbh)
-  list(Rstatus = R, dbh = d$dbh, removed = d$removed)
+  list(Rstatus = R, dbh = dbh)
 }

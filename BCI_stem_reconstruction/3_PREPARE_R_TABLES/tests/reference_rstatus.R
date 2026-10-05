@@ -20,7 +20,7 @@
 #     first record; a stem never recorded is P in every census.
 # Step 2: the tree is alive at c if some stem is A at c or at a later census.
 # Step 3: a dead stem is G when its tree is alive, D when it is dead.
-# Step 4: dbh = the raw DBH on A; NA on P, G and D.
+# Step 4: dbh = the raw DBH, as recorded (a P cell never has one).
 # ========================================================================
 
 ref_evidence <- function(status, dbh) {
@@ -75,7 +75,7 @@ ref_tree <- function(status, dbh) {
       } else {
         rstatus[s, c] <- life[s, c]
       }
-      if (rstatus[s, c] == "A") out_dbh[s, c] <- dbh[s, c]
+      out_dbh[s, c] <- dbh[s, c]
     }
   }
   list(Rstatus = rstatus, dbh = out_dbh)

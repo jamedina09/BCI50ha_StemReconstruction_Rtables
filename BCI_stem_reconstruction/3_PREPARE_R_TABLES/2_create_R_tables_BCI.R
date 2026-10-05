@@ -22,8 +22,9 @@
 #    7. Assert no D/G is stranded between two A's            (Section 9)
 #    8. Derive tree-level histories; apply tree-aware D/G    (Section 10)
 #    9. Assess biology across all history versions          (Section 11)
-#   10. Data-quality diagnostics; DBH cleaning and audit   (Sections 12–13)
-#   11. Export per-census R tables (species table, Section 15, is commented out)
+#   10. Data-quality diagnostics; status × DBH audit         (Sections 12–13)
+#   11. One location per tree; record dates; export per-census R tables
+#       (Section 14; the species table, Section 15, is commented out)
 # The status and DBH rules live in rstatus_functions.R (same folder), which
 # tests/test_Rstatus.R also uses.
 ################################################################################
@@ -34,7 +35,7 @@
 #   corrected_new_status final stem history after tree-level D/G adjustment
 #   tree_histories       tree-level history aggregated from stem histories
 #   DBHs                 numeric matrix of raw stem DBH measurements by census
-#   DBHs_clean           DBHs without the DBH of P/G/D cells (exported dbh)
+#                        (the exported dbh, unchanged)
 #   Rstatus              exported per-census corrected stem status
 #   DFstatus             raw field status (legacy ForestGEO name), never modified
 ################################################################################
@@ -45,8 +46,9 @@
 #   Evidence of life: a raw "alive" record, or a DBH on a "broken below",
 #                    "missing" or status-less record.
 #   Dead record    : "dead" / "stem dead" (with or without DBH) and "broken
-#                    below" without DBH. A DBH on a dead record is a real
-#                    measurement only if the stem is alive later.
+#                    below" without DBH. A DBH on a dead record is not
+#                    evidence of life (the stem is A there only if it is
+#                    alive later); the DBH itself is kept.
 #   P (prior)      : only before a stem's first record.
 #   A (alive)      : from a stem's first record to its last evidence of life.
 #                    Missed censuses and false deaths in between are A:
@@ -61,8 +63,18 @@
 #   G (dead stem)  : dead stem while its tree is alive at j.
 #   D (dead tree)  : dead stem and no stem of the tree is A at j or later.
 #                    D is absorbing: nothing in the tree lives after.
-#   DBH            : kept on A; removed on P, G and D (list in CHECKS); never
-#                    imputed.
+#   DBH            : exported as recorded on every record, A, G or D (G/D
+#                    cells with a DBH: CHECKS/dbh_on_dead_records.csv); a P
+#                    cell never has one; never imputed.
+#   ExactDate      : every recorded date is kept. A missing date is imputed
+#                    only on A rows, measured rows and a stem's first G/D
+#                    row; P rows and later G/D rows have a date only when one
+#                    was recorded (Section 14).
+#   Location       : one (gx, gy, quadrat) per tree, the same in every census
+#                    and for every stem (Section 14).
+#   stemID         : the reconstructed stem number within its tree (1, 2,
+#                    ...): treeID + stemID identify a stem. Internally the
+#                    script keys stems on "TreeID_ReconstructedStemID".
 #   Legal stem transitions: PP PA PG PD AA AG AD GG GD DD
 #   Legal tree transitions: PP PA PD AA AD DD
 #   Everything else is illegal (e.g. DG, DA, GA, AP).
@@ -2340,9 +2352,9 @@ rm(
 # SECTION 13: STATUS × DBH SUPPORT SUMMARY
 # ========================================================================
 # Audit the final corrected_new_status_matrix before export: verify that
-# no illegal transitions remain and that A/P cells are preserved; remove the
-# DBH of P/G/D cells (exported dbh = DBHs_clean); summarise status codes by
-# whether a DBH measurement exists.
+# no illegal transitions remain and that A/P cells are preserved; list the
+# DBHs recorded on dead (G/D) records; summarise status codes by whether a
+# DBH measurement exists. The exported dbh is the raw DBH (DBHs), unchanged.
 
 bio_check(
   is.matrix(corrected_new_status_matrix) &&
@@ -2384,48 +2396,46 @@ bio_check(
 
 rm(final_pairs, illegal, stranded, AP_in, AP_out)
 
-# ---- DBH cleaning: a DBH is kept only on A cells ---------------------------
-# A DBH can only sit on a P/G/D cell when it was recorded on a "dead" /
-# "stem dead" record of a stem that is never alive later: the stem is truly
-# dead, so the DBH is removed from the exported dbh (rstatus_clean_dbh()) and
-# listed with its raw record in CHECKS/dbh_removed_dead_records.csv (user
-# decision of 2026-10-04). The DBH of a false-death record (stem alive later,
-# so A) is a real measurement and is kept. No DBH is ever imputed.
-dbh_fix <- rstatus_clean_dbh(corrected_new_status_matrix, DBHs)
-DBHs_clean <- dbh_fix$dbh
-rm_idx <- which(dbh_fix$removed, arr.ind = TRUE)
-dbh_removed_dt <- data.table(
-  row = rm_idx[, 1], census = rm_idx[, 2],
-  TreeID = unique_StemID$TreeID[rm_idx[, 1]],
-  StemID = unique_StemID$StemID[rm_idx[, 1]],
-  DBH_removed = DBHs[rm_idx],
-  Rstatus = corrected_new_status_matrix[rm_idx]
+# ---- DBH: exported exactly as recorded --------------------------------------
+# No DBH is removed or imputed (user decision of 2026-10-04, as in the Dryad
+# tables). A DBH sits on a G/D cell only when it was recorded on a "dead" /
+# "stem dead" record of a stem that is never alive later; those records are
+# listed in CHECKS/dbh_on_dead_records.csv. The DBH of a false-death record
+# (stem alive later) sits on an A cell. A P cell has no record, so no DBH.
+dd_idx <- which((corrected_new_status_matrix == "G" | corrected_new_status_matrix == "D") & !is.na(DBHs), arr.ind = TRUE)
+dbh_dead_dt <- data.table(
+  row = dd_idx[, 1], census = dd_idx[, 2],
+  TreeID = unique_StemID$TreeID[dd_idx[, 1]],
+  StemID = unique_StemID$StemID[dd_idx[, 1]],
+  DBH = DBHs[dd_idx],
+  Rstatus = corrected_new_status_matrix[dd_idx]
 )
-dbh_removed_dt[, `:=`(
+dbh_dead_dt[, `:=`(
   raw_status = mapply(function(i, j) ViewFullTable_split[[j]]$Status[i], row, census),
   codes = mapply(function(i, j) ViewFullTable_split[[j]]$ListOfTSM[i], row, census),
   original_status = original_status[row],
   corrected_history = corrected_new_status[row]
 )]
-fwrite(dbh_removed_dt[, -"row"], file.path(CHECK_folder, "dbh_removed_dead_records.csv"))
+fwrite(dbh_dead_dt[, -"row"], file.path(CHECK_folder, "dbh_on_dead_records.csv"))
 dead_dbh_cells <- DT_Status[!is.na(DBH) & Status %in% c("dead", "stem dead"), .(row = match(StemID, unique_StemID$StemID), census)]
 dead_dbh_R <- corrected_new_status_matrix[cbind(dead_dbh_cells$row, dead_dbh_cells$census)]
 cat(sprintf(
-  "🔧 DBH on dead / stem dead records: %d | removed (stem never alive later): %d | kept (false death, stem alive later): %d\n",
+  "🔎 DBH on dead / stem dead records: %d, all kept | on G/D (stem never alive later): %d | on A (false death, stem alive later): %d\n",
   nrow(dead_dbh_cells), sum(dead_dbh_R != "A"), sum(dead_dbh_R == "A")
 ))
-cat("  ✓ Saved: dbh_removed_dead_records.csv\n")
+cat("  ✓ Saved: dbh_on_dead_records.csv\n")
 bio_check(
-  nrow(dbh_removed_dt) == sum(dead_dbh_R != "A") && all(dbh_removed_dt$raw_status %in% c("dead", "stem dead")),
-  "DBH is removed only from dead / stem dead records of stems never alive later",
-  examples = dbh_removed_dt[!raw_status %in% c("dead", "stem dead"), StemID],
-  n_bad = dbh_removed_dt[!raw_status %in% c("dead", "stem dead"), .N]
+  nrow(dbh_dead_dt) == sum(dead_dbh_R != "A") && all(dbh_dead_dt$raw_status %in% c("dead", "stem dead")),
+  "A DBH sits on a G/D cell only on a dead / stem dead record of a stem never alive later",
+  examples = dbh_dead_dt[!raw_status %in% c("dead", "stem dead"), StemID],
+  n_bad = dbh_dead_dt[!raw_status %in% c("dead", "stem dead"), .N]
 )
 bio_check(
-  identical(DBHs_clean[corrected_new_status_matrix == "A"], DBHs[corrected_new_status_matrix == "A"]),
-  "Every raw DBH of an A cell is kept unchanged"
+  !any(corrected_new_status_matrix == "P" & !is.na(DBHs)),
+  "No P cell carries a DBH (P is only before a stem's first record)",
+  n_bad = sum(corrected_new_status_matrix == "P" & !is.na(DBHs))
 )
-rm(dbh_fix, rm_idx, dead_dbh_cells, dead_dbh_R)
+rm(dd_idx, dead_dbh_cells, dead_dbh_R)
 
 # ---- (c) status × DBH × census summary -----------------------------------
 n_cens <- ncol(corrected_new_status_matrix)
@@ -2433,7 +2443,7 @@ n_cens <- ncol(corrected_new_status_matrix)
 # Long-format cell-level table (one row per stem×census).
 cells_dt <- data.table(
   status  = as.vector(corrected_new_status_matrix),
-  has_DBH = !is.na(as.vector(DBHs_clean)), # exported dbh
+  has_DBH = !is.na(as.vector(DBHs)), # exported dbh (raw)
   census  = rep(seq_len(n_cens), each = nrow(corrected_new_status_matrix))
 )
 
@@ -2498,8 +2508,8 @@ writeLines(c(
   "## EXPECTATIONS (red flags if violated)",
   "   - status = 'P' & has_DBH = TRUE   should be 0  (P means not yet recruited)",
   "   - status = 'A' & has_DBH = FALSE  is OK but downstream MUST interpolate DBH",
-  "   - status = 'D' & has_DBH = TRUE   should be 0  (DBH of truly dead stems removed: dbh_removed_dead_records.csv)",
-  "   - status = 'G' & has_DBH = TRUE   should be 0  (DBH of truly dead stems removed: dbh_removed_dead_records.csv)",
+  "   - status = 'D' & has_DBH = TRUE   OK: DBH recorded on a dead record, kept (dbh_on_dead_records.csv)",
+  "   - status = 'G' & has_DBH = TRUE   OK: DBH recorded on a dead record, kept (dbh_on_dead_records.csv)",
   "",
   "## PER-CENSUS (wide pivot)"
 ), con)
@@ -2542,11 +2552,11 @@ writeLines(c(
     if (length(n_A_no_DBH)) n_A_no_DBH else 0L
   ),
   sprintf(
-    "   D with DBH (must be 0)            : %d",
+    "   D with DBH (kept as recorded)     : %d",
     if (length(n_D_with_DBH)) n_D_with_DBH else 0L
   ),
   sprintf(
-    "   G with DBH (must be 0)            : %d",
+    "   G with DBH (kept as recorded)     : %d",
     if (length(n_G_with_DBH)) n_G_with_DBH else 0L
   ),
   sprintf(
@@ -2568,9 +2578,9 @@ cat(sprintf(
 cat("\nStatus × DBH overall summary:\n")
 print(summary_overall)
 bio_check(
-  sum(n_P_with_DBH, n_D_with_DBH, n_G_with_DBH) == 0L,
-  "No P, D or G cell carries a DBH in the exported dbh",
-  n_bad = sum(n_P_with_DBH, n_D_with_DBH, n_G_with_DBH)
+  sum(n_P_with_DBH) == 0L,
+  "No P cell carries a DBH in the exported dbh",
+  n_bad = sum(n_P_with_DBH)
 )
 bio_check(
   sum(n_other) == 0L,
@@ -2587,20 +2597,24 @@ rm(
 # ========================================================================
 # SECTION 14: EXPORT CENSUS TABLES
 # ========================================================================
-# Write Rstatus and the cleaned dbh (Section 13) into each census table,
-# rename and subset it to ForestGEO R-table format, then save each census as
-# both a .Rdata object and a .csv file. DFstatus is exported exactly as the
-# raw Status.
+# Write Rstatus into each census table, assign one location per tree, impute
+# the missing dates that are needed, rename and subset each table to the
+# ForestGEO R-table format, then save each census as both a .Rdata object and
+# a .csv file. dbh and DFstatus are exported exactly as recorded; stemID is
+# the reconstructed stem number within its tree.
 
 # Rows of every census table are in unique_StemID order (checked in
-# Section 3), so the status and cleaned DBH matrices align column by column.
+# Section 3), so the status and DBH matrices align column by column.
 for (census in seq_along(ViewFullTable_split)) {
   bio_check(
     identical(ViewFullTable_split[[census]]$StemID, unique_StemID$StemID),
-    sprintf("Census %d rows are in master stem order before Rstatus and dbh are written", census)
+    sprintf("Census %d rows are in master stem order before Rstatus is written", census)
+  )
+  bio_check(
+    identical(as.numeric(ViewFullTable_split[[census]]$DBH), as.numeric(DBHs[, census])),
+    sprintf("Census %d: exported dbh is the raw DBH, unchanged", census)
   )
   ViewFullTable_split[[census]]$new_status <- corrected_new_status_matrix[, census]
-  ViewFullTable_split[[census]]$DBH <- DBHs_clean[, census]
 }
 
 # ========================================================================
@@ -2732,18 +2746,25 @@ rm(location_fix, loc_check)
 cat("✓ Location assignment complete.\n\n")
 
 # ========================================================================
-# DATES: fill missing ExactDate with the modal field date
+# DATES: keep every recorded ExactDate; impute only where a date is needed
 # ========================================================================
-# The MODE is used (not the median) because it is always a day on which the
-# field crew was actually recording; a median can fall on a day nobody was
-# in the field. Votes come only from dates recorded in the data (never from
-# dates imputed here), and ties go to the earliest tied date so every run
-# gives the same answer. Sources, in order, within each census:
+# ExactDate is the field date of a record. Every recorded date is kept (none
+# is removed or replaced). A missing date is imputed only on rows that need
+# one (user decision of 2026-10-04):
+#   - A rows (alive; e.g. a missed measurement, whose DBH stage 4
+#     interpolates in time),
+#   - rows with a DBH,
+#   - the first G/D row of a stem (the census in which it is found dead).
+# P rows and later G/D rows stay NA unless the data recorded a date; stage-4
+# scripts fill the dates they need themselves.
+# The imputed date is the MODE (not the median) because it is always a day on
+# which the field crew was actually recording; a median can fall on a day
+# nobody was in the field. Votes come only from dates recorded in the data
+# (never from dates imputed here), and ties go to the earliest tied date so
+# every run gives the same answer. Sources, in order, within each census:
 #   (1) the same tree    : stems of one tree are measured together
 #   (2) the same quadrat : crews census a quadrat within a few days
 #   (3) the whole census : last resort (e.g. trees without a quadrat)
-# Every row keeps a date, including P rows: downstream code (stage 4) takes
-# the modal year of ExactDate over all rows of a census.
 # ========================================================================
 
 # Modal date of a vector; ties → earliest date.
@@ -2765,37 +2786,39 @@ date_mode_by <- function(dt, by_col, date_col) {
 }
 
 impute_tree_dates <- function(split_list,
+                              need_list,
                               tree_col = "TreeID",
                               date_col = "ExactDate",
                               quadrat_col = "QuadratName") {
   lapply(seq_along(split_list), function(i) {
     dt <- copy(split_list[[i]])
     dates <- dt[[date_col]]
-    n_na_before <- sum(is.na(dates))
+    n_recorded <- sum(!is.na(dates))
+    n_need <- sum(is.na(dates) & need_list[[i]])
     # Only dates recorded in the data vote.
     recorded <- dt[!is.na(dates)]
 
     # (1) same tree, same census
     ref_tree <- date_mode_by(recorded, tree_col, date_col)
-    need <- is.na(dates)
+    need <- is.na(dates) & need_list[[i]]
     dates[need] <- ref_tree[[date_col]][match(dt[[tree_col]][need], ref_tree[[tree_col]])]
     n_tree <- sum(need & !is.na(dates))
 
     # (2) same quadrat, same census
     ref_quad <- date_mode_by(recorded[!is.na(recorded[[quadrat_col]])], quadrat_col, date_col)
-    need <- is.na(dates)
+    need <- is.na(dates) & need_list[[i]]
     dates[need] <- ref_quad[[date_col]][match(dt[[quadrat_col]][need], ref_quad[[quadrat_col]])]
     n_quad <- sum(need & !is.na(dates))
 
     # (3) whole census
-    need <- is.na(dates)
+    need <- is.na(dates) & need_list[[i]]
     dates[need] <- date_mode(recorded[[date_col]])
     n_census <- sum(need & !is.na(dates))
 
     set(dt, j = date_col, value = dates)
     cat(sprintf(
-      "  [impute_tree_dates] census %d: %d missing → %d from tree, %d from quadrat, %d from census mode; %d remain NA\n",
-      i, n_na_before, n_tree, n_quad, n_census, sum(is.na(dates))
+      "  [impute_tree_dates] census %d: %d recorded | %d needed -> %d from tree, %d from quadrat, %d from census mode | %d left NA (P / later G/D rows without a record)\n",
+      i, n_recorded, n_need, n_tree, n_quad, n_census, sum(is.na(dates))
     ))
     dt
   })
@@ -2807,20 +2830,48 @@ census_date_window <- rbindlist(lapply(seq_along(ViewFullTable_split), function(
   data.table(census = i, lo = min(d, na.rm = TRUE), hi = max(d, na.rm = TRUE))
 }))
 
-cat("📅 Imputing missing ExactDate (modal field date)...\n")
-ViewFullTable_split <- impute_tree_dates(ViewFullTable_split)
+# Rows that need a date: A rows, measured rows and the first G/D row of each
+# stem (G and D are absorbing, so that is a dead cell after a non-dead one).
+is_dead <- corrected_new_status_matrix == "G" | corrected_new_status_matrix == "D"
+first_dead <- is_dead & cbind(TRUE, !is_dead[, -ncol(is_dead), drop = FALSE])
+need_date <- corrected_new_status_matrix == "A" | !is.na(DBHs) | first_dead
+recorded_dates <- lapply(ViewFullTable_split, function(dt) dt$ExactDate)
+
+cat("📅 Imputing the missing ExactDate of A, measured and first G/D rows (modal field date)...\n")
+ViewFullTable_split <- impute_tree_dates(
+  ViewFullTable_split,
+  lapply(seq_len(ncol(need_date)), function(i) need_date[, i])
+)
 
 dates_long <- rbindlist(lapply(seq_along(ViewFullTable_split), function(i) {
-  ViewFullTable_split[[i]][, .(StemID, census = i, ExactDate)]
+  ViewFullTable_split[[i]][, .(StemID, census = i, ExactDate, recorded = recorded_dates[[i]], need = need_date[, i])]
 }))
-na_dates <- dates_long[is.na(ExactDate)]
+changed <- dates_long[!is.na(recorded) & (is.na(ExactDate) | ExactDate != recorded)]
+bio_check(
+  nrow(changed) == 0L,
+  "Every recorded date is kept unchanged (no date is removed or replaced)",
+  examples = changed$StemID,
+  n_bad = nrow(changed)
+)
+na_dates <- dates_long[need == TRUE & is.na(ExactDate)]
 bio_check(
   nrow(na_dates) == 0L,
-  "Every row has an ExactDate after imputation",
+  "Every A row, measured row and first G/D row has an ExactDate",
   examples = na_dates$StemID,
   n_bad = nrow(na_dates)
 )
-dates_long <- census_date_window[dates_long, on = "census"]
+extra_dates <- dates_long[need == FALSE & is.na(recorded) & !is.na(ExactDate)]
+bio_check(
+  nrow(extra_dates) == 0L,
+  "P rows and later G/D rows have a date only when it was recorded",
+  examples = extra_dates$StemID,
+  n_bad = nrow(extra_dates)
+)
+cat(sprintf(
+  "📅 ExactDate: %d recorded | %d imputed (A, measured or first G/D rows) | %d NA (P and later G/D rows without a record)\n",
+  dates_long[!is.na(recorded), .N], dates_long[is.na(recorded) & !is.na(ExactDate), .N], dates_long[is.na(ExactDate), .N]
+))
+dates_long <- census_date_window[dates_long[!is.na(ExactDate)], on = "census"]
 out_window <- dates_long[ExactDate < lo | ExactDate > hi]
 bio_check(
   nrow(out_window) == 0L,
@@ -2833,13 +2884,16 @@ dates_long[, prev_date := shift(ExactDate), by = StemID]
 non_monotonic <- dates_long[!is.na(prev_date) & ExactDate <= prev_date]
 bio_check(
   nrow(non_monotonic) == 0L,
-  "Dates strictly increase from census to census for every stem",
+  "Dates strictly increase from census to census for every stem (dated rows)",
   examples = non_monotonic$StemID,
   n_bad = nrow(non_monotonic)
 )
-rm(dates_long, na_dates, out_window, non_monotonic, census_date_window)
+rm(
+  dates_long, changed, na_dates, extra_dates, out_window, non_monotonic, census_date_window,
+  is_dead, first_dead, need_date, recorded_dates
+)
 
-cat("✓ Dates imputation complete.\n\n")
+cat("✓ Dates complete.\n\n")
 
 cat("💾 Exporting census tables to .Rdata files...\n")
 
@@ -2847,8 +2901,8 @@ cat("💾 Exporting census tables to .Rdata files...\n")
 # Loop through each census and export in standardized format
 check_data <- rbindlist(lapply(ViewFullTable_split, function(dt) dt[, ..ViewFullTable_columns_to_keep]))
 setorder(check_data, TreeID, StemID, CensusID)
-# check unique date per TreeID
-check_dates <- unique(check_data[, .(TreeID, ExactDate, CensusID)])
+# check unique date per TreeID (dated rows)
+check_dates <- unique(check_data[!is.na(ExactDate), .(TreeID, ExactDate, CensusID)])
 
 # get nunique exactdate per treeid and census
 check_dates[, c("n_dates") :=
@@ -2895,6 +2949,25 @@ for (census in seq_along(ViewFullTable_split)) {
     examples = unique(X$Rstatus[!X$Rstatus %in% status_codes])
   )
   export_stem_order[[census]] <- X$stemID
+  # stemID: the reconstructed stem number within its tree (1, 2, ...). The
+  # internal key is "TreeID_ReconstructedStemID"; its second part is
+  # exported, so treeID + stemID identify a stem. A stem without a DP
+  # identity ("TreeID_NA": records with no status and no DBH) gets NA.
+  rs_part <- substring(X$stemID, nchar(X$treeID) + 2L)
+  bad_key <- paste(X$treeID, rs_part, sep = "_") != X$stemID | !(rs_part == "NA" | grepl("^[0-9]+$", rs_part))
+  bio_check(
+    !any(bad_key),
+    sprintf("Census %d: every internal stem key is TreeID_<reconstructed stem number>", census),
+    examples = X$stemID[bad_key],
+    n_bad = sum(bad_key)
+  )
+  X[, stemID := as.integer(fifelse(rs_part == "NA", NA_character_, rs_part))]
+  bio_check(
+    !anyDuplicated(X[, .(treeID, stemID)]),
+    sprintf("Census %d: treeID + stemID identify exactly one row", census),
+    n_bad = sum(duplicated(X[, .(treeID, stemID)]))
+  )
+  rm(rs_part, bad_key)
   # Convert to data.frame for compatibility with legacy R code
   # Many ForestGEO functions expect data.frame, not data.table
   fwrite(X, file = file.path(OUTPUT_folder, sprintf("%s.stem%d.csv", site, census)))
