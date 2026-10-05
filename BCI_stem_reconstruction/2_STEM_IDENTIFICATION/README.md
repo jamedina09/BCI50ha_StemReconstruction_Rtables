@@ -24,11 +24,21 @@ Merges completed chunk outputs into final files.
 - Converts them to temporary Parquet parts and merges them.
 - Writes `merged_output.parquet` and `merged_output.rds` to
   `BCI_stem_reconstruction/DATA/<run_code>/`.
-- Rejoins stems that the engine split only because the point of measurement
-  of the trunk moved (`apply_measurement_rejoin()`, `dp_global/R/measurement_rejoin.R`;
-  `ReconstructionMethod = "measurement_rejoin"`) and writes the joins to
-  `DATA/PROCESSED/measurement_rejoin_audit.csv` and the observation pairs for the
-  posterior samples to `DATA/PROCESSED/measurement_rejoin_pairs.csv`.
+- Joins stems that the engine split only because a diameter change fell
+  outside its hard growth bounds: the point of measurement of the trunk moved
+  (e.g. 1982 diameters taken around buttresses) or one diameter was recorded
+  wrongly. An ended stem is joined to the stem of the same tree that starts in
+  the next census when both measurements share the database StemID, or when
+  the new stem would be an impossible recruit (above the recruit limit) with a
+  single candidate (`apply_measurement_rejoin()`; rules in
+  `dp_global/R/measurement_rejoin.R` and `dp_global/README.md`;
+  `ReconstructionMethod = "measurement_rejoin"`). The joined stem keeps one of
+  its two IDs, so the tree's IDs skip one number per join.
+- Writes the final reconstructed stem table
+  `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds` (the
+  input of stage 3), the joins to `DATA/PROCESSED/measurement_rejoin_audit.csv`
+  and the observation pairs for the posterior samples to
+  `DATA/PROCESSED/measurement_rejoin_pairs.csv`.
 
 ## Notes
 
@@ -45,5 +55,8 @@ DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
         └──▶ BASE_OUT_DIR/<run_timestamp>/  (chunk Feather outputs)
 
 2_merge_chunks_to_datatable.R
-        └──▶ BCI_stem_reconstruction/DATA/<run_code>/merged_output.{parquet,rds}
+        ├──▶ BCI_stem_reconstruction/DATA/<run_code>/merged_output.{parquet,rds}
+        └──▶ BCI_stem_reconstruction/DATA/PROCESSED/
+               complete_dataset_final_with_reconstructed_stemids.rds
+               measurement_rejoin_audit.csv, measurement_rejoin_pairs.csv
 ```

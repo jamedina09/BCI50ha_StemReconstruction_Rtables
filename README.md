@@ -144,30 +144,32 @@ Scripts (run in order): `0_prepare_species_tables.R` → `1_prepare_viewfulltabl
 Runs `dp_global` on the cleaned ViewFullTable in parallel chunks and merges outputs.
 
 - `1_main_cpp_chunk_bci.R` — chunked DP driver for BCI data; writes feather chunk outputs with resume support.
-- `2_merge_chunks_to_datatable.R` — merges chunk feathers into `merged_output.parquet` and `.rds`.
+- `2_merge_chunks_to_datatable.R` — merges chunk feathers into `merged_output.parquet` and `.rds`, joins trunks that the engine split only because their point of measurement moved or one diameter was recorded wrongly (`apply_measurement_rejoin()`, `dp_global/R/measurement_rejoin.R`), and writes the final table `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`.
 
 See `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_chunk_bci.md` for run and resume commands.
 
 ### Stage 3 — Prepare R Tables (`3_PREPARE_R_TABLES/`)
 
-Consolidates posterior path files and builds ForestGEO-format census and species R tables.
+Consolidates posterior path files and builds ForestGEO-format census R tables.
 
-- `1_prepare_posteriors_BCI.R` — aggregates `_paths.feather` files into `posterior_sampled_paths.rds`.
-- `2_create_R_tables_BCI.R` — resolves encounter histories, applies broken-below rules, imputes missing data (dates + coordinates), and exports `<site>.stemN.Rdata` and `<site>.spptable.rdata`.
+- `1_prepare_posteriors_BCI.R` — aggregates `_paths.feather` files into `posterior_sampled_paths.rds`, applying the merge step's joins to every sample.
+- `2_create_R_tables_BCI.R` — resolves encounter histories into the corrected status (`Rstatus`), gives every tree one location, fills the `date` column (days since 1960-01-01; `ExactDate`, `dbh` and `DFstatus` stay exactly as recorded), and exports `<site>.stemN.Rdata`. The species table is not written here (see `BCI_stem_reconstruction/3_PREPARE_R_TABLES/README.md`).
 
 ### Stage 4 — Biomass Stocks and Fluxes (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)
 
-Two independent analysis scripts; all outputs are written to `outputs/`.
+Three independent analysis scripts; `biomass_stocks_fluxes.R` and `basal_area_uncertainty.R` write their outputs to `outputs/`, and `general_plot_information.R` prints its summaries to the console.
 
 **`biomass_stocks_fluxes.R`** — estimates AGB stocks, productivity, mortality, and net AGB change across nine BCI censuses using Chave et al. 2014 allometry with Martinez-Cano et al. 2019 height model (trees) and Goodman et al. 2013 (palms). Applies optional strangler-fig removal, palm DBH correction, taper correction, DBH interpolation, 1985 rounding-bias correction, size-class stratification, and Kohyama et al. 2019 productivity/mortality bias correction. Outputs: `outputs/plot_agb_dynamics.png`, `outputs/plot_agb_by_size.png`.
 
 **`basal_area_uncertainty.R`** — propagates stem-identity uncertainty from `dp_global` posterior paths into basal area stocks and fluxes via Monte Carlo realizations. Reports MAP estimates and empirical 95 % CIs; uncertainty is non-zero only for pre-anchor census intervals. Outputs: `outputs/fig1_BA_stock.pdf`, `outputs/fig2_BA_fluxes.pdf`, `outputs/fig3_BA_trajectories.pdf`, plus MAP and MC feather tables.
 
+**`general_plot_information.R`** — descriptive summaries of forest structure and composition: individuals, stems, basal area, species, genera, families, lifeforms and diversity in the most recent census, bootstrapped per-hectare estimates, temporal trends and changes between censuses, and the DBH size-class distribution.
+
 ---
 
 ## Engine Output Reference
 
-After the engine and all post-processing helpers run, `ReconstructedStemID` values are renumbered sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears (ties broken by largest DBH, then original ID).
+After the engine and all post-processing helpers run, `ReconstructedStemID` values are renumbered sequentially from 1 to N within each tag, ordered by the earliest census in which each stem appears (ties broken by largest DBH, then original ID). The BCI merge step's measurement rejoin (`apply_measurement_rejoin()`) runs after this renumbering: a joined stem keeps one of its two IDs, so a tree it changes skips one number per join.
 
 ---
 
@@ -183,4 +185,4 @@ After the engine and all post-processing helpers run, `ReconstructedStemID` valu
 | `BCI_stem_reconstruction/1_DATA_PREPARATION/README.md` | Build species tables and cleaned ViewFullTable from ForestGEO exports |
 | `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/README.md` | Chunked BCI DP runner and chunk merger |
 | `BCI_stem_reconstruction/3_PREPARE_R_TABLES/README.md` | Consolidate posteriors and build ForestGEO-format R tables |
-| `BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/README.md` | AGB stocks/fluxes and basal-area uncertainty for the BCI 50-ha plot |
+| `BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/README.md` | Plot summaries, AGB stocks/fluxes and basal-area uncertainty for the BCI 50-ha plot |
