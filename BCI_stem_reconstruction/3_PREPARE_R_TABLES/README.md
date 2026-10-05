@@ -4,18 +4,25 @@ Stage 3 of the BCI stem-reconstruction pipeline. This stage consumes the
 reconstructed stem identities from `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/` and generates the
 ForestGEO-format census tables plus QC exports used for downstream analysis.
 
-## Scripts (run in order)
+## Scripts
 
 - `1_prepare_posteriors_BCI.R` — Consolidates `_paths.feather` posterior files
   from a completed stage 2 run into `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`,
   applying to every sample the measurement-discontinuity joins of the merge
   step (`DATA/PROCESSED/measurement_rejoin_pairs.csv`).
-- `2_create_R_tables_BCI.R` — Builds the final census tables and species table.
+- `2_create_R_tables_BCI.R` — Builds the final census tables from
+  `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`.
   It assigns each stem a corrected status (`Rstatus`) in every census,
-  gives every tree one location, imputes the dates that are needed, and
+  gives every tree one location, fills the `date` column, and
   exports ForestGEO-format `.Rdata` (and supporting `.csv`) tables.
 - `rstatus_functions.R` — The `Rstatus` and `dbh` rules as small functions,
   sourced by `2_create_R_tables_BCI.R` and by the tests.
+
+Both scripts read the output of the stage-2 merge
+(`2_STEM_IDENTIFICATION/2_merge_chunks_to_datatable.R`), so run it first. They
+do not depend on each other: `2_create_R_tables_BCI.R` does not read the
+posterior file, which is used by
+`4_EXAMPLE_STRUCTURE_ASSESSMENT/basal_area_uncertainty.R`.
 
 ## Rstatus and dbh rules
 
@@ -46,18 +53,38 @@ ForestGEO-format census tables plus QC exports used for downstream analysis.
 
 ## Other exported columns
 
-- `stemID`: the reconstructed stem number within its tree (1, 2, ...), so
-  `treeID` + `stemID` identify a stem. Internally the script keys stems on
+- `stemID`: the reconstructed stem number within its tree, so `treeID` +
+  `stemID` identify a stem. The engine numbers the stems of a tree 1, 2, ...
+  in order of first appearance; in a tree changed by the measurement rejoin of
+  the stage-2 merge, the joined stem keeps one of its two numbers, so the
+  tree skips one number per join. Internally the script keys stems on
   `TreeID_ReconstructedStemID`; a stem without a DP identity (records with no
   status and no DBH) gets `stemID` NA.
-- `ExactDate`: every recorded date is kept. A missing date is imputed (modal
-  field date of the tree, else the quadrat, else the census) only on `A` rows,
-  measured rows and the first `G`/`D` row of a stem; `P` rows and later `G`/`D`
-  rows have a date only when one was recorded. Stage-4 scripts fill the dates
-  they need themselves.
+- `ExactDate`: the field date exactly as recorded (`NA` where there is no
+  record); never imputed, like `dbh` and `DFstatus`.
+- `date`: the ForestGEO R-table date, in days since 1960-01-01 (the unit of
+  the ForestGEO database's `Date` field and of Condit's tables;
+  `as.Date(date, origin = "1960-01-01")` gives the calendar date). Every row
+  has one:
+  1. the recorded date (`ExactDate`) where there is one;
+  2. otherwise the most common recorded date of the same tree in that census;
+  3. if the tree has none, the most common recorded date of the same quadrat
+     in that census;
+  4. if the quadrat has none, the most common recorded date of the census.
+
+  Only recorded dates vote, and ties go to the earliest date. The most common
+  date (the mode) is used rather than a mean or median because it is always a
+  day on which the field crew was recording. Condit's Dryad tables fill `date`
+  with the mean recorded date of the quadrat instead: the two agree within
+  about a day in 1985–2015, but in 1982 the records of one quadrat span months,
+  so the tree's own date is closer. Census intervals (growth, recruitment,
+  mortality) are computed from `date`.
 - `gx`, `gy`, `quadrat`: one location per tree, the same for every stem and
-  census: the position most censuses agree on (one vote per census; ties go to
-  the most recent census), with the quadrat derived from it.
+  census. Each census casts one vote, the most common (`PX`, `PY`) pair among
+  the tree's stems in that census (ties go to the smallest x, then y); the
+  tree takes the pair with the most votes (ties go to the most recent census).
+  `quadrat` is derived from that pair (20 m quadrats named `XXYY`); a tree
+  without coordinates keeps `NA` coordinates and its most common raw quadrat.
 
 ## Tests
 
@@ -65,27 +92,30 @@ ForestGEO-format census tables plus QC exports used for downstream analysis.
 fixtures, every combination of raw states for small trees against a simple
 reference implementation (`tests/reference_rstatus.R`), the validity of every
 `Rstatus` sequence (`tests/rstatus_validity.R`), and the exported R tables
-cell by cell (`Rstatus`, `dbh`, `DFstatus`, `ExactDate`, location and
+cell by cell (`Rstatus`, `dbh`, `DFstatus`, `ExactDate`, `date`, location and
 `stemID`). Run from the project root:
 
 ```r
 testthat::test_file("BCI_stem_reconstruction/3_PREPARE_R_TABLES/tests/test_Rstatus.R")
 ```
 
-`RSTATUS_TEST_LEVEL=quick` runs the smaller enumerations only (about a
-minute; `full`, the default, takes about 15 minutes). `RSTATUS_RTABLES_DIR`
+`RSTATUS_TEST_LEVEL=quick` runs the smaller enumerations only (a few minutes
+with the real-data tests; `full`, the default, takes about 10 minutes on 16
+cores). `RSTATUS_RTABLES_DIR`
 and `RSTATUS_STAGE2_FILE` point the real-data tests at other tables (default:
-`DATA/RTABLES` and `DATA/PROCESSED`).
+`DATA/RTABLES` and `DATA/PROCESSED`); if the tables or the stage-2 file are
+missing, the real-data tests are skipped. `RSTATUS_CORES` sets the cores of
+the reference implementation (default: all but two).
 
 ## Outputs
 
-- `BCI_stem_reconstruction/DATA/RTABLES/<site>.stemN.Rdata`
-- `BCI_stem_reconstruction/DATA/RTABLES/<site>.spptable.rdata`
+- `BCI_stem_reconstruction/DATA/RTABLES/<site>.stemN.Rdata` (and `<site>.stemN.csv`)
 - `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`
 - QC exports in `BCI_stem_reconstruction/DATA/CHECKS/`, among them
   `dbh_on_dead_records.csv`, `location_conflicts.csv`,
   `subset_stems_never_alive.csv` and `subset_stems_never_recorded.csv`
 
-## Notes
-
-- `1_prepare_posteriors_BCI.R` must be run before `2_create_R_tables_BCI.R`.
+The species table is not written by this stage (Section 15 of
+`2_create_R_tables_BCI.R` is commented out). The stage-4 scripts read
+`DATA/RTABLES/bci.spptable.rdata`, so copy the ForestGEO-format table there
+(for example `data_paper_and_repo_publication/RTABLES/bci.spptable.rdata`).

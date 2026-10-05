@@ -11,11 +11,11 @@
 #   3. Rstatus outputs: validity of every P/A/G/D sequence, soundness and
 #      reachability
 #   4. Real data: the exported R tables equal the rules and satisfy every
-#      invariant (Rstatus, dbh, DFstatus, ExactDate, location, stemID);
+#      invariant (Rstatus, dbh, DFstatus, ExactDate, date, location, stemID);
 #      offending stem / tree IDs are printed
 #
 # Options (environment variables):
-#   RSTATUS_TEST_LEVEL   "full" (default; about 15 min) or "quick" (about 1 min)
+#   RSTATUS_TEST_LEVEL   "full" (default; about 10 min on 16 cores) or "quick" (a few min)
 #   RSTATUS_RTABLES_DIR  folder with bci.stem1..9.Rdata (default DATA/RTABLES)
 #   RSTATUS_STAGE2_FILE  stage-2 table the R tables were built from (default
 #                        DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds)
@@ -383,7 +383,7 @@ if (real_ok) {
     load(files[i], envir = e)
     as.data.table(get(ls(e)[1], envir = e))[, .(
       StemID = paste(treeID, stemID, sep = "_"), stemID, TreeID = treeID, census = i, Rstatus, dbh, DFstatus,
-      ExactDate, gx, gy, quadrat, order = .I
+      ExactDate, date, gx, gy, quadrat, order = .I
     )]
   }))
 }
@@ -474,23 +474,23 @@ test_that("real data: stemID is the reconstructed stem number within its tree", 
   ))
 })
 
-test_that("real data: ExactDate keeps every recorded date and is imputed only on A, measured and first G/D rows", {
+test_that("real data: ExactDate is exactly the recorded date; date fills every row and equals it where recorded", {
   skip_if_not(real_ok, "no R tables / stage-2 file found")
-  y <- rt[, .(StemID, census, Rstatus, dbh, ExactDate)][cells[, .(StemID, census, raw_date = ExactDate)], on = .(StemID, census)]
+  y <- rt[, .(StemID, census, ExactDate, date)][cells[, .(StemID, census, raw_date = ExactDate)], on = .(StemID, census)]
+  rec_days <- as.numeric(y$raw_date - as.Date("1960-01-01"))
+  b1 <- y[!same_num(as.numeric(ExactDate), as.numeric(raw_date)), unique(StemID)]
+  b2 <- y[is.na(date), unique(StemID)]
+  b3 <- y[!is.na(raw_date) & date != rec_days, unique(StemID)]
   setorder(y, StemID, census)
-  y[, dead := Rstatus %in% c("G", "D")]
-  y[, first_dead := dead & !shift(dead, fill = FALSE), by = StemID]
-  y[, need := Rstatus == "A" | !is.na(dbh) | first_dead]
-  b1 <- y[!is.na(raw_date) & !same_num(as.numeric(ExactDate), as.numeric(raw_date)), unique(StemID)]
-  b2 <- y[need & is.na(ExactDate), unique(StemID)]
-  b3 <- y[!need & is.na(raw_date) & !is.na(ExactDate), unique(StemID)]
-  expect(length(b1) == 0L, sprintf("a recorded date was changed or removed for %d stems, e.g. %s", length(b1), show_ids(b1)))
-  expect(length(b2) == 0L, sprintf("an A, measured or first G/D row has no date for %d stems, e.g. %s", length(b2), show_ids(b2)))
-  expect(length(b3) == 0L, sprintf("a P or later G/D row got an imputed date for %d stems, e.g. %s", length(b3), show_ids(b3)))
+  b4 <- y[, .(ok = all(diff(date) > 0)), by = StemID][ok == FALSE, StemID]
+  expect(length(b1) == 0L, sprintf("ExactDate differs from the recorded date for %d stems, e.g. %s", length(b1), show_ids(b1)))
+  expect(length(b2) == 0L, sprintf("a row has no date for %d stems, e.g. %s", length(b2), show_ids(b2)))
+  expect(length(b3) == 0L, sprintf("date differs from the recorded date (days since 1960-01-01) for %d stems, e.g. %s", length(b3), show_ids(b3)))
+  expect(length(b4) == 0L, sprintf("date does not increase from census to census for %d stems, e.g. %s", length(b4), show_ids(b4)))
   cat(sprintf(
-    "  ExactDate: recorded %s | imputed %s (A, measured or first G/D rows) | NA %s (P and later G/D rows without a record)\n",
-    format(y[!is.na(raw_date), .N], big.mark = ","), format(y[is.na(raw_date) & !is.na(ExactDate), .N], big.mark = ","),
-    format(y[is.na(ExactDate), .N], big.mark = ",")
+    "  ExactDate: recorded %s, NA %s (exported as recorded) | date: every row (%s filled)\n",
+    format(y[!is.na(raw_date), .N], big.mark = ","), format(y[is.na(raw_date), .N], big.mark = ","),
+    format(y[is.na(raw_date), .N], big.mark = ",")
   ))
 })
 
