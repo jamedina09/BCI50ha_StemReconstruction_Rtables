@@ -262,6 +262,46 @@ rec <- rec[!is.na(quadrat)] # remove stems with no quadrat assignment
 rm(census_list, bci_nums)
 invisible(gc())
 
+# stemID is the stem number within its tree (1, 2, ...): treeID + stemID
+# identify a stem.
+
+# Stage 3 exports every DBH as recorded, so a dead (G/D) record can carry a
+# DBH. It is not a living stem: summaries use alive (A) rows only, so that
+# DBH is ignored here.
+n_dead_dbh <- rec[Rstatus != "A" & !is.na(dbh), .N]
+rec[Rstatus != "A" & !is.na(dbh), dbh := NA]
+message(sprintf("%d DBH values recorded on dead (G/D) records are not used.", n_dead_dbh))
+rm(n_dead_dbh)
+
+# Stage 3 dates every alive (A) row, measured row and first G/D row; P rows
+# and later G/D rows keep NA unless a date was recorded. Those get the modal
+# field date of their tree in that census, else of their quadrat, else of the
+# census (the rule stage 3 applied to every row before), so census years are
+# computed as before. Same function in basal_area_uncertainty.R and
+# biomass_stocks_fluxes.R.
+date_mode_by <- function(dt, by_cols) {
+    cnt <- dt[!is.na(ExactDate), .N, by = c(by_cols, "ExactDate")]
+    setorderv(cnt, c(by_cols, "N", "ExactDate"), c(rep(1L, length(by_cols)), -1L, 1L))
+    cnt[cnt[, .I[1L], by = by_cols]$V1, c(by_cols, "ExactDate"), with = FALSE]
+}
+fill_missing_dates <- function(dt) {
+    m_tree <- date_mode_by(dt, c("treeID", "CensusID"))
+    m_quad <- date_mode_by(dt[!is.na(quadrat)], c("quadrat", "CensusID"))
+    m_cens <- date_mode_by(dt, "CensusID")
+    dt[m_tree, on = .(treeID, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+    dt[m_quad, on = .(quadrat, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+    dt[m_cens, on = .(CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+    invisible(dt)
+}
+n_undated <- rec[is.na(ExactDate), .N]
+fill_missing_dates(rec)
+bio_check(
+    rec[, !anyNA(ExactDate)],
+    sprintf("Every stem-census row has an ExactDate (%d P / later G/D rows dated from tree, quadrat or census)", n_undated),
+    n_bad = rec[is.na(ExactDate), .N]
+)
+rm(n_undated)
+
 # ---- Species / taxonomy table ---------------------------------------
 load(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.rdata"))
 bci.spptable <- as.data.table(bci.spptable)
@@ -342,9 +382,9 @@ message(sprintf(
 # biomass_stocks_fluxes.R. Only stems never measured have no diameter (basal
 # area 0); they are still counted as alive stems / trees.
 rec[, dbh_filled := FALSE]
-need_ids <- rec[Rstatus == "A" & is.na(dbh), unique(stemID)]
-if (length(need_ids) > 0L) {
-    fill <- rec[stemID %in% need_ids,
+need_ids <- unique(rec[Rstatus == "A" & is.na(dbh), .(treeID, stemID)])
+if (nrow(need_ids) > 0L) {
+    fill <- rec[need_ids, on = .(treeID, stemID), nomatch = 0L][,
         {
             t_num <- as.numeric(ExactDate)
             meas <- !is.na(dbh)
@@ -355,9 +395,9 @@ if (length(need_ids) > 0L) {
             }
             .(CensusID, dbh_new = out, filled = target & !is.na(out))
         },
-        by = stemID
+        by = .(treeID, stemID)
     ]
-    rec[fill, on = .(stemID, CensusID), `:=`(dbh = i.dbh_new, dbh_filled = i.filled)]
+    rec[fill, on = .(treeID, stemID, CensusID), `:=`(dbh = i.dbh_new, dbh_filled = i.filled)]
     rm(fill)
 }
 message(sprintf(

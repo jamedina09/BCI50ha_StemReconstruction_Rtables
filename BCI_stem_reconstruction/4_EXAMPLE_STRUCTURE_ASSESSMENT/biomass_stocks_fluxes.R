@@ -136,6 +136,15 @@ rm(census_list, bci_stem_nums)
 # CensusID as integer — essential for ordering and arithmetic (e.g. CensusID - 1L)
 df_stem[, CensusID := as.integer(CensusID)]
 
+# Stage 3 exports every DBH as recorded, so a dead (G/D) record can carry a
+# DBH. It is not a living stem: stocks and fluxes use alive (A) rows only, so
+# that DBH is ignored here (it would otherwise enter growth and strangler
+# selection).
+n_dead_dbh <- df_stem[Rstatus != "A" & !is.na(dbh), .N]
+df_stem[Rstatus != "A" & !is.na(dbh), dbh := NA]
+message(sprintf("[DBH] %d DBH values recorded on dead (G/D) records are not used.", n_dead_dbh))
+rm(n_dead_dbh)
+
 # ============================================================
 # Section 3 — Merge species taxonomy and wood density
 # ============================================================
@@ -198,13 +207,12 @@ large_strangler_figs <- df_stem[
 ]
 
 if (remove_strangler_figs) {
-  df_stem <- df_stem[
-    !treeID %in% large_strangler_figs$treeID &
-      !stemID %in% large_strangler_figs$stemID
-  ]
+  # stemID is the stem number within its tree (treeID + stemID identify a
+  # stem): every stem of an affected tree is removed with the tree.
+  df_stem <- df_stem[!treeID %in% large_strangler_figs$treeID]
   message(sprintf(
     "[STRANGLER] Removed %d trees / %d stems.",
-    uniqueN(large_strangler_figs$treeID), uniqueN(large_strangler_figs$stemID)
+    uniqueN(large_strangler_figs$treeID), uniqueN(large_strangler_figs[, .(treeID, stemID)])
   ))
 }
 rm(large_strangler_figs)
@@ -367,7 +375,8 @@ interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_int
   invisible(dt)
 }
 
-# Linear interpolation uses the measurement dates, set for every row in stage 3.
+# Linear interpolation uses the measurement dates, set in stage 3 for every
+# alive and measured row.
 bio_check(
   df_stem[Rstatus == "A", !anyNA(ExactDate)],
   "Every alive stem-census row has an ExactDate (needed to interpolate DBH in time)",
@@ -395,20 +404,20 @@ rm(n_to_fill, n_filled, n_palm_median_fill)
 
 # Every alive row of a stem that was ever measured now has a DBH: an alive
 # stem stays in the stock until it is dead.
-measured_stems <- df_stem[!is.na(dbh_raw), unique(stemID)]
-no_dbh <- df_stem[Rstatus == "A" & is.na(dbh_cm) & stemID %in% measured_stems]
+measured_stems <- unique(df_stem[!is.na(dbh_raw), .(treeID, stemID)])
+no_dbh <- df_stem[Rstatus == "A" & is.na(dbh_cm)][measured_stems, on = .(treeID, stemID), nomatch = 0L]
 bio_check(
   nrow(no_dbh) == 0L,
   "Every alive (A) row of a measured stem has a DBH (alive stems stay in the stock)",
-  examples = no_dbh$stemID, n_bad = nrow(no_dbh)
+  examples = no_dbh[, paste(treeID, stemID, sep = "_")], n_bad = nrow(no_dbh)
 )
 rm(measured_stems, no_dbh)
 
 # Diagnostic: stems that are alive but still have NA dbh_cm after interpolation.
 # These were never measured.
-inc <- unique(df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_cm)]$stemID)
-if (length(inc) > 0L) {
-  message(sprintf("[INTERP] %d stems remain with NA dbh_cm after interpolation.", length(inc)))
+inc <- unique(df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_cm), .(treeID, stemID)])
+if (nrow(inc) > 0L) {
+  message(sprintf("[INTERP] %d stems remain with NA dbh_cm after interpolation.", nrow(inc)))
 }
 
 # ============================================================
@@ -498,25 +507,26 @@ df_stem[, agb_t := agb_bci(
 # The function is applied in Section 12, right after lag-difference growth and
 # before outlier detection. It returns the number of stems corrected.
 correct_1985_small_stem_growth <- function(dt) {
-  small_1985 <- dt[
+  # a stem is treeID + stemID (stemID is numbered within each tree)
+  small_1985 <- unique(dt[
     CensusID == 2L & Rstatus == "A" & !is.na(dbh_cm) & dbh_cm < 5.5 & !was_interpolated,
-    unique(stemID)
-  ]
-  cls <- dt[
-    stemID %in% small_1985 & CensusID %in% c(2L, 3L) & Rstatus == "A" &
+    .(treeID, stemID)
+  ])
+  cls <- dt[small_1985, on = .(treeID, stemID), nomatch = 0L][
+    CensusID %in% c(2L, 3L) & Rstatus == "A" &
       !is.na(dbh_cm) & dbh_cm < 5.5 & !was_interpolated & !is.na(agb_t),
-    .(stemID, CensusID, agb_t, dbh_r = floor(dbh_cm / 0.5) * 0.5)
+    .(treeID, stemID, CensusID, agb_t, dbh_r = floor(dbh_cm / 0.5) * 0.5)
   ]
   # Mean 1990 AGB per 5-mm class
   class_mean <- cls[CensusID == 3L, .(agb_m = mean(agb_t)), by = dbh_r]
   cls <- class_mean[cls, on = "dbh_r"]
   # One row per stem: class mean of its 1985 class and of its 1990 class
-  both <- dcast(cls, stemID ~ CensusID, value.var = "agb_m")
-  setnames(both, c("stemID", "m85", "m90"))
+  both <- dcast(cls, treeID + stemID ~ CensusID, value.var = "agb_m")
+  setnames(both, c("treeID", "stemID", "m85", "m90"))
   both <- both[!is.na(m85) & !is.na(m90)]
   # Growth is stored on the row of the END census (CensusID 3)
   dt[both,
-    on = "stemID",
+    on = .(treeID, stemID),
     Dagb_t := fifelse(CensusID == 3L & !is.na(dT) & dT > 0, (m90 - m85) / dT, Dagb_t)
   ]
   nrow(both)
@@ -565,28 +575,38 @@ df_stem[, size := cut(dbh_cm,
 # 11a. Time interval per stem between consecutive observations
 data.table::setorder(df_stem, treeID, stemID, CensusID)
 
-# Some rows lack ExactDate (stems from unidentified quadrats). We fill them with
-# a two-step imputation so that every row gets a date and dT is never NA due to
-# a missing date (only the first census of each stem legitimately has dT = NA
-# because there is no prior row to difference against).
+# Stage 3 dates every alive (A) row, measured row and first G/D row; P rows
+# and later G/D rows keep NA unless a date was recorded. Every row needs a
+# date so that dT is never NA because of a missing date (a recruit's interval
+# starts at its P row; only the first census of each stem legitimately has
+# dT = NA because there is no prior row to difference against).
 #
-# Step 1: fill with the median date of all stems in the same quadrat × census.
-# Step 2: fill any remaining NAs (e.g. quadrat itself is NA/unknown) with the
-#         median date across the entire census (plot-wide).
+# A missing date gets the modal field date of the same tree in that census,
+# else of the same quadrat, else of the whole census (ties: earliest date) —
+# the rule stage 3 applied to every row before. Same function in
+# basal_area_uncertainty.R and general_plot_information.R.
 #
-# [EDGE CASE] If an entire census has no dated stems, date_plot_census is NA and
-#             ExactDate remains NA for those rows. This is extremely unlikely with
-#             BCI data; a warning is issued below if it occurs.
+# [EDGE CASE] If an entire census has no dated stems, ExactDate remains NA for
+#             those rows. This is extremely unlikely with BCI data; a warning
+#             is issued below if it occurs.
+date_mode_by <- function(dt, by_cols) {
+  cnt <- dt[!is.na(ExactDate), .N, by = c(by_cols, "ExactDate")]
+  setorderv(cnt, c(by_cols, "N", "ExactDate"), c(rep(1L, length(by_cols)), -1L, 1L))
+  cnt[cnt[, .I[1L], by = by_cols]$V1, c(by_cols, "ExactDate"), with = FALSE]
+}
+fill_missing_dates <- function(dt) {
+  m_tree <- date_mode_by(dt, c("treeID", "CensusID"))
+  m_quad <- date_mode_by(dt[!is.na(quadrat)], c("quadrat", "CensusID"))
+  m_cens <- date_mode_by(dt, "CensusID")
+  dt[m_tree, on = .(treeID, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+  dt[m_quad, on = .(quadrat, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+  dt[m_cens, on = .(CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+  invisible(dt)
+}
 n_na_before <- df_stem[is.na(ExactDate), .N]
-message(sprintf("[DATES] %d rows have NA ExactDate before imputation.", n_na_before))
+message(sprintf("[DATES] %d rows have NA ExactDate before imputation (P / later G/D rows without a record).", n_na_before))
 
-df_stem[, date_quad_census := median(ExactDate, na.rm = TRUE), .(quadrat, CensusID)]
-df_stem[, date_plot_census := median(ExactDate, na.rm = TRUE), .(CensusID)]
-
-df_stem[, ExactDate := fifelse(is.na(ExactDate), date_quad_census, ExactDate)]
-df_stem[is.na(ExactDate), ExactDate := date_plot_census]
-
-df_stem[, `:=`(date_quad_census = NULL, date_plot_census = NULL)]
+fill_missing_dates(df_stem)
 
 # Verify: how many ExactDate NAs remain?
 n_na_after <- df_stem[is.na(ExactDate), .N]
@@ -750,7 +770,7 @@ rm(max_census)
 bio_check(
   df_stem[CensusID == last_census_alive & next_Rstatus == "A", .N] == 0L,
   "No stem leaves the stock while it is alive (A) in the next census",
-  examples = df_stem[CensusID == last_census_alive & next_Rstatus == "A", stemID],
+  examples = df_stem[CensusID == last_census_alive & next_Rstatus == "A", paste(treeID, stemID, sep = "_")],
   n_bad = df_stem[CensusID == last_census_alive & next_Rstatus == "A", .N]
 )
 

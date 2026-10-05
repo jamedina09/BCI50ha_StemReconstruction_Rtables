@@ -3,6 +3,17 @@
 This folder contains two analysis scripts for the BCI 50-ha stem reconstruction project.
 All results are written to `outputs/` under this folder.
 
+All scripts read the stage-3 R tables (`DATA/RTABLES/bci.stemN.Rdata`), where:
+
+- `stemID` is the stem number within its tree (1, 2, ...), so a stem is identified by
+  `treeID` + `stemID` (every stem key in these scripts uses both);
+- `ExactDate` is set on every alive, measured and first dead (`G`/`D`) row, and on any
+  other row only when the date was recorded. Rows without a date (`P` and later `G`/`D`
+  rows) get the modal field date of their tree in that census, else of their quadrat,
+  else of the census (`fill_missing_dates()`, the same in every script);
+- `dbh` is exported as recorded, so a dead (`G`/`D`) record can carry a DBH; stocks and
+  fluxes only use alive (`A`) rows.
+
 ## Scripts
 
 ### `biomass_stocks_fluxes.R`
