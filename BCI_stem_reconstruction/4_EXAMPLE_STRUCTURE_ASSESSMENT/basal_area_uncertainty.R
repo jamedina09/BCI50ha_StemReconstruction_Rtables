@@ -173,12 +173,50 @@ rec <- rec[!is.na(quadrat)]
 rec[, CensusID := as.integer(CensusID)]
 rm(census_list, bci_stem_nums)
 
-# Stage 3 dates every row (modal field date), so no imputation is needed here.
+# Stage 3 exports every DBH as recorded, so a dead (G/D) record can carry a
+# DBH. It is not a living stem: stocks and fluxes use alive (A) rows only, so
+# that DBH is ignored here (a measured row below means an alive measurement).
+n_dead_dbh <- rec[Rstatus != "A" & !is.na(dbh), .N]
+rec[Rstatus != "A" & !is.na(dbh), dbh := NA]
+cat(sprintf("[BA] %d DBH values recorded on dead (G/D) records are not used\n", n_dead_dbh))
+rm(n_dead_dbh)
+
+# stemID is the stem number within its tree (1, 2, ...): treeID + stemID
+# identify a stem, so every stem key below uses both.
+
+# Stage 3 dates every alive (A) row, measured row and first G/D row; P rows
+# and later G/D rows keep NA unless a date was recorded. Those get the modal
+# field date of their tree in that census, else of their quadrat, else of the
+# census (the rule stage 3 applied to every row before), so census dates and
+# path gaps are computed as before. Same function in biomass_stocks_fluxes.R
+# and general_plot_information.R.
+date_mode_by <- function(dt, by_cols) {
+    cnt <- dt[!is.na(ExactDate), .N, by = c(by_cols, "ExactDate")]
+    setorderv(cnt, c(by_cols, "N", "ExactDate"), c(rep(1L, length(by_cols)), -1L, 1L))
+    cnt[cnt[, .I[1L], by = by_cols]$V1, c(by_cols, "ExactDate"), with = FALSE]
+}
+fill_missing_dates <- function(dt) {
+    m_tree <- date_mode_by(dt, c("treeID", "CensusID"))
+    m_quad <- date_mode_by(dt[!is.na(quadrat)], c("quadrat", "CensusID"))
+    m_cens <- date_mode_by(dt, "CensusID")
+    dt[m_tree, on = .(treeID, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+    dt[m_quad, on = .(quadrat, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+    dt[m_cens, on = .(CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
+    invisible(dt)
+}
+bio_check(
+    rec[Rstatus == "A" | !is.na(dbh), !anyNA(ExactDate)],
+    "Every alive or measured stem-census row has an ExactDate (dated in stage 3)",
+    n_bad = rec[(Rstatus == "A" | !is.na(dbh)) & is.na(ExactDate), .N]
+)
+n_undated <- rec[is.na(ExactDate), .N]
+fill_missing_dates(rec)
 bio_check(
     rec[, !anyNA(ExactDate)],
-    "Every stem-census row has an ExactDate (dated in stage 3)",
+    sprintf("Every stem-census row has an ExactDate (%d P / later G/D rows dated from tree, quadrat or census)", n_undated),
     n_bad = rec[is.na(ExactDate), .N]
 )
+rm(n_undated)
 
 # Cushman et al. 2014
 taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
@@ -396,7 +434,7 @@ stem_obs <- rec[
     .(quadrat, treeID, stemID, CensusID, StemPaths, dbh, t = as.numeric(ExactDate))
 ]
 bio_check(
-    stem_obs[, !anyDuplicated(stem_obs[, .(stemID, CensusID)])],
+    stem_obs[, !anyDuplicated(stem_obs[, .(treeID, stemID, CensusID)])],
     "One measurement per stem and census in the exported reconstruction"
 )
 
@@ -416,23 +454,26 @@ exp_stems[, BA := ba_m2(dbh)]
 cat(sprintf(
     "[BA] exported: %d measured stem-censuses | alive without DBH: %d (interpolated %d, trend continued after the last measurement %d, never measured %d)\n",
     nrow(stem_obs), nrow(alive_nodbh), exp_stems[interpolated & !carried, .N], exp_stems[carried == TRUE, .N],
-    alive_nodbh[!stemID %in% stem_obs$stemID, .N]
+    alive_nodbh[!stem_obs, on = .(treeID, stemID), .N]
 ))
 
 # An alive stem is in the stock in every census it is alive; a stem is never
 # in the stock in a census where it is not alive.
-alive_rows <- rec[Rstatus == "A" & stemID %in% stem_obs$stemID, .(stemID, CensusID)]
-not_in_stock <- alive_rows[!exp_stems, on = .(stemID, CensusID)]
+alive_rows <- rec[Rstatus == "A", .(treeID, stemID, CensusID)][
+    unique(stem_obs[, .(treeID, stemID)]),
+    on = .(treeID, stemID), nomatch = 0L
+]
+not_in_stock <- alive_rows[!exp_stems, on = .(treeID, stemID, CensusID)]
 bio_check(
     nrow(not_in_stock) == 0L,
     "Every alive (A) census of a measured stem is in the stock (measured, interpolated or trend-continued)",
-    examples = not_in_stock$stemID, n_bad = nrow(not_in_stock)
+    examples = not_in_stock[, paste(treeID, stemID, sep = "_")], n_bad = nrow(not_in_stock)
 )
-not_alive <- exp_stems[, .(stemID, CensusID)][!alive_rows, on = .(stemID, CensusID)]
+not_alive <- exp_stems[, .(treeID, stemID, CensusID)][!alive_rows, on = .(treeID, stemID, CensusID)]
 bio_check(
     nrow(not_alive) == 0L,
     "No stem is in the stock in a census where it is not alive (A)",
-    examples = not_alive$stemID, n_bad = nrow(not_alive)
+    examples = not_alive[, paste(treeID, stemID, sep = "_")], n_bad = nrow(not_alive)
 )
 rm(alive_rows, not_in_stock, not_alive)
 
