@@ -1,18 +1,29 @@
-# BCI Stem Reconstruction — Biomass Stocks and Fluxes
+# BCI Stem Reconstruction — Example Structure Assessment
 
-This folder contains two analysis scripts for the BCI 50-ha stem reconstruction project.
-All results are written to `outputs/` under this folder.
+This folder contains three analysis scripts for the BCI 50-ha stem reconstruction project:
+`biomass_stocks_fluxes.R` and `basal_area_uncertainty.R` write their results to `outputs/`
+under this folder; `general_plot_information.R` prints its summaries to the console.
 
-All scripts read the stage-3 R tables (`DATA/RTABLES/bci.stemN.Rdata`), where:
+Inputs:
+
+- the stage-3 R tables `DATA/RTABLES/bci.stem1.Rdata` … `bci.stem9.Rdata` (all scripts);
+- the species table `DATA/RTABLES/bci.spptable.rdata` (`biomass_stocks_fluxes.R`,
+  `general_plot_information.R`). Stage 3 does not write it: copy the ForestGEO-format
+  table there (for example `data_paper_and_repo_publication/RTABLES/bci.spptable.rdata`);
+- the posterior samples `DATA/POSTERIORS/posterior_sampled_paths.rds` and the stage-2 table
+  `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`
+  (`basal_area_uncertainty.R`);
+- the wood density file in `wd/` (`biomass_stocks_fluxes.R`).
+
+In the R tables:
 
 - `stemID` is the stem number within its tree (1, 2, ...), so a stem is identified by
   `treeID` + `stemID` (every stem key in these scripts uses both);
-- `ExactDate` is set on every alive, measured and first dead (`G`/`D`) row, and on any
-  other row only when the date was recorded. Rows without a date (`P` and later `G`/`D`
-  rows) get the modal field date of their tree in that census, else of their quadrat,
-  else of the census (`fill_missing_dates()`, the same in every script);
-- `dbh` is exported as recorded, so a dead (`G`/`D`) record can carry a DBH; stocks and
-  fluxes only use alive (`A`) rows.
+- `ExactDate` is the raw field date (`NA` where there is no record); each script completes
+  it from `date` (days since 1960-01-01, filled in stage 3 for every row), so every
+  stem-census row has a date;
+- `dbh` is exported as recorded, so a dead (`G`/`D`) record can carry a DBH; each script
+  ignores it, because stocks, fluxes and summaries use alive (`A`) rows only.
 
 ## Scripts
 
@@ -25,7 +36,7 @@ Purpose:
 
 Key processing steps:
 
-- Load raw BCI stem RTABLE files for censuses 1–9.
+- Load the stage-3 R tables for censuses 1–9.
 - Merge taxonomy and wood specific gravity (WSG) data from BCI species tables and the
   2026 Wright & Muller-Landau Dryad WSG dataset.
 - Fill missing WSG hierarchically by genus, then family, then global mean.
@@ -109,7 +120,8 @@ Monte Carlo realizations and summaries:
 - `ba_mc_realizations_stock_quadrat.feather` — quadrat-level MC realization stocks.
 - `ba_mc_summary_quadrat.feather` — empirical 95 % CI of quadrat fluxes.
 - `ba_mc_summary_stock_quadrat.feather` — empirical 95 % CI of quadrat stocks.
-- `ba_mc_realizations_treeID/` — one feather per MC realization with tree-level fluxes (not tracked by git).
+- `ba_mc_realizations_treeID/` — one feather per MC realization with tree-level fluxes, written only
+  when `write_tree_realizations <- TRUE` (default `FALSE`; not tracked by git).
 
 Figures:
 
@@ -122,3 +134,24 @@ Diagnostics:
   counts, the exported partition vs the posterior per engine, invariance checks and the MC
   error of the 95 % interval bounds.
 - `fig3_BA_trajectories.pdf` — individual-tree BA trajectories for a selected subset.
+
+### `general_plot_information.R`
+
+Purpose:
+
+- Descriptive summaries of forest structure and composition for the 50-ha plot across all
+  censuses (census 1, 1982, is excluded from the temporal comparisons).
+
+Key processing steps:
+
+- Load the stage-3 R tables and the species table; count an individual as one `treeID` and
+  an alive stem as `Rstatus == "A"`.
+- Use the Cushman et al. 2014 taper-corrected DBH (`use_taper_for_ba`), give alive stems whose
+  DBH was missed a DBH from their own measurements (the rule of the other two scripts), and
+  place trees without coordinates at the centre of their quadrat.
+- Summarise the most recent census (individuals, stems, basal area, species, genera, families,
+  lifeforms, diversity), per-hectare estimates by bootstrap over quadrats, temporal trends and
+  changes between censuses, diversity across censuses, and the DBH size-class distribution
+  (census 2 vs census 9).
+
+Outputs: printed to the console; no files are written.

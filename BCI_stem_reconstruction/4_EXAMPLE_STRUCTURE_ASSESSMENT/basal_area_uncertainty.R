@@ -184,39 +184,16 @@ rm(n_dead_dbh)
 # stemID is the stem number within its tree (1, 2, ...): treeID + stemID
 # identify a stem, so every stem key below uses both.
 
-# Stage 3 dates every alive (A) row, measured row and first G/D row; P rows
-# and later G/D rows keep NA unless a date was recorded. Those get the modal
-# field date of their tree in that census, else of their quadrat, else of the
-# census (the rule stage 3 applied to every row before), so census dates and
-# path gaps are computed as before. Same function in biomass_stocks_fluxes.R
-# and general_plot_information.R.
-date_mode_by <- function(dt, by_cols) {
-    cnt <- dt[!is.na(ExactDate), .N, by = c(by_cols, "ExactDate")]
-    setorderv(cnt, c(by_cols, "N", "ExactDate"), c(rep(1L, length(by_cols)), -1L, 1L))
-    cnt[cnt[, .I[1L], by = by_cols]$V1, c(by_cols, "ExactDate"), with = FALSE]
-}
-fill_missing_dates <- function(dt) {
-    m_tree <- date_mode_by(dt, c("treeID", "CensusID"))
-    m_quad <- date_mode_by(dt[!is.na(quadrat)], c("quadrat", "CensusID"))
-    m_cens <- date_mode_by(dt, "CensusID")
-    dt[m_tree, on = .(treeID, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
-    dt[m_quad, on = .(quadrat, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
-    dt[m_cens, on = .(CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
-    invisible(dt)
-}
-bio_check(
-    rec[Rstatus == "A" | !is.na(dbh), !anyNA(ExactDate)],
-    "Every alive or measured stem-census row has an ExactDate (dated in stage 3)",
-    n_bad = rec[(Rstatus == "A" | !is.na(dbh)) & is.na(ExactDate), .N]
-)
-n_undated <- rec[is.na(ExactDate), .N]
-fill_missing_dates(rec)
+# ExactDate is the raw field date (NA where there is no record). Every row
+# needs a date here (census dates, gap interpolation), so a missing one is
+# taken from `date` (days since 1960-01-01, filled in stage 3: the recorded
+# date, else the modal field date of the tree, quadrat or census).
+rec[is.na(ExactDate), ExactDate := as.Date(date, origin = "1960-01-01")]
 bio_check(
     rec[, !anyNA(ExactDate)],
-    sprintf("Every stem-census row has an ExactDate (%d P / later G/D rows dated from tree, quadrat or census)", n_undated),
+    "Every stem-census row has a date (ExactDate, completed from the stage-3 date column)",
     n_bad = rec[is.na(ExactDate), .N]
 )
-rm(n_undated)
 
 # Cushman et al. 2014
 taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {

@@ -145,6 +145,12 @@ df_stem[Rstatus != "A" & !is.na(dbh), dbh := NA]
 message(sprintf("[DBH] %d DBH values recorded on dead (G/D) records are not used.", n_dead_dbh))
 rm(n_dead_dbh)
 
+# ExactDate is the raw field date (NA where there is no record). Every row
+# needs a date (DBH interpolation in time, dT), so a missing one is taken from
+# `date` (days since 1960-01-01, filled in stage 3: the recorded date, else
+# the modal field date of the tree, quadrat or census).
+df_stem[is.na(ExactDate), ExactDate := as.Date(date, origin = "1960-01-01")]
+
 # ============================================================
 # Section 3 — Merge species taxonomy and wood density
 # ============================================================
@@ -375,8 +381,7 @@ interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_int
   invisible(dt)
 }
 
-# Linear interpolation uses the measurement dates, set in stage 3 for every
-# alive and measured row.
+# Linear interpolation uses the measurement dates, set for every row in stage 3.
 bio_check(
   df_stem[Rstatus == "A", !anyNA(ExactDate)],
   "Every alive stem-census row has an ExactDate (needed to interpolate DBH in time)",
@@ -575,38 +580,28 @@ df_stem[, size := cut(dbh_cm,
 # 11a. Time interval per stem between consecutive observations
 data.table::setorder(df_stem, treeID, stemID, CensusID)
 
-# Stage 3 dates every alive (A) row, measured row and first G/D row; P rows
-# and later G/D rows keep NA unless a date was recorded. Every row needs a
-# date so that dT is never NA because of a missing date (a recruit's interval
-# starts at its P row; only the first census of each stem legitimately has
-# dT = NA because there is no prior row to difference against).
+# Some rows lack ExactDate (stems from unidentified quadrats). We fill them with
+# a two-step imputation so that every row gets a date and dT is never NA due to
+# a missing date (only the first census of each stem legitimately has dT = NA
+# because there is no prior row to difference against).
 #
-# A missing date gets the modal field date of the same tree in that census,
-# else of the same quadrat, else of the whole census (ties: earliest date) —
-# the rule stage 3 applied to every row before. Same function in
-# basal_area_uncertainty.R and general_plot_information.R.
+# Step 1: fill with the median date of all stems in the same quadrat × census.
+# Step 2: fill any remaining NAs (e.g. quadrat itself is NA/unknown) with the
+#         median date across the entire census (plot-wide).
 #
-# [EDGE CASE] If an entire census has no dated stems, ExactDate remains NA for
-#             those rows. This is extremely unlikely with BCI data; a warning
-#             is issued below if it occurs.
-date_mode_by <- function(dt, by_cols) {
-  cnt <- dt[!is.na(ExactDate), .N, by = c(by_cols, "ExactDate")]
-  setorderv(cnt, c(by_cols, "N", "ExactDate"), c(rep(1L, length(by_cols)), -1L, 1L))
-  cnt[cnt[, .I[1L], by = by_cols]$V1, c(by_cols, "ExactDate"), with = FALSE]
-}
-fill_missing_dates <- function(dt) {
-  m_tree <- date_mode_by(dt, c("treeID", "CensusID"))
-  m_quad <- date_mode_by(dt[!is.na(quadrat)], c("quadrat", "CensusID"))
-  m_cens <- date_mode_by(dt, "CensusID")
-  dt[m_tree, on = .(treeID, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
-  dt[m_quad, on = .(quadrat, CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
-  dt[m_cens, on = .(CensusID), ExactDate := fcoalesce(ExactDate, i.ExactDate)]
-  invisible(dt)
-}
+# [EDGE CASE] If an entire census has no dated stems, date_plot_census is NA and
+#             ExactDate remains NA for those rows. This is extremely unlikely with
+#             BCI data; a warning is issued below if it occurs.
 n_na_before <- df_stem[is.na(ExactDate), .N]
-message(sprintf("[DATES] %d rows have NA ExactDate before imputation (P / later G/D rows without a record).", n_na_before))
+message(sprintf("[DATES] %d rows have NA ExactDate before imputation.", n_na_before))
 
-fill_missing_dates(df_stem)
+df_stem[, date_quad_census := median(ExactDate, na.rm = TRUE), .(quadrat, CensusID)]
+df_stem[, date_plot_census := median(ExactDate, na.rm = TRUE), .(CensusID)]
+
+df_stem[, ExactDate := fifelse(is.na(ExactDate), date_quad_census, ExactDate)]
+df_stem[is.na(ExactDate), ExactDate := date_plot_census]
+
+df_stem[, `:=`(date_quad_census = NULL, date_plot_census = NULL)]
 
 # Verify: how many ExactDate NAs remain?
 n_na_after <- df_stem[is.na(ExactDate), .N]
