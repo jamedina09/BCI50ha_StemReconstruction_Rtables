@@ -24,6 +24,11 @@ Merges completed chunk outputs into final files.
 - Converts them to temporary Parquet parts and merges them.
 - Writes `merged_output.parquet` and `merged_output.rds` to
   `BCI_stem_reconstruction/DATA/<run_code>/`.
+- Rejoins stems that the engine split only because the point of measurement
+  of the trunk moved (`apply_measurement_rejoin()`, `dp_global/R/measurement_rejoin.R`;
+  `ReconstructionMethod = "measurement_rejoin"`) and writes the joins to
+  `DATA/PROCESSED/measurement_rejoin_audit.csv` and the observation pairs for the
+  posterior samples to `DATA/PROCESSED/measurement_rejoin_pairs.csv`.
 
 ## Notes
 

@@ -428,6 +428,42 @@ print(complete_dataset_final[Tag %in% chk_skipped_full_na, .(Tag, CensusID, Reco
 # These rows correspond to dead tags appearing later as R/broken-below.
 # They are expected to be corrected during subsequent RTable reconstruction.
 
+# =============================================================================
+# MEASUREMENT-DISCONTINUITY REJOIN
+# =============================================================================
+# A trunk whose point of measurement moved (1982 diameters taken around the
+# buttresses, POM raised in later censuses) or that has one wrongly recorded
+# DBH can show a change outside the engine's hard growth bounds; the engine
+# then books a death plus an impossible recruit for one physical trunk.
+# apply_measurement_rejoin() joins those stems again (rules and evidence:
+# dp_global/R/measurement_rejoin.R). The bounds must be those of the stage-2
+# run: MAX_SHRINK_FIXED and MAX_GROWTH_FIXED (cm/yr) and RECRUIT_MAX_FIXED
+# (cm, here in mm) of 1_main_cpp_chunk_bci.R.
+source(file.path(workspace_root, "dp_global", "R", "measurement_rejoin.R"))
+REJOIN_MAX_SHRINK <- -0.5
+REJOIN_MAX_GROWTH <- 5
+REJOIN_RECRUIT_MAX_MM <- 260
+rejoin <- apply_measurement_rejoin(
+    complete_dataset_final,
+    max_shrink = REJOIN_MAX_SHRINK, max_growth = REJOIN_MAX_GROWTH, recruit_max_mm = REJOIN_RECRUIT_MAX_MM
+)
+mr_check(
+    identical(rejoin$dt$RowID, complete_dataset_final$RowID),
+    "Rejoin keeps every row, in the same order"
+)
+unchanged_cols <- setdiff(names(complete_dataset_final), c("ReconstructedStemID", "ReconstructionMethod"))
+mr_check(
+    all(vapply(unchanged_cols, function(n) identical(rejoin$dt[[n]], complete_dataset_final[[n]]), logical(1))),
+    "Rejoin changes only ReconstructedStemID and ReconstructionMethod (DFstatus, DBH and everything else untouched)"
+)
+rejoin_dups <- rejoin$dt[!is.na(ReconstructedStemID) & single_stem_tags == FALSE, .N, by = .(Tag, CensusID, ReconstructedStemID)][N > 1L]
+mr_check(nrow(rejoin_dups) == 0L, "No stem has two rows in one census after the rejoin", examples = rejoin_dups$Tag, n_bad = nrow(rejoin_dups))
+two_pins <- rejoin$dt[!is.na(TrueStemID), uniqueN(TrueStemID), by = .(Tag, ReconstructedStemID)][V1 > 1L, .N] -
+    complete_dataset_final[!is.na(TrueStemID), uniqueN(TrueStemID), by = .(Tag, ReconstructedStemID)][V1 > 1L, .N]
+mr_check(two_pins <= 0L, "No stem gains a second TrueStemID pin through the rejoin", n_bad = two_pins)
+complete_dataset_final <- rejoin$dt
+rm(rejoin_dups, unchanged_cols, two_pins)
+
 # Output directory for the final complete dataset.
 post_dir <- path.expand(
     file.path(
@@ -444,3 +480,12 @@ saveRDS(
     complete_dataset_final,
     file.path(post_dir, "complete_dataset_final_with_reconstructed_stemids.rds")
 )
+
+# Rejoin outputs: the export joins (for review) and the eligible observation
+# pairs that 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R joins inside the
+# posterior samples.
+fwrite(
+    rejoin$pairs[, .(Tag, route, c0, c1, obs0, obs1, d0, d1, tc0, tc1, ratio, g_tc, source, target)],
+    file.path(post_dir, "measurement_rejoin_audit.csv")
+)
+fwrite(rejoin$obs_pairs, file.path(post_dir, "measurement_rejoin_pairs.csv"))

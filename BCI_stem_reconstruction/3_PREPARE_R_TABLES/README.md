@@ -7,7 +7,9 @@ ForestGEO-format census tables plus QC exports used for downstream analysis.
 ## Scripts (run in order)
 
 - `1_prepare_posteriors_BCI.R` — Consolidates `_paths.feather` posterior files
-  from a completed stage 2 run into `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`.
+  from a completed stage 2 run into `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`,
+  applying to every sample the measurement-discontinuity joins of the merge
+  step (`DATA/PROCESSED/measurement_rejoin_pairs.csv`).
 - `2_create_R_tables_BCI.R` — Builds the final census tables and species table.
   It assigns each stem a corrected status (`Rstatus`) in every census,
   gives every tree one location, imputes the dates that are needed, and
