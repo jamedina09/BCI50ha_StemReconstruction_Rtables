@@ -207,6 +207,37 @@ cat(
     ncol(dt_posteriors), "columns |", uniqueN(dt_posteriors$treeID), "trees\n"
 )
 
+# ---- Measurement-discontinuity rejoin inside the samples ---------------------
+# 2_merge_chunks_to_datatable.R joined stems split by a moved point of
+# measurement or a recording error, and wrote the eligible observation pairs
+# (DATA/PROCESSED/measurement_rejoin_pairs.csv). Each pair is joined here in
+# every sample where it is split with a clean end/start and at most one pin,
+# so the posterior follows the same rule as the exported stems.
+source(file.path(workspace_root, "dp_global", "R", "measurement_rejoin.R"))
+processed_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED")
+pairs_file <- file.path(processed_dir, "measurement_rejoin_pairs.csv")
+bio_check(file.exists(pairs_file), "measurement_rejoin_pairs.csv exists (run 2_merge_chunks_to_datatable.R first)")
+rejoin_pairs <- fread(pairs_file, colClasses = list(character = "Tag"))
+obs_info <- as.data.table(readRDS(file.path(processed_dir, "complete_dataset_final_with_reconstructed_stemids.rds")))[
+    !is.na(DBH) & !is.na(obs_row_id),
+    .(tag = as.character(Tag), obs = as.integer(obs_row_id), c = as.integer(as.character(CensusID)), pin = as.character(TrueStemID))
+]
+samples_before <- dt_posteriors[, .(n = sum(path_count)), by = treeID][order(treeID)]
+dt_posteriors <- apply_measurement_rejoin_to_paths(dt_posteriors, rejoin_pairs, obs_info)
+bio_check(
+    identical(samples_before$n, dt_posteriors[, .(n = sum(path_count)), by = treeID][order(treeID)]$n),
+    "Posterior samples per tree are unchanged by the rejoin"
+)
+touched <- dt_posteriors[tag %in% rejoin_pairs$Tag]
+lab_long <- touched[, .(kv = unlist(strsplit(recon, ";", fixed = TRUE))), by = .(tag, recon)][
+    , c("obs", "lab") := tstrsplit(kv, ":", fixed = TRUE)
+][, obs := as.integer(obs)]
+lab_long <- obs_info[, .(tag, obs, c)][lab_long, on = .(tag, obs)]
+collisions <- lab_long[, .N, by = .(tag, recon, lab, c)][N > 1L]
+bio_check(nrow(collisions) == 0L, "No sampled stem holds two observations of one census after the rejoin",
+    examples = unique(collisions$tag), n_bad = nrow(collisions))
+rm(obs_info, samples_before, touched, lab_long, collisions)
+
 # =============================================================================
 # 3. OUTPUT
 # =============================================================================
