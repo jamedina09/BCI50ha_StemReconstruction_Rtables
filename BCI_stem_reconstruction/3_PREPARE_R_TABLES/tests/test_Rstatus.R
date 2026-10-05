@@ -11,7 +11,8 @@
 #   3. Rstatus outputs: validity of every P/A/G/D sequence, soundness and
 #      reachability
 #   4. Real data: the exported R tables equal the rules and satisfy every
-#      invariant; offending stem / tree IDs are printed
+#      invariant (Rstatus, dbh, DFstatus, ExactDate, location, stemID);
+#      offending stem / tree IDs are printed
 #
 # Options (environment variables):
 #   RSTATUS_TEST_LEVEL   "full" (default; about 15 min) or "quick" (about 1 min)
@@ -91,12 +92,12 @@ test_that("false death: a dead record followed by alive is A, and its DBH is kep
   expect_tree(tree(list(c("alive", "broken below", "alive"))), "AAA")
 })
 
-test_that("dead record with a DBH, never alive again: G/D from that census, DBH removed", {
-  expect_tree(tree(list(c("alive", "dead", NA)), list(c(10, 12, NA))), "ADD", list(c(10, NA, NA)))
-  expect_tree(tree(list(c("alive", "stem dead", "dead")), list(c(10, 12, NA))), "ADD", list(c(10, NA, NA)))
+test_that("dead record with a DBH, never alive again: G/D from that census, DBH kept as recorded", {
+  expect_tree(tree(list(c("alive", "dead", NA)), list(c(10, 12, NA))), "ADD", list(c(10, 12, NA)))
+  expect_tree(tree(list(c("alive", "stem dead", "dead")), list(c(10, 12, NA))), "ADD", list(c(10, 12, NA)))
   expect_tree(
     tree(list(c("alive", "stem dead", NA), c("alive", "alive", "alive")), list(c(10, 12, NA), c(10, 11, 12))),
-    c("AGG", "AAA"), list(c(10, NA, NA), c(10, 11, 12))
+    c("AGG", "AAA"), list(c(10, 12, NA), c(10, 11, 12))
   )
 })
 
@@ -228,10 +229,9 @@ check_exhaustive <- function(S, n, st) {
   bad_D <- x[!same_num(dbh, dbh_ref), unique(TreeID)]
   expect(length(bad_R) == 0L, sprintf("Rstatus differs from the reference in %d trees, e.g. %s", length(bad_R), show_ids(bad_R)))
   expect(length(bad_D) == 0L, sprintf("dbh differs from the reference in %d trees, e.g. %s", length(bad_D), show_ids(bad_D)))
-  # DBH invariants
-  expect_identical(x[Rstatus %in% c("P", "G", "D") & !is.na(dbh), .N], 0L)
-  expect_identical(x[Rstatus == "A" & !is.na(raw_DBH) & !same_num(dbh, raw_DBH), .N], 0L)
-  expect_identical(x[!is.na(dbh) & !same_num(dbh, raw_DBH), .N], 0L)
+  # DBH invariants: dbh is the raw DBH everywhere; a P cell never has one
+  expect_identical(x[Rstatus == "P" & !is.na(dbh), .N], 0L)
+  expect_identical(x[!same_num(dbh, raw_DBH), .N], 0L)
   # Rstatus validity: invalid only when a stem has no record at all (all P)
   w <- dcast(x, TreeID + StemID ~ census, value.var = "Rstatus")
   seqs <- do.call(paste0, w[, -(1:2)])
@@ -369,16 +369,22 @@ if (real_ok) {
   raw <- raw[, .(
     TreeID = as.character(TreeID),
     StemID = paste(as.character(TreeID), as.character(as.numeric(as.character(ReconstructedStemID))), sep = "_"),
-    census = as.integer(as.character(CensusID)), Status = as.character(Status), DBH = as.numeric(DBH)
+    census = as.integer(as.character(CensusID)), Status = as.character(Status), DBH = as.numeric(DBH),
+    ExactDate = as.Date(ExactDate), PX = as.numeric(PX), PY = as.numeric(PY)
   )]
   n_cens <- max(raw$census)
   grid <- unique(raw[, .(TreeID, StemID)])[, .(census = seq_len(n_cens)), by = .(TreeID, StemID)]
   cells <- raw[grid, on = .(TreeID, StemID, census)]
   files <- file.path(rtables_dir, sprintf("bci.stem%d.Rdata", seq_len(n_cens)))
+  # The exported stemID is the stem number within its tree; StemID below is
+  # the script's internal key "TreeID_stemID" ("TreeID_NA" for stemID NA).
   rt <- rbindlist(lapply(seq_len(n_cens), function(i) {
     e <- new.env()
     load(files[i], envir = e)
-    as.data.table(get(ls(e)[1], envir = e))[, .(StemID = stemID, TreeID = treeID, census = i, Rstatus, dbh, DFstatus, order = .I)]
+    as.data.table(get(ls(e)[1], envir = e))[, .(
+      StemID = paste(treeID, stemID, sep = "_"), stemID, TreeID = treeID, census = i, Rstatus, dbh, DFstatus,
+      ExactDate, gx, gy, quadrat, order = .I
+    )]
   }))
 }
 
@@ -429,28 +435,87 @@ test_that("real data: Rstatus invariants (stem sequences and tree consistency)",
   expect(length(d_in_gap) == 0L, sprintf("%d trees have a D stem in an unrecorded census although alive later, e.g. %s", length(d_in_gap), show_ids(d_in_gap)))
 })
 
-test_that("real data: dbh invariants against the raw data", {
+test_that("real data: dbh is exported exactly as recorded", {
   skip_if_not(real_ok, "no R tables / stage-2 file found")
   y <- rt[, .(StemID, census, Rstatus, dbh)][cells[, .(StemID, census, Status, raw_DBH = DBH)], on = .(StemID, census)]
-  b1 <- y[Rstatus %in% c("P", "G", "D") & !is.na(dbh), unique(StemID)]
-  b2 <- y[Rstatus == "A" & !is.na(raw_DBH) & !same_num(dbh, raw_DBH), unique(StemID)]
-  b3 <- y[!is.na(dbh) & !same_num(dbh, raw_DBH), unique(StemID)]
-  removed <- y[!is.na(raw_DBH) & is.na(dbh)]
-  b4 <- removed[!Status %in% c("dead", "stem dead"), unique(StemID)]
-  expect(length(b1) == 0L, sprintf("dbh on P/G/D for %d stems, e.g. %s", length(b1), show_ids(b1)))
-  expect(length(b2) == 0L, sprintf("raw dbh of an A cell changed for %d stems, e.g. %s", length(b2), show_ids(b2)))
-  expect(length(b3) == 0L, sprintf("dbh not in the raw data for %d stems, e.g. %s", length(b3), show_ids(b3)))
-  expect(length(b4) == 0L, sprintf("dbh removed from a record that is not dead / stem dead for %d stems, e.g. %s", length(b4), show_ids(b4)))
+  b1 <- y[Rstatus == "P" & !is.na(dbh), unique(StemID)]
+  b2 <- y[!same_num(dbh, raw_DBH), unique(StemID)]
+  on_dead <- y[Rstatus %in% c("G", "D") & !is.na(dbh)]
+  b3 <- on_dead[!Status %in% c("dead", "stem dead"), unique(StemID)]
+  expect(length(b1) == 0L, sprintf("dbh on a P cell for %d stems, e.g. %s", length(b1), show_ids(b1)))
+  expect(length(b2) == 0L, sprintf("exported dbh differs from the raw DBH for %d stems, e.g. %s", length(b2), show_ids(b2)))
+  expect(length(b3) == 0L, sprintf("dbh on a G/D cell that is not a dead / stem dead record for %d stems, e.g. %s", length(b3), show_ids(b3)))
   dead_dbh <- y[!is.na(raw_DBH) & Status %in% c("dead", "stem dead")]
   cat(sprintf(
-    "  DBH on dead / stem dead records: %d | removed (never alive later): %d | kept (false death): %d\n",
-    nrow(dead_dbh), dead_dbh[is.na(dbh), .N], dead_dbh[!is.na(dbh), .N]
+    "  DBH on dead / stem dead records: %d, all kept | on G/D (never alive later): %d | on A (false death): %d\n",
+    nrow(dead_dbh), dead_dbh[Rstatus != "A", .N], dead_dbh[Rstatus == "A", .N]
   ))
-  chk <- file.path(dirname(rtables_dir), "CHECKS", "dbh_removed_dead_records.csv")
+  chk <- file.path(dirname(rtables_dir), "CHECKS", "dbh_on_dead_records.csv")
   if (file.exists(chk)) {
     listed <- fread(chk)
-    expect_setequal(paste(listed$StemID, listed$census), paste(removed$StemID, removed$census))
+    expect_setequal(paste(listed$StemID, listed$census), paste(on_dead$StemID, on_dead$census))
   }
+})
+
+test_that("real data: stemID is the reconstructed stem number within its tree", {
+  skip_if_not(real_ok, "no R tables / stage-2 file found")
+  expect_type(rt$stemID, "integer")
+  expect_true(all(is.na(rt$stemID) | rt$stemID >= 1L))
+  # treeID + stemID identify one row per census, and the same stems in every census
+  expect_identical(rt[, .N, by = .(TreeID, stemID, census)][N > 1L, .N], 0L)
+  # stemID NA only for stems without a DP identity (no status and no DBH ever)
+  no_id <- rt[is.na(stemID), unique(StemID)]
+  expect_true(all(grepl("_NA$", no_id)))
+  expect_identical(rt[is.na(stemID) & (!is.na(dbh) | !is.na(DFstatus)), .N], 0L)
+  cat(sprintf(
+    "  stemID: %s stems in %s trees | largest stem number %d | stems without a DP identity (stemID NA): %d\n",
+    format(uniqueN(rt$StemID), big.mark = ","), format(uniqueN(rt$TreeID), big.mark = ","),
+    max(rt$stemID, na.rm = TRUE), length(no_id)
+  ))
+})
+
+test_that("real data: ExactDate keeps every recorded date and is imputed only on A, measured and first G/D rows", {
+  skip_if_not(real_ok, "no R tables / stage-2 file found")
+  y <- rt[, .(StemID, census, Rstatus, dbh, ExactDate)][cells[, .(StemID, census, raw_date = ExactDate)], on = .(StemID, census)]
+  setorder(y, StemID, census)
+  y[, dead := Rstatus %in% c("G", "D")]
+  y[, first_dead := dead & !shift(dead, fill = FALSE), by = StemID]
+  y[, need := Rstatus == "A" | !is.na(dbh) | first_dead]
+  b1 <- y[!is.na(raw_date) & !same_num(as.numeric(ExactDate), as.numeric(raw_date)), unique(StemID)]
+  b2 <- y[need & is.na(ExactDate), unique(StemID)]
+  b3 <- y[!need & is.na(raw_date) & !is.na(ExactDate), unique(StemID)]
+  expect(length(b1) == 0L, sprintf("a recorded date was changed or removed for %d stems, e.g. %s", length(b1), show_ids(b1)))
+  expect(length(b2) == 0L, sprintf("an A, measured or first G/D row has no date for %d stems, e.g. %s", length(b2), show_ids(b2)))
+  expect(length(b3) == 0L, sprintf("a P or later G/D row got an imputed date for %d stems, e.g. %s", length(b3), show_ids(b3)))
+  cat(sprintf(
+    "  ExactDate: recorded %s | imputed %s (A, measured or first G/D rows) | NA %s (P and later G/D rows without a record)\n",
+    format(y[!is.na(raw_date), .N], big.mark = ","), format(y[is.na(raw_date) & !is.na(ExactDate), .N], big.mark = ","),
+    format(y[is.na(ExactDate), .N], big.mark = ",")
+  ))
+})
+
+test_that("real data: one location per tree, the position most censuses agree on", {
+  skip_if_not(real_ok, "no R tables / stage-2 file found")
+  loc <- unique(rt[, .(TreeID, gx, gy, quadrat)])
+  multi <- loc[, .N, by = TreeID][N > 1L, TreeID]
+  expect(length(multi) == 0L, sprintf("%d trees have more than one (gx, gy, quadrat), e.g. %s", length(multi), show_ids(multi)))
+  # Recompute the votes from the raw coordinates: one vote per tree and census
+  # (its modal pair; ties -> smallest x, then y). The exported pair must have
+  # the most census votes of its tree.
+  pool <- cells[!is.na(PX) & !is.na(PY), .N, by = .(TreeID, census, PX, PY)]
+  setorder(pool, TreeID, census, -N, PX, PY)
+  votes <- pool[pool[, .I[1L], by = .(TreeID, census)]$V1][, .(n_votes = .N), by = .(TreeID, PX, PY)]
+  best <- votes[, .(max_votes = max(n_votes)), by = TreeID]
+  chosen <- votes[unique(rt[!is.na(gx), .(TreeID, PX = gx, PY = gy)]), on = .(TreeID, PX, PY)]
+  chosen <- best[chosen, on = "TreeID"]
+  b1 <- chosen[is.na(n_votes) | n_votes < max_votes, TreeID]
+  expect(length(b1) == 0L, sprintf("%d trees are not at their most-voted position, e.g. %s", length(b1), show_ids(b1)))
+  no_xy <- setdiff(unique(rt$TreeID), chosen$TreeID)
+  expect_setequal(no_xy, setdiff(unique(cells$TreeID), unique(pool$TreeID)))
+  cat(sprintf(
+    "  location: %s trees, one position each | with raw positions that disagree: %s | without coordinates: %d\n",
+    format(uniqueN(rt$TreeID), big.mark = ","), format(votes[, .N, by = TreeID][N > 1L, .N], big.mark = ","), length(no_xy)
+  ))
 })
 
 test_that("real data: DFstatus is exactly the raw Status (never modified)", {
