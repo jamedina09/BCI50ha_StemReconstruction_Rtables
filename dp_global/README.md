@@ -877,10 +877,10 @@ $\hat{\sigma}_{\text{proc},i} = \sqrt{\max(\hat{\sigma}_{\text{total},i}^2 - \te
 $\hat{\sigma}_{\text{proc},i} = \max(\hat{\sigma}_{\text{total},i}, 10^{-6})$
 
 **Linear model for heteroskedasticity:**
-Fits `lm(sd_proc_hat ~ d0_all)` with constraints:
+Fits `lm(sd_proc_hat ~ d0_all)`:
 
-- $\sigma_0 \geq 10^{-4}$
-- $\sigma_1 \geq 0$
+- slope ≥ 0: $\sigma_0$ = intercept (at least 0.01), $\sigma_1$ = slope
+- slope < 0 (the SD falls with size, e.g. palms): a line cannot be kept, since it would reach zero for large stems, so the SD is refitted as a constant, $\sigma_0$ = mean of the per-pair proxies (at least 0.01) and $\sigma_1 = 0$. Before 2026-10 the slope was set to 0 but the intercept kept, which gave every stem the SD extrapolated to DBH 0: 52 of the 220 BCI parameter sets were affected (median ×1.21; *Oenocarpus mapora* 0.323 instead of 0.095 cm/yr, *Socratea* ×3.0, *Elaeis* ×5.9). With the refit every set with ≥ 30 pairs reproduces its own observed SD (`dp_global/tests/test_estimate_bio_pars.R`).
 
 Final model:
 $\sigma(D_0) = \sigma_0 + \sigma_1 D_0$
@@ -1098,17 +1098,14 @@ Example (enforce a 37.5 cm recruit cap):
 estimate_bio_pars(x, enforce_recruit_max = TRUE, recruit_max_source = "fixed", recruit_max_fixed = 37.5)
 ```
 
-**Recruitment rate:**
+**Recruitment rate** (`recruit_rate_unit`, driver flag `RECRUIT_RATE_UNIT`):
 
-Poisson rate per empty slot per year:
-$\lambda_{\text{recruit}} = \frac{n_{\text{recruits}}}{n_{\text{at-risk}} \cdot \sum_{\text{intervals}} \Delta t}$
+- `"tree"` (default): new stems per established tree per year,
+  $\lambda_{\text{recruit}} = \frac{n_{\text{new}} + 0.5}{\sum_{\text{trees, intervals}} \Delta t}$,
+  where a tree is established in an interval when it has a measured stem at its start, $n_{\text{new}}$ counts the stems of those trees without a DBH at the start and with one at the end, and $\Delta t$ is each established tree's interval (the mean over its stems). The 0.5 pseudo-recruit keeps the rate positive for sets without new stems in established trees. This is the probability per year that a tree gains a stem, which is what both engines use it for (the DP's empty track, the matcher's recruitment cell).
+- `"slot"` (legacy): recruits per empty slot per year, $\lambda = n_{\text{recruits}} / \sum \Delta t$ over the grid cells without a DBH at the start. Those cells are dead stems and stems that recruit later, so the ratio barely depends on the species: about 0.08/yr for nearly every BCI set (5–95%: 0.048–0.097), while recruitment observed in 2010–2023 ranges from 0.008 to 0.74 new stems per stem-year (correlation 0.27). With `"tree"` the BCI rates range from 0.0011 to 0.076 (5–95%; median 0.010; *Oenocarpus mapora* 0.149, *Hybanthus prunifolius* 0.019, *Faramea occidentalis* 0.0065).
 
-where:
-
-- $n_{\text{recruits}}$: total recruitment events across all intervals
-- $n_{\text{at-risk}}$: total empty-slot census-years
-
-Fallback: 0
+Both values are returned (`recruitment$lambda_tree`, `recruitment$lambda_slot`, with `lambda_unit`, `n_new_stems_established_trees` and `established_tree_years`).
 
 ### Quantile Selection
 
@@ -1218,9 +1215,11 @@ When the DP cannot be used for a tree (any reason in the fallback list above: a 
 
 1. **Pairwise log-likelihoods**: For each adjacent census pair, computes a log-likelihood matrix between all observed stems using the same biological model as the DP (Gaussian growth likelihood with size-dependent mean and variance, survival probability, soft shrinkage/growth penalties from `Bio_*` columns). DBH rounded down to classes at flagged censuses (`dbh_round_censuses`) is treated as in the DP (see *DBH recorded in classes*).
 
-2. **Cost matrix augmentation** (`augment_cost_matrix()`): Expands the pairwise likelihood matrix to K×K by adding virtual mortality slots (for stems disappearing) and virtual recruitment slots (for new stems appearing), using the same mortality hazard and recruitment size/rate distributions as the DP. K is raised until an assignment without forbidden links exists: with M the largest set of allowed survival links, K ≥ n_curr + n_next − M, so every allowed assignment keeps M survivals (the engine's maximum-survival design).
+2. **Cost matrix augmentation** (`augment_cost_matrix()`): Expands the pairwise likelihood matrix to K×K with mortality slots (for stems disappearing) and recruitment slots (for new stems appearing), using the same mortality hazard and recruitment size/rate distributions as the DP. Two modes (`birth_death`, set from the DP's `prob_birth_death`, driver flag `PROB_BIRTH_DEATH`):
+   - **Birth-death (default, `TRUE`).** K = n_curr + n_next. Each current stem has one death cell (`[i, n_next + i]`, log P(death)) and each next stem one recruitment cell (`[n_curr + j, j]`, log P(recruit) + log f(size)); the cells that pair a recruitment row with a death column carry no event and score 0. Every combination of survivals, deaths and recruitments is an assignment, scored by the sum of its events, so a link is taken only when it is more likely than the death of the earlier stem plus the recruitment of the later one — the choice the DP makes. The matrix carries attribute `"bd"`.
+   - **Legacy (`FALSE`).** K = max(n_curr, n_next), raised only until an assignment without forbidden links exists (with M the largest set of allowed survival links, K ≥ n_curr + n_next − M), so every allowed assignment keeps M survivals: with stable stem counts no stem can die and none can be recruited. Against the 2010–2023 stem tags (identities hidden, 2023 pinned), this forced survival recovered 30% of the links of *Oenocarpus* clumps and 65% of their deaths; before 2010 palm replacements (a death and a recruit in one tree and interval) were 0.8–4.4 per 100 trees per year against 4.6–6.9 with certain identity. The birth-death mode recovers 45% of the links and 82–85% of the deaths, and gives 5.0–7.2 replacements per 100 palm trees per year in 1985–2010 (1982–85: 9.3, when palms with a single stem, whose deaths are certain, also died about three times faster than later); DP trees are unaffected.
 
-3. **Gumbel-noise greedy assignment**: Draws `n_samples` (default 200) stochastic assignments by adding Gumbel(0,1) noise to log-likelihoods (scaled by temperature) and greedily selecting the best available assignment per row. This approximates sampling from the Gibbs distribution over assignments.
+3. **Stochastic assignment** (`greedy_assignment_gumbel()`): Draws `n_samples` (default 200) stochastic assignments by adding Gumbel(0, temperature) noise to the log-likelihoods. Birth-death mode: the noise goes on every event cell (none on the empty cells) and each sample is the exact best assignment of the perturbed pair (`hungarian_min_rcpp()`, Kuhn–Munkres in `dp_global/src/transition_cost_rcpp.cpp`; one cell per event, so deaths and recruitments are not favoured by having several equivalent slots). Legacy mode: rows are assigned greedily to the best available column. This approximates sampling from the Gibbs distribution over assignments.
 
    **TrueStemID pins while sampling.** Two masks constrain each pair's cost matrix. `apply_pin_mask()` sends an observation pinned to a stem present at the anchor to the column that carries that anchor stem. `apply_track_pin_mask()` covers the pins of every stem, including stems that end before the anchor (Step 3a.5 / Step 3b StemID pins, trees last measured before 2010): while sampling backward each next-census observation carries the pin of its track (its own pin, or one inherited from a later census of the same sample, `propagate_track_pin()`), and a pinned observation must join the observation that carries its pin and may not join one that carries a different pin. Unpinned observations are free, so a stem's earlier rows under an older, renumbered StemID can still be linked to it. Without this mask those pins were applied only to the exported table by the pin sweep, so the samples could group the same observations differently from the export.
 
@@ -1391,7 +1390,7 @@ For these reasons, the non-taper-corrected override **replaces** the general eff
 
 **Parameters:**
 
-- `non_taper_corrected_growth_forms` (character vector, default `c("palm", "strangler_fig", "tree_fern")`): growth forms whose DBH measurements are not taper-corrected. When a tag's `growth_form` matches any entry in this list, the non-taper override is activated. Accepts comma- or semicolon-separated strings.
+- `non_taper_corrected_growth_forms` (character vector, default `c("palm", "strangler_fig", "tree_fern")`): growth forms whose DBH measurements are not taper-corrected. When a tag's `growth_form` matches any entry in this list (exact match), the non-taper override is activated. Accepts comma- or semicolon-separated strings. The values must be the `growth_form` labels of the data: the BCI driver assigns `palm`, `strangler` and `fern` and sets `c("palm", "strangler", "fern")` (the defaults `strangler_fig` / `tree_fern` matched nothing there), and it stops with a visible check when a value listed here, in `DP_FALLBACK_GROWTH_FORMS` or in `PROB_SPECIES` does not occur in the data. In BCI the change has no effect on results: strangler figs are routed to the probabilistic matcher before this override is read, and no multi-stem tree is a tree fern.
 - `non_taper_corrected_prune_min_growth` (numeric, default `-0.625`): lower prune bound (cm/year) that replaces the general effective minimum for matching growth forms. Default is `1.25 × MAX_SHRINK_FIXED`.
 - `non_taper_corrected_prune_max_growth` (numeric, default `6.25`): upper prune bound (cm/year) that replaces the general effective maximum for matching growth forms. Default is `1.25 × MAX_GROWTH_FIXED`.
 - `hom_tolerance_scale` (numeric, default `2.0`): additional annual DBH tolerance (cm/yr) per meter of HOM deviation from 1.3 m. When a `hom` (or `HOM`) column is present in the data and the tag is non-taper-corrected, the prune bounds are widened for each census pair by:
@@ -1630,7 +1629,9 @@ out <- add_dp_posterior_bins(
 | R-boundary splitting (fallback paths) | `split_live_resprout_tracks()` | `dp_global/R/dp_global_dp.R` |
 | Posterior samples of a resprout-split tag (paired segments) | `pair_segment_posterior_samples()`, `segment_fixed_assignment()`, `stage_posterior_samples()` | `dp_global/R/dp_global_dp.R` |
 | Pins of every stem while sampling (probabilistic) | `apply_track_pin_mask()`, `propagate_track_pin()` | `dp_global/R/dp_probabilistic_matching.R` |
-| Extra death/recruit slots when pins forbid a pair's links (probabilistic) | `pin_masked_pair()`, `augment_cost_matrix(K_min = …)` | `dp_global/R/dp_probabilistic_matching.R` |
+| Extra death/recruit slots when pins forbid a pair's links (probabilistic, legacy mode) | `pin_masked_pair()`, `augment_cost_matrix(K_min = …)` | `dp_global/R/dp_probabilistic_matching.R` |
+| Birth-death assignment: one death and one recruitment cell per stem, exact perturbed assignment (probabilistic) | `augment_cost_matrix(birth_death = TRUE)`, `greedy_assignment_gumbel()`, `hungarian_min_rcpp()`; argument `prob_birth_death`, tests `dp_global/tests/test_probabilistic_birth_death.R` | `dp_global/R/dp_probabilistic_matching.R`, `dp_global/src/transition_cost_rcpp.cpp` |
+| Growth SD refit when it falls with size; recruitment rate per established tree | `estimate_bio_pars(recruit_rate_unit = …)`, tests `dp_global/tests/test_estimate_bio_pars.R` | `dp_global/R/dp_global_bio.R` |
 | DBH recorded in classes, rounded down (BCI 1982/1985 < 55 mm) | `transition_cost_paired_rcpp(round_t, round_tp1, …)`, `compute_pairwise_log_likelihood(round_curr, round_next, …)`; argument `dbh_round_censuses` | `dp_global/src/transition_cost_rcpp.cpp`, `dp_global/R/dp_global_dp.R`, `dp_global/R/dp_probabilistic_matching.R` |
 | Carried-terminal backfill (post-engine) | `apply_carried_terminal_backfill()` | `dp_global/R/dp_global_main.R` |
 | Orphan-stem backfill (post-engine) | `apply_orphan_stem_backfill()` | `dp_global/R/dp_global_main.R` |
