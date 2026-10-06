@@ -77,7 +77,7 @@ parse_args <- function() {
                     "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
                     "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
                     "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL",
-                    "TAG_FILTER_FILE", "DBH_ROUND_CENSUSES", "RECRUIT_RATE_UNIT"
+                    "TAG_FILTER_FILE", "DBH_ROUND_CENSUSES", "RECRUIT_RATE_UNIT", "COVERAGE_RULE"
                 )
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
@@ -168,6 +168,14 @@ RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 # "slot" = legacy recruits per empty slot of the estimation grid, ~0.08/yr for
 # every species whatever its real recruitment (see dp_global_bio.R, section 9).
 RECRUIT_RATE_UNIT <- "tree"
+# Size coverage a species needs for its own parameter set (2010-2023 data): its
+# diameters must fill 4 equal bins on the log scale with >= 3 stems each.
+# "minmax" (legacy) spans the bins from the smallest to the largest diameter, so
+# a single out-of-range value (Beilschmiedia: one 2 mm record) leaves a bin
+# nearly empty and sends a well-sampled species to a pooled set. "union" also
+# accepts a species whose middle 95% of diameters fill the bins; in BCI it adds
+# beilpe, annoac, bactma, ast1st, hameax and pipeco and removes none.
+COVERAGE_RULE <- "union"
 
 ############################################################
 ### 3.2) DP solver settings
@@ -393,7 +401,8 @@ CLI_REFERENCE <- list(
     PIN_TRUESTEMID = "PIN_TRUESTEMID",
     PROB_N_SIGMA_ME = "PROB_N_SIGMA_ME",
     PROB_BIRTH_DEATH = "PROB_BIRTH_DEATH",
-    RECRUIT_RATE_UNIT = "RECRUIT_RATE_UNIT"
+    RECRUIT_RATE_UNIT = "RECRUIT_RATE_UNIT",
+    COVERAGE_RULE = "COVERAGE_RULE"
 )
 
 # Sensitivity and realism flags are not applicable to the chunked runner
@@ -1135,6 +1144,10 @@ run_main_chunked <- function() {
         .msg <- sprintf("CHECK FAILED: RECRUIT_RATE_UNIT must be \"tree\" or \"slot\", not \"%s\"", RECRUIT_RATE_UNIT)
         cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
     }
+    if (!COVERAGE_RULE %in% c("union", "minmax")) {
+        .msg <- sprintf("CHECK FAILED: COVERAGE_RULE must be \"union\" or \"minmax\", not \"%s\"", COVERAGE_RULE)
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
 
     xraw[, Lifeform := NULL]
 
@@ -1284,7 +1297,12 @@ run_main_chunked <- function() {
     ##
     ## Species that fail are excluded from per-species estimation and fall
     ## back to the pooled "all_tree_shrub" parameters.
-    has_dbh_coverage <- function(dt, n_bins = 4L, min_per_bin = 3L) {
+    ##
+    ## probs = NULL: bins span the smallest to the largest diameter (one
+    ## out-of-range value can leave a bin nearly empty). probs = c(lo, hi): bins
+    ## span those quantiles of log(DBH) and only the diameters inside count
+    ## (COVERAGE_RULE = "union" accepts a species that passes either version).
+    has_dbh_coverage <- function(dt, n_bins = 4L, min_per_bin = 3L, probs = NULL) {
         # Step 1: Extract valid DBH values
         d <- dt[!is.na(DBH) & is.finite(DBH) & DBH > 0, DBH]
         # Step 2: Early exit if insufficient data
@@ -1294,7 +1312,9 @@ run_main_chunked <- function() {
         # Step 3: Log-transform (because tree diameters are log-normally distributed)
         log_d <- log(d)
         # Step 4: Create bin edges
-        breaks <- seq(min(log_d), max(log_d), length.out = n_bins + 1L)
+        rng <- if (is.null(probs)) range(log_d) else stats::quantile(log_d, probs, names = FALSE)
+        if (!is.null(probs)) log_d <- log_d[log_d >= rng[1] & log_d <= rng[2]]
+        breaks <- seq(rng[1], rng[2], length.out = n_bins + 1L)
         ## Widen edges slightly so min/max fall inside
         breaks[1] <- breaks[1] - 1e-6 # Ensure min value is included
         breaks[n_bins + 1] <- breaks[n_bins + 1] + 1e-6 # Ensure max value is included
@@ -1323,6 +1343,22 @@ run_main_chunked <- function() {
             out[, has_size_coverage := has_dbh_coverage(.SD, n_bins = n_bins, min_per_bin = min_per_bin),
                 by = Mnemonic
             ]
+            if (identical(COVERAGE_RULE, "union")) {
+                # also accept a species whose middle 95% of diameters cover the bins
+                out[, coverage_mid95 := has_size_coverage]
+                out[has_size_coverage == FALSE, coverage_mid95 := has_dbh_coverage(.SD,
+                    n_bins = n_bins, min_per_bin = min_per_bin, probs = c(0.025, 0.975)
+                ), by = Mnemonic]
+                counts_ok <- out$n_valid_growth_pair >= min_pairs
+                if (!is.null(min_tags)) counts_ok <- counts_ok & out$n_tags >= min_tags
+                added <- sort(unique(out$Mnemonic[counts_ok & !out$has_size_coverage & out$coverage_mid95]))
+                .msg <- sprintf(
+                    "COVERAGE_RULE union (%s): %s", paste(growth_forms, collapse = ", "),
+                    if (length(added) > 0L) paste("own parameter set through the middle-95% check only:", paste(added, collapse = ", ")) else "no species added by the middle-95% check"
+                )
+                cat("✓", .msg, "\n"); log_msg(.msg)
+                out[, has_size_coverage := coverage_mid95][, coverage_mid95 := NULL]
+            }
             keep <- out$n_valid_growth_pair >= min_pairs & out$has_size_coverage == TRUE
             if (!is.null(min_tags)) keep <- keep & out$n_tags >= min_tags
             out <- out[keep][, species := Mnemonic][]
@@ -2373,6 +2409,9 @@ if (sys.nframe() == 0L) {
 #                                 stable stem counts); default TRUE (birth-death)
 #   --RECRUIT_RATE_UNIT=slot      Legacy recruitment rate (per empty grid slot);
 #                                 default "tree" (new stems per established tree per year)
+#   --COVERAGE_RULE=minmax        Legacy size-coverage rule for a species' own parameter
+#                                 set (bins from min to max DBH); default "union" (also
+#                                 the middle 95% of diameters)
 #   --DP_CHUNK_START=3            Start from chunk N (skip earlier chunks)
 #   --DP_CHUNK_END=9              Stop after chunk N
 #

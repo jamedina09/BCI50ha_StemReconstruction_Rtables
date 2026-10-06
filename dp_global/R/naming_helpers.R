@@ -51,11 +51,13 @@ build_out_dir_name <- function() {
         me_part <- paste0(me_part, "_R", paste(sort(DBH_ROUND_CENSUSES_INT), collapse = ""))
     }
     # Drivers that set these (BCI): "BD" = birth-death probabilistic matcher,
-    # "LT" = recruitment rate per established tree (e.g. NME_R12_BD_LT)
+    # "LT" = recruitment rate per established tree, "CU" = species size
+    # coverage by the union rule (e.g. NME_R12_BD_LT_CU)
     if (exists("PROB_BIRTH_DEATH") && isTRUE(PROB_BIRTH_DEATH)) me_part <- paste0(me_part, "_BD")
     if (exists("RECRUIT_RATE_UNIT") && identical(RECRUIT_RATE_UNIT, "tree")) {
         me_part <- paste0(me_part, "_LT")
     }
+    if (exists("COVERAGE_RULE") && identical(COVERAGE_RULE, "union")) me_part <- paste0(me_part, "_CU")
 
     max_growth_hard_ <- switch(MAX_GROWTH_HARD_SOURCE,
         "fixed" = paste0("g", encode_num(MAX_GROWTH_FIXED)),
