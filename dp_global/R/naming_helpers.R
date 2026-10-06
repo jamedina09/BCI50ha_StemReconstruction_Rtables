@@ -50,6 +50,12 @@ build_out_dir_name <- function() {
     if (exists("DBH_ROUND_CENSUSES_INT") && length(DBH_ROUND_CENSUSES_INT) > 0L) {
         me_part <- paste0(me_part, "_R", paste(sort(DBH_ROUND_CENSUSES_INT), collapse = ""))
     }
+    # Drivers that set these (BCI): "BD" = birth-death probabilistic matcher,
+    # "LT" = recruitment rate per established tree (e.g. NME_R12_BD_LT)
+    if (exists("PROB_BIRTH_DEATH") && isTRUE(PROB_BIRTH_DEATH)) me_part <- paste0(me_part, "_BD")
+    if (exists("RECRUIT_RATE_UNIT") && identical(RECRUIT_RATE_UNIT, "tree")) {
+        me_part <- paste0(me_part, "_LT")
+    }
 
     max_growth_hard_ <- switch(MAX_GROWTH_HARD_SOURCE,
         "fixed" = paste0("g", encode_num(MAX_GROWTH_FIXED)),
