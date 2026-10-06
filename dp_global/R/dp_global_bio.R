@@ -77,7 +77,15 @@ estimate_bio_pars <- function(
   growth_max_fixed = NA_real_,
   # If 'enforce_recruit_max' is TRUE, recruits with DBH > 'recruit_max_fixed' are dropped
   # before fitting the recruitment-size lognormal.
-  enforce_recruit_max = FALSE
+  enforce_recruit_max = FALSE,
+  # Unit of the recruitment rate lambda (recruitment$lambda):
+  # - "tree": new stems per established tree per year (a tree with a measured
+  #   stem at t0; its new stems at t1), the rate at which the engines expect a
+  #   new stem in a tree (default)
+  # - "slot": recruits per empty slot per year in the estimation grid (legacy;
+  #   the empty slots are dead stems and stems that recruit later, so the value
+  #   is close to 0.08/yr for every species)
+  recruit_rate_unit = c("tree", "slot")
 ) {
     # =====================================================================
     # estimate_bio_pars()
@@ -166,6 +174,11 @@ estimate_bio_pars <- function(
 #
 # enforce_recruit_max
 #   Logical: if TRUE, drop recruits with DBH > recruit_max_fixed (cm) prior to fitting recruit size.
+#
+# recruit_rate_unit
+#   "tree" (default): lambda = new stems per established tree per year (see
+#   section 9). "slot": the legacy recruits per NA slot per year. Both values
+#   are returned (recruitment$lambda_tree, recruitment$lambda_slot).
     library(MASS)
 
     # =========================================================================
@@ -436,9 +449,20 @@ estimate_bio_pars <- function(
     # Notes:
     # - sigma0_hat is constrained to be positive
     # - sigma1_hat is constrained to be non-negative
+    # - when the SD falls with size (negative slope, e.g. palms), a line cannot
+    #   be kept (it would reach zero for large stems), and keeping its
+    #   intercept with the slope set to 0 would give every stem the SD
+    #   extrapolated to DBH 0 (Oenocarpus: 0.323 instead of 0.095 cm/yr). The SD
+    #   is then refitted as a constant: the mean of the per-pair SD proxies.
     fit_sd <- lm(sd_proc_hat ~ d0_all)
-    sigma0_hat <- max(coef(fit_sd)[1], 0.01)
-    sigma1_hat <- max(coef(fit_sd)[2], 0)
+    sd_slope <- unname(coef(fit_sd)[2])
+    if (is.finite(sd_slope) && sd_slope >= 0) {
+        sigma0_hat <- max(unname(coef(fit_sd)[1]), 0.01)
+        sigma1_hat <- sd_slope
+    } else {
+        sigma0_hat <- max(mean(sd_proc_hat), 0.01)
+        sigma1_hat <- 0
+    }
 
     # =========================================================================
     # 7. SHRINKAGE PENALTY ESTIMATION (k_shrink)
@@ -563,17 +587,39 @@ estimate_bio_pars <- function(
     # We estimate:
     #   - recruit sizes via a lognormal fit
     #   - recruit_max_dbh as a high quantile guardrail
-    #   - recruit rate lambda as recruits per available NA slot per year
+    #   - recruit rate lambda (recruit_rate_unit):
+    #       "tree": new stems per established tree per year. A tree is
+    #               established when it has a measured stem at t0; its new
+    #               stems are those without a DBH at t0 and with one at t1.
+    #               This is the rate at which the engines expect a new stem
+    #               in a tree (DP slack track, matcher recruit cell).
+    #       "slot": recruits per NA slot per year (legacy). The NA slots of
+    #               the grid are dead stems and stems that recruit later, so
+    #               this ratio barely depends on the species (~0.08/yr).
     recruit_dbh <- c()
     n_risk <- 0
     n_rec <- 0
     total_time_at_risk <- 0
+    n_rec_tree <- 0
+    tree_time_at_risk <- 0
 
     for (i in seq_len(length(census_ids) - 1)) {
         t0 <- as.character(census_ids[i])
         t1 <- as.character(census_ids[i + 1])
 
         if (!all(c(t0, t1) %in% names(dw))) next
+
+        # Rate per established tree: trees with a measured stem at t0, their
+        # new stems at t1, and their exposure (mean interval of their stems)
+        est_row <- !is.na(dw[[t0]])
+        if (any(est_row) && t0 %in% names(iw) && t1 %in% names(iw)) {
+            est_tags <- unique(dw$Tag[est_row])
+            new_stem <- is.na(dw[[t0]]) & !is.na(dw[[t1]]) & is.finite(dw[[t1]]) & dw[[t1]] > 0 & dw$Tag %in% est_tags
+            n_rec_tree <- n_rec_tree + sum(new_stem)
+            T_rows <- as.numeric(iw[[t1]][est_row] - iw[[t0]][est_row]) / 365.25
+            T_tree <- tapply(T_rows, dw$Tag[est_row], function(v) mean(v[is.finite(v)]))
+            tree_time_at_risk <- tree_time_at_risk + sum(T_tree[is.finite(T_tree) & T_tree > 0])
+        }
 
         at_risk <- is.na(dw[[t0]])
         if (!any(at_risk)) next
@@ -646,11 +692,16 @@ estimate_bio_pars <- function(
     }
 
     # Recruitment rate (Poisson)
-    lambda_hat <- if (total_time_at_risk > 0) {
+    recruit_rate_unit <- match.arg(recruit_rate_unit)
+    lambda_slot <- if (total_time_at_risk > 0) {
         n_rec / total_time_at_risk
     } else {
         0
     }
+    # 0.5 pseudo-recruit: a set without new stems in established trees gets a
+    # small positive rate instead of zero (a zero rate would forbid recruits)
+    lambda_tree <- if (tree_time_at_risk > 0) (n_rec_tree + 0.5) / tree_time_at_risk else NA_real_
+    lambda_hat <- if (identical(recruit_rate_unit, "tree") && is.finite(lambda_tree)) lambda_tree else lambda_slot
 
     # =========================================================================
     # 10. GUARDRAILS: SHRINKAGE (max_shrink)
@@ -966,7 +1017,13 @@ estimate_bio_pars <- function(
             recruit_max_source = recruit_max_source,
             recruit_max_fixed = recruit_max_fixed,
             enforce_recruit_max = enforce_recruit_max,
-            lambda = lambda_hat
+            lambda = lambda_hat,
+            # provenance: both definitions of the rate (see recruit_rate_unit)
+            lambda_unit = recruit_rate_unit,
+            lambda_tree = lambda_tree,
+            lambda_slot = lambda_slot,
+            n_new_stems_established_trees = as.integer(n_rec_tree),
+            established_tree_years = tree_time_at_risk
         ),
         shrinkage = list(
             k_shrink = k_shrink_hat,
