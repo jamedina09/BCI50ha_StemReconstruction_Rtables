@@ -5,9 +5,17 @@
 # When the DP cannot be used (state space too large, a dead end with no
 # feasible state, species or growth-form routing; see do_fallback()):
 #   1. Pairwise log-likelihoods (same bio model as DP)
-#   2. Augment cost matrix with mortality/recruitment slots (enough of them
-#      for an assignment without forbidden links to exist)
-#   3. Draw n_samples stochastic assignments via Gumbel-noise greedy; a pair
+#   2. Augment cost matrix with mortality/recruitment slots. Birth-death mode
+#      (birth_death = TRUE, the default): every stem may continue, die or be
+#      recruited in every census pair, one death cell per current stem and
+#      one recruit cell per next stem, so a link is taken only when it is
+#      more likely than the death of the earlier stem plus the recruitment of
+#      the later one (as in the DP). Legacy mode (birth_death = FALSE): only
+#      as many slots as the stem counts and the forbidden links require, so
+#      with stable counts every stem is forced to continue
+#   3. Draw n_samples stochastic assignments. Birth-death mode: Gumbel noise
+#      on every event cell and the exact best assignment of each perturbed
+#      pair (hungarian_min_rcpp). Legacy mode: Gumbel-noise greedy; a pair
 #      whose greedy assignment uses a forbidden (-Inf) link is re-solved
 #      exactly (enforce_feasible_assignment), so the hard limits hold; a
 #      violation no assignment can avoid is chosen as the DP does (hard
@@ -58,9 +66,11 @@ match_stems_probabilistic <- function(tree_data,
                                       dbh_round_max = 5.5, # only DBH below this (cm) was rounded
                                       dbh_round_width = 0.5, # class width (cm)
                                       return_samples = FALSE, # TRUE: attach samples as attr "DP_Posterior_Samples" instead of staging them
+                                      birth_death = TRUE, # TRUE: every stem may die / be recruited in every pair (see header); FALSE: legacy slots
                                       verbose = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
+    birth_death <- isTRUE(birth_death)
     posterior_top_k <- max(1L, as.integer(posterior_top_k))
 
     vcat <- function(...) {
@@ -294,7 +304,7 @@ match_stems_probabilistic <- function(tree_data,
             round_curr = .round_curr, round_next = .round_next,
             round_max = dbh_round_max, round_width = dbh_round_width
         )
-        aug <- augment_cost_matrix(L, dbh_curr, dbh_next, iv, bio)
+        aug <- augment_cost_matrix(L, dbh_curr, dbh_next, iv, bio, birth_death = birth_death)
         .k_raised <- attr(aug, "k_raised")
         if (!is.null(.k_raised)) {
             vcat(prefix, sprintf(
@@ -749,10 +759,53 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
 # ---- Augment cost matrix with mortality/recruitment ----------------------
 # K_min: optional smallest K, used by pin_masked_pair() when a sample's pin
 # masks forbid survival links that the K sized here relied on.
+#
+# Birth-death mode (birth_death = TRUE): K = n_curr + n_next and every stem
+# has its own event cells, so any combination of survivals, deaths and
+# recruitments is an assignment:
+#   [1:n_curr, 1:n_next]          survival link: growth + survival log-likelihood (L)
+#   [i, n_next + i]               death of current stem i: log P(death)
+#   [n_curr + j, j]               recruitment of next stem j: log P(recruit) + log f(size)
+#   [n_curr + j, n_next + i]      empty: no event, score 0 (and no noise when sampling)
+# All other cells are -Inf. A configuration scores the sum of its events, so
+# a link is chosen only when it is more likely than the death of the earlier
+# stem plus the recruitment of the later one, as in the DP. With one cell per
+# event the Gumbel noise of greedy_assignment_gumbel() does not favour deaths
+# or recruitments by their number of copies. The matrix carries attribute
+# "bd" = c(n_curr, n_next), which selects the matching sampler and fallback.
+#
+# Legacy mode (birth_death = FALSE): K = max(n_curr, n_next), raised only so
+# that an assignment without forbidden links exists; with stable stem counts
+# no death or recruitment slot exists and every stem must continue.
 
-augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio, K_min = NULL) {
+augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio, K_min = NULL, birth_death = FALSE) {
     n_curr <- length(dbh_curr)
     n_next <- length(dbh_next)
+
+    if (isTRUE(birth_death)) {
+        K <- n_curr + n_next
+        if (!is.null(K_min) && K < K_min) K <- as.integer(K_min)
+        A <- matrix(-Inf, nrow = K, ncol = K)
+        if (K > 0L) {
+            if (n_curr > 0L && n_next > 0L) A[seq_len(n_curr), seq_len(n_next)] <- L
+            for (i in seq_len(n_curr)) {
+                hazard <- bio$h0 * exp(bio$beta_mort * dbh_curr[i])
+                p_death <- max(1e-12, min(1 - 1e-12, 1 - exp(-hazard * interval_years)))
+                A[i, n_next + i] <- log(p_death)
+            }
+            p_recruit <- max(1e-12, min(1 - 1e-12, 1 - exp(-bio$recruit_lambda * interval_years)))
+            for (j in seq_len(n_next)) {
+                d1 <- dbh_next[j]
+                if (!is.finite(d1) || d1 <= 0) next
+                ll_recruit <- log(p_recruit) + dlnorm(d1, meanlog = bio$recruit_meanlog, sdlog = bio$recruit_sdlog, log = TRUE)
+                if (is.finite(bio$recruit_max_dbh) && d1 > bio$recruit_max_dbh) ll_recruit <- -Inf
+                A[n_curr + j, j] <- ll_recruit
+            }
+            if (K > n_curr && K > n_next) A[(n_curr + 1L):K, (n_next + 1L):K] <- 0
+        }
+        attr(A, "bd") <- c(n_curr, n_next)
+        return(A)
+    }
 
     # Adaptive K: start from max(n_curr, n_next), then ensure enough
     # death columns for rows where ALL survival entries are -Inf, and
@@ -925,10 +978,17 @@ fallback_log_cost <- function(A, L_free, dbh_next, interval_years, bio) {
             meanlog = bio$recruit_meanlog,
             sdlog = bio$recruit_sdlog, log = TRUE
         )
-        rows <- (n_curr + 1L):K
-        for (j in seq_len(n_next)) {
-            forb <- !is.finite(fb[rows, j])
-            fb[rows[forb], j] <- ll[j]
+        if (!is.null(attr(A, "bd"))) {
+            # birth-death matrix: each next stem has one recruit cell, [n_curr + j, j]
+            for (j in seq_len(n_next)) {
+                if (n_curr + j <= K && !is.finite(fb[n_curr + j, j])) fb[n_curr + j, j] <- ll[j]
+            }
+        } else {
+            rows <- (n_curr + 1L):K
+            for (j in seq_len(n_next)) {
+                forb <- !is.finite(fb[rows, j])
+                fb[rows[forb], j] <- ll[j]
+            }
         }
     }
     fb
@@ -1152,9 +1212,11 @@ pin_masked_pair <- function(cost, fb, pd, bio, mask) {
         return(list(cost = mc, fb = mf, grown = FALSE))
     }
     # survival block keeps the lookahead adjustment; slots as in augment_cost_matrix()
+    # (a birth-death matrix already has a death and a recruit cell per stem,
+    # so it never reaches this point)
     grown <- augment_cost_matrix(cost[seq_len(n_curr), seq_len(n_next), drop = FALSE],
         pd$dbh_curr, pd$dbh_next, pd$iv, bio,
-        K_min = K_need
+        K_min = K_need, birth_death = !is.null(attr(cost, "bd"))
     )
     list(
         cost = mask(grown),
@@ -1165,9 +1227,14 @@ pin_masked_pair <- function(cost, fb, pd, bio, mask) {
 
 # ---- Gumbel-noise greedy assignment --------------------------------------
 # Draw one stochastic assignment from an augmented log-cost matrix using the
-# Gumbel-max trick.  Each row is assigned to the highest-scoring available
-# column after adding Gumbel(0, temperature) noise, processed in descending
-# order of row maxima.
+# Gumbel-max trick.
+#   Birth-death matrix (attribute "bd", see augment_cost_matrix()): Gumbel
+#   noise on every event cell (links, deaths, recruitments), none on the
+#   empty cells, and the exact best assignment of the perturbed scores
+#   (hungarian_min_rcpp(), lpSolve when the compiled solver is absent).
+#   Legacy matrix: each row is assigned to the highest-scoring available
+#   column after adding Gumbel(0, temperature) noise, processed in descending
+#   order of row maxima.
 #
 # INPUTS
 #   log_cost_matrix  K×K matrix of log-likelihoods (augmented with
@@ -1186,6 +1253,26 @@ greedy_assignment_gumbel <- function(log_cost_matrix, temperature = 1.0, fallbac
 
     # Add Gumbel(0, temperature) noise:  -temperature * log(-log(U))
     noise <- matrix(-temperature * log(-log(runif(K * K))), nrow = K, ncol = K)
+
+    bd <- attr(log_cost_matrix, "bd")
+    if (!is.null(bd)) {
+        n_curr <- bd[1L]
+        n_next <- bd[2L]
+        if (K > n_curr && K > n_next) noise[(n_curr + 1L):K, (n_next + 1L):K] <- 0 # empty cells: no event, no noise
+        noisy <- log_cost_matrix + noise
+        w <- noisy
+        w[!is.finite(w)] <- -1e9 # forbidden cells: taken only when no assignment avoids them
+        assignment <- if (exists("hungarian_min_rcpp", mode = "function")) {
+            as.integer(hungarian_min_rcpp(-w))
+        } else {
+            sol <- lpSolve::lp.assign(w - min(w), direction = "max")$solution
+            as.integer(apply(sol, 1L, function(r) which(r > 0.5)[1L]))
+        }
+        # a forbidden cell is used only when the pair has no allowed assignment:
+        # choose the least bad one as the DP would (enforce_feasible_assignment)
+        return(enforce_feasible_assignment(noisy, assignment, fallback = fallback, noise = noise))
+    }
+
     noisy <- log_cost_matrix + noise
 
     # Greedy assignment: for each row in descending max-noisy-score order,

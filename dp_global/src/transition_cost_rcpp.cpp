@@ -1,6 +1,7 @@
 #include <Rcpp.h>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -705,4 +706,58 @@ Rcpp::List derive_phase_prev_batch_rcpp(
         Rcpp::Named("to_j")    = r_to,
         Rcpp::Named("phase_t") = r_phase
     );
+}
+
+// ---------------------------------------------------------------------------
+// hungarian_min_rcpp
+//
+// Exact minimum-cost assignment of a square cost matrix (Kuhn-Munkres with
+// row/column potentials, O(n^3)). Used by the probabilistic matcher to solve
+// each perturbed census pair exactly (greedy_assignment_gumbel(), birth-death
+// mode). Forbidden cells must be passed as large finite costs, not Inf.
+//
+// Arguments:
+//   cost : NumericMatrix [n x n] — cost of assigning row i to column j.
+//
+// Returns: IntegerVector of length n — the 1-based column assigned to each row.
+// ---------------------------------------------------------------------------
+// [[Rcpp::export]]
+Rcpp::IntegerVector hungarian_min_rcpp(const Rcpp::NumericMatrix& cost) {
+    const int n = cost.nrow();
+    if (cost.ncol() != n) Rcpp::stop("hungarian_min_rcpp: cost must be a square matrix");
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j)
+            if (!std::isfinite(cost(i, j))) Rcpp::stop("hungarian_min_rcpp: costs must be finite");
+    const double INF = std::numeric_limits<double>::infinity();
+    // 1-based potentials u (rows), v (columns); p[j] = row matched to column j
+    std::vector<double> u(n + 1, 0.0), v(n + 1, 0.0), minv(n + 1);
+    std::vector<int> p(n + 1, 0), way(n + 1, 0);
+    std::vector<char> used(n + 1);
+    for (int i = 1; i <= n; ++i) {
+        p[0] = i;
+        int j0 = 0;
+        std::fill(minv.begin(), minv.end(), INF);
+        std::fill(used.begin(), used.end(), 0);
+        do {
+            used[j0] = 1;
+            const int i0 = p[j0];
+            int j1 = 0;
+            double delta = INF;
+            for (int j = 1; j <= n; ++j) {
+                if (used[j]) continue;
+                const double cur = cost(i0 - 1, j - 1) - u[i0] - v[j];
+                if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
+                if (minv[j] < delta) { delta = minv[j]; j1 = j; }
+            }
+            for (int j = 0; j <= n; ++j) {
+                if (used[j]) { u[p[j]] += delta; v[j] -= delta; }
+                else minv[j] -= delta;
+            }
+            j0 = j1;
+        } while (p[j0] != 0);
+        do { const int j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0 != 0);
+    }
+    Rcpp::IntegerVector ans(n);
+    for (int j = 1; j <= n; ++j) if (p[j] > 0) ans[p[j] - 1] = j;
+    return ans;
 }
