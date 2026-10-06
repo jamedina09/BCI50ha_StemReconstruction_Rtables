@@ -24,13 +24,15 @@ caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_c
 **Flag explanations:**
 
 - `DP_MAX_STATES`: Cap on DP state-space size per tag (higher = more accuracy, longer runtime).
-- `PROB_SPECIES`: Comma-separated species codes to force probabilistic fallback (e.g., for strangler figs).
-- `DP_FALLBACK_GROWTH_FORMS`: Growth forms that trigger fallback to the probabilistic matcher.
+- `PROB_SPECIES`: Comma-separated species codes (`Mnemonic`) routed to the probabilistic matcher: the clonal palms *Oenocarpus mapora* (`oenoma`) and *Bactris major* (`bactma`) and the strangler figs (`ficu*`). Every code must occur in the data; otherwise the run stops at load with `❌ CHECK FAILED`.
+- `DP_FALLBACK_GROWTH_FORMS`: `growth_form` labels routed to the probabilistic matcher. The labels are those the script assigns: `tree`, `shrub`, `palm`, `strangler`, `fern` (singular, matched exactly). A value that is not a label (e.g. `palms`) stops the run at load with `❌ CHECK FAILED` instead of silently routing nothing.
+- `PROB_BIRTH_DEATH` (default `TRUE`, not needed on the command line): the probabilistic matcher lets every stem continue, die or be recruited in every census pair, scored by the same biological model as the DP. `--PROB_BIRTH_DEATH=FALSE` restores the legacy matcher, which forces every stem to continue when the stem count does not change (before 2010 it gave 0.8–4.4 palm stem replacements, a death and a recruit in one tree, per 100 trees per year, against 4.6–6.9 with the 2010–2023 stem tags). The DP is not affected.
+- `RECRUIT_RATE_UNIT` (default `"tree"`, not needed on the command line): the recruitment rate of both engines is the number of new stems per established tree per year (2010–2023 data). `--RECRUIT_RATE_UNIT=slot` restores the legacy rate per empty slot of the estimation grid (~0.08/yr for every species).
 - `POSTERIOR_SAMPLE_SEED`: Integer seed for reproducible sampling.
 - `MANUAL_CORES`/`MANUAL_CORES_VALUE`: Enable and set the number of parallel workers.
 - `DP_CHUNK_SIZE`: Number of tags processed per parallel chunk (match to core count for efficiency).
 - `USE_MEASUREMENT_ERROR`: Whether to use per-census DBH measurement error (set FALSE for speed).
-- `DBH_ROUND_CENSUSES` (default `"1,2"`, not needed on the command line): censuses whose small-stem DBH (< 55 mm) was recorded in 5 mm classes, rounded down (BCI 1982 and 1985). The engines read such a DBH as a size within its class, so a 5 mm class step is not taken as an impossible growth jump that splits one stem into a death and a recruit. The run log shows `✓ DBH rounded down to 5 mm classes …` (the data are checked at run time) and the output folder name carries `NME_R12`. `--DBH_ROUND_CENSUSES=none` turns it off.
+- `DBH_ROUND_CENSUSES` (default `"1,2"`, not needed on the command line): censuses whose small-stem DBH (< 55 mm) was recorded in 5 mm classes, rounded down (BCI 1982 and 1985). The engines read such a DBH as a size within its class, so a 5 mm class step is not taken as an impossible growth jump that splits one stem into a death and a recruit. The run log shows `✓ DBH rounded down to 5 mm classes …` (the data are checked at run time) and the output folder name carries `NME_R12` (with the defaults above, `NME_R12_BD_LT`: `BD` = birth-death matcher, `LT` = recruitment rate per tree). `--DBH_ROUND_CENSUSES=none` turns it off.
 - `BASE_OUT_DIR`: Root directory for all output (a timestamped subdirectory is created for each run).
 
 After all chunks finish, run `2_merge_chunks_to_datatable.R` to merge per-chunk Feather files into the final dataset.

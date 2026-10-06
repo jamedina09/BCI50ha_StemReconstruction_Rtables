@@ -11,8 +11,19 @@ reconstructed stem dataset used by `BCI_stem_reconstruction/3_PREPARE_R_TABLES/`
 Chunked DP driver.
 
 - Loads `BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds`.
-- Estimates per-species parameters and applies BCI-specific preprocessing.
-- Runs `dp_global` on multi-stem tags in parallel chunks.
+- Checks at load that every growth form and species code named in the routing
+  settings (`DP_FALLBACK_GROWTH_FORMS`, `NON_TAPER_CORRECTED_GROWTH_FORMS`,
+  `PROB_SPECIES`) occurs in the data; a value that does not (e.g. `palms` for
+  the label `palm`) stops the run with `❌ CHECK FAILED`.
+- Estimates per-species parameters from the 2010–2023 stems and applies
+  BCI-specific preprocessing. The growth SD is refitted as a constant when it
+  falls with size, and the recruitment rate is new stems per established tree
+  per year (`RECRUIT_RATE_UNIT`; see `dp_global/README.md`, *Parameter
+  Estimation*).
+- Runs `dp_global` on multi-stem tags in parallel chunks: the exact DP, or the
+  probabilistic matcher for palm clumps (*Oenocarpus mapora*, *Bactris major*),
+  strangler figs and trees too complex for the DP. The matcher lets every stem
+  continue, die or be recruited in every census pair (`PROB_BIRTH_DEATH`).
 - Writes chunk outputs to `BASE_OUT_DIR/<run_timestamp>/`.
 - Supports resuming interrupted runs.
 

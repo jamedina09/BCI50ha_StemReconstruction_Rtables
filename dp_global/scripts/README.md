@@ -75,10 +75,19 @@ DP / reconstruction option
 - `USE_BIO_HARD_SHRINK_IN_PROB` — default: `TRUE`. Controls two hard constraints in the probabilistic matcher: (1) the bio shrink gate in pairwise edge construction (`g < Bio_Max_Shrink` → edge log-likelihood set to `-Inf`), and (2) the Layer 2 ME cumulative-shrinkage repair check in `repair_stitched_growth_violations()`. When `FALSE`, both are disabled — edges with growth below `Bio_Max_Shrink` are allowed (penalised by the soft `k_shrink` quadratic term only) and the ME cumulative check does not sever trajectories. Use `FALSE` to allow confirmed large-shrinkage events (e.g., storm damage) without forcing the matcher to split a continuous stem. **Note:** The exact DP solver is unaffected — it always applies `Bio_Max_Shrink` as a hard pruning bound regardless of this flag.
 - `USE_BIO_HARD_GROWTH_IN_PROB` — default: `TRUE`. Controls the bio growth gate in pairwise edge construction in the probabilistic matcher (`g > Bio_Max_Growth_Bio` → edge log-likelihood set to `-Inf`). When `FALSE`, edges exceeding the biological growth maximum are allowed (penalised by the soft `k_growth` quadratic term only). The exact DP solver is unaffected by this flag.
 - `PIN_TRUESTEMID` — default: `TRUE`. When `TRUE`, observations with a known `TrueStemID` at non-anchor censuses are pinned to their field-observed identity track in the probabilistic matcher, reducing effective state space and preventing re-identification of labelled stems. Two stems with different pins are never joined: when the pins forbid links that a census pair's death/recruit slots relied on, the pair gets extra slots (`pin_masked_pair()`, see `dp_global/README.md`).
+- Birth-death assignment in the probabilistic matcher: these drivers use the
+  engine default (`prob_birth_death = TRUE` in
+  `match_stems_dp_global_backward_marginals_batch()`, `birth_death = TRUE` in
+  `match_stems_probabilistic()`): in every census pair each stem may continue,
+  die or be recruited, scored by the same biological model as the DP. The BCI
+  driver exposes it as `PROB_BIRTH_DEATH` (`FALSE` = legacy forced survival; see
+  `dp_global/README.md`, *Probabilistic Matching Fallback*).
 - `DP_FALLBACK_GROWTH_FORMS` — default: `character(0)`; comma- or
   semicolon-separated list of values in the `growth_form` column that should
   trigger an immediate probabilistic fallback and prevent the DP solver from running
-  on that tag. The driver automatically splits the string into a vector.
+  on that tag. The driver automatically splits the string into a vector. Values
+  are matched exactly against the data's labels (the BCI driver checks them at
+  load and stops on a value that is not a label).
 - `NON_TAPER_CORRECTED_GROWTH_FORMS` — default: `c("palm", "strangler_fig", "tree_fern")`;
   growth forms whose DBH is NOT taper-corrected. These forms exhibit both real
   biological DBH growth (palms: 1–3 cm/yr; strangler figs: variable as they
