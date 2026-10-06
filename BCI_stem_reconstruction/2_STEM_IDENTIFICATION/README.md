@@ -19,7 +19,10 @@ Chunked DP driver.
   BCI-specific preprocessing. The growth SD is refitted as a constant when it
   falls with size, and the recruitment rate is new stems per established tree
   per year (`RECRUIT_RATE_UNIT`; see `dp_global/README.md`, *Parameter
-  Estimation*).
+  Estimation*). A species gets its own parameter set when its diameters cover
+  the size range either from smallest to largest or over their middle 95%
+  (`COVERAGE_RULE = "union"`), so a single out-of-range diameter no longer
+  sends a well-sampled species to a pooled set.
 - Runs `dp_global` on multi-stem tags in parallel chunks: the exact DP, or the
   probabilistic matcher for palm clumps (*Oenocarpus mapora*, *Bactris major*),
   strangler figs and trees too complex for the DP. The matcher lets every stem
