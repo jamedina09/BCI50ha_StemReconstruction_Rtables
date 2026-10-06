@@ -77,7 +77,7 @@ parse_args <- function() {
                     "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
                     "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
                     "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL",
-                    "TAG_FILTER_FILE", "DBH_ROUND_CENSUSES"
+                    "TAG_FILTER_FILE", "DBH_ROUND_CENSUSES", "RECRUIT_RATE_UNIT"
                 )
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
@@ -163,6 +163,11 @@ K_GROWTH_SOURCE <- "fixed"
 K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
 RECRUIT_MAX_SOURCE <- "fixed"
 RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
+# Recruitment rate lambda used by both engines (probability of a new stem in a
+# tree): "tree" = new stems per established tree per year (2010-2023 data);
+# "slot" = legacy recruits per empty slot of the estimation grid, ~0.08/yr for
+# every species whatever its real recruitment (see dp_global_bio.R, section 9).
+RECRUIT_RATE_UNIT <- "tree"
 
 ############################################################
 ### 3.2) DP solver settings
@@ -185,14 +190,20 @@ DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
 DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
 # Growth forms forcing probabilistic fallback. See main_cpp.R for details.
+# Values must be growth_form labels of the data, which this script assigns
+# from Lifeform (Section 9): "tree", "shrub", "palm", "strangler", "fern".
+# They are matched exactly, and a visible check stops the run when a listed
+# value is not a label (e.g. "palms").
 DP_FALLBACK_GROWTH_FORMS <- character(0)
 # Non-taper-corrected growth forms (palms, strangler figs, tree ferns):
 # These show real DBH growth plus large apparent variation when HOM changes.
 # Wide base prune bounds prevent spurious pruning.
 # HOM tolerance adds per-census-pair widening when a HOM column is present.
 # Units: cm/year.  Set to NULL to disable the override.
+# Labels as assigned in Section 9 (checked at run time like
+# DP_FALLBACK_GROWTH_FORMS); "strangler_fig" / "tree_fern" matched nothing.
 PRUNE_BOUND_FACTOR <- 5
-NON_TAPER_CORRECTED_GROWTH_FORMS <- c("palm", "strangler_fig", "tree_fern")
+NON_TAPER_CORRECTED_GROWTH_FORMS <- c("palm", "strangler", "fern")
 NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH <- PRUNE_BOUND_FACTOR * MAX_SHRINK_FIXED
 NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH <- PRUNE_BOUND_FACTOR * MAX_GROWTH_FIXED
 # HOM tolerance scale: cm of annual DBH tolerance per meter of HOM deviation
@@ -250,6 +261,16 @@ PIN_TRUESTEMID <- TRUE
 # hard shrink/growth limits shared with the DP are enforced during sampling
 # instead (enforce_feasible_assignment() in dp_probabilistic_matching.R).
 PROB_N_SIGMA_ME <- Inf
+
+# Birth-death assignment in the probabilistic matcher (palm clumps, strangler
+# figs, trees too complex for the DP). TRUE: in every census pair each stem may
+# continue, die or be recruited, scored by the same biological model as the
+# DP, so a link is kept only when it is more likely than a death plus a
+# recruitment; each sample is the exact best assignment of a perturbed pair.
+# FALSE: legacy matcher, which with stable stem counts forces every stem to
+# continue (before 2010, 0.8-4.4 palm stem replacements per 100 trees per year
+# against 4.6-6.9 with the 2010-2023 stem tags). The DP itself is not affected.
+PROB_BIRTH_DEATH <- TRUE
 
 ############################################################
 ### 3.3) Chunking & posterior sampling settings
@@ -370,7 +391,9 @@ CLI_REFERENCE <- list(
     USE_BIO_HARD_SHRINK_IN_PROB = "USE_BIO_HARD_SHRINK_IN_PROB",
     USE_BIO_HARD_GROWTH_IN_PROB = "USE_BIO_HARD_GROWTH_IN_PROB",
     PIN_TRUESTEMID = "PIN_TRUESTEMID",
-    PROB_N_SIGMA_ME = "PROB_N_SIGMA_ME"
+    PROB_N_SIGMA_ME = "PROB_N_SIGMA_ME",
+    PROB_BIRTH_DEATH = "PROB_BIRTH_DEATH",
+    RECRUIT_RATE_UNIT = "RECRUIT_RATE_UNIT"
 )
 
 # Sensitivity and realism flags are not applicable to the chunked runner
@@ -829,6 +852,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
             use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
             use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
+            prob_birth_death = isTRUE(PROB_BIRTH_DEATH),
             pin_truestemid = isTRUE(PIN_TRUESTEMID)
         ),
         error = function(e) {
@@ -861,6 +885,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 dbh_round_censuses = DBH_ROUND_CENSUSES_INT,
                 dbh_round_max = DBH_ROUND_MAX_MM / 10,
                 dbh_round_width = DBH_ROUND_WIDTH_MM / 10,
+                birth_death = isTRUE(PROB_BIRTH_DEATH),
                 verbose = isTRUE(DP_VERBOSE)
             )
             if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
@@ -1075,6 +1100,41 @@ run_main_chunked <- function() {
     xraw[grepl("helecho", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "fern"]
     xraw[grepl("arbusto", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "shrub"]
     xraw[is.na(growth_form), growth_form := "tree"]
+
+    # Visible checks: the engines match growth forms and species codes exactly,
+    # so a value that is not a label of the data (e.g. "palms" for "palm")
+    # would silently route nothing. Every value listed in the routing settings
+    # must exist in the full input (before any TAG_FILTER_FILE subset).
+    .split_arg <- function(v) {
+        v <- as.character(v)
+        if (length(v) == 1L && grepl("[,;]", v)) v <- strsplit(v, "[,;]")[[1L]]
+        v <- trimws(v)
+        v[!is.na(v) & nzchar(v)]
+    }
+    .gf_labels <- sort(unique(xraw$growth_form))
+    .route_checks <- list(
+        list(name = "DP_FALLBACK_GROWTH_FORMS", vals = .split_arg(DP_FALLBACK_GROWTH_FORMS), pool = .gf_labels, what = "growth_form labels"),
+        list(name = "NON_TAPER_CORRECTED_GROWTH_FORMS", vals = .split_arg(NON_TAPER_CORRECTED_GROWTH_FORMS), pool = .gf_labels, what = "growth_form labels"),
+        list(name = "PROB_SPECIES", vals = .split_arg(PROB_SPECIES), pool = unique(as.character(xraw$Mnemonic)), what = "species codes (Mnemonic)")
+    )
+    for (.chk in .route_checks) {
+        .bad <- setdiff(.chk$vals, .chk$pool)
+        if (length(.bad) > 0L) {
+            .msg <- sprintf(
+                "CHECK FAILED: %s lists %s, which %s not among the %s of the data%s",
+                .chk$name, paste(.bad, collapse = ", "), if (length(.bad) == 1L) "is" else "are", .chk$what,
+                if (.chk$what == "growth_form labels") paste0(" (", paste(.gf_labels, collapse = ", "), ")") else ""
+            )
+            cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+        }
+        .msg <- sprintf("%s: %s %s", .chk$name, if (length(.chk$vals) > 0L) paste(.chk$vals, collapse = ", ") else "(none)",
+            if (length(.chk$vals) > 0L) paste("all among the", .chk$what, "of the data") else "")
+        cat("✓", .msg, "\n"); log_msg(.msg)
+    }
+    if (!RECRUIT_RATE_UNIT %in% c("tree", "slot")) {
+        .msg <- sprintf("CHECK FAILED: RECRUIT_RATE_UNIT must be \"tree\" or \"slot\", not \"%s\"", RECRUIT_RATE_UNIT)
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
 
     xraw[, Lifeform := NULL]
 
@@ -1420,7 +1480,9 @@ run_main_chunked <- function() {
                 growth_max_fixed = MAX_GROWTH_FIXED,
                 # If 'enforce_recruit_max' is TRUE, recruits with DBH > 'recruit_max_fixed' are dropped
                 # before fitting the recruitment-size lognormal.
-                enforce_recruit_max = TRUE
+                enforce_recruit_max = TRUE,
+                # Recruitment rate unit: new stems per established tree per year ("tree")
+                recruit_rate_unit = RECRUIT_RATE_UNIT
             )
             if (verbose) {
                 cat("Estimated bio parameters for species:", sp, "\n")
@@ -2303,9 +2365,14 @@ if (sys.nframe() == 0L) {
 #   --POSTERIOR_SAMPLES=250       Draw N posterior samples per group (0 = disabled)
 #   --POSTERIOR_SAMPLES_FORMAT=csv|rds|feather
 #   --USE_MEASUREMENT_ERROR=TRUE  Enable measurement-error model for bio params
-#   --DP_FALLBACK_GROWTH_FORMS="fig,tree"
-#                                 Comma-separated list of growth forms that bypass
-#                                 Species-specific bio params-falls back to probabilistic
+#   --DP_FALLBACK_GROWTH_FORMS="strangler,palm"
+#                                 Comma-separated growth_form labels (tree, shrub,
+#                                 palm, strangler, fern) routed to the probabilistic
+#                                 matcher; a value that is not a label stops the run
+#   --PROB_BIRTH_DEATH=FALSE      Legacy probabilistic matcher (forced survival with
+#                                 stable stem counts); default TRUE (birth-death)
+#   --RECRUIT_RATE_UNIT=slot      Legacy recruitment rate (per empty grid slot);
+#                                 default "tree" (new stems per established tree per year)
 #   --DP_CHUNK_START=3            Start from chunk N (skip earlier chunks)
 #   --DP_CHUNK_END=9              Stop after chunk N
 #
