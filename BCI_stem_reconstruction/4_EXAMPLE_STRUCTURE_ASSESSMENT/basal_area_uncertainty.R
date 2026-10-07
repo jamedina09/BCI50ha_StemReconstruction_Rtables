@@ -89,9 +89,21 @@
 # NOTES
 # --------
 # Additional methodological decisions are documented in biomass_stocks_fluxes.R.
-# In this script, giant strangler ficus (> 500 mm DBH) are retained, no
-# correction is applied for the buttress bias of the first census, the Kohyama
-# et al. (2019) correction is not applied, and palm diameters are not modified.
+# Palms and strangler figs are treated as in biomass_stocks_fluxes.R:
+#   * Giant strangler figs (Ficus costaricana, obtusifolia, popenoei and
+#     trigonata with a DBH > 500 mm in any census) are excluded with every stem
+#     of their tree in all censuses (Rutishauser et al. 2020;
+#     remove_strangler_figs). Their trees also leave the posterior paths.
+#   * Palms other than Socratea do not grow in diameter: observed DBH changes
+#     are measurement error, so every measured alive stem of such a species gets
+#     the species' median DBH over all censuses (Rutishauser et al. 2020;
+#     Piponiot et al. 2024; use_median_palm_dbh). A palm's BA is then constant
+#     and identity uncertainty changes its Loss / Gain only. Alive palm censuses
+#     without a measurement are gap-filled like any other stem, which gives the
+#     same median (a stem never measured is not in the stock, as for every
+#     species in this script).
+# No correction is applied for the buttress bias of the first census, and the
+# Kohyama et al. (2019) correction is not applied.
 # ==============================================================================
 
 rm(list = ls())
@@ -131,6 +143,10 @@ write_quadrat_realizations <- TRUE # all quadrat-level realizations in one feath
 
 # Report the stage-2 method of spliced observations.
 report_splice_methods <- TRUE
+
+# Palms and strangler figs, as in biomass_stocks_fluxes.R (see NOTES above).
+remove_strangler_figs <- TRUE # exclude all giant Ficus strangler spp. (Rutishauser 2020)
+use_median_palm_dbh <- TRUE # replace palm DBH with the species median (except Socratea)
 
 out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -195,6 +211,30 @@ bio_check(
     n_bad = rec[is.na(ExactDate), .N]
 )
 
+# Species table (Family, Genus, Species, Latin) for the palm and strangler-fig
+# rules. Stage 3 does not write it: copy bci.spptable.rdata into DATA/RTABLES.
+spp_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.rdata")
+bio_check(file.exists(spp_file), paste("Species table found:", spp_file))
+load(spp_file)
+bci.spptable <- unique(as.data.table(bci.spptable)[, .(sp, Family, Genus, Species = SpeciesName, Latin)])
+bio_check(!anyDuplicated(bci.spptable$sp), "One row per species code in the species table", examples = bci.spptable[duplicated(sp), sp])
+rec[bci.spptable, on = "sp", `:=`(Family = i.Family, Genus = i.Genus, Species = i.Species, Latin = i.Latin)]
+rm(bci.spptable)
+
+# Giant strangler figs (> 500 mm DBH, raw units, in any census) are excluded with
+# every stem of their tree in all censuses (Rutishauser et al. 2020), as in
+# biomass_stocks_fluxes.R. Selected on the recorded DBH, before the taper correction.
+strangler_trees <- as.character(unique(rec[
+    dbh > 500 & Genus %in% "Ficus" & Species %in% c("costaricana", "obtusifolia", "popenoei", "trigonata"),
+    treeID
+]))
+n_strangler_stems <- 0L
+if (remove_strangler_figs) {
+    n_strangler_stems <- uniqueN(rec[as.character(treeID) %in% strangler_trees & !is.na(stemID), .(treeID, stemID)])
+    rec <- rec[!as.character(treeID) %in% strangler_trees]
+    cat(sprintf("[STRANGLER] Removed %d trees / %d stems.\n", length(strangler_trees), n_strangler_stems))
+}
+
 # Cushman et al. 2014
 taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
     # Defensive checks
@@ -226,6 +266,30 @@ rec[, hom := ifelse(is.na(hom), 1.3, hom)]
 rec[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
 rec[, dbh_raw := dbh]
 rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
+
+# Palm DBH correction (Rutishauser et al. 2020; Piponiot et al. 2024): palms other
+# than Socratea do not grow in diameter, so each measured alive stem takes the
+# median DBH of its species over all censuses, as in biomass_stocks_fluxes.R.
+# Only measured rows change: an unmeasured alive census stays unmeasured, so the
+# observations of the posterior paths are the same as before, and it is gap-filled
+# from the stem's own (equal) measurements.
+palm_rows <- rec[Family %in% "Arecaceae" & !Genus %in% "Socratea" & Rstatus == "A" & !is.na(dbh), which = TRUE]
+n_palm_species <- uniqueN(rec$Latin[palm_rows])
+n_palm_changed <- 0L
+if (use_median_palm_dbh) {
+    dbh_before_palm <- rec$dbh[palm_rows]
+    rec[
+        Family %in% "Arecaceae" & !Genus %in% "Socratea" & Rstatus == "A" & !is.na(dbh),
+        dbh := median(dbh, na.rm = TRUE),
+        by = Latin
+    ]
+    n_palm_changed <- sum(abs(rec$dbh[palm_rows] - dbh_before_palm) > 1e-9)
+    cat(sprintf(
+        "[PALM] %d palm species (excluding Socratea): DBH of %d measured alive stem-censuses set to the species median (%d changed).\n",
+        n_palm_species, length(palm_rows), n_palm_changed
+    ))
+    rm(dbh_before_palm)
+}
 
 post_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "POSTERIORS", "posterior_sampled_paths.rds")
 stage2_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "complete_dataset_final_with_reconstructed_stemids.rds")
@@ -486,6 +550,9 @@ cat("[BA] exported quadrat stock:", nrow(map_quadrat_stock), "quadrat×census ro
 # ---- 4.1 Posterior paths and weights ---------------------------------------
 post_full <- as.data.table(readRDS(post_file))
 post_full[, treeID := as.character(treeID)]
+# Giant strangler figs left the analysis (remove_strangler_figs): so do their paths.
+n_strangler_post <- post_full[treeID %in% strangler_trees & remove_strangler_figs, uniqueN(treeID)]
+if (remove_strangler_figs) post_full <- post_full[!treeID %in% strangler_trees]
 post_full[, n_paths := .N, by = treeID]
 # Sample frequencies are the posterior probabilities of the unique paths, for
 # both engines (DP draws often repeat; probabilistic draws are nearly all
@@ -509,6 +576,7 @@ s2 <- as.data.table(readRDS(stage2_file))[, .(
     treeID = as.character(TreeID), StemPaths = as.integer(obs_row_id),
     method = as.character(ReconstructionMethod)
 )]
+if (remove_strangler_figs) s2 <- s2[!treeID %in% strangler_trees]
 # Both engines are sampled together; the engine is only used to report them.
 prob_trees <- intersect(multi_trees, s2[method == "probabilistic", unique(treeID)])
 # Single-stem tags (no reconstruction, hence no posterior), for the diagnostics.
@@ -809,6 +877,16 @@ diag_line("")
 diag_line("# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated ", format(Sys.time()))
 diag_line("K_realizations = ", K_realizations, " | seed = ", mc_seed, " | anchor census = ", ANCHOR_START_CENSUS)
 diag_line("")
+diag_line("## Palms and strangler figs (as in biomass_stocks_fluxes.R)")
+diag_line(sprintf(
+    "remove_strangler_figs = %s: %d trees / %d stems removed from every census (%d of them had a posterior)",
+    remove_strangler_figs, if (remove_strangler_figs) length(strangler_trees) else 0L, n_strangler_stems, n_strangler_post
+))
+diag_line(sprintf(
+    "use_median_palm_dbh = %s: %d palm species (excluding Socratea), %d measured alive stem-censuses, %d given the species median",
+    use_median_palm_dbh, n_palm_species, length(palm_rows), n_palm_changed
+))
+diag_line("")
 diag_line("## Trees")
 diag_line("trees with a posterior: ", uniqueN(post_full$treeID))
 diag_line("  single path (no identity uncertainty): ", post_full[n_paths == 1L, uniqueN(treeID)])
@@ -965,7 +1043,8 @@ fig1 <- ggplot() +
                 -1
             } * ")")
     ) +
-    theme_forest()
+    theme_forest() +
+    coord_cartesian(ylim = c(30, 35))
 print(fig1)
 
 # ── Figure 2: annual BA flux components per hectare ────────────────────────────

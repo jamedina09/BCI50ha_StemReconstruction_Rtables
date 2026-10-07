@@ -1,7 +1,7 @@
 # =============================================================================
 # 1_prepare_posteriors_BCI.R
 #
-# Purpose: Consolidate posterior Feather outputs from a BCI DP run into one
+# Purpose: Consolidate posterior Feather outputs from the engines into one
 #          RDS file with an explicit Tag column.
 #
 # Posterior columns (one row per unique reconstruction path of a tag):
@@ -60,7 +60,7 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Run folder to consolidate, selected by name: the output directory can hold
 # several runs (and .zip archives of them). Update it for each new run; it must
 # be the same run as in 2_merge_chunks_to_datatable.R.
-run_code <- "20261003_193710_unknown_allT_DP_MB_NME_R12_g5_sm0p5_kg0_ks0_rcpp"
+run_code <- "20261005_232052_unknown_allT_DP_MB_NME_R12_BD_LT_CU_g5_sm0p5_kg0_ks0_rcpp"
 bio_check(
     dir.exists(file.path(home_dir, run_code, "posteriors")),
     sprintf("Run folder %s exists in %s and has a posteriors/ folder", run_code, home_dir),
