@@ -7,8 +7,7 @@ under this folder; `general_plot_information.R` prints its summaries to the cons
 Inputs:
 
 - the stage-3 R tables `DATA/RTABLES/bci.stem1.Rdata` … `bci.stem9.Rdata` (all scripts);
-- the species table `DATA/RTABLES/bci.spptable.rdata` (`biomass_stocks_fluxes.R`,
-  `general_plot_information.R`). Stage 3 does not write it: copy the ForestGEO-format
+- the species table `DATA/RTABLES/bci.spptable.rdata` (all three scripts). Stage 3 does not write it: copy the ForestGEO-format
   table there (for example `data_paper_and_repo_publication/RTABLES/bci.spptable.rdata`);
 - the posterior samples `DATA/POSTERIORS/posterior_sampled_paths.rds` and the stage-2 table
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`
@@ -69,6 +68,13 @@ Key processing steps:
 
 - Load the exported reconstruction (R tables) and the posterior paths
   (`DATA/POSTERIORS/posterior_sampled_paths.rds`).
+- Treat palms and strangler figs as `biomass_stocks_fluxes.R` does (flags
+  `remove_strangler_figs` and `use_median_palm_dbh`, both `TRUE`): giant strangler figs
+  (*Ficus costaricana*, *obtusifolia*, *popenoei*, *trigonata* with a DBH > 500 mm in any
+  census) are removed with every stem of their tree and leave the posterior paths too; every
+  measured alive stem of a palm species other than *Socratea* gets the species' median DBH over
+  all censuses. A palm's basal area is then constant, so identity uncertainty changes only its
+  Loss and Gain.
 - Separate trees with a single path (no identity uncertainty) from trees with several paths.
 - Complete every path with the stage-2 links of observations outside its window (splice).
 - Run Monte Carlo realizations that draw one path per multi-path tree, independently, with
@@ -98,6 +104,10 @@ Posterior weights and the two engines:
 
 Key assumptions and scope:
 
+- Palm diameters and strangler figs are corrected as in `biomass_stocks_fluxes.R`; the other
+  methodological choices (taper correction aside, no buttress or Kohyama correction) are not
+  applied here. On the current tables this removes 29 trees and lowers the plot BA stock by
+  0.5–0.9 m² ha⁻¹ (giant figs and the DBH fluctuations of palms).
 - Uncertainty applies only to pre-anchor intervals because post-anchor censuses have confirmed
   stem identity. The anchor census used in this script is `ANCHOR_START_CENSUS = 7`.
 - Only identity uncertainty is quantified. Trees are drawn independently, so their variations
