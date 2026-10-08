@@ -7,9 +7,13 @@ ForestGEO-format census tables plus QC exports used for downstream analysis.
 ## Scripts
 
 - `1_prepare_posteriors_BCI.R` — Consolidates `_paths.feather` posterior files
-  from a completed stage 2 run into `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`,
+  from a completed stage 2 run (`home_dir` and `run_code` at the top of the
+  script; the same run as in the stage-2 merge) into
+  `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`,
   applying to every sample the measurement-discontinuity joins of the merge
-  step (`DATA/PROCESSED/measurement_rejoin_pairs.csv`).
+  step (`DATA/PROCESSED/measurement_rejoin_pairs.csv`). One row per sampled
+  path of a tree, with `tag`, `treeID`, `path_sig`, `path_count`, `path_prob`
+  and `recon`; sample a path with weight `path_count`.
 - `2_create_R_tables_BCI.R` — Builds the final census tables from
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`.
   It assigns each stem a corrected status (`Rstatus`) in every census,
@@ -18,9 +22,9 @@ ForestGEO-format census tables plus QC exports used for downstream analysis.
 - `rstatus_functions.R` — The `Rstatus` and `dbh` rules as small functions,
   sourced by `2_create_R_tables_BCI.R` and by the tests.
 
-Both scripts read the output of the stage-2 merge
-(`2_STEM_IDENTIFICATION/2_merge_chunks_to_datatable.R`), so run it first. They
-do not depend on each other: `2_create_R_tables_BCI.R` does not read the
+Both scripts are run from the project root and read the output of the
+stage-2 merge (`2_STEM_IDENTIFICATION/2_merge_chunks_to_datatable.R`), so run
+it first. They do not depend on each other: `2_create_R_tables_BCI.R` does not read the
 posterior file, which is used by
 `4_EXAMPLE_STRUCTURE_ASSESSMENT/basal_area_uncertainty.R`.
 
@@ -107,9 +111,18 @@ and `RSTATUS_STAGE2_FILE` point the real-data tests at other tables (default:
 missing, the real-data tests are skipped. `RSTATUS_CORES` sets the cores of
 the reference implementation (default: all but two).
 
+## Requirements
+
+R packages: `data.table`, `arrow` and `inspectdf`; `igraph` (transition
+diagram in `2_create_R_tables_BCI.R`); `testthat` and `parallel` for the tests.
+
 ## Outputs
 
-- `BCI_stem_reconstruction/DATA/RTABLES/<site>.stemN.Rdata` (and `<site>.stemN.csv`)
+- `BCI_stem_reconstruction/DATA/RTABLES/<site>.stemN.Rdata` (and `<site>.stemN.csv`),
+  one table per census with the columns `CensusID`, `treeID`, `stemID`, `tag`,
+  `StemTag`, `sp`, `quadrat`, `gx`, `gy`, `dbh` (mm), `hom` (m), `ExactDate`,
+  `date`, `codes`, `DFstatus`, `Rstatus` and `StemPaths` (the row key of the
+  posterior paths); every table lists the same stems in the same order
 - `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`
 - QC exports in `BCI_stem_reconstruction/DATA/CHECKS/`, among them
   `dbh_on_dead_records.csv`, `location_conflicts.csv`,

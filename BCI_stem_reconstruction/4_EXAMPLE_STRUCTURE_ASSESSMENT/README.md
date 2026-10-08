@@ -3,6 +3,7 @@
 This folder contains three analysis scripts for the BCI 50-ha stem reconstruction project:
 `biomass_stocks_fluxes.R` and `basal_area_uncertainty.R` write their results to `outputs/`
 under this folder; `general_plot_information.R` prints its summaries to the console.
+All three are run from the project root.
 
 Inputs:
 
@@ -12,7 +13,14 @@ Inputs:
 - the posterior samples `DATA/POSTERIORS/posterior_sampled_paths.rds` and the stage-2 table
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`
   (`basal_area_uncertainty.R`);
-- the wood density file in `wd/` (`biomass_stocks_fluxes.R`).
+- the wood density file `wd/doi_10_5061_dryad_5qfttdzn3__v20260403/WD_species.txt`
+  (`biomass_stocks_fluxes.R`; the `wd/` folder is not under version control: download the
+  dataset from <https://datadryad.org/dataset/doi:10.5061/dryad.5qfttdzn3>).
+
+R packages: `data.table`, `truncnorm`, `lubridate`, `HDInterval`, `ggplot2`, `scales`, `cowplot`
+(`biomass_stocks_fluxes.R`); `data.table`, `ggplot2`, `patchwork`, `scales`, `collapse`, `arrow`
+(`basal_area_uncertainty.R`); `data.table`, `boot`, `HDInterval`
+(`general_plot_information.R`).
 
 In the R tables:
 
@@ -113,16 +121,16 @@ Key assumptions and scope:
 - Only identity uncertainty is quantified. Trees are drawn independently, so their variations
   largely cancel at plot level and the ribbon is narrow; it does not include sampling
   (quadrat) uncertainty or model/systematic error.
-- The script writes several outputs to `outputs/`, including MAP feather tables, MC realization
-  feather files, summary files, and diagnostic figures.
+- The script writes several outputs to `outputs/`: feather tables of the exported
+  reconstruction, MC realization feather files, summary files, and diagnostic figures.
 
 Outputs (written to `outputs/`):
 
-MAP (deterministic) tables:
+Exported reconstruction (file prefix `ba_map_`):
 
-- `ba_map_change_treeID.feather` — MAP tree-level BA flux per census pair.
-- `ba_map_change_quadrat.feather` — MAP quadrat-level BA flux per census pair.
-- `ba_map_stock_quadrat.feather` — MAP quadrat-level BA stock per census.
+- `ba_map_change_treeID.feather` — tree-level BA flux per census pair.
+- `ba_map_change_quadrat.feather` — quadrat-level BA flux per census pair.
+- `ba_map_stock_quadrat.feather` — quadrat-level BA stock per census.
 
 Monte Carlo realizations and summaries:
 
