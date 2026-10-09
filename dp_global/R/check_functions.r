@@ -1,9 +1,26 @@
-# Utilities to inspect and visualize biological mortality parameters
+# Utilities to inspect and visualize the biological parameters (mortality,
+# growth, recruitment) estimated by estimate_bio_pars()
 #
 # Functions:
-# - mortality_params_df(bio_pars)
-# - plot_mortality_params_bars(bio_pars, species = NULL, show = TRUE)
-# - plot_mortality_hazard_curve(bio_pars, species = NULL, dbh_range = c(1,100), n = 200, log_y = FALSE, show = TRUE)
+# - mortality_params_df(bio_pars), growth_params_df(bio_pars),
+#   recruitment_params_df(bio_pars): one row of parameters per species
+# - plot_mortality_params_bars(), plot_growth_params_bars(),
+#   plot_recruitment_params_bars(): bar plots of those parameters
+# - plot_mortality_hazard_curve(), plot_mortality_with_interval_prob(),
+#   plot_growth_mean_curve(), plot_recruitment_pdf_curve(): curves against DBH
+# - export_bio_pars_report(): the plots above in one PDF
+#
+# Arguments shared by the functions:
+# - bio_pars: named list, one element per species (or parameter set), each a
+#   list as returned by estimate_bio_pars() (growth, mortality, recruitment).
+#   Missing parameters give NA.
+# - species: names of bio_pars to keep (NULL = all).
+# - dbh_range, n: DBH range (cm) and number of points of a curve.
+# - show: print the ggplot; show_legend: keep the legend.
+# The plot functions use ggplot2 (and reshape2 where they melt the table) and
+# return the plot invisibly. Without ggplot2 they draw with base graphics,
+# with a warning, and return the plotted data frame invisibly.
+# Sourcing this file stops when the 'here' package is not installed.
 #
 # Usage examples:
 # bio <- ... # list of species -> list(mortality = list(h0 = ..., beta = ...), ...)
@@ -11,6 +28,7 @@
 # plot_mortality_params_bars(bio)
 # plot_mortality_hazard_curve(bio, species = c("sp1", "sp3"))
 
+# data.frame(species, h0, beta), one row per element of bio_pars
 mortality_params_df <- function(bio_pars) {
     if (!is.list(bio_pars) || length(bio_pars) == 0L) {
         stop("bio_pars must be a non-empty list of species parameter lists")
@@ -74,7 +92,8 @@ plot_mortality_params_bars <- function(bio_pars, species = NULL, show = TRUE, sh
 }
 
 # Plot hazard curve (hazard(DBH) = h0 * exp(beta * DBH)).
-# Optionally show the interval mortality probability p = 1 - exp(-hazard * interval_years).
+# Optionally show the interval mortality probability p = 1 - exp(-hazard * interval_years)
+# in a second panel (interval_years not NULL). log_y: log10 y axis (ggplot only).
 plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(1, 100), n = 200, interval_years = NULL, log_y = FALSE, show = TRUE, show_legend = TRUE) {
     df <- mortality_params_df(bio_pars)
     if (!is.null(species)) df <- df[df$species %in% species, , drop = FALSE]
@@ -172,6 +191,9 @@ plot_mortality_hazard_curve <- function(bio_pars, species = NULL, dbh_range = c(
 
 # ---- Growth parameter helpers ----------------------------------------------
 
+# data.frame(species, mu_const, gamma, sigma0, sigma1, max_growth,
+# max_growth_soft, k_growth), one row per element of bio_pars. mu_const is
+# growth$alpha, or growth$mu when alpha is missing; gamma is 0 when missing.
 growth_params_df <- function(bio_pars) {
     if (!is.list(bio_pars) || length(bio_pars) == 0L) stop("bio_pars must be a non-empty list")
     sp <- names(bio_pars)
@@ -204,6 +226,7 @@ growth_params_df <- function(bio_pars) {
     df
 }
 
+# Bar plot of mu_const, gamma, sigma0, sigma1, max_growth and k_growth across species
 plot_growth_params_bars <- function(bio_pars, species = NULL, show = TRUE, show_legend = TRUE) {
     df <- growth_params_df(bio_pars)
     if (!is.null(species)) {
@@ -314,6 +337,8 @@ plot_growth_mean_curve <- function(bio_pars, species = NULL, dbh_range = c(1, 10
 
 # ---- Recruitment parameter helpers -----------------------------------------
 
+# data.frame(species, meanlog, sdlog, recruit_max_dbh, lambda), one row per
+# element of bio_pars
 recruitment_params_df <- function(bio_pars) {
     if (!is.list(bio_pars) || length(bio_pars) == 0L) stop("bio_pars must be a non-empty list")
     sp <- names(bio_pars)
@@ -340,6 +365,7 @@ recruitment_params_df <- function(bio_pars) {
     df
 }
 
+# Bar plot of meanlog, sdlog and recruit_max_dbh across species
 plot_recruitment_params_bars <- function(bio_pars, species = NULL, show = TRUE, show_legend = TRUE) {
     df <- recruitment_params_df(bio_pars)
     if (!is.null(species)) {
@@ -374,7 +400,8 @@ plot_recruitment_params_bars <- function(bio_pars, species = NULL, show = TRUE, 
     }
 }
 
-# Plot recruit DBH PDF: lognormal with meanlog/sdlog
+# Plot recruit DBH PDF: lognormal with meanlog/sdlog; a dashed vertical line
+# marks recruit_max_dbh and (ggplot only) the legend shows lambda
 plot_recruitment_pdf_curve <- function(bio_pars, species = NULL, dbh_range = c(0.1, 50), n = 200, show = TRUE, show_legend = TRUE) {
     df <- recruitment_params_df(bio_pars)
     if (!is.null(species)) df <- df[df$species %in% species, , drop = FALSE]
@@ -436,6 +463,7 @@ plot_recruitment_pdf_curve <- function(bio_pars, species = NULL, dbh_range = c(0
 }
 
 # Plot hazard and corresponding interval mortality probability together
+# (two panels; interval_years in years; log_y: log10 y axis, ggplot only)
 plot_mortality_with_interval_prob <- function(bio_pars, species = NULL, dbh_range = c(1, 100), n = 200, interval_years = 5, log_y = FALSE, show = TRUE, show_legend = TRUE) {
     df <- mortality_params_df(bio_pars)
     if (!is.null(species)) df <- df[df$species %in% species, , drop = FALSE]
@@ -503,10 +531,20 @@ plot_mortality_with_interval_prob <- function(bio_pars, species = NULL, dbh_rang
     }
 }
 
-# Export a multi-page PDF report with diagnostics for each species
-# - Each plot call produces one page in the PDF (base or ggplot)
-# - By default we include a small set of summary pages (parameter bars) and,
-#   then, for each species: mortality (hazard + interval prob), growth (mu + sigma), recruitment (PDF).
+# Export a multi-page PDF report with diagnostics of the parameters
+# - Each plot call produces one page in the PDF (base or ggplot); a plot that
+#   fails is skipped without a message.
+# - Pages: the three parameter bar plots (include_param_summary), then one
+#   page each for mortality (hazard + interval prob; hazard alone when
+#   interval_years is NULL), growth (mu + sigma) and recruitment (PDF) with all
+#   requested species together, then the same three pages per species when
+#   include_individual_pages = TRUE.
+# - out_file: PDF path (its folder is created). The default calls here(), so
+#   the 'here' package must be attached when it is used.
+# - dbh_ranges: DBH range of the mortality, growth and recruit curves.
+# - width, height: page size in inches; open = TRUE opens the PDF with the
+#   macOS `open` command.
+# - Returns the normalised path of the PDF, invisibly.
 if (!requireNamespace("here", quietly = TRUE)) {
     stop("Please install the 'here' package to use check_functions.r");
 }

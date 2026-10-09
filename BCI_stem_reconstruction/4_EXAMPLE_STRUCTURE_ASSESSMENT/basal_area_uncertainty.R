@@ -71,6 +71,13 @@
 # realization, except for the rare stem whose unmeasured gap spans the anchor
 # (its interpolated DBH depends on the path).
 #
+# INPUTS (run from the project root)
+# ------
+#   BCI_stem_reconstruction/DATA/RTABLES/bci.stem1..9.Rdata, bci.spptable.rdata
+#   BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds
+#   BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds
+#   Packages: data.table, ggplot2, patchwork, scales, collapse, arrow
+#
 # OUTPUTS (written to BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/)
 # --------
 #   ba_map_change_treeID.feather        exported reconstruction: tree-level flux
@@ -235,13 +242,16 @@ if (remove_strangler_figs) {
     cat(sprintf("[STRANGLER] Removed %d trees / %d stems.\n", length(strangler_trees), n_strangler_stems))
 }
 
-# Cushman et al. 2014
+# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`
+# (taper model of Cushman et al. 2014):
+#   b      = exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
+#   dbh_at = dbh_cm / exp(-b * (hom - common_hom))
+# dbh_mm in mm, hom in m (NA is read as common_hom). Returns mm; NA where the
+# DBH or the HOM is not positive. Stops when the two vectors differ in length.
 taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
-    # Defensive checks
     if (length(dbh_mm) != length(hom)) {
         stop("'dbh_mm' and 'hom' must have the same length")
     }
-    # copy inputs to avoid modifying caller's vectors
     dbh_mm <- as.numeric(dbh_mm)
     hom <- as.numeric(hom)
     # Replace NA heights with 1.3 m (do not modify valid measured heights)
@@ -261,7 +271,7 @@ taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
     return(out_mm)
 }
 
-# NOTE: dbh should be in cm for the equation.
+# taper_2014() takes the DBH in mm and returns mm.
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
 rec[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
 rec[, dbh_raw := dbh]
@@ -271,7 +281,7 @@ rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 # than Socratea do not grow in diameter, so each measured alive stem takes the
 # median DBH of its species over all censuses, as in biomass_stocks_fluxes.R.
 # Only measured rows change: an unmeasured alive census stays unmeasured, so the
-# observations of the posterior paths are the same as before, and it is gap-filled
+# observations of the posterior paths are unchanged, and it is gap-filled
 # from the stem's own (equal) measurements.
 palm_rows <- rec[Family %in% "Arecaceae" & !Genus %in% "Socratea" & Rstatus == "A" & !is.na(dbh), which = TRUE]
 n_palm_species <- uniqueN(rec$Latin[palm_rows])
@@ -453,7 +463,8 @@ decompose_intervals <- function(stems, pairs, stem_cols, tree_cols) {
 #   map_tree_change    – tree-level flux per census pair
 #   map_quadrat_change – quadrat-level flux
 #   map_quadrat_stock  – quadrat-level BA stock
-# (object names keep the historical "map_" prefix.)
+# (the "map_" prefix of these objects and of the output files stands for the
+# exported reconstruction.)
 # ============================================================
 
 dates <- rec[, .(Date = median(ExactDate)), by = CensusID][order(CensusID)]

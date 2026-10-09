@@ -21,6 +21,12 @@
 # Step 2: the tree is alive at c if some stem is A at c or at a later census.
 # Step 3: a dead stem is G when its tree is alive, D when it is dead.
 # Step 4: dbh = the raw DBH, as recorded (a P cell never has one).
+#
+# ref_evidence(status, dbh): one record -> "alive", "dead" or "none"; stops
+#   on an unknown raw status.
+# ref_tree(status, dbh): one tree -> list(Rstatus, dbh), matrices [stem x census].
+# ref_rstatus_table(cells, cores): many trees (see below). Needs data.table
+#   (loaded by test_Rstatus.R); cores > 1 uses parallel::mclapply.
 # ========================================================================
 
 ref_evidence <- function(status, dbh) {

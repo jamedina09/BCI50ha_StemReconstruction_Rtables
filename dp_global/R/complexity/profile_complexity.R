@@ -2,6 +2,7 @@
 ##
 ## Identifies the most complex tags in a dataset: state counts,
 ## transition counts (edges), and estimated wall-clock time.
+## Run from the project root (paths are resolved with here()).
 ##
 ## Usage:
 ##   Rscript dp_global/R/complexity/profile_complexity.R                     # BCI default
@@ -9,7 +10,29 @@
 ##   Rscript dp_global/R/complexity/profile_complexity.R --TOP_N=30          # show top 30
 ##   Rscript dp_global/R/complexity/profile_complexity.R --DP_REFINE=TRUE    # refine top tags with DP-constrained enumeration
 ##   Rscript dp_global/R/complexity/profile_complexity.R --RUN_TAG=231472    # time a specific tag through actual DP
-##   Rscript dp_global/R/complexity/profile_complexity.R --DP_REFINE=TRUE --DP_MAX_STATES=100000    # time a specific tag through actual DP
+##   Rscript dp_global/R/complexity/profile_complexity.R --DP_REFINE=TRUE --DP_MAX_STATES=100000    # refine with a state cap of 100,000
+##
+## Arguments (--NAME=value):
+##   DATA           "bci" (default) reads bci_data/bci_multistem_xrun_debug.rds;
+##                  the project has no bci_data folder (an untracked copy of
+##                  that file is in data_simulation/sample_data_BCI/general_data/).
+##                  "simulated" reads data_simulation/data/simulated_data_1.csv
+##   TOP_N          number of tags listed in step 2 (default 20)
+##   DP_MAX_STATES  state cap per census used for the fallback flag and the
+##                  refinement (default 40000)
+##   DP_REFINE      TRUE runs step 3 on the first TOP_N_DP tags (default FALSE)
+##   TOP_N_DP       number of tags refined in step 3 (default 20)
+##   RUN_TAG        tag to run through the DP in step 5 (default: none)
+##
+## The scan uses its own simplified rules, which differ from the DP in
+## dp_global_dp.R: the anchor is census 7 (or the tag's last measured census
+## when earlier), K = max(anchor IDs, largest stem count, first count + later
+## increases) + number of resprout observations + 1 slack track (the DP adds
+## no track for resprouts), a tag is flagged as fallback when K is below its
+## largest stem count or its largest per-census state count exceeds
+## DP_MAX_STATES, and step 3 uses fixed pruning bounds of -0.625 and 6.25
+## cm/yr without TrueStemID pins before the anchor. Only tags with more than
+## one stem ID are scanned.
 ## ────────────────────────────────────────────────────────────────────────
 
 library(data.table)
@@ -17,6 +40,7 @@ library(here)
 
 # ── CLI args ─────────────────────────────────────────────────────────────
 args <- commandArgs(trailingOnly = TRUE)
+# Value of --name=value on the command line (first match), else `default`
 get_arg <- function(name, default) {
     pat <- paste0("^--", name, "=(.*)$")
     m   <- grep(pat, args, value = TRUE)
@@ -127,7 +151,7 @@ out <- sp_tab[out, on = "Tag"]
 cr_str <- obs_pre[, .(census_range = paste(CensusID, collapse = ",")), by = Tag]
 out <- cr_str[out, on = "Tag"]
 
-# K computation
+# K computation (one track per resprout observation is added here; the DP adds none)
 out[, K_base := pmax(n_anchor_ids, max_obs, K_from_counts) + n_resprout]
 out[, K := as.integer(K_base + 1L)]  # +1 for slack
 
@@ -270,7 +294,8 @@ if (isTRUE(DP_REFINE)) {
 
         prune_min <- -0.625; prune_max <- 6.25
 
-        # Backward per-interval constrained enumeration (mirrors dp_global_dp.R)
+        # Backward per-interval constrained enumeration (as in dp_global_dp.R, with the
+        # fixed bounds above and without pins at the censuses before the anchor)
         all_mats <- vector("list", n_census)
         n_states_c <- integer(n_census)
         allowed <- vector("list", n_census)

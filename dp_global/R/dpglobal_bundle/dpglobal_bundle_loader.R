@@ -1,12 +1,19 @@
 # dpglobal_bundle_loader.R
-# Loads all functions required by main_cpp.R for DP_GLOBAL workflow
+# Builds the bundle snapshot of the DP_GLOBAL workflow: sources the dp_global
+# R modules into one environment and saves it as dpglobal_bundle.RData, next
+# to a manifest (dpglobal_bundle_manifest.rds) with the module list, the
+# package requirements per module and whether the compiled C++ functions were
+# available in this session. Run from the project root
+# (package_bundle.sh --build-bundle does it); needs the 'here' package.
 
 
 # Source all required R scripts into a new environment
 library(here)
 
 dpglobal_env <- new.env()
-# 1) Try to run dp_global_main.R to collect module manifest (r_files) if present
+# 1) Try to run dp_global_main.R to collect module manifest (r_files) if present.
+#    dp_global_main.R sources its modules into the global environment, so
+#    step 2 sources them again into dpglobal_env.
 tryCatch(
     {
         source(here::here("dp_global", "R", "dp_global_main.R"), local = dpglobal_env)
@@ -37,7 +44,7 @@ if (exists("r_files", envir = dpglobal_env)) {
         }
     }
 } else {
-    # Fallback: source all R scripts in dp_global/R (excluding bundle dir)
+    # Fallback: source the R scripts directly under dp_global/R (sub-folders are not scanned)
     rn <- list.files(here::here("dp_global", "R"), pattern = "\\.[rR]$", full.names = TRUE)
     rn <- rn[!grepl("dpglobal_bundle", rn)]
     for (fp in rn) {
@@ -113,5 +120,8 @@ if (bundle_manifest$compiled_acceleration_available) {
 # Usage:
 # 1. Run this script to create dpglobal_bundle.RData and dpglobal_bundle_manifest.rds
 # 2. On another system, load("dpglobal_bundle.RData") to access functions/objects
-# 3. If compiled acceleration is required, run the helper script `install_transition_cost_rcpp.R` in this directory to compile the C++ sources
+# 3. The compiled functions are not in the RData: compile them on that system with
+#    Rcpp::sourceCpp("dp_global/src/transition_cost_rcpp.cpp") (the DP needs them).
+#    The script `install_transition_cost_rcpp.R` named in the messages above is
+#    not part of this directory.
 

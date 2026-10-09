@@ -1,10 +1,14 @@
 #!/usr/bin/env Rscript
 # verify_bundle.R — smoke tests to validate an extracted dp_global bundle
 # Run from the extracted bundle root: Rscript dp_global/R/dpglobal_bundle/verify_bundle.R
+# Prints one PASS / FAIL line per check and exits with status 0 when every
+# check passes, 1 otherwise. Step 4 sources dp_global_main.R, which needs the
+# packages data.table, igraph, Rcpp and MASS and compiles the C++ file.
 
 cat("Running bundle verification...\n")
 
 all_ok <- TRUE
+# fail() prints the message and marks the run as failed; pass() only prints
 fail <- function(msg) { cat("FAIL:", msg, "\n"); all_ok <<- FALSE }
 pass <- function(msg) { cat("PASS:", msg, "\n") }
 
@@ -49,7 +53,7 @@ if (file.exists(cpp_file)) {
   fail("Missing C++ source: transition_cost_rcpp.cpp")
 }
 
-# 4. Source all modules (verifies they parse without error)
+# 4. Source all modules (verifies they parse and load without error)
 cat("\nSourcing dp_global_main.R...\n")
 tryCatch({
   source("dp_global/R/dp_global_main.R")

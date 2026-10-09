@@ -10,6 +10,8 @@ root <- c(".", "..", "../..")
 root <- normalizePath(root[file.exists(file.path(root, "dp_global", "R", "dp_global_bio.R"))][1])
 source(file.path(root, "dp_global", "R", "dp_global_bio.R"))
 
+# census_date(): date of census c (census 7 on 2010-01-01, 5 years apart)
+# fit(): estimate_bio_pars() with fixed guardrails and no measurement error
 census_date <- function(c) as.IDate("2010-01-01") + round((c - 7L) * 5 * 365.25)
 fit <- function(x, ...) suppressWarnings(estimate_bio_pars(x, anchor_start_census = 7L, use_measurement_error = FALSE,
   max_shrink_source = "fixed", max_shrink_fixed = -0.5, max_growth_source = "fixed", max_growth_fixed = 5,
@@ -43,7 +45,7 @@ test_that("SD falling with size: refitted as a constant (the mean of the SD prox
   expect_lt(raw[2], 0)                                    # the data have a negative slope
   expect_equal(b$growth$sigma1, 0)
   expect_equal(b$growth$sigma0, mean(p$sd), tolerance = 1e-8)
-  expect_lt(b$growth$sigma0, unname(raw[1]))               # smaller than the intercept the old code kept
+  expect_lt(b$growth$sigma0, unname(raw[1]))               # smaller than the intercept of the linear fit
 })
 
 test_that("SD rising with size: the linear fit is kept unchanged", {
@@ -69,7 +71,7 @@ test_that("recruitment rate: new stems per established tree per year, and the le
   expect_equal(r$n_new_stems_established_trees, 4L)          # the 3 stems of new trees are not new stems of established trees
   expect_equal(r$established_tree_years, 10 * T78 + 13 * T89, tolerance = 1e-9)
   expect_equal(r$lambda, (4 + 0.5) / (10 * T78 + 13 * T89), tolerance = 1e-9)
-  expect_equal(r$lambda_slot, 7 / (7 * T78), tolerance = 1e-9) # legacy: 7 recruits over 7 empty slots
+  expect_equal(r$lambda_slot, 7 / (7 * T78), tolerance = 1e-9) # per slot: 7 recruits over 7 empty slots
   b2 <- fit(x, recruit_rate_unit = "slot")
   expect_equal(b2$recruitment$lambda, r$lambda_slot)
   expect_error(fit(x, recruit_rate_unit = "plot"))

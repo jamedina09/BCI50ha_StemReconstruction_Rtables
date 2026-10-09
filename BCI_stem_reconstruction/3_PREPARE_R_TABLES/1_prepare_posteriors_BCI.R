@@ -2,10 +2,29 @@
 # 1_prepare_posteriors_BCI.R
 #
 # Purpose: Consolidate posterior Feather outputs from the engines into one
-#          RDS file with an explicit Tag column.
+#          RDS file with explicit tag and treeID columns, and join in every
+#          sample the stems joined by the measurement rejoin of the stage-2
+#          merge.
 #
-# Posterior columns (one row per unique reconstruction path of a tag):
-#   path_sig   : signature of the path (sequence of ReconstructedStemIDs)
+# Run from the project root, after 2_STEM_IDENTIFICATION/2_merge_chunks_to_datatable.R.
+#
+# Inputs:
+#   <home_dir>/<run_code>/posteriors/tag_<Tag>_posterior_samples_*_paths.feather
+#       one file per reconstructed tag, from the stage-2 run
+#   BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
+#       Tag <-> TreeID
+#   BCI_stem_reconstruction/DATA/PROCESSED/measurement_rejoin_pairs.csv and
+#   complete_dataset_final_with_reconstructed_stemids.rds   (stage-2 merge)
+# Output:
+#   BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds
+#       data.table keyed by tag: tag, treeID, path_sig, path_count, path_prob, recon
+# Packages: arrow, data.table, inspectdf.
+#
+# Posterior columns (one row per distinct labelled reconstruction of a tag; two
+# rows can describe the same grouping of observations under different labels,
+# in which case their counts add up):
+#   path_sig   : signature of the path (the per-sample stem labels of its
+#                observations, pasted with "-")
 #   path_count : number of the tag's posterior samples that produced this path.
 #                path_count / sum(path_count) is the posterior probability to
 #                use for Monte Carlo sampling, for both engines. DP samples are
@@ -16,8 +35,13 @@
 #                each sample by exp(logp) before summing, so path_prob is
 #                proportional to count x p (roughly p^2) and must NOT be used
 #                for sampling; for probabilistic tags it equals the count share.
-#   recon      : "ObsRowID:ReconstructedStemID;..." identity of every
-#                observation in the path
+#   recon      : "ObsRowID:label;..." stem label of every measured observation
+#                in the path (ObsRowID = obs_row_id of the stage-2 table). The
+#                labels are valid within the path; they are not the exported
+#                stem numbers.
+# In the trees with a measurement rejoin, recon is rewritten, paths that become
+# identical are merged (path_sig of one of them is kept) and path_prob is the
+# count share.
 # =============================================================================
 
 # =============================================================================
@@ -26,9 +50,8 @@
 
 rm(list = ls())
 
-# Load required packages (will error if not available; install before running)
 library(arrow) # read_feather()
-library(data.table) # fast data manipulation, rbindlist()
+library(data.table)
 
 # ── Hard check that stays visible in interactive (line-by-line) runs ────────
 # On failure: prints a ❌ line (count + examples), raises an immediate
@@ -90,7 +113,8 @@ tag_from_filename <- function(file_paths) {
 
 # read_and_bind_feathers() ------------------------------------------------
 # Read posterior Feather files, extract Tag from the filename, and combine
-# all files into a single keyed data.table.
+# all files into a single data.table keyed by Tag (Tag first). Stops when
+# file_paths is not a non-empty character vector.
 read_and_bind_feathers <- function(file_paths) {
     if (!is.character(file_paths) || length(file_paths) == 0) {
         stop("file_paths must be a non-empty character vector")
@@ -168,7 +192,7 @@ col_order <- c("Tag", "TreeID", "path_sig", "path_count", "path_prob", "recon")
 
 dt_posteriors <- dt_posteriors[, ..col_order][!is.na(TreeID)]
 
-# rename Tag to tag and TreeID to treeID for consistency with the rest of the codebase
+# rename Tag to tag and TreeID to treeID, the column names of the R tables
 setnames(dt_posteriors, old = c("Tag", "TreeID"), new = c("tag", "treeID"))
 
 # Report the consolidated table size and preview the top rows.
@@ -195,8 +219,9 @@ bio_check(
 )
 rm(obs_sets)
 
-# Posterior samples per tree (the DP draws 200 per tag; fewer means some
-# samples failed). Reported, not enforced.
+# Posterior samples per tree (200 are drawn per tag; a tree has fewer when
+# samples were dropped, e.g. by the matcher's pin-consistency filter).
+# Reported, not enforced.
 cat("Posterior samples per tree (sum of path_count):\n")
 print(dt_posteriors[, .(n_samples = sum(path_count)), by = treeID][, .N, by = n_samples][order(-N)])
 

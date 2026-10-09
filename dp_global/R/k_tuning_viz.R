@@ -14,7 +14,16 @@
 #     shrink: cost += k_shrink * (d0-d1)^2 only if d1 < d0
 #     growth: cost += k_growth * (d1 - (d0 + max_growth_soft*T))^2 only if exceed cap
 # - SPLIT does not depend on k_shrink/k_growth (it depends on mortality+recruitment terms).
+# - Costs come from transition_cost_tracks_bio_components() (dp_global_bio.R)
+#   with the arguments built by bio_pars_to_transition_args()
+#   (sensitivity_transition_cost_bio.R); both files must be sourced first.
 
+# k at which JOIN costs as much as SPLIT: join_base + k * delta_cm^2 == split_cost.
+#   join_base  : JOIN cost without soft penalties
+#   split_cost : SPLIT cost (death + recruitment)
+#   delta_cm   : DBH difference the soft penalty acts on (cm)
+# Returns max(0, (split_cost - join_base) / delta_cm^2); NA when an input is
+# not finite or delta_cm is not positive.
 k_threshold_from_costs <- function(join_base, split_cost, delta_cm) {
     join_base <- as.numeric(join_base)
     split_cost <- as.numeric(split_cost)
@@ -27,6 +36,24 @@ k_threshold_from_costs <- function(join_base, split_cost, delta_cm) {
     max(0, (split_cost - join_base) / (delta_cm^2))
 }
 
+# JOIN and SPLIT costs of each scenario over a grid of k.
+#   scenarios      : data.frame / data.table with columns d0 and d1 (DBH in cm
+#                    at t and t+1) and an optional label
+#   interval_years : census interval (years)
+#   bio            : parameter list of one species (estimate_bio_pars())
+#   temperature    : temperature of the weight ratio exp(-(join - split) / temperature)
+#   k_grid         : k values to evaluate
+#   which_k        : penalty swept: "shrink", "growth", or "auto" (shrink when
+#                    d1 < d0, growth when d1 exceeds the soft cap, else shrink
+#                    with no effect)
+#   prune_min_annual_growth, prune_max_annual_growth : optional pruning bounds
+#                    (cm/yr); they only set the join_pruned flag
+#   subtitle       : not used
+# Returns a data.table with one row per scenario and k: scenario, d0, d1,
+# interval_years, annual_growth, join_pruned, mode, delta_cm, k, join_base,
+# split_cost, join_cost, delta_join_minus_split, join_preferred, k_cross,
+# the weight ratio (and its log10), temperature, recruit_max_dbh,
+# max_growth_soft and max_shrink.
 k_sweep_join_vs_split <- function(
   scenarios,
   interval_years,
@@ -175,6 +202,17 @@ k_sweep_join_vs_split <- function(
     data.table::rbindlist(out_list, use.names = TRUE, fill = TRUE)
 }
 
+# Plots of a k_sweep_join_vs_split() table: the JOIN and SPLIT costs against k
+# (one panel per scenario, k_cross as a vertical line) and, with
+# show_weight_ratio = TRUE, the log10 weight ratio of JOIN over SPLIT.
+#   dt       : output of k_sweep_join_vs_split()
+#   k_max    : largest k plotted
+#   out_path : PDF path; the two plots are written to it, one per page
+#   subtitle : plot subtitle
+# With show_weight_ratio = FALSE the function returns list(cost = <ggplot>)
+# and writes no PDF. Otherwise it writes the PDF when out_path is given and
+# does not return the plots (the list built below is not the last value).
+# Needs ggplot2 and scales.
 plot_k_sweep_join_vs_split <- function(
   dt,
   show_weight_ratio = TRUE,
@@ -243,7 +281,7 @@ plot_k_sweep_join_vs_split <- function(
         p_cost <- p_cost +
             ggplot2::geom_vline(
                 data = k_cross_dt,
-                mapping = ggplot2::aes(xintercept = k_cross, group = scenario_label), # ← key fix
+                mapping = ggplot2::aes(xintercept = k_cross, group = scenario_label), # scenario_label places the line in its own panel
                 linewidth = 0.6,
                 alpha = 0.6
             ) +
@@ -253,7 +291,7 @@ plot_k_sweep_join_vs_split <- function(
                     x = k_cross,
                     y = Inf,
                     label = paste0("k_cross=", signif(k_cross, 3)),
-                    group = scenario_label # ← ensures correct panel
+                    group = scenario_label # places the label in its own panel
                 ),
                 angle = 90,
                 vjust = 1.1,
@@ -319,6 +357,8 @@ plot_k_sweep_join_vs_split <- function(
     }
 }
 
+# One row per scenario of a k_sweep_join_vs_split() table: scenario, d0, d1,
+# interval_years, mode, delta_cm, k_cross, join_pruned, join_base, split_cost.
 k_sweep_crosspoints <- function(dt) {
     if (!requireNamespace("data.table", quietly = TRUE)) {
         stop("Package 'data.table' is required.")

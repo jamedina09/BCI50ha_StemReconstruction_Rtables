@@ -48,6 +48,12 @@ if (sys.nframe() == 0L) {
 # Parse command-line arguments to override defaults.
 # Usage: Rscript main_cpp.R --WHICH_TAG=2 --RUN_ALL_TAGS=TRUE --DP_MODE=marginals+bins --SENSITIVITY_MODE=run --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=8
 # Supported args: any config variable name prefixed with --
+# parse_args() returns a named list of the overrides on the command line:
+#   --KEY=VALUE  "true"/"false" become logical, whole numbers integer, decimals
+#                numeric; the keys in .char_keys always stay character
+#   --FLAG       TRUE
+#   -h, --help   help = TRUE
+# The values are applied to the variables of the same name in section 4.
 
 parse_args <- function() {
     args <- commandArgs(trailingOnly = TRUE)
@@ -145,7 +151,7 @@ RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 ### 3.2) DP solver settings
 ############################################################
 # DP algorithm parameters: mode, anchoring, state budget, slack, posterior sampling.
-DP_MODE <- "marginals+bins" # Options: "none", "marginals", "marginals+bins"
+DP_MODE <- "marginals+bins" # Options: "none" (skip the DP), "map", "marginals", "marginals+bins" ("map" and "marginals" run the same DP; "+bins" adds DP_PosteriorBin)
 WHICH_TAG <- "20"
 ANCHOR_START_CENSUS <- 7L
 DP_VERBOSE <- TRUE
@@ -154,7 +160,7 @@ DP_MAX_TRACKS <- NULL # auto (computed from data)
 DP_MAX_STATES <- 40000L
 DP_SLACK_TRACKS <- 1L
 # NOTE: Optionally require that slack be granted only if an anchor DBH is recruitable
-# (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to preserve current behavior.
+# (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). Set FALSE to grant the slack tracks to every tag.
 DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
 # Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
 DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
@@ -167,22 +173,22 @@ DP_FALLBACK_GROWTH_FORMS <- character(0)
 # These show real DBH growth plus large apparent variation when HOM changes.
 # Wide base prune bounds prevent spurious pruning.
 # HOM tolerance adds per-census-pair widening when a HOM column is present.
-# Units: cm/year.  Set to NULL to disable the override.
+# Units: cm/year.  An empty NON_TAPER_CORRECTED_GROWTH_FORMS turns the override off.
 PRUNE_BOUND_FACTOR <- 1.25
 NON_TAPER_CORRECTED_GROWTH_FORMS <- c("palm", "strangler_fig", "tree_fern")
 NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH <- PRUNE_BOUND_FACTOR * MAX_SHRINK_FIXED
 NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH <- PRUNE_BOUND_FACTOR * MAX_GROWTH_FIXED
-# HOM tolerance scale: cm of annual DBH tolerance per meter of HOM deviation
-# from 1.3 m.  Set 0 to disable HOM widening.
+# HOM tolerance scale: cm of DBH tolerance per meter of HOM deviation from
+# 1.3 m, divided by the census interval to widen the annual bounds.
+# Set 0 to disable HOM widening.
 HOM_TOLERANCE_SCALE <- 2.0
 
-# Posterior sampling defaults (disabled by default)
+# Posterior sampling defaults (200 samples; POSTERIOR_SAMPLES = 0 disables sampling)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
-# - POSTERIOR_SAMPLES_FORMAT: output format forwarded to DP ('rds','feather','csv')
+# - POSTERIOR_SAMPLES_FORMAT: format of the final paths files ('rds','feather','csv')
 # - POSTERIOR_SAMPLES_PATH: optional path to write posterior files; when NULL DP writes to out_dir/posteriors
-# - POSTERIOR_SAMPLE_SEED: integer seed used to make posterior sampling reproducible. If NULL sampling is not
-#   deterministically seeded. Pass --POSTERIOR_SAMPLE_SEED=<int> for reproducible CLI runs; the chunked runner
-#   (main_cpp_chunk.R) defaults to 123L when sampling is enabled and no seed is set.
+# - POSTERIOR_SAMPLE_SEED: integer seed used to make posterior sampling reproducible. If NULL, this script
+#   (like main_cpp_chunk.R) sets it to 123L when sampling is enabled; pass --POSTERIOR_SAMPLE_SEED=<int> to override.
 POSTERIOR_SAMPLES <- 200L
 POSTERIOR_SAMPLES_FORMAT <- "csv" # options: 'rds', 'feather', 'csv'
 POSTERIOR_SAMPLES_PATH <- NULL
@@ -201,7 +207,8 @@ PROB_SPECIES <- character(0)
 
 # Lookahead weight for probabilistic matcher: controls how much the
 # cost matrix at pair (i) is influenced by the assignment at pair (i+1).
-# 0 = disabled (original independent sampling), 0.5 = default.
+# 0 = disabled (each pair sampled independently). The engine default is 0.5;
+# this driver uses 1.
 PROB_LOOKAHEAD_WEIGHT <- 1
 
 # Bio hard bounds control for probabilistic matcher:
@@ -218,7 +225,7 @@ PROB_N_SIGMA_ME <- 3
 
 # Pin observations with known TrueStemID at non-anchor censuses to their
 # correct track.  Reduces state space and prevents misidentification.
-# Set FALSE to revert to pre-pinning behavior.
+# Set FALSE to leave the observations before the anchor unpinned.
 PIN_TRUESTEMID <- TRUE
 
 ############################################################
@@ -241,7 +248,7 @@ message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 # Optional: explicitly set a subdirectory name for outputs.
 # If NULL, an automatic name based on timestamp + key config flags is used.
 # OUT_DIR_NAME <- NULL
-# CONFIG_NAME is set by the orchestrator (e.g., run_dp_future) to identify the
+# CONFIG_NAME can be set by an external orchestrator to identify the
 # experimental configuration; default to NULL so override parsing treats it as
 # a valid, known variable rather than an unknown override.
 CONFIG_NAME <- NULL
@@ -337,6 +344,10 @@ RUN_REALISM_REPORT <- FALSE
 ############################################################
 ### 4.2) Help & override application
 ############################################################
+# print_help(): print the keys of CLI_REFERENCE with their current values.
+# normalize_key() / find_matching_var(), below, match an override to a global
+# variable whatever its case and with '-' or '_'; any global variable can be
+# overridden, not only the keys of CLI_REFERENCE.
 print_help <- function() {
     cat("Usage: Rscript scripts/main_cpp.R [--KEY=VALUE] [--FLAG]\n")
     cat("Common keys and defaults:\n")
@@ -481,6 +492,10 @@ message("[dp_global main_cpp.R] getwd(): ", getwd())
 
 # Centralized DP naming and path helpers 🔧
 DP_BASE <- "stem_reconstruction_dp_global_rcpp"
+# make_out_path(): <dir>/<base>.<ext>
+# out_path(target): path of a run-level output: "dp" (with `ext`, csv by
+# default), "dp_csv", "dp_rds", "dp_feather", "dp_pdf", or "posteriors" (the
+# posteriors folder). Stops on any other target.
 make_out_path <- function(base = DP_BASE, ext = "csv", dir = out_dir) {
     file.path(dir, paste0(base, ".", ext))
 }
@@ -501,6 +516,8 @@ out_path <- function(target, ext = NULL) {
     )
 }
 
+# Run write_expr() when `flag` is TRUE, after creating the folder of `path`.
+# Logs success or failure; returns TRUE / FALSE (invisible FALSE when skipped).
 maybe_write <- function(flag, path, write_expr, msg = NULL) {
     if (!isTRUE(flag)) {
         return(invisible(FALSE))
@@ -574,6 +591,7 @@ source(here("dp_global", "R", "k_tuning_viz.R"))
 # - Soft penalty is quadratic: soft_cost = k * (delta_cm^2)
 # - If you want delta_cm = D to contribute cost C, set k = C / (D^2).
 
+# Create `path` (recursively) when it does not exist; returns it invisibly.
 ensure_dir <- function(path) {
     if (!dir.exists(path)) {
         dir.create(path, recursive = TRUE)
@@ -584,6 +602,7 @@ ensure_dir <- function(path) {
     invisible(path)
 }
 
+# Print a time-stamped message and append it to <out_dir>/run_log.txt.
 log_msg <- function(msg, level = "INFO") {
     ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     full <- sprintf("[%s] %s: %s", ts, level, msg)
@@ -594,6 +613,10 @@ log_msg <- function(msg, level = "INFO") {
     invisible(full)
 }
 
+# Make sure x has a character `species` column: the forced label when
+# FORCE_ONE_SPECIES_PARAMETERS is TRUE, else the existing `species`, else the
+# column named by SPECIES_COL or the first of a list of usual names. Stops when
+# none is found. Modifies x by reference and returns it.
 ensure_species_column <- function(x) {
     if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
         x[, species := FORCED_SPECIES_LABEL]
@@ -631,13 +654,16 @@ ensure_species_column <- function(x) {
 
 get_growth_mu_const <- function(growth_list) {
     # Growth mean model: mu(DBH) = alpha + gamma*log(DBH)
-    # Backward-compat: if alpha/gamma absent, use constant mean mu and gamma=0.
+    # Returns alpha, or the constant mean mu when the list has no alpha.
     if (!is.null(growth_list$alpha)) {
         return(growth_list$alpha)
     }
     growth_list$mu
 }
 
+# Evaluate the quoted expression `expr` inside list `x` (e.g.
+# quote(guardrails$hard$value)); returns it as a number when it is a single
+# finite value, otherwise `fallback`.
 get_nested_numeric <- function(x, expr, fallback = NULL) {
     v <- tryCatch(eval(expr, envir = x), error = function(e) NULL)
     if (!is.null(v) && length(v) == 1L && is.finite(v)) {
@@ -646,6 +672,10 @@ get_nested_numeric <- function(x, expr, fallback = NULL) {
     fallback
 }
 
+# Add the Bio_* columns the engines read (growth, mortality, recruitment,
+# guardrails and soft-penalty weights) to xrun, per species, from bio_pars
+# (named by species; each element from estimate_bio_pars()). Modifies xrun by
+# reference and returns it.
 attach_bio_columns <- function(xrun, bio_pars) {
     xrun[, `:=`(
         Bio_Mu_Growth = get_growth_mu_const(bio_pars[[.BY$species]]$growth),
@@ -685,6 +715,8 @@ attach_bio_columns <- function(xrun, bio_pars) {
     xrun
 }
 
+# Default DP track cap: the largest number of measured stems of any tag in
+# one census up to ANCHOR_START_CENSUS, plus 1.
 auto_dp_max_tracks <- function(xrun) {
     max_obs_any_tag_census <- xrun[
         CensusID <= ANCHOR_START_CENSUS & !is.na(DBH),
@@ -699,6 +731,12 @@ auto_dp_max_tracks <- function(xrun) {
 ### 8) Core DP functions
 ############################################################
 # run_dp_one_group(dtg, dp_max_tracks)  — wraps match_stems_dp_global_backward_marginals_batch()
+#   for the rows of one (Tag, species) group. A group with no rows, no DBH or
+#   CensusID column, or only NA in one of them is returned as it is (method
+#   "skipped_no_data"). When the DP call raises an error, the rows up to the
+#   anchor go to match_stems_probabilistic() and the later rows are labelled.
+#   The TrueStemID sweep at the end runs on every output. Returns the group's
+#   rows with the reconstruction columns.
 # maybe_add_posterior_bins(out)          — optionally annotates output with posterior bin labels
 
 run_dp_one_group <- function(dtg, dp_max_tracks) {
@@ -743,7 +781,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             non_taper_corrected_prune_min_growth = NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH,
             non_taper_corrected_prune_max_growth = NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH,
             hom_tolerance_scale = HOM_TOLERANCE_SCALE,
-            # posterior sampling controls (disabled by default)
+            # posterior sampling controls (POSTERIOR_SAMPLES = 0 disables sampling)
             posterior_samples = POSTERIOR_SAMPLES,
             posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
             posterior_samples_path = POSTERIOR_SAMPLES_PATH,
@@ -756,7 +794,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
             prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
             prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR, # very high recruit max dbh
-            prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh instead of biological (and margin) one, TRUE, set prune_recruit_max_dbh as min(prune_recruit_max_dbh, bio_recruit_max_dbh * 1.2)
+            prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh as given; TRUE = use min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)
             allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
             verbose = isTRUE(DP_VERBOSE),
             prob_n_samples = PROB_N_SAMPLES,
@@ -838,10 +876,11 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
         .ts_rows <- which(!is.na(out$TrueStemID))
         if (length(.ts_rows) > 0L) {
             # ---- Script-level audit: detect engine-vs-pin disagreements ----
-            # Last-line defense.  At this point both finalize_out and the
-            # probabilistic matcher have already run their own audits, so any
-            # override caught here means a row leaked through both inner
-            # sweeps -- worth surfacing loudly.
+            # On the fallback paths finalize_out() and the probabilistic
+            # matcher have already run their own sweep and audit, so an
+            # override caught here means a row leaked through them. On the
+            # normal DP path this is the only sweep: the DP honours the pins
+            # through its state enumeration and does not call finalize_out().
             if (!("SweepAuditOverride" %in% names(out))) {
                 out[, SweepAuditOverride := FALSE]
             } else {
@@ -887,7 +926,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             # retag-campaign reuse of OriginalStemID 995110 would force
             # two rows at (Tag=258411, CensusID=6) onto Recon=995110;
             # the engine had already given the second row a fresh ID
-            # (995113), which we now retain.
+            # (995113), which is kept.
             if (!("SweepRollbackToPreSweep" %in% names(out))) {
                 out[, SweepRollbackToPreSweep := FALSE]
             } else {
@@ -963,6 +1002,9 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
     out
 }
 
+# Add DP_PosteriorBin (add_dp_posterior_bins(): confident >= 0.95,
+# unlinked-likely >= 0.5) when DP_MODE is "marginals+bins"; otherwise returns
+# `out` unchanged.
 maybe_add_posterior_bins <- function(out) {
     if (isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
         out <- add_dp_posterior_bins(
@@ -979,8 +1021,11 @@ maybe_add_posterior_bins <- function(out) {
 ############################################################
 ### 9) Main pipeline — run_main()
 ############################################################
-# run_main() — loads data, estimates bio parameters, runs DP over all tags,
-# writes CSV/RDS/PDF outputs, and returns list(xrun, bio_pars).
+# run_main() — loads data (CSV), estimates bio parameters per species, runs
+# the DP for WHICH_TAG or (RUN_ALL_TAGS = TRUE) for all tags in parallel,
+# applies the post-engine helpers, writes CSV/RDS/Feather/PDF outputs and the
+# optional realism and sensitivity outputs, and returns list(out, xrun,
+# bio_pars) invisibly.
 run_main <- function() {
     ensure_dir(out_dir)
     tryCatch(
@@ -1182,16 +1227,17 @@ run_main <- function() {
     }
     out <- maybe_add_posterior_bins(out)
 
-    # 5.5b Post-engine backfill of orphan terminal-event rows.
-    #      For rows with Status %in% {"dead","stem dead","broken below"} AND
-    #      NA DBH that the engine could not match (ReconstructedStemID NA),
-    #      copy the ReconstructedStemID from the most recent prior row in the
-    #      same (Tag, OriginalStemID) group (LOCF). Sets
-    #      ReconstructionMethod = "carried_terminal" on filled rows.
-    #      Shared helper defined in dp_global/R/dp_global_main.R; mirrors
-    #      Step 9b in main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
-    #      First, unpinned measurements left behind by the TrueStemID sweep
+    # 5.5b First, unpinned measurements left behind by the TrueStemID sweep
     #      rejoin their engine track's single pin (apply_pin_track_rejoin()).
+    #      Then the post-engine backfill of orphan terminal-event rows:
+    #      for rows with Status %in% {"dead","stem dead","broken below",
+    #      "missing"} AND NA DBH that the engine could not match
+    #      (ReconstructedStemID NA), copy the ReconstructedStemID from the
+    #      most recent prior row in the same (Tag, StemID / OriginalStemID)
+    #      group (LOCF). Sets ReconstructionMethod = "carried_terminal" on
+    #      filled rows. Shared helpers defined in dp_global/R/dp_global_main.R;
+    #      mirrors Step 9b in main_cpp_bci.R and the per-chunk call in
+    #      main_cpp_chunk.R.
     out <- apply_pin_track_rejoin(out)
     out <- apply_carried_terminal_backfill(out)
 
@@ -1199,23 +1245,22 @@ run_main <- function() {
     #      NA DBH, and a non-NA source-id (StemID / OriginalStemID) are stems
     #      whose first appearance had no measurement (e.g. born broken-below
     #      at C7+); the engine cannot reach them. Fill Recon = source-id and
-    #      tag ReconstructionMethod = "given_orphan". Mirrors Step 9c in
+    #      tag ReconstructionMethod = "given_orphan". Mirrors section 9b of
     #      main_cpp_bci.R and the per-chunk call in main_cpp_chunk.R.
     out <- apply_orphan_stem_backfill(out)
     out <- apply_terminal_to_host(out) # terminal records back to the stem that ended
 
     # 5.5d Broken-below invariant pass. Enforce R1 (split-on-break) and R2
     #      (terminate-on-stump) per `apply_broken_below_invariants` in
-    #      dp_global/R/dp_global_main.R. Mirrors Step 9d in main_cpp_bci.R
+    #      dp_global/R/dp_global_main.R. Mirrors section 9b of main_cpp_bci.R
     #      and the per-chunk call in main_cpp_chunk.R.
     out <- apply_broken_below_invariants(out)
 
-    # 5.5e Reverse the direction of ReconstructedStemID numbering so
-    #      smaller integers correspond to earlier stem appearances.
+    # 5.5e Renumber ReconstructedStemID 1..N within each tag so that
+    #      smaller integers correspond to earlier stem appearances
+    #      (renumber_engine_minted_ids() in dp_global_main.R).
     #      Must run AFTER apply_broken_below_invariants(). Returns a
-    #      Tag/old_id/new_id mapping consumed by finalize_posterior_paths();
-    #      companion mapping files are no longer written.
-    #      See dp_global/improvements.md for the full algorithm.
+    #      Tag/old_id/new_id mapping consumed by finalize_posterior_paths().
     if (!is.null(out)) {
         .renum <- renumber_engine_minted_ids(
             out,
@@ -1223,8 +1268,7 @@ run_main <- function() {
             posterior_samples_path = out_dir
         )
         out <- .renum$out
-        # Finalize posterior path files in the renumbered ID space
-        # (recommended architecture, see dp_global/improvements.md).
+        # Finalize posterior path files in the renumbered ID space.
         finalize_posterior_paths(
             out,
             posterior_samples_path = out_dir,
@@ -1488,27 +1532,32 @@ if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
 #   optional sensitivity sweeps, realism reports, and k-sweep demos.
 #   Use main_cpp_chunk.R instead when memory is limited.
 #
-# BASIC RUN — all tags, default settings
-#   Rscript dp_global/scripts/main_cpp.R \
-#     --INPUT_FILE=data/my_stems.csv
-#
-# SINGLE-TAG MODE
+# SINGLE-TAG MODE (the default: RUN_ALL_TAGS = FALSE, WHICH_TAG = "20")
 #   Rscript dp_global/scripts/main_cpp.R \
 #     --INPUT_FILE=data/my_stems.csv \
-#     --RUN_ALL_TAGS=FALSE \
 #     --WHICH_TAG=2747
 #
+# ALL TAGS
+#   Rscript dp_global/scripts/main_cpp.R \
+#     --INPUT_FILE=data/my_stems.csv \
+#     --RUN_ALL_TAGS=TRUE --PLOT_PDF_ONE_TAG_ONLY=FALSE
+#   (PLOT_PDF_ONE_TAG_ONLY is set from the default RUN_ALL_TAGS before the
+#   command line is applied; without the second flag the PDF holds only
+#   WHICH_TAG.)
+#
 # COMMON OVERRIDES
-#   --DP_MAX_STATES=1100          Max DP states per track (higher = slower, more accurate)
+#   --DP_MAX_STATES=1100          Max assignment states per census; a tag above it
+#                                 goes to the probabilistic matcher
 #   --MANUAL_CORES=TRUE           Use a fixed core count instead of auto-detect
 #   --MANUAL_CORES_VALUE=8        Number of cores (requires MANUAL_CORES=TRUE)
 #   --WRITE_DP_PDF=TRUE/FALSE     Whether to produce the per-tag PDF plot
 #   --POSTERIOR_SAMPLES=250       Draw N posterior samples per group (0 = disabled)
 #   --POSTERIOR_SAMPLES_FORMAT=csv|rds|feather
-#   --USE_MEASUREMENT_ERROR=TRUE  Enable measurement-error model for bio params
+#   --USE_MEASUREMENT_ERROR=TRUE  Measurement-error model in the parameter estimation
+#                                 and in the DP growth likelihood
 #   --DP_FALLBACK_GROWTH_FORMS="fig,tree"
-#                                 Comma-separated list of growth forms that bypass
-#                                 species-specific bio params
+#                                 Comma-separated list of growth_form values sent to
+#                                 the probabilistic matcher instead of the DP
 #   --SENSITIVITY_MODE=run+write+pdf
 #                                 Run transition-cost sensitivity sweep and write PDF
 #   --RUN_REALISM_REPORT=TRUE     Write per-tag realism / tuning-suggestion tables
@@ -1523,7 +1572,7 @@ if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
 #   Rscript dp_global/scripts/main_cpp.R --help
 
 # Rscript dp_global/scripts/main_cpp.R \
-#     --INPUT_FILE=/Users/medinaja/GDrive_Science/STRI/STEM_IDENTIFICATION_TEST/data_simulation/data/simulated_data_1.csv \
+#     --INPUT_FILE=data_simulation/data/simulated_data_1.csv \
 #     --RUN_ALL_TAGS=FALSE \
 #     --DP_MAX_STATES=2 \
 #     --WHICH_TAG=20

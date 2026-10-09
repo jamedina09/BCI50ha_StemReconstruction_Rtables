@@ -53,6 +53,10 @@ workspace_root <- getwd()
 #   Sec. 14 – DBH size-class distribution (Census 2 vs. Census 9)
 #
 # Dependencies: data.table, boot, HDInterval
+# Inputs (run from the project root): the stage-3 R tables
+#   BCI_stem_reconstruction/DATA/RTABLES/bci.stem1..9.Rdata and the species
+#   table bci.spptable.rdata in the same folder.
+# Output: printed to the console; no file is written.
 #
 # NOTE: These are basic descriptive summaries intended to give
 # an overall view of forest structure and composition. Understanding
@@ -312,13 +316,16 @@ bci.spptable <- bci.spptable[, keep_spp, with = FALSE]
 rec <- merge(rec, bci.spptable, by = "sp", all.x = TRUE)
 
 # ---- Taper correction -------------------------------------
-# Cushman et al. 2014
+# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`
+# (taper model of Cushman et al. 2014):
+#   b      = exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
+#   dbh_at = dbh_cm / exp(-b * (hom - common_hom))
+# dbh_mm in mm, hom in m (NA is read as common_hom). Returns mm; NA where the
+# DBH or the HOM is not positive. Stops when the two vectors differ in length.
 taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
-    # Defensive checks
     if (length(dbh_mm) != length(hom)) {
         stop("'dbh_mm' and 'hom' must have the same length")
     }
-    # copy inputs to avoid modifying caller's vectors
     dbh_mm <- as.numeric(dbh_mm)
     hom <- as.numeric(hom)
     # Replace NA heights with 1.3 m (do not modify valid measured heights)
@@ -338,7 +345,7 @@ taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
     return(out_mm)
 }
 
-# NOTE: dbh should be in cm for the equation.
+# taper_2014() takes the DBH in mm and returns mm.
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
 rec[, dbh_raw := dbh] # as measured at the POM (mm)
 rec[, dbh_t := taper_2014(dbh_mm = dbh_raw, hom = hom)]

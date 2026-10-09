@@ -1,27 +1,36 @@
 ############################################################
 ### estimate_dp_complexity_function.R
-### Accurate estimator of DP transition cost calls per tag
+### Estimator of DP transition cost calls per tag
 ###
-### Mirrors exact logic from dp_global_dp.R to estimate —
+### Follows the logic of dp_global_dp.R to estimate —
 ### without running the DP — how many transition cost evaluations
 ### will be performed per tag.  Use this to rank tags by expected
 ### run time before submitting batch jobs.
 ###
-### Key mechanics taken directly from dp_global_dp.R:
-###  1. census_range  — from first_obs_census up to anchor_start
-###                     (shifted when last observed census < anchor_start)
+### Key mechanics, modelled on dp_global_dp.R:
+###  1. census_range  — the censuses with a DBH from the first one up to
+###                     anchor_start (the anchor moves to the last observed
+###                     census when that is earlier)
 ###  2. K (tracks)    — max(anchor_ids, max_obs, K_from_counts)
-###                     + resprout barrier + slack, capped to max_tracks
+###                     + one track per resprout observation + slack, capped
+###                     to max_tracks. The DP itself adds no track for
+###                     resprouts and adds tracks for TrueStemIDs pinned
+###                     before the anchor, so K can differ from the DP's.
 ###  3. State space   — P(K, n_obs) per census;
 ###                     exceeding max_states flags estimated_fallback
+###                     (the DP sends such a tag to the probabilistic matcher)
 ###  4. Pruned edges  — enumerate every (state_t × state_{t+1}) pair
-###                     and apply the same hard-prune guard:
+###                     and apply the hard-prune guard of the DP:
 ###                       DBH->DBH  : (d1-d0)/interval in [eff_min, eff_max]
 ###                       NA ->DBH  : d1 <= eff_recruit_max
 ###                       DBH->NA   : always OK (death)
 ###                       NA ->NA   : always OK (unborn track)
-###  5. Output        — rows per tag, sorted by estimated_edges_pruned desc
+###  5. Output        — rows per tag, tags without fallback first, sorted by
+###                     edge count (descending)
 ###                     + predicted_seconds / predicted_hours from calibrated model
+###
+### The file must be sourced with the 'here' package attached
+### (estimate_dp_complexity() calls here() to source dp_global_states.R).
 ############################################################
 
 #' Estimate DP transition-cost evaluations per tag
@@ -30,7 +39,8 @@
 #' @param anchor_start Integer: DP anchor census (default 7)
 #' @param slack_tracks Integer: extra tracks for simultaneous death+birth (default 1)
 #' @param max_states Integer: same as DP max_states – tags exceeding this per
-#'   census would fall back to igraph and are flagged (default 40000)
+#'   census would fall back to the probabilistic matcher and are flagged
+#'   (default 40000)
 #' @param max_tracks Integer: hard cap on K (default 9999)
 #' @param slack_require_anchor_recruitable Logical: only grant slack when any
 #'   anchor DBH <= recruit_max_dbh (default FALSE)
@@ -44,19 +54,28 @@
 #' @param recruit_max_dbh Numeric: fallback recruit size cap when column absent (default Inf)
 #' @param prune_recruit_max_dbh Numeric|NULL: explicit recruit prune cap
 #' @param prune_use_bio_recruit Logical: use bio recruit max DBH (default TRUE)
-#' @param fast Logical: when TRUE (default) skip the O(states^2) pruned-edge
-#'   enumeration and rank by unpruned edge count instead.  Use fast=FALSE only
-#'   when you need accurate pruned counts (e.g., for model validation).
+#' @param fast Logical: when TRUE (default) the scan is vectorized over all
+#'   tags and the result is ranked by unpruned edge count; pruned edges are
+#'   then counted with matrix operations, and only when
+#'   `compute_all_pruned_edges = TRUE`.  fast=FALSE loops over the tags and
+#'   checks every state pair (e.g., for model validation).
 #' @param use_dp_prune Logical: when TRUE, compute exact DP-constrained state
 #'   counts for the top tags using the current dp_global state-enumeration logic.
 #'   This improves ranking of the slowest tags while keeping the full-tag
 #'   vectorized scan fast.
 #' @param top_n_dp Integer: number of top tags (by rough state size) to re-score
 #'   with DP-aware constrained enumeration when `use_dp_prune=TRUE`.
-#' @return data.table sorted descending by estimated_edges_unpruned (fast=TRUE)
-#'   or estimated_edges_pruned (fast=FALSE), with columns `predicted_seconds`
-#'   and `predicted_hours` from a log-log polynomial model calibrated on actual
-#'   benchmark runs.
+#' @param compute_all_pruned_edges Logical: with `fast=TRUE`, also count the
+#'   pruned edges of every tag without fallback and with at least two censuses
+#'   (default TRUE). FALSE leaves `estimated_edges_pruned` NA except for the
+#'   tags re-scored by `use_dp_prune`.
+#' @return data.table with one row per tag: Tag, Species, census_range,
+#'   n_censuses, K, max_obs, max_states_per_census, total_states,
+#'   estimated_edges_unpruned, estimated_edges_pruned, estimated_fallback,
+#'   fallback_reason, and `predicted_seconds` / `predicted_hours` from a
+#'   log-log polynomial model. Tags without fallback come first, then
+#'   descending by estimated_edges_unpruned (fast=TRUE) or by
+#'   estimated_edges_pruned where available (fast=FALSE).
 #' @export
 estimate_dp_complexity <- function(data,
                                    anchor_start = 7L,
@@ -114,7 +133,8 @@ estimate_dp_complexity <- function(data,
     }
 
     # ------------------------------------------------------------------
-    # 2. Per-census-pair interval lookup (mirrors resolve_interval_years_pair)
+    # 2. Per-census-pair interval lookup (difference of the mean ExactDate of
+    #    two consecutive censuses, in years; NA without dates)
     # ------------------------------------------------------------------
     census_interval_lookup <- NULL
     if ("ExactDate" %in% names(data)) {
@@ -143,7 +163,8 @@ estimate_dp_complexity <- function(data,
     }
 
     # ------------------------------------------------------------------
-    # 3. Helpers mirroring dp_global_states.R
+    # 3. Local helpers (same roles as those in dp_global_utils.R and
+    #    dp_global_states.R)
     # ------------------------------------------------------------------
 
     # P(K, n) = K * (K-1) * ... * (K-n+1)
@@ -190,7 +211,9 @@ estimate_dp_complexity <- function(data,
     }
 
     # ------------------------------------------------------------------
-    # 4. Hard-prune check — exact mirror of candidate_ok in dp_global_dp.R
+    # 4. Hard-prune check — the growth and recruit-size rule of the DP's
+    #    feasibility check (derive_phase_prev_batch_rcpp() in
+    #    dp_global/src/transition_cost_rcpp.cpp)
     # ------------------------------------------------------------------
     transition_feasible <- function(tdbh0, tdbh1, interval_val, eff_min, eff_max, eff_rec) {
         if (!is.finite(interval_val)) {
@@ -269,6 +292,13 @@ estimate_dp_complexity <- function(data,
 
     # ------------------------------------------------------------------
     # 4c. DP-aware constrained state enumeration helpers
+    #     compute_dp_state_counts(): states per census with the backward
+    #     per-interval track constraints of the DP (no pins before the anchor).
+    #     Returns list(fallback, fallback_reason, n_states_by_census,
+    #     total_states, state_mats).
+    #     count_dp_pruned_edges(): pruned edges between those state sets.
+    #     estimate_one_tag_dp(): the per-tag row (as estimate_one_tag()) built
+    #     from them; used when use_dp_prune = TRUE.
     # ------------------------------------------------------------------
     compute_dp_state_counts <- function(tag_data, census_range, anchor_start, K,
                                         track_ids, anchor_ids, max_states,
@@ -584,7 +614,8 @@ estimate_dp_complexity <- function(data,
     }
 
     # ------------------------------------------------------------------
-    # 5. Per-tag estimator — mirrors match_stems_dp_global_backward_marginals_batch
+    # 5. Per-tag estimator — follows match_stems_dp_global_backward_marginals_batch
+    #    (used by the slow path, fast = FALSE). Returns one row for the tag.
     # ------------------------------------------------------------------
     estimate_one_tag <- function(tag_data, tag_val, species_val) {
         # 5a. Effective anchor (shift down if no obs reach anchor_start)
@@ -623,7 +654,7 @@ estimate_dp_complexity <- function(data,
         obs_counts[is.na(obs_counts)] <- 0L
         max_obs <- if (length(obs_counts) > 0L) max(obs_counts) else 0L
 
-        # 5c. K — exact replica of dp_global_dp.R K computation
+        # 5c. K — as in dp_global_dp.R, plus the resprout tracks added below
         anchor_obs <- tag_data[CensusID == eff_anchor & !is.na(DBH)]
         anchor_ids <- sort(unique(na.omit(anchor_obs$TrueStemID)))
 
@@ -644,7 +675,7 @@ estimate_dp_complexity <- function(data,
         K_from_counts <- as.integer(if (length(obs_counts) > 0L) obs_counts[1L] + births_needed else 0L)
         K_base <- max(length(anchor_ids), max_obs, K_from_counts)
 
-        # Resprout barrier — use pre-aggregated summary (keyed lookup)
+        # One extra track per resprout observation (pre-aggregated summary, keyed lookup)
         n_resprout <- 0L
         if (!is.null(resprout_summary_pre)) {
             tag_resp <- resprout_summary_pre[.(tag_val)][CensusID %in% census_range]
@@ -690,7 +721,8 @@ estimate_dp_complexity <- function(data,
         total_s <- sum(n_states_c, na.rm = TRUE)
         fallback <- isTRUE(max_s_c > max_states)
 
-        # 5e. Effective pruning bounds — mirrors dp_global_dp.R lines ~978-999
+        # 5e. Effective pruning bounds — as in the "effective pruning bounds"
+        #     block of dp_global_dp.R
         read_bio_col <- function(candidates, default_val) {
             for (col in candidates) {
                 if (col %in% names(tag_data)) {
@@ -742,7 +774,7 @@ estimate_dp_complexity <- function(data,
 
         # 5g. Pruned edge count: full state enumeration + per-pair feasibility check
         #     Skipped entirely when fast=TRUE (use unpruned count for ranking).
-        #     Skipped (NA) when tag would fall back to igraph.
+        #     Skipped (NA) when the tag would fall back to the probabilistic matcher.
         edges_pruned <- NA_real_
         if (!isTRUE(fast) && !fallback && n_census >= 2L) {
             all_mats <- vector("list", n_census)
@@ -798,8 +830,8 @@ estimate_dp_complexity <- function(data,
     # ------------------------------------------------------------------
     # 6. Runtime predictor
     #    Calibrated polynomial in log-log space from benchmark runs.
-    #    Uses estimated_edges_pruned when available (= actual C++ calls after pruning),
-    #    otherwise estimated_edges_unpruned (upper bound, same as old TransitionComputations).
+    #    Uses estimated_edges_pruned when available (= transitions left after pruning),
+    #    otherwise estimated_edges_unpruned (upper bound).
     #    Note: the model was fitted on unpruned counts; pruned predictions are optimistic.
     # ------------------------------------------------------------------
     predict_seconds <- function(N) {
@@ -1136,7 +1168,9 @@ estimate_dp_complexity <- function(data,
 #' @param anchor_start Integer: anchor census (default 7)
 #' @param slack_tracks Integer: slack tracks (default 1)
 #' @param ... Additional arguments forwarded to estimate_dp_complexity
-#' @return List with per-census detail
+#' @return List with `summary` (the estimate_dp_complexity() row of the tag)
+#'   and `per_census` (CensusID, N_Obs, N_States = P(K, N_Obs); NULL when the
+#'   tag has no DBH up to the anchor). Stops when the tag is not in `data`.
 #' @export
 get_tag_complexity_details <- function(data, tag,
                                        anchor_start = 7L,
@@ -1207,7 +1241,8 @@ get_tag_complexity_details <- function(data, tag,
     )
 }
 
-# Example usage:
+# Example usage (the project has no bci_data folder; an untracked copy of this
+# .rds is in data_simulation/sample_data_BCI/general_data/):
 if (FALSE) {
     library(data.table)
     source("dp_global/R/complexity/estimate_dp_complexity_function.R")
@@ -1221,9 +1256,10 @@ if (FALSE) {
 
 #' Sweep across parameter configurations and summarise predicted runtime
 #'
-#' Runs estimate_dp_complexity once per scenario and returns a summary table
-#' showing how many tags use DP vs igraph, total predicted hours, and the
-#' slowest-tag predicted time. Use this to decide how tightening pruning or
+#' Runs estimate_dp_complexity once per scenario (always with fast = TRUE)
+#' and returns a summary table showing how many tags use DP vs the fallback
+#' (column `n_tags_igraph`), total predicted hours, and the slowest-tag
+#' predicted time. Use this to decide how tightening pruning or
 #' lowering max_states affects your batch runtime.
 #'
 #' @param data RDS path, CSV path, or already-loaded data.table/data.frame
@@ -1237,7 +1273,10 @@ if (FALSE) {
 #'   for any parameter not overridden by a scenario row.
 #' @param return_full Logical: if TRUE, attach per-tag tables as an attribute
 #'   `"full_results"` on the returned summary (default FALSE).
-#' @return data.table with one row per scenario.
+#' @return data.table with one row per scenario: label, max_states,
+#'   min_growth, max_growth, prune_min, prune_max, recruit_max, n_tags_total,
+#'   n_tags_dp, n_tags_igraph, pct_dp, total_hours, slowest_tag, slowest_min,
+#'   median_sec, max_states_in_data.
 #' @export
 sweep_dp_complexity <- function(data,
                                 scenarios,

@@ -2,12 +2,20 @@
 # VALIDITY OF RSTATUS SEQUENCES (one stem) AND COMBINATIONS (one tree)
 # ========================================================================
 # Stem level: valid = P* A* G* D* with at least one non-P census.
-# Tree level (Steps 2-3): the tree is alive at census c iff some stem is A at
-# c or later; a G needs the tree alive, a D needs it dead. The two checks in
-# the request ("any D => all non-P stems D", "any A => no D") are reported
+# Tree level (Steps 2-3 of reference_rstatus.R): the tree is alive at census
+# c iff some stem is A at c or later; a G needs the tree alive, a D needs it
+# dead. Two simpler per-census checks ("any D => all non-P stems D", "any A
+# => no D"; labelled "[request check]" in the reasons) are reported
 # separately: they miss "G with no stem alive then or later".
 # Flags (valid, but reported): a stem dead without ever being A, a G/D in
 # census 1, and a P stem while its tree is dead.
+#
+# stem_reasons(s) / stem_flags(s): for a character vector of stem histories,
+#   the reasons a history is invalid / the flags it raises ("" when none).
+# classify_trees(trees): trees = list of character vectors (one history per
+#   stem, all of one length). Returns list(valid, flag,
+#   request_checks_invalid, reasons), one element per tree.
+# Needs data.table (loaded by test_Rstatus.R).
 # ========================================================================
 
 stem_reasons <- function(s) {

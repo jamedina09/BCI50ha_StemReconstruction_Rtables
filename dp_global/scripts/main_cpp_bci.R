@@ -1,8 +1,11 @@
 ############################################################
 ### main_cpp_bci.R — BCI debug driver: one tag
 ###
-### Loads bci_multistem_xrun_debug.rds and runs the full DP
-### pipeline for a single tag.
+### Loads data_simulation/sample_data_BCI/multistem_tags.rds (BCI
+### multi-stem tags, with the Bio_* parameter columns already
+### attached), rebuilds TrueStemID with the BCI pinning steps and
+### runs the DP and the post-engine helpers for a single tag. No
+### biological parameters are estimated here.
 ###
 ### Run from project root:
 ###   Rscript dp_global/scripts/main_cpp_bci.R
@@ -65,7 +68,8 @@ WRITE_DP_RDS <- TRUE
 WRITE_DP_PDF <- TRUE
 DP_PDF_INCLUDE_REFERENCE <- TRUE
 
-# Bio parameter estimation sources (same as main_cpp_chunk.R)
+# Parameter sources: nothing is estimated in this script (the Bio_* columns
+# come with the input), so these values only enter the output folder name
 MAX_GROWTH_HARD_SOURCE <- "fixed"
 MAX_SHRINK_HARD_SOURCE <- "fixed"
 K_SHRINK_SOURCE <- "fixed"
@@ -137,8 +141,10 @@ xraw[, rownum := .I]
 #       The OriginalStemID is unambiguous at any census, including pre-C7.
 #
 #   (b) CensusID >= 7 (year 2010 onward): from C7 the BCI database assigned
-#       OriginalStemIDs via a systematic re-tagging campaign. Every stem
-#       present at C7+ has a trustworthy, reliable database ID.
+#       OriginalStemIDs via a systematic re-tagging campaign. Every C7+ row
+#       is anchored to its OriginalStemID, except the rows without a DBH
+#       whose Status is dead / stem dead / broken below (the end of a
+#       trajectory; see the comment at the code).
 #
 #   All other rows are left as NA — the DP resolves them.
 #
@@ -149,32 +155,25 @@ xraw[, rownum := .I]
 #   Within each (Tag, OriginalStemID) group, once a stem has made its last
 #   live measurement (last non-NA DBH), all subsequent rows are in the
 #   terminal phase: they can only record death, resprout, or missing status.
-#   In that zone the OriginalStemID is unambiguous — the database does not
-#   reassign IDs for simple death / carry-forward records.
 #
 #   2a. Identify the boundary: the last census with a non-NA DBH per
 #       (Tag, OriginalStemID). Rows strictly after this are the terminal
 #       phase. Stems that never recorded a DBH get NA and are excluded
 #       from all propagation by the guards in 2b and 2c.
 #
-#   2b. DIRECT ANCHOR terminal-event rows to their own OriginalStemID.
-#       Any post-last-DBH row carrying an explicit death, broken-below, or
-#       R-family resprout code is safe to anchor. No prior Step-1 anchor is
-#       required — a death/resprout record for a given OriginalStemID is
-#       unambiguously about that biological individual.
-#       Handles:
-#         • Pure pre-C7 stems with no StemTag (Case 1): e.g. last DBH at C1,
-#           Status="dead" at C2 → anchored here; 2c fills any later gaps.
-#         • Spans-C7 stems with gaps before the C7 anchor (Case 2): e.g.
-#           Status="dead" at C5 anchored here; C6 gap filled by 2c.
+#   2b. Anchor measured break / resprout rows of the terminal phase to
+#       their own OriginalStemID. The filter asks for a row after the
+#       stem's last DBH that itself has a DBH, which no row can be, so this
+#       step anchors nothing; measured break / resprout rows are anchored
+#       by Step 3a.
 #
-#   2c. BIDIRECTIONAL FILL of remaining post-last-DBH NA gaps.
-#       After 2b, rows with no explicit terminal status (e.g. "missing"
-#       carry-forward rows, or gaps between a dead row and a later C7+
-#       anchor) may still be NA. LOCF carries anchors forward; NOCB carries
-#       a later C7+ anchor backward. The CensusID > last_dbh_census filter
-#       strictly limits the operation to the terminal phase: pre-last-DBH
-#       rows are never modified.
+#   2c. BIDIRECTIONAL FILL of the terminal-phase rows that are still NA.
+#       Within the terminal phase of a group, LOCF carries an anchor
+#       forward and NOCB carries a later anchor backward (anchors there
+#       come from Step 1: a StemTag row, or a C7+ row that Step 1(b) did not
+#       exclude). The CensusID > last_dbh_census filter strictly limits the
+#       operation to the terminal phase: pre-last-DBH rows are never
+#       modified.
 #
 #   Pre-last-DBH rows are deliberately left as NA. The DP must be free to
 #   resolve ambiguous early-census identity assignments.
@@ -186,9 +185,10 @@ xraw[!is.na(StemTag), TrueStemID := OriginalStemID] # (a) physical tag
 #     EXCEPT end-of-trajectory rows with NA DBH (dead / stem dead / broken-below
 #     without a measurement). Those rows describe a death/break event, not a
 #     new identity, and pinning them to OriginalStemID severs them from their
-#     prior alive trajectory (see tag 000378 C7-C9; bci_data/dead_pattern.html
-#     shows 99.8% of dead+NA-DBH rows have prior history at the same
-#     OriginalStemID). They will be backfilled post-engine in Step 9b below.
+#     prior alive trajectory (see tag 000378 C7-C9; in the BCI data 99.8% of
+#     dead+NA-DBH rows have prior history at the same OriginalStemID, computed
+#     in data_simulation/sample_data_BCI/general_data/dead_pattern.qmd). They
+#     will be backfilled post-engine in Step 9b below.
 xraw[
     is.na(TrueStemID) &
         CensusID >= 7L &
@@ -229,14 +229,19 @@ xraw[.last_dbh, on = .(Tag, OriginalStemID), .last_dbh_census := i.last_dbh_cens
 #           – Status == "broken below", OR
 #           – R-family resprout code in ListOfTSM
 #
-#     Rationale (bci_data/dead_pattern.html, broken_below_pattern.html):
+#     Rationale (numbers computed in dead_pattern.qmd and
+#     broken_below_pattern.qmd, data_simulation/sample_data_BCI/general_data/):
 #       - dead / stem-dead / broken-below + NA DBH are END-OF-TRAJECTORY rows.
-#         99.8% of dead+NA-DBH rows have a prior alive record at the same
-#         (Tag, OriginalStemID). Pinning them to OriginalStemID here forces
-#         the engine to treat them as 1-row singletons and severs them from
-#         the actual prior trajectory. We now let the engine match them.
-#       - broken-below WITH DBH is a START-OF-NEW-TRAJECTORY row (~99% have no
-#         prior history at the same OriginalStemID) and IS correctly anchored.
+#         99.8% of dead+NA-DBH rows have a prior record at the same
+#         (Tag, OriginalStemID). Pinning them to OriginalStemID here would
+#         force the engine to treat them as 1-row singletons and sever them
+#         from the actual prior trajectory, so the engine matches them.
+#       - broken-below WITH DBH is a START-OF-NEW-TRAJECTORY row (98.8% have no
+#         prior history at the same OriginalStemID) and is the kind of row
+#         this step is meant to anchor.
+#     NOTE: `CensusID > .last_dbh_census` and `!is.na(DBH)` cannot both hold
+#     for a row of the group, so the filter below selects no row. Step 3a
+#     anchors the measured break / resprout rows.
 xraw[
     is.na(TrueStemID) &
         !is.na(.last_dbh_census) &
@@ -268,56 +273,58 @@ xraw[, .last_dbh_census := NULL]
 # STEP 3 — Extended propagation: terminal-event anchoring + OriginalStemID match
 # -----------------------------------------------------------------------
 #
-#   Step 2 only anchors rows STRICTLY AFTER the last non-NA DBH for a stem.
-#   That misses several common patterns:
+#   Step 2 only touches rows STRICTLY AFTER the last non-NA DBH of a stem.
+#   That leaves several common patterns unanchored:
 #     • The last live row IS the broken-below row (DBH still recorded), so it
-#       coincides with last_dbh_census and is excluded by the 2b filter
+#       coincides with last_dbh_census
 #       (e.g. tag 242114 c5 row 18: broken-below with DBH=8.6;
 #             tag 000012 c5: broken-below with DBH=1.9).
-#     • The dying-stem row never had a DBH, so .last_dbh_census is NA and
-#       2b rejects it (e.g. tag 115203 c6: NA-DBH broken-below R-coded row).
-#     • An early-census death row anchors its own OriginalStemID, but the
-#       earlier alive rows with the same OriginalStemID stay NA
+#     • The alive rows of a stem whose only later records are death / break
+#       rows without a DBH
 #       (e.g. tag 004808 c1 alive 4769 → c2 dead 4769;
 #             tag 006160, tag 264355).
 #
 #   Within a single Tag, identical OriginalStemID is treated as the same
 #   biological individual (BCI database invariant pre- and post-C7).  So:
 #
-#   3a. ANCHOR any unresolved row whose Status is "dead" / "stem dead" /
-#       "broken below" OR whose ListOfTSM contains an R-family resprout code.
-#       This is a STRICTLY STRONGER variant of 2b: the .last_dbh_census
-#       guard is dropped because a death/broken/resprout record is itself
-#       sufficient evidence that the OriginalStemID is the true identity.
+#   3a. ANCHOR any unresolved row WITH a DBH whose Status is "broken below"
+#       or whose ListOfTSM contains an R-family resprout code: the start of
+#       a new trajectory. Death / break rows without a DBH are not anchored
+#       here.
 #
-#   3b. PROPAGATE within each (Tag, OriginalStemID) group: if any row in the
-#       group has a non-NA TrueStemID and the values are unanimous, fill all
+#   3a.5 ANCHOR the alive measured rows of a group that is still entirely
+#       unanchored and has a death / break row without a DBH.
+#
+#   3b. PROPAGATE within each (Tag, OriginalStemID) group: if the rows that
+#       carry a DBH hold exactly one non-NA TrueStemID value, fill all
 #       remaining NA rows of the group with that value.  This handles:
-#         • backward propagation from terminal anchors (Case 1, 4)
-#         • gap-filling between an early death row and a later C7+ row
-#         • any orphan NA rows in a group that has at least one anchor
-#       Conflicts (multiple distinct TrueStemIDs in one group) leave the NA
-#       rows alone and emit a warning so they can be inspected.
+#         • backward and forward propagation from a measured anchor
+#         • gap-filling between an early row and a later C7+ row
+#         • any orphan NA rows in a group that has a measured anchor
+#       Groups whose measured rows hold several distinct TrueStemIDs are
+#       left alone and counted in the message.
 
 # 3a. Direct anchor of START-OF-NEW-TRAJECTORY rows ONLY.
 #     Conditions:
 #       • Status == "broken below" with non-NA DBH, OR
 #       • R-family resprout code in ListOfTSM with non-NA DBH.
 #
-#     Pattern evidence (bci_data/broken_below_pattern.html, dead_pattern.html):
+#     Pattern evidence (computed in broken_below_pattern.qmd and
+#     dead_pattern.qmd, data_simulation/sample_data_BCI/general_data/):
 #       - broken-below + DBH     : start of a NEW trajectory
-#                                  (~99% have NO prior history at the same
+#                                  (98.8% have NO prior history at the same
 #                                   OriginalStemID; ~51% appear alive later).
 #                                  → anchor to OriginalStemID is correct;
 #                                    no risk of pre-anchor collision.
 #       - broken-below + NA DBH  : END of an existing trajectory
-#                                  (~60% have prior alive history at same
+#                                  (55.6% have prior history at same
 #                                   OriginalStemID).
 #                                  → DO NOT anchor; let the engine link the
 #                                    death back to its prior alive record.
 #       - dead / stem dead       : END of an existing trajectory
 #                                  (99.8% have prior history at same
-#                                   OriginalStemID; 0.0024% have DBH).
+#                                   OriginalStemID; 24 of 140,010 rows
+#                                   have a DBH).
 #                                  → DO NOT anchor; let the engine match.
 #
 #     Pre-pinning a terminal end-of-trajectory row to its own OriginalStemID
@@ -336,11 +343,11 @@ xraw[
 
 # 3a.5 Same-OriginalStemID continuity for unanchored death/break trajectories.
 #
-#     Empirical evidence (bci_data/dead_pattern.qmd,
-#     bci_data/broken_below_pattern.qmd):
-#       - dead / stem-dead + NA DBH : 99.8% have prior alive history at the
+#     Empirical evidence (computed in dead_pattern.qmd and
+#     broken_below_pattern.qmd, data_simulation/sample_data_BCI/general_data/):
+#       - dead / stem-dead + NA DBH : 99.8% have prior history at the
 #                                     same OriginalStemID.
-#       - broken-below     + NA DBH : ~60% have prior alive history at the
+#       - broken-below     + NA DBH : 55.6% have prior history at the
 #                                     same OriginalStemID.
 #     In both cases the NA-DBH terminal record is overwhelmingly the END
 #     of the SAME stem's trajectory.
@@ -394,9 +401,9 @@ message(sprintf(
 
 # 3b. Propagate within (Tag, OriginalStemID) when a group has a unique anchor
 #     that comes from a DBH-bearing row (i.e. a real start-of-trajectory or
-#     C7+ retag anchor). Anchors that originated from terminal-event rows are
-#     no longer created by Step 2b/3a (after the dead-pattern fix), but this
-#     guard makes the propagation rule independent of upstream changes:
+#     C7+ retag anchor). Steps 2b and 3a create no anchor on a terminal-event
+#     row without a DBH; the guard here also keeps any such anchor (e.g. a
+#     tagged dead row from Step 1) out of the propagation:
 #     end-of-trajectory rows must NEVER be allowed to back-propagate their
 #     OriginalStemID to earlier alive rows (see tag 000378 C6 case).
 .n_before <- sum(is.na(xraw$TrueStemID))
@@ -446,9 +453,9 @@ message("[main_cpp_bci.R] Tag ", WHICH_TAG, " — species: ", paste(tag_sp, coll
 message("[main_cpp_bci.R] Tag ", WHICH_TAG, " — rows: ", nrow(xrun[Tag == WHICH_TAG]))
 
 # ----------------------------------------------------------------
-# 8. Attach bio columns and prepare for DP
-#    Subset to the tag's species only — bio_pars only covers that
-#    species, so attach_bio_columns would fail on other species.
+# 8. Prepare for DP
+#    The Bio_* columns come with the input file; nothing is attached
+#    here. The rows of the tag's species are used to size dp_max_tracks.
 # ----------------------------------------------------------------
 xrun_tag <- xrun[species %in% tag_sp]
 
@@ -475,15 +482,21 @@ out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 # 9b. Post-engine helpers (order mirrors main_cpp.R / main_cpp_chunk.R):
 #
 #   1. maybe_add_posterior_bins()        — add per-row posterior bins.
-#   2. apply_carried_terminal_backfill() — fill orphan terminal-event
-#        rows (NA Recon, NA DBH, dead/broken-below) by LOCF within
-#        (Tag, OriginalStemID) and tag them ReconstructionMethod =
-#        "carried_terminal".
-#   3. apply_orphan_stem_backfill()      — handle "born-orphan" rows
+#   2. apply_pin_track_rejoin()          — unpinned measurements left
+#        behind by the TrueStemID sweep rejoin their track's pin.
+#   3. apply_carried_terminal_backfill() — fill orphan terminal-event
+#        rows (NA Recon, NA DBH, dead / stem dead / broken below /
+#        missing) by LOCF within (Tag, OriginalStemID) and tag them
+#        ReconstructionMethod = "carried_terminal".
+#   4. apply_orphan_stem_backfill()      — handle "born-orphan" rows
 #        (NA Recon, NA TrueStemID, NA DBH, source-id non-NA) by setting
 #        Recon = source-id and ReconstructionMethod = "given_orphan".
+#   5. apply_terminal_to_host()          — death / break records that
+#        precede the life of their identity go to the stem that ended.
+#   6. apply_broken_below_invariants()   — rules R1 and R2.
+#   7. renumber_engine_minted_ids() and finalize_posterior_paths().
 #
-#   Both backfill helpers live in dp_global/R/dp_global_main.R.
+#   All these helpers live in dp_global/R/dp_global_main.R.
 # ----------------------------------------------------------------
 out <- maybe_add_posterior_bins(out)
 out <- apply_pin_track_rejoin(out) # rows left behind by the TrueStemID sweep rejoin their track's pin
@@ -494,15 +507,15 @@ out <- apply_broken_below_invariants(out)
 
 # Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
 # ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
-# then by original ID. This matches the OriginalStemID convention and ensures no negative or zero IDs.
-# Returns a Tag/old_id/new_id mapping for finalize_posterior_paths(); see dp_global/improvements.md.
+# then by original ID, so no ID is negative or zero.
+# Returns a Tag/old_id/new_id mapping for finalize_posterior_paths().
 .renum <- renumber_engine_minted_ids(
     out,
     posterior_top_k = DP_POSTERIOR_TOP_K,
     posterior_samples_path = out_dir
 )
 out <- .renum$out
-# Finalize posterior path files in the renumbered ID space (see improvements.md for rationale).
+# Finalize posterior path files in the renumbered ID space.
 finalize_posterior_paths(
     out,
     posterior_samples_path = out_dir,
@@ -559,10 +572,8 @@ message("[main_cpp_bci.R] Done. Output dir: ", out_dir)
 # Rscript dp_global/scripts/main_cpp_bci.R --POSTERIOR_SAMPLES=200 --WHICH_TAG=171506 \
 #     --DP_MAX_STATES=10000 \
 #     --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
-#     --DP_FALLBACK_GROWTH_FORMS="strangler_fig" \
 #     --POSTERIOR_SAMPLE_SEED=42 \
-#     --MANUAL_CORES=TRUE \
-#     --MANUAL_CORES_VALUE=16 \
-#     --DP_CHUNK_SIZE=16 \
 #     --USE_MEASUREMENT_ERROR=FALSE \
 #     --PROB_LOOKAHEAD_WEIGHT=1
+# (DP_FALLBACK_GROWTH_FORMS has no effect with the default input, which has no
+# growth_form column; this single-tag driver has no chunk or core settings.)
