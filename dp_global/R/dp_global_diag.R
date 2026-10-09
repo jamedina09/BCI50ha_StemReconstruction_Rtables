@@ -13,10 +13,15 @@ add_constraint_violation <- function(x, id_col = "ReconstructedStemID", min_grow
     # - x: data.table with at least id_col, DBH, CensusID.
     # - id_col: which ID column defines a track (defaults to ReconstructedStemID).
     # - min_growth/max_growth: allowable annual growth bounds (cm/year).
-    # - pair_interval: years between consecutive censuses (assumed constant here).
+    # - pair_interval: mean date of each census in days, named by CensusID
+    #   (vector or list); the interval of a pair is the difference of its two
+    #   dates divided by 365.25.
     #
     # OUTPUT
-    # - `x` with/updated `ConstraintViolation` logical column (TRUE for flagged rows).
+    # - `x` with/updated `ConstraintViolation` logical column (TRUE for flagged rows;
+    #   other rows keep their value, NA when the column is created here).
+    #   `x` is modified by reference and re-ordered by CensusID. It is returned
+    #   without flags when id_col, DBH or CensusID is missing.
     #
     # NOTES
     # - Only evaluates consecutive censuses (CensusID increases by 1).
@@ -67,8 +72,22 @@ add_dp_posterior_bins <- function(
     # PURPOSE
     # - Convenience label per observation based on the DP marginal posterior.
     #
+    # INPUTS
+    # - x: data.frame / data.table with DP_PosteriorUnlinkedProb and
+    #   DP_PosteriorReconstructedProb or DP_PosteriorTop1Prob.
+    # - confident_prob, unlinked_prob: thresholds of the bins below.
+    # - use_reconstructed_prob: score = DP_PosteriorReconstructedProb when TRUE
+    #   and present, else DP_PosteriorTop1Prob.
+    # - out_col: name of the factor column written (levels confident,
+    #   ambiguous, unlinked-likely).
+    #
+    # OUTPUT
+    # - x as a data.table with out_col added (all NA when the posterior
+    #   columns are missing). Stops when out_col is not a single name.
+    #
     # BINS
     # - "unlinked-likely": posterior probability of being unlinked >= unlinked_prob
+    #   (takes precedence over "confident")
     # - "confident": posterior probability of the chosen reconstructed ID >= confident_prob
     #   (or Top1Prob if use_reconstructed_prob=FALSE)
     # - "ambiguous": everything else (posterior spread across multiple IDs)
@@ -133,13 +152,26 @@ add_dp_posterior_bins <- function(
 # create smooth DBH trajectories across censuses.
 #
 # For each Tag, we optionally create two side-by-side plots:
-# 1) DBH trajectories grouped by `ReferenceStemID` (only if present and `include_reference=TRUE`)
+# 1) DBH trajectories grouped by `OriginalStemID` (only with `include_reference=TRUE`)
 # 2) DBH trajectories grouped by `ReconstructedStemID`
 #
 # Each line is a "stem ID group" and points are DBH measurements by census.
 # If DP posterior bins are present (DP_PosteriorBin), point shapes show
 # confident/ambiguous/unlinked-likely, and constraint violations are overlaid
-# as an "X" symbol.
+# as an "X" symbol. Without bins, point shapes show the constraint violations.
+#
+# INPUTS
+#   out               data.table with Tag, CensusID, DBH, ReconstructedStemID,
+#                     ReconstructionMethod, ConstraintViolation and species (or
+#                     Species); OriginalStemID with include_reference = TRUE.
+#                     An `out_dir` column, when present, is the plot subtitle.
+#   pdf_file          a .pdf path or an existing directory (a default file
+#                     name is used there). With `tag`, "_tag_<tag>" or
+#                     "_tags_<tags>" is added to the file name.
+#   include_reference add the OriginalStemID panel.
+#   tag               optional tag(s) to plot; NULL = all tags.
+# RETURNS  the path of the PDF written (invisibly). Needs ggplot2 and cowplot;
+#          stops when a required column is missing or no row matches `tag`.
 
 plot_tag_to_pdf <- function(out, pdf_file, include_reference = FALSE, tag = NULL) {
     ## ---- Package checks (no attach unless needed) ----
@@ -168,12 +200,12 @@ plot_tag_to_pdf <- function(out, pdf_file, include_reference = FALSE, tag = NULL
         stop("Missing columns: ", paste(missing_cols, collapse = ", "), call. = FALSE)
     }
 
-# Check for species column (case-insensitive)
+# A species column is required: `species` or `Species`
 if (!("species" %in% names(out)) && !("Species" %in% names(out))) {
     stop("Missing column: species (or Species)", call. = FALSE)
 }
 
-# Optionally, standardize the column name to lowercase
+# The code below reads `species`
 if ("Species" %in% names(out) && !("species" %in% names(out))) {
     names(out)[names(out) == "Species"] <- "species"
 }
@@ -267,7 +299,7 @@ if ("Species" %in% names(out) && !("species" %in% names(out))) {
         # ii <- 1
         tag <- keys$Tag[[ii]]
         species_code <- unique(out[Tag == tag]$species)
-        # Filter to the current Tag (and species, if applicable).
+        # Rows of the current Tag.
         tag_data <- data.table::copy(out[Tag == tag])
 
         tag_data[, ConstraintViolationFlag := (!is.na(ConstraintViolation) & as.logical(ConstraintViolation))]

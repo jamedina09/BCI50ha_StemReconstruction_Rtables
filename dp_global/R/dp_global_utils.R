@@ -15,7 +15,8 @@ count_injective_states <- function(K, n_obs) {
     #
     # OUTPUT
     # - Numeric scalar (double): P(K, n_obs) = K*(K-1)*...*(K-n_obs+1) = K!/(K-n_obs)!
-    # - Returns 0 when n_obs > K.
+    # - Returns 1 when n_obs is 0 and 0 when n_obs > K.
+    # - Returns NA when K or n_obs is not finite or is negative.
     # - Allows Inf on overflow.
     #
     # NOTES
@@ -47,15 +48,27 @@ resolve_interval_years <- function(tree_data,
                                        "CensusIntervalYears"
                                    )) {
     # PURPOSE
-    # - Determine the census interval (years) for the DP.
-    # - Supports the newer workflow where interval is stored in `tree_data` as a
-    #   column (similar to Bio_* columns), so callers don't have to pass it around.
+    # - Return one census interval (years) for a (Tag, species) group, from the
+    #   argument or from a column of `tree_data` (similar to Bio_* columns).
+    # - Not called by the engines: the DP and the matchers take the interval of
+    #   each census pair from the mean ExactDate of the two censuses.
+    #
+    # INPUTS
+    # - tree_data: data.frame / data.table of the group; read only when
+    #   interval_years is NULL.
+    # - interval_years: positive finite number; returned as given when not NULL.
+    # - interval_col_candidates: column names searched, in order, for the interval.
+    #
+    # OUTPUT
+    # - Numeric scalar: interval_years, or the single finite value of the first
+    #   candidate column that has finite values.
     #
     # CONTRACT
-    # - The DP currently assumes a single constant interval for all adjacent census
-    #   transitions within a (Tag, species) group.
-    # - If a candidate interval column contains multiple distinct finite values,
-    #   we error rather than silently picking one.
+    # - One constant interval per group: if a candidate interval column contains
+    #   multiple distinct finite values, we error rather than silently picking one.
+    # - Also errors when interval_years is not a positive finite number, when
+    #   tree_data is not a data.frame (and interval_years is NULL), when the
+    #   value found is not positive, and when no candidate column has a value.
 
     if (!is.null(interval_years)) {
         interval_years <- suppressWarnings(as.numeric(interval_years))
@@ -101,12 +114,18 @@ resolve_interval_years <- function(tree_data,
 }
 
 # Resolve interval years for a specific adjacent census pair (t0 -> t1).
+# Not called by the engines (see resolve_interval_years()); the igraph matcher
+# in dp_global_matchers.R defines a local function of the same name.
 # Preference order:
 #  - explicit scalar `interval_years` argument if provided
-#  - per-census value at CensusID == t1 (preferred)
-#  - per-census value at CensusID == t0
-#  - global constant in the interval column if present
-# Errors when multiple distinct finite values are present for the pair.
+#  - then, in the first candidate column that has positive finite values:
+#    - per-census value at CensusID == t1 (preferred)
+#    - per-census value at CensusID == t0
+#    - the values of the whole column
+# When the values found are not all equal, their mean is returned with a
+# warning. Errors when interval_years is not a positive finite number, when
+# tree_data is not a data.frame (and interval_years is NULL), and when no
+# candidate column gives a value.
 resolve_interval_years_pair <- function(tree_data, t0, t1, interval_years = NULL,
                                        interval_col_candidates = c(
                                            "Bio_IntervalYears",

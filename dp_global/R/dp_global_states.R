@@ -16,7 +16,9 @@ enumerate_states_injective <- function(K, n_obs, max_states) {
     # OUTPUT
     # - Matrix with one row per state and n_obs columns.
     #   Each row is a length-n_obs integer vector of track indices; e.g. c(2,5,1)
-    #   means obs1->track2, obs2->track5, obs3->track1.
+    #   means obs1->track2, obs2->track5, obs3->track1. Rows are in lexicographic
+    #   order of the track indices. With n_obs = 0 the result is a 1 × 0 matrix
+    #   (the single empty state).
     # - Returns NULL when:
     #   - n_obs > K (impossible to assign injectively), or
     #   - the estimated number of states P(K, n_obs) exceeds max_states.
@@ -45,8 +47,8 @@ enumerate_states_injective <- function(K, n_obs, max_states) {
     }
     n_states <- as.integer(n_states_est)
 
-    # Pre-allocate the output matrix and fill it using a shared row buffer + counter.
-    # This avoids the O(n_states^2) list-copying that recursive c(out, build(...)) incurs.
+    # Pre-allocate the output matrix and fill it using a shared row buffer + counter,
+    # so that no list of states is copied while the recursion runs.
     mat <- matrix(0L, nrow = n_states, ncol = n_obs)
     row_ctr <- 1L
     current_row <- integer(n_obs)
@@ -70,7 +72,7 @@ enumerate_states_constrained <- function(K, n_obs, allowed_tracks, max_states) {
     # PURPOSE
     # - Like enumerate_states_injective(), but restricts each observation to a
     #   subset of tracks.  This eliminates provably infeasible assignments
-    #   (e.g., growth bounds violation over the cumulative span to the anchor)
+    #   (e.g., tracks ruled out by the growth bounds or by a TrueStemID pin)
     #   BEFORE enumerating, dramatically reducing the state count when many
     #   tracks are biologically impossible for a given observation.
     #
@@ -82,8 +84,14 @@ enumerate_states_constrained <- function(K, n_obs, allowed_tracks, max_states) {
     # - max_states: hard cap on enumerated states.
     #
     # OUTPUT
-    # - Matrix with one row per feasible injective assignment, n_obs columns.
-    # - Returns NULL when no feasible assignment exists or max_states exceeded.
+    # - Matrix with one row per feasible injective assignment, n_obs columns
+    #   (a 1 × 0 matrix when n_obs is 0).
+    # - Returns NULL when n_obs > K or no feasible assignment exists.
+    # - The enumeration stops at max_states: when more feasible assignments
+    #   exist, the first max_states of them (in enumeration order) are
+    #   returned, not NULL, so a result with exactly max_states rows can be
+    #   incomplete.
+    # - Stops with an error when allowed_tracks does not have length n_obs.
 
     if (n_obs == 0L) {
         return(matrix(integer(0), nrow = 1L, ncol = 0L))
@@ -144,6 +152,8 @@ state_to_track_dbh <- function(state_vec, obs_dbh, K) {
     # PURPOSE
     # - Convert a census "state" into a track-indexed DBH vector so transition costs
     #   can be computed track-by-track.
+    # - Not called by the DP, which fills its states × tracks DBH matrices by
+    #   matrix indexing.
     #
     # INPUTS
     # - state_vec: integer vector of length n_obs mapping obs index -> track index.

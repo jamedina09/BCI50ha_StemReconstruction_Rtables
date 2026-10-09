@@ -15,6 +15,8 @@ estimate_bio_pars <- function(
   #   (B) to set conservative guardrails (e.g., max_shrink)
   #
   # Reference (used as the basis for the measurement-error scaling):
+  #   Chave et al. (2004), Error propagation and scaling for tropical forest
+  #   biomass estimates. Phil. Trans. R. Soc. B 359(1443): 409-420.
   #   https://royalsocietypublishing.org/rstb/article/359/1443/409/20356/Error-propagation-and-scaling-for-tropical-forest
   #
   # Model assumption (mixture, per census measurement):
@@ -23,8 +25,7 @@ estimate_bio_pars <- function(
   #
   # Small-error SD (cm) is diameter-dependent:
   #   SD1(D) = a * D + b
-  # where D is DBH in cm.
-  # (In our workflow, the fitted values are: a=0.0062, b=0.0904.)
+  # where D is DBH in cm (defaults: a = 0.0062, b = 0.0904).
   meas_sd1_a = 0.0062,
   meas_sd1_b = 0.0904,
   # Large-error SD (cm) and mixture weight
@@ -82,8 +83,8 @@ estimate_bio_pars <- function(
   # - "tree": new stems per established tree per year (a tree with a measured
   #   stem at t0; its new stems at t1), the rate at which the engines expect a
   #   new stem in a tree (default)
-  # - "slot": recruits per empty slot per year in the estimation grid (legacy;
-  #   the empty slots are dead stems and stems that recruit later, so the value
+  # - "slot": recruits per empty slot per year in the estimation grid (the
+  #   empty slots are dead stems and stems that recruit later, so the value
   #   is close to 0.08/yr for every species)
   recruit_rate_unit = c("tree", "slot")
 ) {
@@ -96,6 +97,7 @@ estimate_bio_pars <- function(
     #  - mortality: h0, beta
     #  - recruitment: lognormal size params and rate lambda
     #  - shrinkage and measurement_error settings
+    #  - settings (the options used) and interval (per-pair intervals, counts)
     #
     # Brief models:
     #  - mu(DBH) = alpha + gamma * log(DBH)
@@ -105,6 +107,9 @@ estimate_bio_pars <- function(
     # Notes:
     #  - This function supplies reasonable defaults and guardrails for DP.
     #  - It is not intended as a full ecological analysis.
+    #  - It stops when no row is usable, when fewer than two censuses or five
+    #    growth pairs are available, and when a "fixed" source or an enforce_*
+    #    option is given an invalid fixed value.
 
     # ---------------------------------------------------------------------
     # Inputs / arguments (detailed)
@@ -115,24 +120,22 @@ estimate_bio_pars <- function(
     #     - CensusID   : census index (integer-like, increasing)
     #     - DBH        : diameter at breast height (cm)
     #     - TrueStemID : a "ground truth" stem identity used ONLY for parameter estimation
-    #     - species    : species code (optional; if missing, caller should add)
-    #
-    # interval_years
-    #   Numeric scalar; time between adjacent censuses used for annualization.
-    #   If NULL (default), the function will try to read interval information from
-    #   the input data.table via one of the candidate column names
-    #   ("Bio_IntervalYears", "IntervalYears", "interval_years", "census_interval_years", "CensusIntervalYears").
-    #   When a per-census/row interval column is present, per-pair intervals are
-    #   used to annualize increments and to compute mortality/recruitment exposure.
-    #   Example: if censuses are 5 years apart, interval_years=5.
-    #
-    # census_ids
-    #   Optional integer vector of CensusID values to use. If NULL, uses all
-    #   CensusIDs present after filtering.
+    #     - ExactDate  : measurement date. The interval of each census pair is
+    #                    the difference of a stem's two dates; a stem with no
+    #                    record at a census takes its tag's mean date at that
+    #                    census, or else the census mean date.
+    #     - species    : species code (optional; set to NA when missing)
+    #   Only rows with DBH > 0 and a TrueStemID are used.
     #
     # mortality_start
     #   Starting values for optim() in the mortality fit:
     #     c(log(h0_start), beta_start)
+    #
+    # anchor_start_census
+    #   First census used. The estimation grid holds every stem at every census
+    #   with CensusID >= anchor_start_census, so only the census pairs from that
+    #   census on enter the growth, mortality and recruitment estimates. The
+    #   default reads the global ANCHOR_START_CENSUS of the calling script.
     #
     # meas_sd1_a, meas_sd1_b, meas_sd2, meas_p_big
     #   Parameters of the DBH measurement error model.
@@ -141,7 +144,7 @@ estimate_bio_pars <- function(
     #   and a "large error" SD2 (cm) with mixture probability p_big.
     #
     #   These values follow the remeasurement-based error propagation discussion
-    #   in the paper linked above (Royal Society Phil. Trans. B article).
+    #   in the paper cited above (Chave et al. 2004).
     #   We keep the model in code form only (not reproducing paper text).
     #
     # use_measurement_error
@@ -152,6 +155,12 @@ estimate_bio_pars <- function(
     #     - treat all growth variability as process variability
     #     - set shrinkage guardrails purely from data quantiles
     #
+    # recruit_max_source, recruit_max_fixed, recruit_max_quantile
+    #   recruit_max_dbh (cm), the upper bound for recruit size: with "data" the
+    #   recruit_max_quantile quantile of the observed recruit DBHs (larger
+    #   values are more permissive; 5 cm when no recruit was observed), with
+    #   "fixed" the value recruit_max_fixed.
+    #
     # shrink_hard_prob
     #   Lower-tail probability used for the measurement-noise-only shrink quantile.
     #   Smaller values make max_shrink more permissive (more negative).
@@ -160,25 +169,38 @@ estimate_bio_pars <- function(
     #   Lower quantile of observed annual increments used as a data-driven guardrail.
     #   Smaller values make max_shrink more permissive (more negative).
     #
-    # recruit_max_quantile
-    #   Upper quantile of observed recruits used as a guardrail for recruit size.
-    #   Larger values make recruit_max_dbh more permissive.
-#
-# enforce_growth_bounds
-#   Logical: if TRUE, drop observed annual increments outside the provided
-#   bounds (growth_min_fixed, growth_max_fixed) before estimating growth
-#   mean and variance. Units: cm/year.
-#
-# growth_min_fixed, growth_max_fixed
-#   Numeric scalar bounds in cm/year. Either may be NA to perform one-sided bound.
-#
-# enforce_recruit_max
-#   Logical: if TRUE, drop recruits with DBH > recruit_max_fixed (cm) prior to fitting recruit size.
-#
-# recruit_rate_unit
-#   "tree" (default): lambda = new stems per established tree per year (see
-#   section 9). "slot": the legacy recruits per NA slot per year. Both values
-#   are returned (recruitment$lambda_tree, recruitment$lambda_slot).
+    # max_shrink_source, max_shrink_fixed
+    #   max_shrink (cm/year): "data" = the estimate of section 10, "fixed" =
+    #   max_shrink_fixed.
+    #
+    # growth_hard_prob, growth_data_quantile, growth_soft_quantile
+    #   Upper-tail analogues for extreme growth: the measurement-noise-only
+    #   upper-tail probability, the upper quantile of observed increments
+    #   (hard bound) and the upper quantile used for the soft cap.
+    #
+    # max_growth_source, max_growth_fixed
+    #   max_growth (cm/year): "data" = the estimate, "fixed" = max_growth_fixed.
+    #
+    # k_growth_source, k_growth_fixed, k_shrink_source, k_shrink_fixed
+    #   Soft penalty weights (1/cm^2): "data" = estimated (sections 7 and 10),
+    #   "fixed" = the fixed value (0 turns the penalty off).
+    #
+    # enforce_growth_bounds
+    #   Logical: if TRUE, drop observed annual increments outside the provided
+    #   bounds (growth_min_fixed, growth_max_fixed) before estimating growth
+    #   mean and variance. Units: cm/year.
+    #
+    # growth_min_fixed, growth_max_fixed
+    #   Numeric scalar bounds in cm/year. Either may be NA to perform one-sided bound.
+    #
+    # enforce_recruit_max
+    #   Logical: if TRUE, drop recruits with DBH > recruit_max_fixed (cm) prior to fitting recruit size.
+    #
+    # recruit_rate_unit
+    #   "tree" (default): lambda = new stems per established tree per year (see
+    #   section 9). "slot": recruits per NA slot per year, also used when the
+    #   per-tree rate cannot be computed. Both values are returned
+    #   (recruitment$lambda_tree, recruitment$lambda_slot).
     library(MASS)
 
     # =========================================================================
@@ -314,7 +336,7 @@ estimate_bio_pars <- function(
     # For each adjacent census pair (t0, t1):
     #   d0 = DBH at t0 (cm)
     #   d1 = DBH at t1 (cm)
-    #   g  = (d1 - d0) / T  (cm/year)  where T may be a scalar or vary per pair
+    #   g  = (d1 - d0) / T  (cm/year)  where T is the stem's own interval (years)
     #
     # We collect:
     #   g_all           : all observed annualized increments
@@ -326,7 +348,9 @@ estimate_bio_pars <- function(
     d1_all <- c()
     var_meas_g_all <- c()
     T_all <- c()
-    # Diagnostic counters for interval handling (useful for testing)
+    # Diagnostic counters returned in `interval`. The grid gives every stem a
+    # date at every census, so the two counters after the first stay at 0
+    # unless a census has no date at all.
     pairs_candidate_count <- 0L
     pairs_filled_with_scalar_count <- 0L
     pairs_dropped_count <- 0L
@@ -357,7 +381,7 @@ estimate_bio_pars <- function(
         n_ok <- sum(ok)
         T1 <- if (t1 %in% names(iw)) iw[[t1]][ok] else rep(NA_real_, n_ok)
         T0 <- if (t0 %in% names(iw)) iw[[t0]][ok] else rep(NA_real_, n_ok)
-        # Per-row coalesce: prefer T1, fall back to T0 when T1 is missing
+        # Interval of each pair in years (date at t1 minus date at t0)
         Tvec <- as.numeric(T1 - T0) / 365.25
         g <- (d1 - d0) / Tvec
         v_meas_g <- (meas_var_eps(d0) + meas_var_eps(d1)) / (Tvec^2)
@@ -472,7 +496,7 @@ estimate_bio_pars <- function(
     # - measurement error (common)
     # - ID swaps / bad matches (the thing we want to discourage)
     #
-    # In transition_cost_tracks_bio(), shrinkage is penalized softly as:
+    # In the transition cost (transition_cost_rcpp.cpp), shrinkage is penalized softly as:
     #   cost_shrink = k_shrink * (d0 - d1)^2
     # Units:
     #   (d0 - d1) is cm; to make cost dimensionless, k_shrink has units 1/cm^2.
@@ -482,10 +506,6 @@ estimate_bio_pars <- function(
     #   one typical measurement SD costs O(1).
     #   If measurement error is disabled, fall back to a crude estimate based on
     #   the variance of negative increments.
-    # Estimate a soft shrink penalty from measurement error scale.
-    # k_shrink is applied as:  k_shrink * (d0-d1)^2  (units: 1/cm^2).
-    # With measurement noise, small shrinkage can be expected; we therefore scale
-    # k_shrink so that shrinkage of ~1 SD costs O(1).
     k_shrink_source <- match.arg(k_shrink_source)
     k_shrink_fixed <- as.numeric(k_shrink_fixed)
     if (identical(k_shrink_source, "fixed")) {
@@ -593,7 +613,7 @@ estimate_bio_pars <- function(
     #               stems are those without a DBH at t0 and with one at t1.
     #               This is the rate at which the engines expect a new stem
     #               in a tree (DP slack track, matcher recruit cell).
-    #       "slot": recruits per NA slot per year (legacy). The NA slots of
+    #       "slot": recruits per NA slot per year. The NA slots of
     #               the grid are dead stems and stems that recruit later, so
     #               this ratio barely depends on the species (~0.08/yr).
     recruit_dbh <- c()
@@ -726,6 +746,9 @@ estimate_bio_pars <- function(
     # We compute a conservative lower quantile of the *measurement-noise-only* annualized
     # DBH difference, using a typical diameter.
 
+    # Interval used to annualize the measurement-noise quantiles below: the
+    # median interval of the last census pair (each pass of this loop replaces
+    # the intervals of the pass before).
     long_time_interval <- c()
 
     for (i in seq_len(length(census_ids) - 1)) {
@@ -907,7 +930,7 @@ estimate_bio_pars <- function(
     }
 
     # Soft extreme-growth penalty strength (units: 1/cm^2), analogous to k_shrink.
-    # In transition_cost_tracks_bio(), the penalty is applied to the *excess DBH* above
+    # In the transition cost (transition_cost_rcpp.cpp), the penalty is applied to the *excess DBH* above
     # the soft cap in cm:
     #   excess = d1 - (d0 + max_growth_soft*T)
     #   cost_growth_soft = k_growth * excess^2
@@ -945,14 +968,14 @@ estimate_bio_pars <- function(
     # =========================================================================
     # The returned structure is intentionally aligned with:
     # - bio_pars_to_transition_args()
-    # - transition_cost_tracks_bio()
+    # - transition_cost_tracks_bio_components()
     # - realism_calibration.R diagnostics
     list(
         growth = list(
             # Mean annual growth model: mu(DBH) = alpha + gamma*log(DBH)
             alpha = alpha_hat,
             gamma = gamma_hat,
-            # Backward-compatible summary (empirical mean of g)
+            # Empirical mean of g (summary; the cost uses alpha and gamma)
             mu = mu_hat,
             sigma0 = sigma0_hat,
             sigma1 = sigma1_hat,
@@ -1133,13 +1156,29 @@ transition_cost_tracks_bio_components <- function(
   hard_penalty = 1e6
 ) {
     # PURPOSE
-    # - Diagnostics companion to transition_cost_tracks_bio().
+    # - Diagnostics companion to the compiled transition cost
+    #   (transition_cost_rcpp.cpp): the same cost for ONE pair of track vectors,
+    #   written in R and split into its terms. Used by the sensitivity and
+    #   tuning tools (sensitivity_transition_cost_bio.R, k_tuning_viz.R), not
+    #   by the DP.
     # - Returns a per-track breakdown of the *same* terms used in the scalar cost,
-    #   plus the tie-break contribution.
+    #   plus the tie-break contribution. It has no DBH-rounding arguments, so it
+    #   matches the compiled cost for censuses that are not flagged as rounded.
+    #
+    # INPUTS
+    # - track_dbh_t, track_dbh_tp1: DBH (cm) per track at t and t+1, same
+    #   length; NA = no stem on the track.
+    # - The other arguments are those of transition_cost_tracks_bio_batch_rcpp()
+    #   (dp_global/src/transition_cost_rcpp.R).
     #
     # OUTPUT
     # - list(per_track=..., tiebreak=..., total=..., p_recruit=...)
-    #   where per_track is a data.table with case labels and component costs.
+    #   where per_track is a data.table with case labels and component costs
+    #   (cost_recruit, cost_no_recruit, cost_mortality, cost_growth_lik,
+    #   cost_shrink_soft, cost_growth_soft, cost_hard, total_track), and total
+    #   is the sum of total_track plus the tie-break.
+    # - Stops when the two vectors differ in length or interval_years is not
+    #   positive.
 
     if (length(track_dbh_tp1) != length(track_dbh_t)) {
         stop("track_dbh_t and track_dbh_tp1 must have the same length.", call. = FALSE)
