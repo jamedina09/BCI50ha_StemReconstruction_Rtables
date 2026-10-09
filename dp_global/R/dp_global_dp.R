@@ -1,36 +1,119 @@
 ############################################################
 # dp_global_dp.R
-# Core dynamic programming (MAP and marginal DP functions)
+# Core dynamic programming: one function gives the MAP (Viterbi)
+# reconstruction, the posterior marginals and the posterior samples of a tag;
+# helpers for resprout splits and for staging posterior samples follow it.
 ############################################################
 
 # match_stems_dp_global_backward_marginals_batch()
 #
 # PURPOSE
-#   Run backward marginal DP stem identification for one or more tags.  For
-#   each tag (Tag × species group) the function tries the full DP solver; if
-#   the state space exceeds `max_states` it falls back to a cheaper method
-#   (probabilistic greedy matching).
+#   Run backward marginal DP stem identification for one tag (Tag × species
+#   group): the MAP assignment, the posterior marginals of every measured
+#   observation and, on request, posterior samples of whole reconstructions.
+#   The tag goes to the probabilistic matcher (do_fallback() ->
+#   match_stems_probabilistic()) when the DP cannot be used: state space
+#   above `max_states`, no usable anchor, no feasible state, or a species /
+#   growth form routed there.
 #
-# KEY PARAMETERS
-#   tree_data            data.table — one row per (Tag, OriginalStemID, CensusID).
-#   min_growth / max_growth  Hard bounds on annual growth (cm/yr).
-#   anchor_start         Integer CensusID where TrueStemID is trusted.
-#   max_states           Max states per census before fallback (default 50 000).
+# PARAMETERS
+#   tree_data            data.table of one tag — one row per stem record and
+#                        census, with CensusID, DBH (cm), ExactDate and the
+#                        Bio_* parameter columns (one value per tag). Read
+#                        when present: TrueStemID, Tag, species, Species,
+#                        growth_form, Status, ListOfTSM, hom, obs_row_id.
+#   min_growth / max_growth  Hard bounds on annual growth (cm/yr): they flag
+#                        ConstraintViolation, are the pruning bounds when
+#                        prune_min_growth / prune_max_growth are NULL, and are
+#                        passed to the probabilistic matcher.
+#   anchor_start         Integer CensusID where TrueStemID is trusted; the DP
+#                        runs backward from it and rows after it are not
+#                        solved. Another census is used when this one has no
+#                        measured stem or no TrueStemID (rules in the code).
+#   max_tracks           Cap on the number of identity tracks K (K is raised
+#                        above it when the anchor and pre-anchor pins need
+#                        more tracks).
+#   slack_tracks         Tracks added to the minimum K; they hold no stem at
+#                        the anchor.
+#   slack_require_anchor_recruitable, slack_require_anchor_eps
+#                        TRUE grants the slack tracks only when an anchor stem
+#                        has DBH <= Bio_Recruit_MaxDBH_unit + eps.
+#   max_states           Max states per census before fallback (default
+#                        50 000); max_states^2 limits the candidate
+#                        transitions of a census pair.
 #   temperature          Marginal-DP softmax temperature; 1.0 = Bayesian.
-#   use_measurement_error  Use the mixture measurement-error model in likelihoods.
+#   posterior_top_k      Number of DP_PosteriorTop{k}ID / Prob columns
+#                        (at least 1).
+#   eps_tiebreak         Weight of the rank tie-break in the transition cost.
+#   allow_provisional_anchor  When the anchor rows have no TrueStemID, give
+#                        them provisional IDs ("provisional_dp") instead of
+#                        sending the tag to the matcher.
+#   use_measurement_error  Use the mixture measurement-error model in
+#                        likelihoods (meas_sd1_a, meas_sd1_b, meas_sd2,
+#                        meas_p_big; see transition_cost_rcpp.cpp).
+#   dbh_round_censuses, dbh_round_max, dbh_round_width
+#                        CensusIDs whose DBH below dbh_round_max (cm) was
+#                        recorded in classes of dbh_round_width (cm), rounded
+#                        down.
+#   fallback_growth_forms  growth_form values sent straight to the matcher.
 #   posterior_samples    How many posterior path samples to draw (0 = none).
+#   posterior_samples_format  Format of the final paths file, stored with
+#                        the staged samples.
+#   posterior_samples_path  Folder under which posteriors/.staging/ is
+#                        written (NULL: the global `out_dir`, else getwd()).
+#   posterior_sample_seed  Seed set before sampling (NULL: none).
+#   posterior_return_samples  TRUE returns the samples as attribute
+#                        "DP_Posterior_Samples" instead of staging them.
+#   prune_hard           Drop transitions outside the pruning bounds.
+#   prune_min_growth / prune_max_growth  Pruning bounds on annual growth
+#                        (cm/yr); NULL = min_growth / max_growth.
+#   prune_use_bio_bounds TRUE narrows them to Bio_Max_Shrink / Bio_Max_Growth.
+#   prune_recruit_max_dbh  Largest recruit DBH (cm); NULL =
+#                        Bio_Recruit_MaxDBH_unit.
+#   prune_use_bio_recruit  TRUE caps prune_recruit_max_dbh at
+#                        Bio_Recruit_MaxDBH_unit.
+#   non_taper_corrected_growth_forms, non_taper_corrected_prune_min_growth,
+#   non_taper_corrected_prune_max_growth
+#                        growth_form values whose pruning bounds are replaced
+#                        by these two values.
+#   hom_tolerance_scale  For those growth forms, when the data have a `hom`
+#                        column: widening of the bounds per census pair
+#                        (0 = off).
+#   verbose              Print progress (also option dp_global_biol.verbose).
+#   chunk_id             Label added to the log prefix.
+#   allow_segment_split  Solve a tag with a resprout census as two
+#                        independent segments (see "Resprout segment split").
+#   post_segment_all_recruits  Set by that split for its post segment.
 #   prob_n_samples       Number of stochastic samples for the probabilistic
-#                        greedy matcher (used on fallback).
-#   prob_species         Character vector of species to route to the probabilistic
-#                        matcher instead of the default DP fallback.
+#                        matcher (used on fallback).
+#   prob_species         Values of the `Species` column to route to the
+#                        probabilistic matcher.
 #   prob_lookahead_weight  Weight [0,1] for sequential backward conditioning in the
-#                        probabilistic matcher.  0 = independent per-pair sampling
-#                        (original behaviour).  0.5 = default (blend future
-#                        assignment info into the cost matrix).
+#                        probabilistic matcher.  0 = independent per-pair
+#                        sampling.  0.5 = default (blend future assignment
+#                        info into the cost matrix).
+#   use_bio_hard_shrink_in_prob, use_bio_hard_growth_in_prob
+#                        Apply the Bio_Max_Shrink / Bio_Max_Growth hard gates
+#                        in the matcher.
+#   prob_n_sigma_me      Matcher threshold on cumulative shrinkage, in SD of
+#                        the measurement error.
+#   prob_birth_death     Matcher: every stem may die or be recruited in
+#                        every census pair.
+#   pin_truestemid       Pin observations with a TrueStemID to their track at
+#                        every census, not only at the anchor.
 #
 # RETURNS
-#   data.table with ReconstructedStemID, ReconstructionMethod, marginal columns,
-#   and optional posterior path files written to posterior_samples_path.
+#   data.table with the input rows plus ReconstructedStemID,
+#   ReconstructionMethod, ConstraintViolation, DP_KUsed,
+#   DP_MaxStatesPerCensus, DP_MaxStatesCensusID, DP_FallbackReason,
+#   obs_row_id and the marginal columns (DP_PosteriorTop{k}ID / Prob,
+#   DP_PosteriorEntropy, DP_PosteriorReconstructedProb,
+#   DP_PosteriorUnlinkedProb). Attributes: DP_PruneInfo, DP_Compute_Profile
+#   and, when samples are drawn, DP_Sampling_Profile and
+#   DP_Posterior_Staging_File (or DP_Posterior_Samples). The samples are
+#   staged under posterior_samples_path; finalize_posterior_paths() writes
+#   the path files. Stops when temperature is not a positive number or a
+#   required Bio_* column is missing, NA or not constant within the tag.
 
 match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            min_growth = -Inf,
@@ -44,9 +127,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            temperature = 1.0,
                                                            posterior_top_k = 2L,
                                                            eps_tiebreak = 1e-6,
-                                                           # --- measurement error (optional) ---
                                                            # Allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
                                                            allow_provisional_anchor = TRUE,
+                                                           # --- measurement error (optional) ---
                                                            use_measurement_error = FALSE,
                                                            meas_sd1_a = 0.0062,
                                                            meas_sd1_b = 0.0904,
@@ -84,8 +167,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            non_taper_corrected_growth_forms = c("palm", "strangler_fig", "tree_fern"),
                                                            non_taper_corrected_prune_min_growth = -0.625,
                                                            non_taper_corrected_prune_max_growth = 6.25,
-                                                           # HOM tolerance scale: cm of annual DBH tolerance per meter
-                                                           # of HOM deviation from 1.3 m.  Set 0 to disable HOM widening.
+                                                           # HOM tolerance scale: cm of DBH tolerance per meter of HOM
+                                                           # deviation from 1.3 m, divided by the census interval to
+                                                           # widen the annual bounds.  Set 0 to disable HOM widening.
                                                            hom_tolerance_scale = 2.0,
                                                            verbose = FALSE,
                                                            chunk_id = NULL,
@@ -98,7 +182,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                                                            use_bio_hard_shrink_in_prob = TRUE, # use bio hard shrink gate in probabilistic
                                                            use_bio_hard_growth_in_prob = TRUE, # use bio hard growth gate in probabilistic
                                                            prob_n_sigma_me = 3, # ME cumulative-shrinkage threshold for probabilistic matcher
-                                                           prob_birth_death = TRUE, # matcher: every stem may die / be recruited in every census pair (FALSE: legacy slots)
+                                                           prob_birth_death = TRUE, # matcher: every stem may die / be recruited in every census pair (FALSE: count-based slots)
                                                            # --- TrueStemID pinning at non-anchor censuses ---
                                                            pin_truestemid = TRUE) # pin obs with known TrueStemID to their track
 {
@@ -283,12 +367,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     #
     # Two detection modes (both census-level, no per-stem identifier required):
     #
-    #   A. Explicit MF: rows where is.na(DBH) & ListOfTSM contains "MF".
+    #   A. Explicit MF: rows where is.na(DBH) and either ListOfTSM contains
+    #      "MF" or Status is "missing".
     #      Forward propagation extends through subsequent consecutive censuses
     #      where ALL rows have is.na(DBH).
     #
-    #   B. Implicit MF: censuses where ALL rows have is.na(DBH) (regardless of
-    #      ListOfTSM) but the tag has at least one non-NA DBH in both an earlier
+    #   B. Implicit MF: censuses where ALL rows have is.na(DBH) and none
+    #      carries a resprout code or Status "broken below", while the tag has
+    #      at least one non-NA DBH in both an earlier
     #      and a later census.  These are sandwiched gap censuses that indicate
     #      the stem was alive but unmeasured, even without the MF code.
     mf_stash <- NULL
@@ -404,6 +490,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # Attempts to infer ReconstructedStemID by finding tracks that are alive
     # in the flanking censuses but not observed at the MF census.  If exactly
     # one such candidate exists the ID is assigned; otherwise it stays NA.
+    # Every re-inserted row gets ReconstructionMethod "dp_mf_inferred".
+    # Returns `out` with the stash rows appended, ordered by obs_row_id.
     reinsert_mf_rows <- function(out, stash) {
         stash <- ensure_posterior_columns(stash)
         if (!("ReconstructionMethod" %in% names(stash))) stash[, ReconstructionMethod := NA_character_]
@@ -413,11 +501,12 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
         # Best-effort matching: for each MF row at census C, look at tracks
         # assigned in the nearest census before C and the nearest census after C.
-        # The candidate is the set of tracks present in both flanking sets BUT
+        # The candidates are the tracks present in both flanking sets (in the
+        # one that exists, when C has assignments on one side only) BUT
         # not assigned to any observation at census C in `out`.
-        # Each MF row at a given census consumes one candidate (removed from the
-        # pool for subsequent MF rows at the same census) so that when there are
-        # N MF rows and exactly N missing tracks the assignment is unambiguous.
+        # An ID is given only while exactly one candidate is left: with one
+        # candidate the first MF row of the census takes it, and with several
+        # candidates no MF row of that census is assigned.
         out_assigned <- out[!is.na(ReconstructedStemID)]
         dp_censuses <- sort(unique(out_assigned$CensusID))
 
@@ -442,8 +531,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 integer(0)
             }
 
-            # Candidate tracks: present in at least one flanking census but
-            # not assigned at the MF census itself.
+            # Candidate tracks: present in both flanking censuses (or in the
+            # only one with assignments) but not assigned at the MF census itself.
             if (length(ids_before) > 0L && length(ids_after) > 0L) {
                 flanking <- intersect(ids_before, ids_after)
             } else if (length(ids_before) > 0L) {
@@ -478,7 +567,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         out
     }
 
-    # Helper: mark post-anchor rows as 'given' when appropriate and normalize post rows
+    # Helper: label rows after the anchor, which the DP does not solve. Rows
+    # with a TrueStemID take it as ReconstructedStemID (method "given"); the
+    # others get method "none_after_anchor". Posterior columns are added and
+    # the DP metadata columns set to NA. Returns `post`.
     propagate_post_anchor_given <- function(post) {
         if (!("ReconstructedStemID" %in% names(post))) post[, ReconstructedStemID := as.integer(NA_integer_)]
         if (!("ReconstructionMethod" %in% names(post))) post[, ReconstructionMethod := NA_character_]
@@ -516,7 +608,14 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         post
     }
 
-    # Helper: finalize output by appending post-anchor rows (if DP was scoped)
+    # Helper: finalize the output of the fallback paths (do_fallback()) and of
+    # the resprout segment split. Restores the input TrueStemID on provisional
+    # anchor rows, appends the post-anchor rows (if DP was scoped), re-inserts
+    # the stashed MF rows, runs the TrueStemID pin sweep with its audit
+    # columns, attaches DP_PruneInfo and checks the row count against the
+    # input. The normal DP path does not call it: there the pins are enforced
+    # by the state enumeration (pin_truestemid) and the first three steps are
+    # done inline before returning.
     finalize_out <- function(out) {
         out <- ensure_posterior_columns(out)
         # Restore original TrueStemID for provisional_dp rows (undo fabricated anchor IDs
@@ -554,8 +653,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         # Authoritative enforcement of the invariant
         #   ReconstructedStemID == TrueStemID  on every row with non-NA TrueStemID
         # (excluding provisional_dp rows whose TrueStemID is fabricated).
-        # Runs in both DP-success and fallback paths (do_fallback) because
-        # every code path ends in finalize_out.  Critically, it runs AFTER
+        # Runs on every path that ends in finalize_out: the fallbacks
+        # (do_fallback) and the resprout segment split.  Critically, it runs AFTER
         # the NA-R / R-boundary barrier severing inside do_fallback, which
         # would otherwise overwrite pinned IDs with synthetic ones to break
         # crossing tracks.  Synthetic IDs win for rows the DP/probabilistic
@@ -622,7 +721,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                 )]
             }
         }
-        # Attach prune stats if available (some early returns may occur before prune_stats is initialized)
+        # Attach prune stats (zeros when the fallback happened before any pruning)
         attr(out, "DP_PruneInfo") <- if (exists("prune_stats")) prune_stats else list()
         # Row-count sanity check: output must have exactly as many rows as input
         .n_out <- nrow(out)
@@ -814,7 +913,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         }
 
         # If scoping removes all observations (e.g., all observations are after the requested
-        # anchor), return a one-row placeholder so the Tag is represented in outputs.
+        # anchor), return every row without running the DP, labelled as post-anchor rows.
         if (nrow(tree_data) == 0L) {
             vcat(prefix, "No observations before anchor C", anchor_start, "; skipping DP and returning rows as-is")
             out <- data.table::copy(original_tree_data)
@@ -829,10 +928,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
 
     # Preserve any provided TrueStemID as hard values in output —
-    # but ONLY at the anchor census, where TrueStemID is actually used
-    # as a constraint by the DP solver.  Pre-anchor TrueStemID is NOT
-    # used to constrain identification; labelling it "given" would be
-    # misleading.  Pre-anchor rows get their method from Viterbi ("dp").
+    # here ONLY at the anchor census, the fixed end state of the DP.
+    # Pre-anchor rows get their method after the MAP decode: "dp", or
+    # "given" where pin_truestemid pinned the observation to its track.
     # EXCEPTION: provisional_dp rows keep their label — TrueStemID was
     # fabricated, not from field data.
     # NOTE: use %in% not != for NA-safe comparison (NA != "x" is NA in R,
@@ -1065,15 +1163,18 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         return(do_fallback("anchor_ids_missing", K_used = as.integer(min(max_obs, max_tracks))))
     }
 
-    # Choose K (tracks) same logic as the MAP DP
+    # Choose K (tracks): at least the anchor stems, the largest stem count of
+    # any census, and the first census's stems plus every later increase
     births_needed <- if (length(obs_counts) >= 2L) sum(pmax(0L, diff(obs_counts))) else 0L
     K_from_counts <- as.integer(if (length(obs_counts) > 0L) obs_counts[1L] + births_needed else 0L)
     K_base <- max(length(anchor_ids), max_obs, K_from_counts)
 
-    # ---- Resprout barrier: increase K for resprout observations ----
-    # Each resprout (R|RP|RF|RT|QR|OR code with non-NA DBH) forces the track into
-    # phase 0 at the preceding census, effectively creating a new identity that
-    # needs its own track slot.  Add one extra track per resprout observation.
+    # ---- Resprout observations and NA-R barriers ----
+    # A resprout observation is a measured row (non-NA DBH) with an
+    # R|RP|RF|RT|QR|OR code or Status "broken below". In the DP it continues
+    # the track of a stem present at the preceding census (the R-recruit
+    # constraint below and derive_phase_prev_batch_rcpp()), so it needs no
+    # track of its own.
     resprout_regex <- "\\b(R|RP|RF|RT|QR|OR)\\b"
     # Pre-compute per-census row indices and resprout flags ONCE here.
     # This single pass is reused in both the resprout count below and the
@@ -1122,18 +1223,20 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
     # -----------------------------------------------------------------------
     # Resprout segment split
-    # When any census p0 >= 2 (not the first in range) carries an R code and
-    # lies before the anchor, split the DP into two independent sub-problems:
-    #   pre-segment  : censuses 1 .. (r_boundary - 1), provisional anchor
-    #   post-segment : censuses r_boundary .. anchor_start
-    # Biological rationale: R means the tree resprouted — stems at the R
-    # census are entirely new physical entities with no identity continuity
-    # to stems at earlier censuses.  Splitting prevents pre-resprout census
-    # history from contaminating post-resprout track assignments.
-    # The post sub-call starts at position 1 in its range (does not satisfy
-    # .p0 >= 2), so it never triggers a further split.  Additionally,
-    # allow_segment_split=FALSE in recursive sub-calls prevents cascading
-    # splits; downstream R codes are handled by R-recruit constraints.
+    # When any census p0 >= 2 (not the first in range) carries a resprout
+    # observation and lies before the anchor, split the DP at the first such
+    # census into two independent sub-problems:
+    #   pre-segment  : censuses 1 .. r_boundary, anchored at its last
+    #                  measured census
+    #   post-segment : censuses after r_boundary .. anchor_start
+    # Biological rationale: R means the tree resprouted — in the DP the
+    # R-coded measurement closes the stem that broke, and the stems of later
+    # censuses have no identity continuity with the stems before the break.
+    # (After the engine, apply_broken_below_invariants() R1 starts a new ID
+    # at a measured "broken below" row.)  Splitting prevents pre-resprout
+    # census history from contaminating post-resprout track assignments.
+    # allow_segment_split=FALSE in the two sub-calls prevents cascading
+    # splits; their later R codes are handled by the R-recruit constraint.
     # -----------------------------------------------------------------------
     .r_boundary_pos <- NULL
     if (isTRUE(allow_segment_split)) {
@@ -1642,7 +1745,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         phase_vec <- decode_phase_key(p)
         list(assign = assign_vec, phase = phase_vec)
     }
-    # Bio params (same extraction logic as MAP DP)
+    # Bio params: one value per tag, read from the Bio_* columns
     Bio_Mu_Growth_unit <- unique(tree_data$Bio_Mu_Growth)
     Bio_Gamma_Growth_unit <- if ("Bio_Gamma_Growth" %in% names(tree_data)) {
         unique(tree_data$Bio_Gamma_Growth)
@@ -1885,8 +1988,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             vcat(prefix, "    dt=", sprintf("%.2f", interval_val), " yr", sep = "")
 
             # -----------------------------------------------------------------------
-            # Batch feasibility check in C++: replaces the O(n_cc × n_next × K) R
-            # inner loop.  derive_phase_prev_batch_rcpp checks phase-transition
+            # Batch feasibility check in C++, O(n_cc × n_next × K):
+            # derive_phase_prev_batch_rcpp checks phase-transition
             # constraints and hard growth-rate pruning for every (i, j) pair at once.
             # -----------------------------------------------------------------------
 
@@ -1946,8 +2049,8 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
             # -----------------------------------------------------------------------
             # Post-segment recruit continuity constraint
-            # When this DP is the post-segment of a resprout split, ALL stems at the
-            # first census (the R-boundary) are new organisms.  If the number of
+            # When this DP is the post-segment of a resprout split, ALL stems at its
+            # first census (the first census after the R census) are new organisms.  If the number of
             # stems at the first census <= the number at the next census, every stem
             # at p must be on a track that is also occupied at p+1 — a freshly
             # resprouted stem dying immediately while another independent recruit
@@ -2247,7 +2350,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             tree_data[.pinned_post_unassigned, ReconstructedStemID := as.integer(TrueStemID)]
         }
         # ---- Hard-invariant pre-anchor sweep -----------------------------------
-        # Same fix as the post-anchor block above but for pre-anchor NA-DBH
+        # As for the post-anchor rows above, but for pre-anchor NA-DBH
         # rows that the DP never visited (obs_row_idx filters !is.na(DBH)).
         # A row carrying TrueStemID at C2 with DBH=NA and Status="dead"
         # would otherwise leave finalize_out with ReconstructedStemID=NA and
@@ -2605,14 +2708,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         sampling_profile$samples_dt_size_bytes <- as.numeric(object.size(samples_dt))
         sampling_profile$after_samples_time <- tic() - t_sampling_start
 
-        # ---- Recommended architecture (see dp_global/improvements.md) ----
         # Stage raw samples_dt (in engine ID space) to disk. The post-engine
-        # pipeline will: (1) translate ReconstructedStemID using the
-        # renumber mapping, (2) re-run apply_bb_invariants_to_samples in the
+        # pipeline (finalize_posterior_paths()) will: (1) translate
+        # ReconstructedStemID using the renumber mapping, (2) apply the pins
+        # and apply_bb_invariants_to_samples in the
         # renumbered ID space, (3) compute path_sig / paths_summary, and
         # (4) write the final paths file. This guarantees per-sample bb-minted
-        # IDs are derived from renumbered track IDs (cf. Fallback limitation
-        # described in improvements.md).
+        # IDs are derived from renumbered track IDs.
         sampling_profile$finished <- Sys.time()
         if (isTRUE(posterior_return_samples)) {
             # Resprout-split segment: hand the samples back (attached before
@@ -2841,9 +2943,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 # The rows BEFORE the R census get the new ID, as in the DP resprout segment
 # split and the NA-R barrier, so the R row and its continuation keep the
 # matcher's ID: the anchor TrueStemID that the final sweep in finalize_out()
-# restores. Renaming the rows after the R census instead let that sweep re-join
-# the anchor to the stem that broke, stranding the censuses in between as
-# one-census stems counted twice in stock (e.g. tag 152256, census 6).
+# restores. If the rows after the R census were renamed instead, that sweep
+# would re-join the anchor to the stem that broke and strand the censuses in
+# between as one-census stems counted twice in stock (e.g. tag 152256,
+# census 6).
 #
 # The stem that broke is found through ReconstructedStemID_PreSweep (the
 # matcher's own track): its last measured row before the R census. That row's
@@ -3019,18 +3122,21 @@ stage_posterior_samples <- function(samples_dt, tag, engine,
 }
 
 # Summary of what's available in posteriors
-
-# Full long-format samples file (one row per observed reconstructed tree per sample):
-# Example: posteriors/tag_20_posterior_samples_<ts>.csv
-# Per-sample summary (one row per sampled full-reconstruction):
-# posteriors/tag_20_posterior_samples_<ts>_summary.csv
-# Columns: Sample, Tag, logp, path_sig, path_count, sample_weight, sample_prob
-# sample_prob is normalized over all drawn samples and can be used as sampling weight for downstream propagation.
+#
+# The engines only stage the raw samples (one row per measured observation and
+# sample) in posteriors/.staging/. finalize_posterior_paths()
+# (dp_global_main.R) turns each staging file into the one file kept per tag,
+# and deletes the staging file:
+#
 # Per-path aggregated summary (unique reconstructions):
-# posteriors/tag_20_posterior_samples_<ts>_paths.csv
-# Columns: path_sig, path_count, path_prob, recon (compact reconstruction mapping like "<ObsRowID>:<ReconstructedStemID>;..." — ObsRowID is enforced)
-
-# How to use these for error propagation (suggestions)
-# Use paths.csv directly: each row is a unique reconstruction with probability path_prob (sums to 1 across unique paths) — convenient for expectation of downstream metrics without resampling.
-# Or sample reconstructions according to sample_prob in the summary file to create Monte Carlo realizations for error propagation; then expand each sample using the full long file if needed to attach per-census reconstructed IDs.
-# The recon column in paths.csv is handy to quickly apply a mapping (parse "ObsRowID:ReconstructedStemID" pairs).
+# posteriors/tag_<Tag>_posterior_samples_<ts>_paths.<rds|feather|csv>
+# Columns: path_sig, path_count, path_prob, recon (compact reconstruction mapping like "<ObsRowID>:<ReconstructedStemID>;...")
+#
+# How to use it for error propagation
+# Each row is a unique reconstruction of the tag. path_count is the number of
+# drawn samples with that reconstruction, so path_count / sum(path_count) is
+# its sampled frequency. path_prob sums to 1 across the paths of a tag: it is
+# that frequency for tags solved by the probabilistic matcher or by a resprout
+# split whose draws carry no logp, and the share of exp(logp) of the path's
+# samples for tags whose DP samples carry logp.
+# The recon column gives the mapping to apply (parse "ObsRowID:ReconstructedStemID" pairs).

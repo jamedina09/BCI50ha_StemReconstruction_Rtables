@@ -2,14 +2,18 @@
 # dp_global_main.R — Main loader for `dp_global` R modules
 # -------------------------------------------------------------------------
 # Purpose: central entrypoint that ensures required packages are present,
-# attempts to enable C++ acceleration, sources core R modules in a
-# deterministic order, and performs quick post-source sanity checks.
+# compiles the C++ functions, sources core R modules in a deterministic
+# order, performs quick post-source sanity checks, and defines the shared
+# post-engine helpers (sections 7-9 and the functions after them).
+# Must be sourced with the working directory at the project root.
 # -------------------------------------------------------------------------
 
 ## ---- 1) Package preflight checks ----------------------------------------
 # Minimal required packages for the DP workflow. We check but do not attach
 # everything — only packages that need to be attached for convenient operators
 # (e.g., data.table's `:=`) are attached below.
+# check_pkg(p): stops with an install hint when package `p` is not installed;
+# returns TRUE invisibly otherwise.
 check_pkg <- function(p) {
     if (!requireNamespace(p, quietly = TRUE)) {
         stop(sprintf("Package '%s' is required. Install it with install.packages('%s')", p, p), call. = FALSE)
@@ -21,11 +25,15 @@ check_pkg("data.table")
 check_pkg("igraph")
 check_pkg("Rcpp")
 
-## ---- 2) C++ acceleration (optional, non-fatal) --------------------------
-# Source helper R wrappers (keeps the uncompiled fallback short-circuitable)
-# Ensure the R wrapper is defined in the top-level environment so callers can
-# access the wrapper regardless of how this loader is invoked.
-# Use project root rather than here() to construct file paths (CRAN-friendly style)
+## ---- 2) C++ functions (a failed compilation is not fatal here) -----------
+# The R wrappers are sourced into the top-level environment so callers can
+# access them regardless of how this loader is invoked.
+# A failed compilation only raises a warning here, but the DP has no R
+# implementation of the compiled functions: it calls
+# derive_phase_prev_batch_rcpp() and transition_cost_paired_rcpp() directly,
+# so without them every DP call raises an error. The probabilistic matcher
+# uses lpSolve when hungarian_min_rcpp() is missing.
+# File paths are built from the working directory (the project root).
 root_dir <- getwd()
 sys.source(file.path(root_dir, "dp_global", "src", "transition_cost_rcpp.R"), envir = globalenv())
 tryCatch(
@@ -40,7 +48,8 @@ tryCatch(
 
 ## ---- 3) Module manifest & package requirements --------------------------
 # Ordered list of R modules we expect to load. Order chosen to respect
-# likely dependencies (utils -> bio -> states -> matchers -> dp -> diag).
+# likely dependencies (utils -> bio -> states -> matchers -> probabilistic
+# matcher -> dp -> diag).
 r_files <- c(
     "dp_global_utils.R",
     "dp_global_bio.R",
@@ -124,10 +133,11 @@ species <- NULL
 #   - Status is one of "dead", "stem dead", "broken below", "missing"
 #
 # For each such row we copy the most recent prior non-NA ReconstructedStemID
-# from the same (Tag, OriginalStemID) group (LOCF). Biologically, a terminal
-# event ends the trajectory of the most recent prior identity carrying the
-# same OriginalStemID; without this fill these rows would be dropped from
-# any downstream trajectory. A "missing" record after the stem's earlier
+# from the same (Tag, source ID) group (LOCF). The source ID is the StemID
+# column, or OriginalStemID when the table has no StemID. Biologically, a
+# terminal event ends the trajectory of the most recent prior identity
+# carrying the same source ID; without this fill these rows would be dropped
+# from any downstream trajectory. A "missing" record after the stem's earlier
 # records is likewise that stem's record (99.9% of BCI "missing" rows follow
 # a record of the same StemID); without the fill it would become a stem of its
 # own that never lives. Stage 3 reads "missing" as no data, so no status
@@ -135,7 +145,10 @@ species <- NULL
 # looks backward).
 #
 # Returns the (potentially modified) data.table with `ReconstructionMethod`
-# set to "carried_terminal" on rows that were filled.
+# set to "carried_terminal" on rows that were filled. `out` is modified by
+# reference and re-ordered by Tag, source ID and CensusID. It is returned
+# untouched when it has no source-ID column or lacks Status, DBH, Tag,
+# CensusID or ReconstructedStemID. `verbose` logs the number of rows filled.
 apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
     if (is.null(out) || nrow(out) == 0L) {
         return(out)
@@ -189,10 +202,10 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
 ## ---- 8) Shared post-engine helper: orphan-stem backfill ----------------
 # Backfill rows for "born-orphan" stems that the engine cannot reach.
 #
-# A stem is "born orphan" when its source identifier (StemID in production,
-# OriginalStemID in this test repo) first appears with no DBH and no
-# upstream TrueStemID anchor (e.g. a brand-new StemID first recorded as
-# broken-below at C7+). Without DBH the DP has no signal to disambiguate
+# A stem is "born orphan" when its source identifier (StemID, or
+# OriginalStemID when the table has no StemID column) first appears with no
+# DBH and no upstream TrueStemID anchor (e.g. a brand-new StemID first
+# recorded as broken-below at C7+). Without DBH the DP has no signal to disambiguate
 # and TrueStemID is never assigned, so the engine leaves
 # ReconstructedStemID = NA on every census of that stem.
 #
@@ -207,6 +220,10 @@ apply_carried_terminal_backfill <- function(out, verbose = TRUE) {
 # Justified because (a) the source ID is unambiguous, (b) DBH=NA means DP
 # has no signal, (c) the new method label keeps the trail auditable, and
 # (d) collision risk is zero — DP cannot have reached these rows.
+#
+# Returns `out` (modified by reference); untouched when it has no source-ID
+# column or lacks TrueStemID, DBH or ReconstructedStemID. `verbose` logs the
+# number of rows filled.
 apply_orphan_stem_backfill <- function(out, verbose = TRUE) {
     if (is.null(out) || nrow(out) == 0L) {
         return(out)
@@ -259,9 +276,9 @@ apply_orphan_stem_backfill <- function(out, verbose = TRUE) {
 #   - the DP resprout segment split offsets the pre-segment IDs, including
 #     tracks it had labelled with a pin, so after the sweep the pinned rows
 #     hold the pin and their unpinned track-mates the offset ID.
-# The posterior samples keep the engine's links, so these cuts inflated the
-# exported BA Loss and Gain and put the exported line outside the identity
-# Monte Carlo ribbon.
+# The posterior samples keep the engine's links, so with these cuts the
+# exported table would show more BA loss and gain than the identity Monte
+# Carlo built from the samples.
 #
 # Rule, per engine track (measured rows of one Tag and
 # ReconstructedStemID_PreSweep), cut into segments at every broken-below row
@@ -280,6 +297,11 @@ apply_orphan_stem_backfill <- function(out, verbose = TRUE) {
 # Runs first in the post-engine chain, after the sweeps, so the backfills,
 # apply_terminal_to_host() and the broken-below invariants see whole stems.
 # Idempotent: a moved ID T no longer exists.
+#
+# Returns `out` (modified by reference); untouched when it lacks Tag,
+# CensusID, DBH, Status, TrueStemID, ReconstructedStemID or
+# ReconstructedStemID_PreSweep. `verbose` logs the IDs and rows moved and the
+# IDs skipped for a collision.
 apply_pin_track_rejoin <- function(out, verbose = TRUE) {
     if (is.null(out) || nrow(out) == 0L) {
         return(out)
@@ -402,6 +424,12 @@ apply_pin_track_rejoin <- function(out, verbose = TRUE) {
 # Runs after apply_orphan_stem_backfill() and before
 # apply_broken_below_invariants(). Idempotent: a moved record sits after its
 # new stem's life, so it is no longer a candidate.
+#
+# Returns `out` (modified by reference); untouched when it lacks Tag,
+# CensusID, Status, DBH or ReconstructedStemID. Without a StemID /
+# OriginalStemID column the records are grouped by Tag and identity only, and
+# without ReconstructedStemID_PreSweep rule (a) is skipped. `verbose` logs the
+# groups and rows moved by each rule.
 apply_terminal_to_host <- function(out, verbose = TRUE) {
     if (is.null(out) || nrow(out) == 0L) {
         return(out)
@@ -550,35 +578,42 @@ apply_terminal_to_host <- function(out, verbose = TRUE) {
 #       "bb_split_carry" (carried forward).
 #
 #   R2 (terminate-on-stump): a row with Status == "broken below" and
-#       is.na(DBH) terminates the trajectory.  Any later row of the same
-#       trajectory that has !is.na(DBH) MUST be re-IDed.  Mint a fresh ID
-#       and propagate analogously.  Tag method = "bb_post_terminator_split" /
-#       "bb_post_terminator_split_carry".  NA-DBH dead/BB/stem-dead corpse
-#       rows already labelled by `apply_carried_terminal_backfill` keep
-#       their ID (LOCF on terminator is allowed).
+#       is.na(DBH) terminates the trajectory.  The first later row of the
+#       same trajectory that has !is.na(DBH) MUST be re-IDed.  Mint a fresh
+#       ID and carry it forward from that row as in R1.  Tag method =
+#       "bb_post_terminator_split" / "bb_post_terminator_split_carry".
+#       NA-DBH rows between the stump and that measured row (dead / BB /
+#       stem-dead corpse rows, e.g. labelled by
+#       `apply_carried_terminal_backfill`) keep their ID (LOCF on terminator
+#       is allowed).
 #
 # Why the trajectory (and not StemTag) is the group: StemTags only exist from
-# the 2010 census on (C7+). Grouping by StemTag put a stem's pre-2010 rows
-# (StemTag NA) and its 2010+ rows (StemTag set) in different groups, so a
-# break measured in 2010 was never compared with the trunk it continued
-# (e.g. tag 082883: a 155 mm trunk and its 30 mm resprout stayed one stem),
-# and in the all-NA pre-2010 group the rows of different stems interleaved,
-# so a split could stop carrying forward early (e.g. tag 053376).
+# the 2010 census on (C7+). A StemTag group would hold a stem's pre-2010 rows
+# (StemTag NA) and its 2010+ rows (StemTag set) apart, so a break measured in
+# 2010 would never be compared with the trunk it continues (e.g. tag 082883:
+# a 155 mm trunk and its 30 mm resprout), and in the all-NA pre-2010 group
+# the rows of different stems would interleave, so a split could stop
+# carrying forward early (e.g. tag 053376).
 #
-# Pinned rows (non-NA TrueStemID) are normally respected, BUT when a pin
-# conflicts with the contract (typical case: BCI driver pre-stamps
-# TrueStemID = OriginalStemID on every BB+DBH row under the assumption
-# they begin a new trajectory; ~28% of the time the OriginalStemID is
-# reused from a prior alive row in the same StemTag and the pin therefore
-# locks in a contract violation), the pass overrides the pin and updates
-# both ReconstructedStemID and TrueStemID to the newly-minted ID.  Each
-# such override is counted and reported.  The pass is deterministic and
-# idempotent: running it twice on the same input yields the same output
-# as one run.
+# A pin (non-NA TrueStemID) does not protect a row from R1 or R2. The BCI
+# drivers pin every BB+DBH row to its own StemID (Step 3a) on the assumption
+# that it begins a new trajectory; when its reconstructed trajectory still
+# holds earlier rows (e.g. earlier records under the same StemID), the pass
+# mints the new ID all the same and also rewrites TrueStemID on the rows whose
+# TrueStemID equals the replaced ID.  Each such override is counted and
+# reported.  The
+# pass is deterministic and idempotent: running it twice on the same input
+# yields the same output as one run.
 #
-# This function operates only on the MAP-level table.  Posterior CSVs need
-# the same operator applied per-sample with `path_sig` recomputation; that
-# is handled separately at the posterior writer site.
+# This function operates only on the MAP-level table.  The posterior samples
+# get the same operator per sample in apply_bb_invariants_to_samples(), which
+# finalize_posterior_paths() calls before it computes `path_sig`.
+#
+# Returns `out` (modified by reference and re-ordered by Tag,
+# ReconstructedStemID and CensusID; ReconstructionMethod is added when
+# missing); untouched when it lacks Tag, CensusID, Status, DBH or
+# ReconstructedStemID. `verbose` logs the number of R1 splits, R2 splits and
+# pin overrides.
 apply_broken_below_invariants <- function(out, verbose = TRUE) {
     if (is.null(out) || nrow(out) == 0L) {
         return(out)
@@ -623,11 +658,11 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
             prior <- rid[ix[seq_len(a - 1L)]]
             prior <- prior[!is.na(prior)]
             if (length(prior) == 0L || is.na(rid[i]) || !(rid[i] %in% prior)) next
-            # Pin override: the BCI driver pre-stamps TrueStemID = OriginalStemID
-            # on BB+DBH rows under the assumption that they start a new
-            # trajectory.  When the contract is violated despite the pin, the
-            # pin was applied on a wrong assumption and we override it.  We
-            # also update TrueStemID to keep the two columns consistent.
+            # Pin override: the BCI drivers pin BB+DBH rows to their own StemID
+            # on the assumption that they start a new trajectory.  When the
+            # row still has earlier rows on its trajectory, the pin is
+            # overridden and TrueStemID is updated to keep the two columns
+            # consistent.
             if (!is.na(trueid[i])) n_pin_override <- n_pin_override + 1L
             old_id <- rid[i]
             new_id <- next_id
@@ -713,7 +748,8 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
 # Inputs: samples_dt (Sample, CensusID, ReconstructedStemID, ObsRowID) and the
 # tag's rows of the final table (obs_row_id, CensusID, DBH, Status, TrueStemID,
 # ReconstructionMethod, and StemID or OriginalStemID).
-# Returns samples_dt with ReconstructedStemID re-encoded.
+# Returns a copy of samples_dt with ReconstructedStemID re-encoded. The input
+# itself is returned when a required column is missing or no row is pinned.
 apply_pins_to_samples <- function(samples_dt, tree_data) {
     if (is.null(samples_dt) || nrow(samples_dt) == 0L || is.null(tree_data) || nrow(tree_data) == 0L) {
         return(samples_dt)
@@ -793,28 +829,31 @@ apply_pins_to_samples <- function(samples_dt, tree_data) {
 #
 # Per-sample relabel of broken-below contract violations on a posterior
 # `samples_dt` produced by `dp_global_dp.R` or `dp_probabilistic_matching.R`.
-# Strategy A: apply the same deterministic R1/R2 operator implemented in
-# `apply_broken_below_invariants()` to each posterior sample independently.
+# Applies the same deterministic R1/R2 operator implemented in
+# `apply_broken_below_invariants()` to each posterior sample independently,
+# on the sampled trajectories (the rows of one sampled ReconstructedStemID).
 #
 # Inputs:
 #   samples_dt : data.table with columns at least Sample, CensusID,
 #                ReconstructedStemID, ObsRowID. Rows ordered by Sample, CensusID.
-#   tree_data  : the engine's per-row data.table; must contain `obs_row_id`,
-#                `Status`, `DBH`, and a series column (StemTag /
-#                OriginalStemID / StemID). `Tag` is optional but used if present.
+#   tree_data  : the tag's per-row data.table; must contain `obs_row_id`,
+#                `Status`, `DBH`, and one of StemTag / OriginalStemID / StemID
+#                (the function returns samples_dt unchanged without one,
+#                although the relabel does not read that column). The tag
+#                label is taken from samples_dt$Tag when present.
 #   verbose    : log a single summary message.
 #
-# Returns: samples_dt with `ReconstructedStemID` rewritten so each sample
-# satisfies R1 (BB+DBH must not reuse a prior live ID in the same series)
-# and R2 (BB+NA-DBH terminator must not be followed by a live row reusing
-# its ID). The relabel is independent per sample, so freshly-minted IDs do
-# not need to be globally unique across samples — `path_sig` will continue
-# to collapse identical reconstructions correctly because `paste0` over the
-# rewritten ids is deterministic given the (sample, ordering) inputs.
+# Returns: samples_dt (modified by reference) with `ReconstructedStemID`
+# rewritten so each sample satisfies R1 (BB+DBH must not continue an earlier
+# row of its sampled trajectory) and R2 (BB+NA-DBH terminator must not be
+# followed by a live row reusing its ID). The relabel is independent per
+# sample, so freshly-minted IDs do not need to be globally unique across
+# samples — `path_sig` will continue to collapse identical reconstructions
+# correctly because `paste0` over the rewritten ids is deterministic given
+# the (sample, ordering) inputs.
 #
-# Use sites: posterior writers in `dp_global_dp.R` and
-# `dp_probabilistic_matching.R`, immediately AFTER samples are sorted and
-# BEFORE `path_sig` / `path_count` aggregation.
+# Use site: finalize_posterior_paths(), after the ID translation and
+# apply_pins_to_samples() and BEFORE `path_sig` / `path_count` aggregation.
 apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE) {
     if (is.null(samples_dt) || nrow(samples_dt) == 0L) {
         return(samples_dt)
@@ -897,12 +936,11 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
 #      values in TrueStemID and must follow the rename; rows holding
 #      real DB IDs in TrueStemID are left untouched as ground truth).
 #
-# Posterior path files are no longer written by this function. The post-
-# engine driver should call finalize_posterior_paths() afterwards, passing
-# the returned `mapping`, to translate staged per-sample samples_dt into
-# the renumbered ID space and write the final paths file. Because the
-# mapping interface is unchanged (Tag/old_id/new_id), posterior paths
-# automatically pick up the new 1..N numbering.
+# This function writes no posterior files. The post-engine driver calls
+# finalize_posterior_paths() afterwards, passing the returned `mapping`
+# (Tag / old_id / new_id), to translate staged per-sample samples_dt into
+# the renumbered ID space and write the final paths file, so the posterior
+# paths carry the same 1..N numbering.
 #
 # Inputs:
 #   out                      : data.table (per-chunk or per-tag) with at
@@ -911,12 +949,15 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
 #   posterior_top_k          : (optional) explicit number of
 #                              DP_PosteriorTop{k}ID columns. If NULL,
 #                              auto-detected from column names.
-#   posterior_samples_path   : retained for backward compatibility; no-op.
-#   mapping_format           : retained for backward compatibility; no-op.
+#   posterior_samples_path   : not used.
+#   mapping_format           : checked with match.arg(), otherwise not used.
 #   verbose                  : log a per-call summary.
 #
 # Returns: list(out = renamed data.table, mapping = combined mapping
-# data.table with columns Tag, old_id, new_id, first_census).
+# data.table with columns Tag, old_id, new_id, first_census). `out` is
+# modified by reference. When `out` is empty or lacks Tag, CensusID,
+# ReconstructedStemID or ReconstructionMethod it is returned as it is with an
+# empty mapping.
 renumber_engine_minted_ids <- function(out,
                                        posterior_top_k = NULL,
                                        posterior_samples_path = NULL,
@@ -1106,10 +1147,9 @@ renumber_engine_minted_ids <- function(out,
         )
     }
 
-    # Posterior companion mapping files are no longer written here (see
-    # finalize_posterior_paths()). The `posterior_samples_path` and
-    # `mapping_format` arguments are retained for backward compatibility
-    # but are now no-ops.
+    # No mapping file is written here: finalize_posterior_paths() takes the
+    # returned mapping. `posterior_samples_path` and `mapping_format` are not
+    # used.
 
     if (isTRUE(verbose)) {
         message(sprintf(
@@ -1124,13 +1164,26 @@ renumber_engine_minted_ids <- function(out,
 # -------------------------------------------------------------------------
 # finalize_posterior_paths()
 #
-# Recommended-architecture post-engine step (see dp_global/improvements.md).
+# Post-engine step that turns the staged posterior samples into the final
+# per-tag path files.
 # Reads per-tag raw posterior staging files written by the engines (DP and
 # probabilistic), translates ReconstructedStemID via the renumber mapping,
-# re-runs apply_bb_invariants_to_samples() so per-sample bb-minted IDs are
-# derived from the renumbered track IDs, computes path signatures and
-# probabilities, and writes the final `tag_{Tag}_posterior_samples_{ts}_paths.{ext}`
-# files in the user-requested format. Staging files are deleted on success.
+# applies the database pins per sample (apply_pins_to_samples()), runs
+# apply_bb_invariants_to_samples() so per-sample bb-minted IDs are derived
+# from the renumbered track IDs, computes path signatures and probabilities,
+# and writes the final `tag_{Tag}_posterior_samples_{ts}_paths.{ext}` files
+# in the user-requested format (feather needs the arrow package; without it,
+# and for any format other than "feather" or "csv", an .rds file is written).
+# Staging files are deleted on success.
+#
+# One row per unique reconstruction (path) of a tag:
+#   path_sig   : the sample's ReconstructedStemID values pasted with "-" in
+#                row order.
+#   path_count : number of samples with that reconstruction.
+#   path_prob  : path_count / number of samples when the samples carry no
+#                `logp`; otherwise the sum over the path's samples of
+#                exp(logp) normalised over all samples of the tag.
+#   recon      : "<ObsRowID>:<ReconstructedStemID>;..." for the path.
 #
 # Inputs:
 #   out                    : data.table AFTER renumber_engine_minted_ids().
@@ -1144,7 +1197,9 @@ renumber_engine_minted_ids <- function(out,
 #                            returned by renumber_engine_minted_ids(). If
 #                            NULL or empty, ReconstructedStemID values are
 #                            assumed to already be in renumbered space (the
-#                            no-op identity translation).
+#                            no-op identity translation). Sampled IDs that
+#                            are not in a tag's mapping get new IDs above the
+#                            tag's renumbered range.
 #   verbose                : log a per-tag summary message.
 #
 # Returns: invisible list(n_tags, n_written, n_failed, written_paths).

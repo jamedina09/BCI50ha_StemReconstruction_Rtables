@@ -1,10 +1,10 @@
 ############################################################
 # dp_global_matchers.R
-# Fallback stepwise matching (igraph-based)
+# Stepwise backward matching (igraph-based)
 ############################################################
 match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anchor_start) {
     # PURPOSE
-    # - "Safe" fallback when global DP is too expensive: perform stepwise matching
+    # - Stepwise alternative to the global DP: perform stepwise matching
     #   backward in time using a deterministic bipartite matching.
     # - This is intentionally conservative and fast; it is not guaranteed to be
     #   globally optimal across multiple censuses (unlike DP).
@@ -17,18 +17,28 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
     # - If a stem cannot be matched, assign a new ID.
     #
     # INPUTS
-    # - tree_data: data.table for ONE (Tag, species) group.
+    # - tree_data: data.table for ONE (Tag, species) group, with CensusID, DBH,
+    #   TrueStemID and ExactDate. CensusID must be consecutive integers from 1:
+    #   the loop pairs census c with census c + 1.
     # - min_growth/max_growth: hard bounds on annual growth (cm/year).
-    # - anchor_start: integer CensusID to start backward matching from.
+    # - anchor_start: integer CensusID to start backward matching from. Without
+    #   any TrueStemID the last census with a DBH is used and its stems get
+    #   provisional IDs.
     #
     # OUTPUT
-    # - tree_data with `ReconstructedStemID` filled and diagnostic columns:
-    #   - `ReconstructionMethod`: "given" (from TrueStemID) or "igraph" (fallback)
-    #   - `ConstraintViolation`: TRUE for links that required force/creation.
+    # - tree_data (a copy ordered by CensusID) with `ReconstructedStemID` filled
+    #   and diagnostic columns:
+    #   - `ReconstructionMethod`: "given" (from TrueStemID), "igraph" (matched or
+    #     given a new ID here) or "provisional_igraph" (provisional anchor)
+    #   - `ConstraintViolation`: TRUE for stems that could not be matched and
+    #     got a new ID.
+    #   - `DP_FallbackReason`: "igraph_assigned", "provisional_igraph_anchor_assigned"
+    #     or "no_dbh" on the rows concerned.
     #
     # NOTES
-    # - Self-contained igraph-based stepwise matcher; the main DP pipeline routes
-    #   most fallbacks through the probabilistic matcher instead.
+    # - Self-contained igraph-based stepwise matcher. The DP pipeline does not
+    #   call it: do_fallback() in dp_global_dp.R routes every fallback to the
+    #   probabilistic matcher.
     tree_data <- tree_data[order(CensusID)]
     if (!("ReconstructionMethod" %in% names(tree_data))) {
         tree_data[, ReconstructionMethod := NA_character_]
@@ -36,7 +46,7 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
     if (!("ConstraintViolation" %in% names(tree_data))) {
         tree_data[, ConstraintViolation := NA]
     }
-    # Add a DP_FallbackReason column to capture why DP fell back to igraph (if applicable)
+    # DP_FallbackReason records how this matcher labelled a row (see OUTPUT)
     if (!("DP_FallbackReason" %in% names(tree_data))) tree_data[, DP_FallbackReason := NA_character_]
     tree_data[!is.na(TrueStemID), `:=`(
         ReconstructedStemID = as.integer(TrueStemID),
@@ -107,7 +117,8 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
         # Helper: deterministic edge weights for max_bipartite_match().
         #
         # Objective: prefer small |DBH_c - DBH_{c+1}| (distance) while gently
-        # breaking ties to reduce unnecessary rank crossings.
+        # breaking ties to reduce unnecessary rank crossings, then by position
+        # (lower column index, then lower row index).
         #
         # Implementation detail
         # - igraph matches by maximizing total weight.
@@ -157,11 +168,9 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
     # used to derive inter-census intervals (years) for growth validation.
     resolve_interval_years_pair <- function(tree_data) {
         dt <- tree_data[, .(CensusID, ExactDate)]
-        ## get mean exactdate per census
         dt_mean <- dt[, .(MeanDate = mean(ExactDate, na.rm = TRUE)), by = CensusID]
         setorder(dt_mean, CensusID)
 
-        ## dcast to wide format
         dt_wide <- dcast(dt_mean, 1 ~ CensusID, value.var = "MeanDate")
         ## compute interval between t0 and t1
         # interval_val <- (as.numeric(dt_wide[[as.character(t1)]]) - as.numeric(dt_wide[[as.character(t0)]])) / 365.25

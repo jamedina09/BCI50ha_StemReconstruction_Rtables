@@ -1,22 +1,27 @@
 ############################################################
 # dp_probabilistic_matching.R
-# Probabilistic greedy matching fallback for large state spaces
+# Probabilistic matcher: stochastic assignment of the stems of each census
+# pair, for the tags the DP does not solve
 ############################################################
 # When the DP cannot be used (state space too large, a dead end with no
-# feasible state, species or growth-form routing; see do_fallback()):
-#   1. Pairwise log-likelihoods (same bio model as DP)
+# feasible state, species or growth-form routing; see do_fallback() in
+# dp_global_dp.R):
+#   1. Pairwise log-likelihoods from the Bio_* parameters the DP uses
+#      (compute_pairwise_log_likelihood(): Gaussian growth, survival and the
+#      soft penalties; the DP's measurement-error mixture is not implemented
+#      here)
 #   2. Augment cost matrix with mortality/recruitment slots. Birth-death mode
 #      (birth_death = TRUE, the default): every stem may continue, die or be
 #      recruited in every census pair, one death cell per current stem and
 #      one recruit cell per next stem, so a link is taken only when it is
 #      more likely than the death of the earlier stem plus the recruitment of
-#      the later one (as in the DP). Legacy mode (birth_death = FALSE): only
-#      as many slots as the stem counts and the forbidden links require, so
-#      with stable counts every stem is forced to continue
+#      the later one (as in the DP). Count-based slots (birth_death = FALSE):
+#      only as many slots as the stem counts and the forbidden links require,
+#      so with stable counts every stem is forced to continue
 #   3. Draw n_samples stochastic assignments. Birth-death mode: Gumbel noise
 #      on every event cell and the exact best assignment of each perturbed
-#      pair (hungarian_min_rcpp). Legacy mode: Gumbel-noise greedy; a pair
-#      whose greedy assignment uses a forbidden (-Inf) link is re-solved
+#      pair (hungarian_min_rcpp). Count-based slots: Gumbel-noise greedy; a
+#      pair whose greedy assignment uses a forbidden (-Inf) link is re-solved
 #      exactly (enforce_feasible_assignment), so the hard limits hold; a
 #      violation no assignment can avoid is chosen as the DP does (hard
 #      penalty + likelihood without the hard gate). TrueStemID pins of every
@@ -43,6 +48,43 @@
 # estimation needed — they are already computed by dp_global_bio.R).
 
 # ---- Main entry point ----------------------------------------------------
+# match_stems_probabilistic(): reconstruct the stem identities of one tag.
+#
+# INPUTS
+#   tree_data        data.table of one tag with CensusID, DBH, TrueStemID,
+#                    ExactDate and the Bio_* columns (Bio_Mu_Growth,
+#                    Bio_Sigma0_Growth, Bio_Sigma1_Growth, Bio_Max_Shrink,
+#                    Bio_K_Shrink, Bio_H0_Mortality, Bio_Beta_Mortality,
+#                    Bio_Recruit_Meanlog, Bio_Recruit_Sdlog,
+#                    Bio_Recruit_MaxDBH_unit, Bio_Recruitment_lambda; optional
+#                    Bio_Gamma_Growth, Bio_Max_Growth, Bio_K_Growth). The
+#                    first value of each Bio_* column is used.
+#   min_growth, max_growth   hard bounds on annual growth (cm/yr), used when
+#                    the prune_* bounds are NULL
+#   anchor_start     CensusID of the anchor census. When no measured row at
+#                    that census has a TrueStemID, the last census with a DBH
+#                    is the anchor. Rows after the anchor are not matched.
+#   n_samples        number of stochastic assignments to draw
+#   temperature      scale of the Gumbel noise; higher = more random
+#   posterior_top_k  number of DP_PosteriorTop{k}ID / Prob columns (at least 1)
+#   posterior_samples_path, posterior_samples_format
+#                    passed to export_probabilistic_posteriors()
+#   posterior_sample_seed    seed set before sampling (NULL: none)
+#   prune_min_growth, prune_max_growth
+#                    replace min_growth / max_growth when not NULL
+#   prune_recruit_max_dbh    replaces Bio_Recruit_MaxDBH_unit when not NULL
+#   The remaining arguments are described next to their defaults below.
+#
+# RETURNS  tree_data (a copy ordered by CensusID) with ReconstructedStemID on
+#   its measured rows up to the anchor, ReconstructionMethod ("probabilistic",
+#   "given", "provisional_dp"), the posterior columns DP_PosteriorTop{k}ID /
+#   Prob, DP_PosteriorEntropy and DP_PosteriorReconstructedProb, and, when
+#   pin_truestemid is TRUE and a row has a TrueStemID that is not a
+#   provisional anchor ID, SweepAuditOverride and
+#   ReconstructedStemID_PreSweep. ConstraintViolation and obs_row_id are added
+#   when missing. The posterior samples are staged on disk, or attached as
+#   attribute "DP_Posterior_Samples" when return_samples = TRUE. A tag with no
+#   DBH, or with one measured census, returns before any sampling.
 
 match_stems_probabilistic <- function(tree_data,
                                       min_growth,
@@ -66,7 +108,7 @@ match_stems_probabilistic <- function(tree_data,
                                       dbh_round_max = 5.5, # only DBH below this (cm) was rounded
                                       dbh_round_width = 0.5, # class width (cm)
                                       return_samples = FALSE, # TRUE: attach samples as attr "DP_Posterior_Samples" instead of staging them
-                                      birth_death = TRUE, # TRUE: every stem may die / be recruited in every pair (see header); FALSE: legacy slots
+                                      birth_death = TRUE, # TRUE: every stem may die / be recruited in every pair (see header); FALSE: count-based slots
                                       verbose = FALSE) {
     tree_data <- tree_data[order(CensusID)]
     n_samples <- as.integer(n_samples)
@@ -264,10 +306,10 @@ match_stems_probabilistic <- function(tree_data,
 
     # --- Pins of every observation, for the track-pin mask ------------------
     # pin_info above covers only pins that point to a stem present at the
-    # anchor. Pins on stems that end before the anchor (Step 3a.5 / Step 3b
-    # StemID pins, trees last measured before 2010) were applied only to the
-    # exported table by the pin sweep, so the samples could group those
-    # observations differently from the export. pin_val[[i]][j] is the
+    # anchor. pin_val also covers the pins on stems that end before the anchor
+    # (Step 3a.5 / Step 3b StemID pins, trees last measured before 2010), so
+    # that the samples group those observations as the pin sweep groups them
+    # in the exported table. pin_val[[i]][j] is the
     # TrueStemID of obs j at census i (NA when not pinned; provisional anchor
     # IDs are not pins). While sampling backward, every next-census obs carries
     # the pin of its track (its own pin, or one inherited from a later census
@@ -536,7 +578,7 @@ match_stems_probabilistic <- function(tree_data,
     # ReconstructedStemID = the consensus (maximum-expected-accuracy) sample,
     # not the per-census marginal resolution above. Top-K and entropy columns
     # stay marginal; DP_PosteriorReconstructedProb = share of samples giving
-    # the observation the exported ID (same meaning as before).
+    # the observation the exported ID.
     .cons <- select_consensus_trajectory(stitched, obs_data)
     .chosen <- stitched[[.cons$index]]
     for (ci in seq_len(n_census)) {
@@ -554,9 +596,9 @@ match_stems_probabilistic <- function(tree_data,
         .cons$index, length(stitched), .cons$agreement, .cons$part_freq
     ))
 
-    # --- Diagnostic check: count residual growth violations from greedy
-    #     conflict resolution.  With growth-aware resolver + pin-consistent
-    #     sample filtering + sample-level repair, ideally 0 violations remain.
+    # --- Diagnostic check: count growth violations left in the exported
+    #     (consensus) trajectory.  The sample-level repair removes them,
+    #     except on links it keeps (e.g. between two pinned observations).
     #     We do NOT modify tree_data here — posteriors must stay pristine.
     {
         .n_violations <- 0L
@@ -606,11 +648,12 @@ match_stems_probabilistic <- function(tree_data,
     tree_data[.is_prov, ReconstructionMethod := "provisional_dp"]
 
     # ---- Hard-invariant final sweep ----------------------------------------
-    # The greedy/marginal stitching above honours pin_info[[i]] for rows whose
-    # TrueStemID is present at the anchor census (i.e. is in anchor_ids).
-    # Pre-anchor TrueStemIDs that are absent at the anchor are silently
-    # dropped by match(tsid, anchor_ids) -> NA, leaving those rows free to
-    # receive any greedy assignment.  This sweep enforces the hard invariant
+    # The sampling above honours the pins as groupings: pin_info[[i]] for rows
+    # whose TrueStemID is present at the anchor census (i.e. is in anchor_ids),
+    # pin_val[[i]] for every pinned row.  A track that ends before the anchor
+    # is labelled with a matcher ID (stitch_assignments_backward()), not with
+    # its pin, and rows without DBH are not sampled at all.  This sweep
+    # enforces the hard invariant
     # ReconstructedStemID == TrueStemID for ANY row with non-NA TrueStemID,
     # regardless of DBH or census position.  Mirrors the equivalent sweep
     # in dp_global_dp.R::finalize_out().
@@ -679,6 +722,31 @@ match_stems_probabilistic <- function(tree_data,
 }
 
 # ---- Pairwise log-likelihood matrix --------------------------------------
+# Log-likelihood of every link between a stem at census c and a stem at
+# census c+1: Gaussian growth likelihood of the annual growth, plus the log
+# survival probability of the earlier stem, plus the soft penalties.
+#
+# INPUTS
+#   dbh_curr, dbh_next   DBH (cm) of the stems at census c and c+1
+#   interval_years       years between the two censuses
+#   bio                  list built in match_stems_probabilistic(): mu_const,
+#                        mu_gamma, sigma0, sigma1 (growth mean and SD), h0,
+#                        beta_mort (mortality hazard), max_shrink,
+#                        max_growth_bio (bio hard bounds), k_shrink, k_growth
+#                        (soft penalty weights)
+#   min_growth, max_growth   hard bounds on annual growth (cm/yr); a link
+#                        outside them is forbidden (not applied when
+#                        non-finite)
+#   use_bio_hard_shrink, use_bio_hard_growth
+#                        also forbid links below bio$max_shrink / above
+#                        bio$max_growth_bio
+#   round_curr, round_next   TRUE when census c / c+1 recorded DBH in classes,
+#                        rounded down
+#   round_max, round_width   only DBH below round_max (cm) was rounded, in
+#                        classes of round_width (cm)
+#
+# RETURNS  n_curr × n_next matrix of log-likelihoods; -Inf for a forbidden
+#          link or a non-finite DBH.
 
 compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
                                             bio, min_growth, max_growth,
@@ -737,7 +805,10 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
             p_surv <- max(1e-12, min(1 - 1e-12, p_surv))
             ll_surv <- log(p_surv)
 
-            # Soft penalties (same as C++)
+            # Soft penalties: shrinkage as in the C++ cost; excess growth is
+            # measured above the bio hard bound max_growth_bio (the C++ cost
+            # uses Bio_Max_Growth_Soft), so it only acts when the bio growth
+            # gate is off
             ll_soft <- 0
             if (is.finite(bio$k_shrink) && bio$k_shrink > 0 && d1 < d0) {
                 ll_soft <- ll_soft - bio$k_shrink * (d0 - d1)^2
@@ -774,9 +845,19 @@ compute_pairwise_log_likelihood <- function(dbh_curr, dbh_next, interval_years,
 # or recruitments by their number of copies. The matrix carries attribute
 # "bd" = c(n_curr, n_next), which selects the matching sampler and fallback.
 #
-# Legacy mode (birth_death = FALSE): K = max(n_curr, n_next), raised only so
-# that an assignment without forbidden links exists; with stable stem counts
-# no death or recruitment slot exists and every stem must continue.
+# Count-based slots (birth_death = FALSE, the default of this function):
+# K = max(n_curr, n_next), raised only so that an assignment without forbidden
+# links exists; with stable stem counts no death or recruitment slot exists
+# and every stem must continue. Rows above n_curr are recruit sources and
+# columns above n_next death sinks; a matrix whose K was raised carries
+# attribute "k_raised" = c(K before, K).
+#
+# INPUTS   L          n_curr × n_next survival log-likelihoods
+#                     (compute_pairwise_log_likelihood())
+#          dbh_curr, dbh_next, interval_years, bio   as for L; bio also gives
+#                     recruit_lambda, recruit_meanlog, recruit_sdlog and
+#                     recruit_max_dbh (a larger recruit is forbidden)
+# RETURNS  K × K matrix of log-scores.
 
 augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio, K_min = NULL, birth_death = FALSE) {
     n_curr <- length(dbh_curr)
@@ -841,11 +922,11 @@ augment_cost_matrix <- function(L, dbh_curr, dbh_next, interval_years, bio, K_mi
     # the n_curr - M stems left need death columns (K - n_next) and the
     # n_next - M left need recruit rows (K - n_curr): feasible iff
     # K >= n_curr + n_next - M. The count above only looks at stems with NO
-    # allowed link, so it misses e.g. two stems whose only allowed successor
-    # is the same stem, and a forbidden link was then forced. At
+    # allowed link, so on its own it misses e.g. two stems whose only allowed
+    # successor is the same stem, which would force a forbidden link. At
     # K = n_curr + n_next - M every allowed assignment has exactly M
-    # survivals, which keeps the engine's maximum-survival design; pairs
-    # that were already feasible keep their K.
+    # survivals, which keeps the maximum-survival design of this mode; pairs
+    # that are feasible at the K above keep it.
     K_before <- K
     if (n_curr > 0L && n_next > 0L && K < n_curr + n_next) {
         M <- max_allowed_matching(is.finite(L))
@@ -1010,7 +1091,10 @@ fallback_log_cost <- function(A, L_free, dbh_next, interval_years, bio) {
 #   dbh_further : DBH vector at census i+2 (length n_next_next)
 #   interval_next : interval in years between census i+1 and i+2
 #   bio        : bio parameter list
-#   weight     : lookahead weight (0 disables, 0.5 default)
+#   weight     : lookahead weight (0 disables; match_stems_probabilistic()
+#                passes prob_lookahead_weight, 0.5 by default). The adjustment
+#                of a column is weight × (its continuity log-likelihood minus
+#                the best column's), floored at -2 before weighting.
 #
 # Returns: modified aug_cost matrix (same dimensions)
 
@@ -1182,15 +1266,15 @@ propagate_track_pin <- function(assignment, pin_curr, next_track_pin,
 # that the largest set of allowed survival links fits. The pin masks can then
 # forbid links that this K relied on: one stem at C6 pinned to A and one stem
 # at C7 pinned to B give a 1x1 matrix (13.8 -> 15.5 cm is allowed growth, so
-# no death slot) whose only link the mask forbids, and every sample had to
-# join A to B (tag 150279). The pin sweep then separated the pinned rows, but
-# the unpinned rows of that track kept its label, which can be another stem's
-# pin. When the masked survival links (largest allowed set M) need more
-# death/recruit slots than K has, the pair is rebuilt with
+# no death slot) whose only link the mask forbids, so that every sample would
+# have to join A to B (tag 150279); the pin sweep would then separate the
+# pinned rows while the unpinned rows of that track keep its label, which can
+# be another stem's pin. When the masked survival links (largest allowed set
+# M) need more death/recruit slots than K has, the pair is rebuilt with
 # K = n_curr + n_next - M (the rule augment_cost_matrix() applies to
 # growth-forbidden links) and masked again, so one pinned stem ends and the
-# other starts. Pairs with enough slots are returned exactly as masked before
-# (same matrices, so the same random numbers are drawn).
+# other starts. Pairs with enough slots are returned masked at their own size
+# (so the same random numbers are drawn for them).
 #
 # INPUTS  cost, fb  K×K cost (lookahead included) and fallback matrices
 #         pd        pair_data entry (n_curr, n_next, dbh_curr, dbh_next, iv, L_free)
@@ -1232,9 +1316,9 @@ pin_masked_pair <- function(cost, fb, pd, bio, mask) {
 #   noise on every event cell (links, deaths, recruitments), none on the
 #   empty cells, and the exact best assignment of the perturbed scores
 #   (hungarian_min_rcpp(), lpSolve when the compiled solver is absent).
-#   Legacy matrix: each row is assigned to the highest-scoring available
-#   column after adding Gumbel(0, temperature) noise, processed in descending
-#   order of row maxima.
+#   Matrix without that attribute (count-based slots): each row is assigned
+#   to the highest-scoring available column after adding Gumbel(0,
+#   temperature) noise, processed in descending order of row maxima.
 #
 # INPUTS
 #   log_cost_matrix  K×K matrix of log-likelihoods (augmented with
@@ -1351,7 +1435,7 @@ enforce_feasible_assignment <- function(noisy, assignment, fallback = NULL, nois
 # constraints.  Two layers of defense (mirroring the DP pathway):
 #
 #   1. Hard-rate check: annualized growth outside [min_rate, max_rate]
-#      is severed immediately (same as before).
+#      is severed immediately.
 #
 #   2. ME-informed cumulative-shrinkage check: even when each consecutive
 #      pair passes the hard rate, a long run of small decreases can
@@ -1368,7 +1452,8 @@ enforce_feasible_assignment <- function(noisy, assignment, fallback = NULL, nois
 #      per-pair greedy matcher.
 #
 # When a violation is found, the EARLIER observation is severed by assigning
-# it a new unique break-ID.  Up to max_passes iterations per sample (a
+# it a new unique break-ID (layer 2: the observation at the start of the
+# shrinkage run).  Up to max_passes iterations per sample (a
 # break can shorten trajectories and expose new violations).
 #
 # Pinned observations (TrueStemID, `pinned`) are never severed: the database
@@ -1377,7 +1462,20 @@ enforce_feasible_assignment <- function(noisy, assignment, fallback = NULL, nois
 # severed instead (unless it is pinned too or sits at the anchor census); a
 # link between two pinned observations is kept.
 #
-# Returns the modified stitched list (same structure).
+# INPUTS
+#   stitched     list of samples; each a list of per-census ID vectors
+#   obs_data     per-census observation data (uses $dbh and $n)
+#   intervals    years between consecutive observed censuses
+#   min_rate, max_rate   hard bounds on annual growth (cm/yr)
+#   me_sd1_a, me_sd1_b   small-error SD model of layer 2
+#   n_sigma_me   layer-2 threshold in SD units (Inf turns layer 2 off)
+#   max_passes   passes per sample
+#   use_bio_hard_shrink   FALSE skips layer 2
+#   pinned       list per census of logical vectors (TRUE = pinned
+#                observation), or NULL
+#
+# Returns the modified stitched list (same structure), with attributes
+# "sample_level_breaks" (all breaks) and "sample_level_me_breaks" (layer 2).
 
 repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
                                               min_rate, max_rate,
@@ -1519,7 +1617,8 @@ repair_stitched_growth_violations <- function(stitched, obs_data, intervals,
 #               index (1..n_anchor) for obs j, or NA if not pinned
 #   anchor_ids  integer vector of anchor IDs
 #   n_census    number of censuses
-#   min_keep    minimum number of surviving samples (safety net)
+#   min_keep    safety net: all samples are kept when fewer than
+#               min(min_keep, max(1, n_samples %/% 4)) are pin-consistent
 #   vcat        verbose logger
 #   prefix      log prefix
 #
@@ -1603,6 +1702,17 @@ filter_pin_consistent_samples <- function(stitched, pin_info, anchor_ids,
 }
 
 # ---- Stitch assignments backward from anchor ----------------------------
+# Turn each sample's per-pair assignments into a track ID per observation.
+# Anchor observations carry anchor_ids; walking backward, an observation
+# linked to a next-census observation inherits its ID, and an observation
+# sent to a death column gets an ID of its own (the same in every sample).
+#
+# INPUTS   all_samples  list of samples; each a list (one per census pair) of
+#                       assignment vectors (assignment[row] = col)
+#          obs_data     per-census observation data (uses $n)
+#          anchor_ids   ID of each anchor observation
+#          K            not used
+# RETURNS  list of samples; each a list of per-census integer ID vectors
 
 stitch_assignments_backward <- function(all_samples, obs_data, anchor_ids, K) {
     n_samples <- length(all_samples)
@@ -1663,6 +1773,23 @@ stitch_assignments_backward <- function(all_samples, obs_data, anchor_ids, K) {
 }
 
 # ---- Compute marginals from samples -------------------------------------
+# Per observation, the share of samples that give it each ID, written to
+# tree_data as DP_PosteriorTop{k}ID / Prob and DP_PosteriorEntropy, and one
+# ID per observation resolved census by census (ReconstructedStemID with its
+# share in DP_PosteriorReconstructedProb). match_stems_probabilistic() then
+# replaces that resolved ID by the consensus sample
+# (select_consensus_trajectory()).
+#
+# INPUTS   stitched         list of samples; each a list of per-census IDs
+#          tree_data        the tag's data.table (modified by reference)
+#          obs_data         per-census observation data ($n, $idx, $dbh)
+#          obs_census       not used
+#          anchor_pos       position of the anchor census in obs_data
+#          posterior_top_k  number of Top-k columns to fill
+#          intervals, min_rate, max_rate   when all three are given, a
+#                           candidate ID is skipped if it breaks the growth
+#                           bounds against the stem's nearest resolved census
+# RETURNS  tree_data
 
 compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
                                            obs_census, anchor_pos,
@@ -1937,14 +2064,17 @@ select_consensus_trajectory <- function(stitched, obs_data) {
 }
 
 # ---- Repair growth violations from marginal resolution -------------------
+# Not called by match_stems_probabilistic(), which exports the consensus
+# sample and only counts residual violations.
+#
 # The per-census greedy marginal resolution can assign the same StemID to
 # observations at consecutive censuses that violate growth bounds.  This
 # happens because the marginals are computed independently per census.
 #
-# Repair strategy: walk each StemID's trajectory.  When a violation is
-# found between census c and c+1, try to reassign the observation at
-# census c to one of its top-k posterior alternatives.  If no alternative
-# resolves the violation, break the track by assigning a new unique ID.
+# Repair: walk each StemID's trajectory.  When the growth between two
+# consecutive measured rows is outside [min_rate, max_rate], the earlier
+# row gets a new unique ID; up to 10 passes.  obs_data and posterior_top_k
+# are not used.  Returns tree_data (modified by reference).
 
 repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
                                               intervals, min_rate, max_rate,
@@ -2026,7 +2156,16 @@ repair_marginal_growth_violations <- function(tree_data, obs_data, obs_census,
 }
 
 # ---- Export posterior samples (mirrors DP format) -------------------------
-
+# Build the long samples table of a tag (Tag, Sample, CensusID,
+# ReconstructedStemID, ObsRowID; one row per measured observation and sample,
+# no logp column) and stage it as
+# <posterior_samples_path>/posteriors/.staging/tag_<Tag>_samples_raw_<ts>.rds
+# for finalize_posterior_paths(). <ts> is the global BATCH_TS when it exists,
+# otherwise the current time; a NULL posterior_samples_path falls back to the
+# global `out_dir`, then to tempdir(). posterior_samples_format ("rds",
+# "feather" or "csv") is stored in the staging file as the format of the
+# final paths file. `verbose` is not used (messages go through `vcat`).
+#
 # stage = FALSE: build samples_dt and return it without writing the staging
 # file (used when a DP resprout-split segment falls back to this matcher; the
 # split pairs the two segments' draws and stages them once per tag).
@@ -2084,7 +2223,6 @@ export_probabilistic_posteriors <- function(stitched, tree_data, obs_data,
         return(invisible(samples_dt))
     }
 
-    # ---- Recommended architecture (see dp_global/improvements.md) ----
     # Stage raw samples_dt (engine ID space). The post-engine pipeline will
     # translate via renumber mapping, re-run apply_bb_invariants_to_samples
     # in renumbered space, compute path_sig / paths_summary and write the
