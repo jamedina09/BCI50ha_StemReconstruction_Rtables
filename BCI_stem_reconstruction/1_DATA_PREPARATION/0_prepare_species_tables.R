@@ -1,14 +1,31 @@
 # =============================================================================
 # 0_prepare_species_tables.R
 #
-# Purpose: Prepare and update the BCI 50-ha plot species list by merging new and old taxonomy tables,
-#          and flagging known data issues for downstream processing.
+# Purpose: Prepare the BCI 50-ha plot species table: the species list (with
+#          growth forms) checked against the TNRS name service, completed from
+#          the ViewTaxonomy table, with notes on known data issues.
+#
+# Run from the project root (or from BCI_stem_reconstruction/). The TNRS calls
+# need an internet connection.
+#
+# Inputs (BCI_stem_reconstruction/DATA/RAW/):
+#   sp_tables/Lista_bci_mnemonics_formadevida.xlsx   species list ("new" taxonomy;
+#                                                    the file must be at this path)
+#   ViewFiles_bci_allcensuses/ViewTaxonomy_bci.csv    database taxonomy ("old")
+#   ViewFiles_bci_allcensuses/ViewFullTable_bci.csv   census records (mnemonics in use)
+# Outputs (BCI_stem_reconstruction/DATA/SPP_TABLE/, which must exist):
+#   bci_spptable.txt, bci_spptable.csv (both tab-separated) and
+#   bci_spptable.RData (object bci.spptable), one row per mnemonic with
+#   Mnemonic, Order, Family, Genus, SpeciesName, InfraspecificRank,
+#   InfraspecificEpithet, Authority, Synonyms, Lifeform_RFoster,
+#   Lifeform_RPerez_SAguilar, CommonName, Herbarium, Notes.
+# Packages: data.table, TNRS, stringr, readxl, inspectdf.
 # =============================================================================
 
 # Clear all objects from the workspace to avoid accidental contamination
 rm(list = ls())
 
-# Set data.table and print options for clarity
+# data.table print options
 options(
     datatable.print.class = FALSE,
     datatable.print.keys = TRUE,
@@ -22,7 +39,7 @@ library(data.table) # Fast table manipulation
 library(TNRS) # Taxonomic Name Resolution Service
 library(stringr) # String helpers (trimming, case, etc.)
 
-# Show how many threads data.table will use (for debugging/performance)
+# Number of threads data.table will use
 data.table::getDTthreads()
 
 # =============================================================================
@@ -59,23 +76,23 @@ colnames(spp_new) <- gsub("[^[:alnum:]_]", "", colnames(spp_new))
 inspectdf::inspect_na(spp_new)
 
 
-# --- 1b. Load old taxonomy table (CSV) and clean column names ---
+# --- 1b. Old taxonomy table (ViewTaxonomy): load and clean column names ------
 spp_old <- as.data.table(fread(TAXONOMY_OLD))
 colnames(spp_old) <- tolower(colnames(spp_old))
 colnames(spp_old) <- stringr::str_trim(colnames(spp_old))
 # Convert literal "NULL" strings to NA for proper handling
 spp_old[spp_old == "NULL"] <- NA
 
-# --- 1c. Load BCI inventory (CSV) and keep unique Tag–Mnemonic–CensusID ---
+# --- 1c. BCI inventory (ViewFullTable) ---------------------------------------
 sp_bci_raw_input <- as.data.table(fread(INPUT_FILE))
-# Keep only unique Tag–Mnemonic–CensusID combinations (one row per tree per census)
+# Unique Tag–Mnemonic–CensusID combinations (one row per tree per census)
 sp_bci_raw <- unique(sp_bci_raw_input[, .(Tag, Mnemonic, CensusID)])
 
 # =============================================================================
 # 1.1. CHECK RAW TAXONOMY DATA
 # =============================================================================
-# Identify known data problems in the new taxonomy table and mark rows that
-# need manual attention before TNRS validation.
+# Known data problems in the new taxonomy table: the lines below print the
+# rows concerned and record a note (column `notes`) where one applies.
 spp_new[, notes := NA_character_]
 
 # Example: Appunia siebertiii is correct; Morinda siebertii is a synonym.
@@ -117,10 +134,13 @@ sp_bci_raw_input[Mnemonic == "pterro"]
 # Replace with pterro:
 sp_bci_raw_input[Mnemonic == "pterof"]
 
-# FIXME: pterof should be replaced by pterro in the BCI inventory.
-# The correction is applied here in the current script.
+# FIXME: pterof should be replaced by pterro in the BCI inventory (raw data).
+# Below, the replacement is made in the copy held in memory, which this script
+# only uses to compare mnemonics; 1_prepare_viewfulltable.R.R makes the same
+# replacement in the table it prepares.
 
-# Legacy codes for Beilschmiedia and Quararibea are being checked against the raw inventory.
+# Beilschmiedia and Quararibea: compare the codes of the species list with
+# those used in the raw inventory.
 spp_new[especie %in% "pendula"]
 spp_new[especie %in% "asterolepis"]
 spp_new[especie %in% "tovarensis"]
@@ -131,7 +151,7 @@ unique(sp_bci_raw_input[Genus == "Quararibea", .(Mnemonic, Family, Genus, Specie
 
 spp_new[codigo %in% c("beilpe", "quaras")]
 
-# The only current inventory fix applied here is the known mnemonic correction
+# The only inventory fix applied here is the known mnemonic correction
 # `pterof -> pterro`.
 sp_bci_raw_input[, Mnemonic := ifelse(Mnemonic == "pterof", "pterro", Mnemonic)]
 bci_data_mnemonic <- sort(unique(sp_bci_raw_input[, Mnemonic]))
@@ -172,7 +192,6 @@ spp_new[codigo %in% inc[2], `:=`(
 spp_new[codigo %in% inc[1]]
 spp_new[codigo %in% inc[2]]
 
-# Remove extra annotations from authorities so TNRS can parse them cleanly.
 # Strip non-authority annotations (sensu, auct., nom. dub., ined.) from the
 # authority field; they confuse the TNRS parser
 spp_new[, autoridad := stringr::str_replace_all(
@@ -193,8 +212,11 @@ spp_new[
 
 
 # --- 2b. Build the TNRS name string -----------------------------------------
-# Create the query string for TNRS, including family, genus, species,
-# optional infraspecific rank, and authority.
+# build_tnrs_name(): query string for TNRS, "<Family> <Genus> <species>
+# [<rank> <infraspecific name>] [<authority>]", vectorised over its arguments.
+# Empty or NA parts are left out; the family is only included when it ends in
+# -aceae; an infraspecific name without a rank gets "subsp.". Returns a
+# character vector.
 
 build_tnrs_name <- function(
   family,
@@ -204,15 +226,13 @@ build_tnrs_name <- function(
   infra_name = NULL,
   authority = NULL
 ) {
-    # Start with genus
     name <- genus
-    # Add species
     name <- ifelse(
         !is.na(species) & species != "",
         paste(name, species),
         name
     )
-    # Add infraspecific rank + epithet
+    # Infraspecific rank + epithet
     has_infra <- !is.na(infra_name) & infra_name != ""
     name <- ifelse(
         has_infra,
@@ -223,7 +243,6 @@ build_tnrs_name <- function(
         ),
         name
     )
-    # Add authority
     name <- ifelse(
         !is.na(authority) & authority != "",
         paste(name, authority),
@@ -263,13 +282,13 @@ spp_new_to_check <- spp_new[!is.na(genero) & genero != ""]
 
 cat(nrow(spp_new_no_genero), "rows have no genus and will be skipped\n")
 spp_new[is.na(genero)]
-# apeihy, nects1, and nects3 have no genus; these are morphospecies (mects) and one that died before that will require manual review
+# apeihy, nects1 and nects3 have no genus in the new list (Apeiba "hybrida" and two Nectandra morphospecies); their taxonomy is filled from the old table in section 3
 cat(nrow(spp_new_to_check), "rows will be sent to TNRS\n")
 
 # Prepare the two-column input expected by TNRS(): ID + name_string
 tnrs_input <- spp_new_to_check[, .(ID, name_string)]
 
-# --- 2c. TNRS parse mode: verify parsing before resolving -------------------
+# --- 2d. TNRS parse mode: verify parsing before resolving -------------------
 # TNRS parse mode checks the name string syntax and component extraction.
 # Run this before resolve mode to catch any badly formed names early.
 
@@ -294,7 +313,7 @@ chk <- parsed[, .(
 chk_missing <- setdiff(min(spp_new_to_check$ID):max(spp_new_to_check$ID), chk$ID)
 spp_new_to_check[ID %in% chk_missing] # inspect dropped rows if any
 
-# --- 2d. TNRS resolve mode: retrieve accepted names -------------------------
+# --- 2e. TNRS resolve mode: retrieve accepted names -------------------------
 # Only run after confirming parse output looks correct.
 # sources: WFO (World Flora Online) + WCVP (Kew Plants of the World Online)
 # matches = "best": return only the single best match per name
@@ -308,27 +327,29 @@ results <- TNRS(
 )
 results_dt <- as.data.table(results)
 
-# --- 2e. Fix TNRS merged-ID artefact ----------------------------------------
-# TNRS occasionally merges two rows that submitted identical name strings into
-# a single result with a comma-separated ID (e.g. "1559,1558").
-# This happens here for the two Swartzia simplex subspecies.
-# Fix: duplicate that result row, assign each original ID separately.
+# --- 2f. Check for TNRS merged-ID results ------------------------------------
+# TNRS can merge two rows that submitted identical name strings into a single
+# result with a comma-separated ID (e.g. "1559,1558"). The two Swartzia simplex
+# varieties are told apart by the variety added to their name string in
+# section 2. The lines below list any merged ID and compare the returned IDs
+# with those of the species list; nothing is repaired here (a merged ID would
+# become NA in the numeric conversion further down).
 
-# Identify any merged-ID rows
+# Merged-ID rows, if any
 results_dt[grepl(",", ID)]$ID
 
-# Verify that the corrected results cover all expected IDs
+# IDs returned versus IDs of the species list
 setdiff(results_dt$ID, 1:nrow(spp_new)) # IDs in results not in spp_new
 setdiff(1:nrow(spp_new), results_dt$ID) # IDs in spp_new not in results
 
-## apeihy, nects1, and nects3 are not in results because they had no genus and were not sent to TNRS; these will require manual review
+## apeihy, nects1, and nects3 are not in results because they had no genus and were not sent to TNRS
 spp_new[ID %in% setdiff(1:nrow(spp_new), results_dt$ID)] # inspect any missing IDs in results
 
 # Convert ID to numeric for joining and sort for readability
 results_dt[, ID := as.numeric(as.character(ID))]
 setorder(results_dt, ID)
 
-# --- 2f. Diagnose problems ---------------------------------------------------
+# --- 2g. Diagnose problems ---------------------------------------------------
 # Assign a human-readable problem label to each row using TNRS score columns.
 # Rules are evaluated in order; fcase() returns the first matching condition.
 # Labels are written in Spanish to match the final output format.
@@ -395,9 +416,8 @@ results_dt[, problem := fcase(
 # Frequency table of problem categories — useful triage overview
 results_dt[, .N, by = problem][order(-N)]
 
-# --- 2g. Select and retain TNRS output columns ------------------------------
-# Keep only the columns that are actionable for downstream curation.
-# See the reference block below for a full description of each column.
+# --- 2h. Select and retain TNRS output columns ------------------------------
+# Keep only the columns used in the curation below.
 
 # Inspect any Swartzia varieties that may need special handling.
 results_dt[Genus_submitted == "Swartzia"]
@@ -420,12 +440,13 @@ cols_tnrs_clean <- c(
 
 results_dt <- results_dt[, ..cols_tnrs_clean]
 
-# --- 2h. Merge TNRS results back to new taxonomy and export -----------------
+# --- 2i. Merge TNRS results back to new taxonomy -----------------------------
 
-# Remove helper columns created for TNRS submission (no longer needed)
+# Remove the helper column created for the TNRS submission
 spp_new[, name_string := NULL]
 
-# Left join: keep all rows of spp_new; attach TNRS scores where available
+# Full join on ID (all = TRUE): every row of spp_new is kept, with the TNRS
+# columns where a result exists
 spp_new <- merge(
     spp_new,
     results_dt,
@@ -437,7 +458,7 @@ spp_new <- merge(
 # 3. APPLY TNRS CORRECTIONS
 # =============================================================================
 # Use the TNRS diagnosis labels to apply safe fixes.
-# - Missing from the new list: keep the old taxonomy values.
+# - Not sent to TNRS (no genus): accepted here, completed from the old taxonomy below.
 # - Reclassified family: update only the family.
 # - Morphospecies: accept genus-only names.
 # - Authority formatting: standardise authority text.
@@ -454,12 +475,11 @@ spp_new[, solution := problem]
 message("Problem distribution before corrections:")
 print(table(spp_new$solution, useNA = "ifany"))
 
-# --- Check 1: Species not present in Rolando's list --------------------------
-# Some BCI mnemonics (e.g. apeihy, nects1, nects3) were not in the new
-# taxonomy and therefore have NA in `problema`. They already carry valid
-# name data from the old taxonomy (prev_* columns); mark them as OK.
+# --- Check 1: Rows that were not sent to TNRS --------------------------------
+# The rows without a genus in the new list (apeihy, nects1, nects3) were not
+# sent to TNRS and therefore have NA in `problem`. Their family, genus and
+# species are filled from the old taxonomy further below; mark them as OK.
 spp_new[is.na(solution)]
-# this species will be checked later
 spp_new[is.na(solution), solution := "OK"]
 print(table(spp_new$solution, useNA = "ifany"))
 
@@ -532,7 +552,7 @@ print(table(spp_new$solution, useNA = "ifany"))
 
 # --- Final authority sweep ---------------------------------------------------
 # Catch any remaining rows where the authority still differs from the backbone
-# value (e.g. minor formatting differences not covered by Check 5).
+# value (e.g. minor formatting differences not covered by Check 4).
 message("Remaining authority mismatches after all checks:")
 print(spp_new[autoridad != Accepted_name_author, .(codigo, autoridad, Accepted_name_author)])
 spp_new[
@@ -540,8 +560,8 @@ spp_new[
     autoridad := Accepted_name_author
 ]
 
-spp_new[, texto := NULL] # drop helper column no longer needed
-spp_new[, fotos := NULL] # drop TNRS output column no longer needed
+spp_new[, texto := NULL] # column of the species list that is not exported
+spp_new[, fotos := NULL] # column of the species list that is not exported
 
 spp_new[autoridad != Accepted_name_author]
 spp_new[, Accepted_name_author := NULL]
@@ -579,7 +599,7 @@ inc <- unique(spp_new[is.na(orden) | is.na(familia) | is.na(genero) | is.na(espe
 
 to_replace <- spp_old[mnemonic %in% inc]
 
-# Fill missing taxonomy fields from the old ViewTaxonomy for morphospecies
+# Fill missing taxonomy fields from the old ViewTaxonomy (the codes without a genus in the new list)
 spp_new[codigo %in% inc[1]]
 spp_new[
     codigo %in% inc[1],
@@ -629,7 +649,7 @@ spp_new[codigo == "nects3", f_de_vida_r_perez_s_aguilar := "árbol"]
 spp_new[codigo %in% c(inc, "swars1", "swars2")]
 
 # =============================================================================
-# 11. ASSEMBLE FINAL bci.spptable AND EXPORT
+# 4. ASSEMBLE FINAL bci.spptable AND EXPORT
 # =============================================================================
 
 # Retain only the columns needed for the species table; drop all comparison
@@ -656,7 +676,6 @@ full_out <- spp_new[, ..cols_clean]
 names(full_out)
 
 # --- Rename columns to English ------------------------------------------
-# ForestGEO/CTFS conventions use English column names; rename to match.
 
 setnames(
     full_out,
@@ -673,7 +692,7 @@ setnames(
 # count nrows per Lifeform_RPerez_SAguilar
 full_out[, .N, by = Lifeform_RPerez_SAguilar]
 
-# --- 11e. Export -------------------------------------------------------------
+# --- Export ------------------------------------------------------------------
 bci.spptable <- full_out
 
 output_path <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "SPP_TABLE")
@@ -693,6 +712,7 @@ save(
 )
 message("Exported: DATA/SPP_TABLE/bci_spptable.RData")
 
+# Same table with a .csv extension (also tab-separated)
 fwrite(
     bci.spptable,
     file.path(output_path, "bci_spptable.csv"),
