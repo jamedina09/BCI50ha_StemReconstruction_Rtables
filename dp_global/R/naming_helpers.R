@@ -1,9 +1,10 @@
 # naming_helpers.R
 # Helper functions for building canonical output names and encoding numeric
-# values for directory-safe names used by `main_cpp.R`.
+# values for directory-safe names. Sourced by the drivers (main_cpp.R,
+# main_cpp_chunk.R, main_cpp_bci.R and the BCI chunk driver).
 
 # Encode numeric values for directory-safe names
-# -0.5 -> m0p5, 7.5 -> 7p5
+# -0.5 -> m0p5, 7.5 -> 7p5; NULL or NA -> "NA"
 encode_num <- function(x) {
     if (is.null(x) || is.na(x)) {
         return("NA")
@@ -15,8 +16,22 @@ encode_num <- function(x) {
 }
 
 # Build a directory-safe output name using the run's key parameters. This
-# function expects the calling environment (main_cpp.R) to define the
-# variables referenced (e.g., BATCH_TS, CONFIG_NAME, WHICH_TAG, DP_MODE, etc.).
+# function takes no arguments: it reads the driver's global variables
+# RUN_ALL_TAGS, WHICH_TAG, DP_MODE, USE_MEASUREMENT_ERROR,
+# MAX_GROWTH_HARD_SOURCE, MAX_GROWTH_FIXED, MAX_SHRINK_HARD_SOURCE,
+# MAX_SHRINK_FIXED, K_GROWTH_SOURCE, K_GROWTH_FIXED, K_SHRINK_SOURCE and
+# K_SHRINK_FIXED, and, when they exist, BATCH_TS, CONFIG_NAME,
+# DBH_ROUND_CENSUSES_INT, PROB_BIRTH_DEATH, RECRUIT_RATE_UNIT and
+# COVERAGE_RULE.
+# Returns one string:
+#   <timestamp>_<config>_<tags>_<DP mode>_<ME label>_<g>_<s>_<kg>_<ks>_rcpp
+# e.g. 20261005_232052_unknown_allT_DP_MB_NME_R12_BD_LT_CU_g5_sm0p5_kg0_ks0_rcpp
+#   tags    : allT (all tags) or T<WHICH_TAG>
+#   DP mode : NO_DP (none), DP_S (map), DP_M (marginals), DP_MB
+#             (marginals+bins), DP_U (other)
+#   g / s   : hard growth / shrink bound: g<value> / s<value> when fixed, gD / sD
+#             from data, gU / sU otherwise
+#   kg / ks : soft growth / shrink penalty, coded the same way
 build_out_dir_name <- function() {
     # Timestamp: use BATCH_TS if provided; else fallback to current date+time
     ts <- if (exists("BATCH_TS") && nzchar(BATCH_TS)) BATCH_TS else format(Sys.time(), "%Y%m%d_%H%M%S")

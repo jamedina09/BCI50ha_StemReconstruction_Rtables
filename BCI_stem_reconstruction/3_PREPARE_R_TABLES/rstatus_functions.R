@@ -11,7 +11,7 @@
 #   fix_resurrections()  alive later => never dead                  (Section 8)
 #   rstatus_tree_dg()    dead stem -> G (tree alive) or D (tree dead) (Section 10)
 #
-# Rules (user decisions of 2026-10-04):
+# Rules:
 #   Evidence of life : an "alive" record (with or without DBH), or a DBH on a
 #                      "broken below", "missing" or status-less record.
 #   Dead record      : "dead", "stem dead" (with or without DBH) and
@@ -68,6 +68,10 @@ rstatus_propagate <- function(histories) {
 # ------------------------------------------------------------------------
 # HELPER FUNCTION: fix_resurrections
 # ------------------------------------------------------------------------
+# Section 8: resolve D->A / G->A transitions in encounter histories (see the
+# PARAMETERS / RETURNS notes inside). The default log_file reads CHECK_folder,
+# a global of 2_create_R_tables_BCI.R; pass log_file = NULL to write no log.
+# Stops when the histories differ in length or dbh_matrix has another shape.
 fix_resurrections <- function(status_vec,
                               dbh_matrix,
                               stem_ids = NULL,
@@ -80,10 +84,13 @@ fix_resurrections <- function(status_vec,
   #   stem_ids   : optional StemIDs for the log
   #   dbh_aware  : TRUE  -> per-cell decision uses DBH evidence
   #                FALSE -> lifespan rule: every DA/GA -> AA (backfill all);
-  #                         the mode used by this script
-  #   log_file   : audit log path
+  #                         the mode used by 2_create_R_tables_BCI.R and by
+  #                         compute_rstatus()
+  #   log_file   : audit log path (NULL: no log)
+  #   verbose    : print a one-line summary
   #
-  # RETURNS list with corrected status_vec + counts + flagged data.table.
+  # RETURNS list(status_vec = corrected histories, n_backfill, n_demote,
+  #   flagged = one row per D->A / G->A cell with the action taken).
   #
   # IMPLEMENTATION (single matrix pass + vectorized string ops):
   #   1. Build status matrix once.
@@ -148,7 +155,7 @@ fix_resurrections <- function(status_vec,
     smat[cbind(cell_rows[is_dem], cell_cols[is_dem])] <- prev_codes[is_dem]
   }
 
-  # ---- rebuild string vector (vectorized; ~50x faster than apply) -------
+  # ---- rebuild string vector ---------------------------------------------
   new_vec <- do.call(paste0, lapply(seq_len(n_censuses), function(j) smat[, j]))
 
   # ---- apply backfills via gsub on the rows that need it ----------------
@@ -246,7 +253,7 @@ rstatus_tree_dg <- function(status_matrix, tree_id) {
 #   status, dbh : matrices [stem x census] of raw Status and DBH
 #   tree_id     : one value per stem
 # Returns list(Rstatus, dbh): matrices of the same shape; dbh is the raw DBH,
-# exported unchanged (Step 4: no DBH is removed or imputed).
+# exported unchanged (no DBH is removed or imputed).
 compute_rstatus <- function(status, dbh, tree_id) {
   code <- matrix(rstatus_raw_code(as.vector(status), as.vector(dbh)), nrow = nrow(status))
   h <- do.call(paste0, as.data.frame(code, stringsAsFactors = FALSE))

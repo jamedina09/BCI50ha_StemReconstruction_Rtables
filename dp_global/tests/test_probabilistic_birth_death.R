@@ -50,7 +50,8 @@ test_that("birth-death matrix: one death cell per current stem, one recruit cell
   rec <- A[3:5, 1:3]
   expect_true(all(is.finite(diag(rec))) && all(!is.finite(rec[row(rec) != col(rec)])))
   expect_true(all(A[3:5, 4:5] == 0))
-  # legacy mode is unchanged: K = max(n_curr, n_next), no "bd" attribute
+  # count-based slots (birth_death = FALSE, the default of augment_cost_matrix()):
+  # K = max(n_curr, n_next), no "bd" attribute
   Al <- augment_cost_matrix(L, d0, d1, 5, bio)
   expect_null(attr(Al, "bd"))
   expect_equal(nrow(Al), 3L)
@@ -91,6 +92,8 @@ clump <- function() {
     Bio_Recruit_MaxDBH_unit = 26, Bio_Recruitment_lambda = bio$recruit_lambda)]
   x
 }
+# Run the matcher on the clump with birth_death = bd; returns the IDs of the
+# dying stem and of the new stem, and whether the two stable stems stay linked.
 run_clump <- function(bd) {
   out <- match_stems_probabilistic(clump(), min_growth = -0.5, max_growth = 5, anchor_start = 3L, n_samples = 100L,
     posterior_sample_seed = 7L, prob_lookahead_weight = 1, n_sigma_me = Inf, birth_death = bd, return_samples = TRUE)

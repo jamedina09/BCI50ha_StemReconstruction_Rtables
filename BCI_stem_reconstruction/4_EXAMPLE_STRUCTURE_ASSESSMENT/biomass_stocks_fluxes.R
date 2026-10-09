@@ -34,6 +34,14 @@
 # All AGB calculations use taper-corrected DBH (dbh_t, _t suffix).
 # [EDGE CASE] notes flag non-trivial boundary conditions throughout.
 #
+# INPUTS (run from the project root)
+# ------
+#   BCI_stem_reconstruction/DATA/RTABLES/bci.stem1..9.Rdata   stage-3 R tables
+#   BCI_stem_reconstruction/DATA/RTABLES/bci.spptable.rdata   species table
+#   wd/doi_10_5061_dryad_5qfttdzn3__v20260403/WD_species.txt  wood density
+#     (in this folder)
+#   Packages: data.table, truncnorm, lubridate, HDInterval, ggplot2, scales, cowplot
+#
 # OUTPUTS (written to BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/)
 # --------
 #   plot_agb_dynamics.png   Standing AGB, productivity/mortality, and net change
@@ -67,7 +75,7 @@ workspace_root <- getwd()
 # hom_change_threshold        — POM shift (m) above which a row is flagged as outlier
 # dbh_interp_method           — "linear", "locf", or "mean" (DBH NA-fill method)
 
-remove_strangler_figs <- TRUE # exclude all Ficus strangler spp. (Rutishauser 2020)
+remove_strangler_figs <- TRUE # exclude trees of four strangler Ficus spp. with a stem > 500 mm DBH (Rutishauser 2020)
 use_median_palm_dbh <- TRUE # replace palm DBH with species median (except Socratea)
 biomass_allometry <- "chave14" # "chave14" or "chave05"
 use_local_height_allometry <- TRUE # use Martinez-Cano 2019 height model
@@ -226,13 +234,16 @@ rm(large_strangler_figs)
 # ============================================================
 # Section 5 — Taper correction
 # ============================================================
-# Cushman et al. 2014
+# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`
+# (taper model of Cushman et al. 2014):
+#   b      = exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
+#   dbh_at = dbh_cm / exp(-b * (hom - common_hom))
+# dbh_mm in mm, hom in m (NA is read as common_hom). Returns mm; NA where the
+# DBH or the HOM is not positive. Stops when the two vectors differ in length.
 taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
-  # Defensive checks
   if (length(dbh_mm) != length(hom)) {
     stop("'dbh_mm' and 'hom' must have the same length")
   }
-  # copy inputs to avoid modifying caller's vectors
   dbh_mm <- as.numeric(dbh_mm)
   hom <- as.numeric(hom)
   # Replace NA heights with 1.3 m (do not modify valid measured heights)
@@ -252,7 +263,8 @@ taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
   return(out_mm)
 }
 
-# NOTE: dbh should be in cm for the equation.
+# taper_2014() takes the DBH in mm and returns mm. `dbh` becomes the
+# taper-corrected value; the recorded one is kept in dbh_raw.
 df_stem[, hom := ifelse(is.na(hom), 1.3, hom)]
 df_stem[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
 df_stem[, dbh_raw := dbh]
@@ -446,7 +458,7 @@ agb_bci <- function(dbh, # dbh, in cm
       agb <- 0.0509 * wsg * dbh^2 * h / 1000
     }
     if (method == "chave14") {
-      # Chave et al. 2014, equation 4 with the BIOMASS package
+      # Chave et al. 2014, equation 4 (kg, converted to Mg)
       agb <- (0.0673 * (wsg * h * dbh^2)^0.976) / 1000
     }
   } else {
@@ -457,7 +469,8 @@ agb_bci <- function(dbh, # dbh, in cm
         0.207 * log(dbh)^2 - 0.0281 * log(dbh)^3) / 1000
     }
     if (method == "chave14") {
-      # Chave et al. 2014, equation 7 with the BIOMASS package (transform into kg)
+      # Chave et al. 2014, equation 7, with the environmental stress value E
+      # (kg, converted to Mg)
       E <- 0.05176398
       agb <- exp(-2.023977 - 0.89563505 * E + 0.92023559 *
         log(wsg) + 2.79495823 * log(dbh) - 0.04606298 * (log(dbh)^2)) / 1000
@@ -577,13 +590,13 @@ df_stem[, size := cut(dbh_cm,
 #             reversed dates). A warning is issued.
 # [EDGE CASE] dT >= 10 yr is also flagged as suspicious (BCI intervals are ~5y).
 
-# 11a. Time interval per stem between consecutive observations
+# 12a. Time interval per stem between consecutive observations
 data.table::setorder(df_stem, treeID, stemID, CensusID)
 
-# Some rows lack ExactDate (stems from unidentified quadrats). We fill them with
-# a two-step imputation so that every row gets a date and dT is never NA due to
-# a missing date (only the first census of each stem legitimately has dT = NA
-# because there is no prior row to difference against).
+# ExactDate was completed from `date` in Section 2, so every row already has a
+# date and the count below is 0. The two fills that follow only act if a date
+# were still missing, so that dT is never NA for want of a date (only the
+# first census of each stem has dT = NA, because there is no prior row).
 #
 # Step 1: fill with the median date of all stems in the same quadrat × census.
 # Step 2: fill any remaining NAs (e.g. quadrat itself is NA/unknown) with the
@@ -624,14 +637,14 @@ if (n_bad_dT > 0) {
 }
 rm(n_bad_dT)
 
-# 11b. Ensure rows are in order before lag/lead operations.
+# 12b. Ensure rows are in order before lag/lead operations.
 data.table::setorder(df_stem, treeID, stemID, CensusID)
 
-# 11c. Lag base values per stem
+# 12c. Lag base values per stem
 df_stem[, prev_dbh_cm := shift(dbh_cm), .(treeID, stemID)]
 df_stem[, prev_agb_t := shift(agb_t), .(treeID, stemID)]
 
-# 11d. Recruit detection: first row per stem where the stem is alive (Rstatus=A,
+# 12d. Recruit detection: first row per stem where the stem is alive (Rstatus=A,
 #      valid dbh) AND there is no PRIOR alive observation. Recruits at CensusID 1
 #      are excluded (they are start-of-monitoring, not new recruits).
 df_stem[, n_alive_prior := cumsum(!is.na(dbh_cm) & Rstatus == "A") -
@@ -639,11 +652,11 @@ df_stem[, n_alive_prior := cumsum(!is.na(dbh_cm) & Rstatus == "A") -
 df_stem[, is_recruit := !is.na(dbh_cm) & Rstatus == "A" &
   n_alive_prior == 0L & CensusID >= 2L]
 
-# 11e. Standard lag-difference growth (ongoing stems with both c and c+1 alive+measured)
+# 12e. Standard lag-difference growth (ongoing stems with both c and c+1 alive+measured)
 df_stem[, Ddbh_cm := fifelse(!is.na(dbh_cm) & !is.na(prev_dbh_cm), (dbh_cm - prev_dbh_cm) / dT, NA_real_)]
 df_stem[, Dagb_t := fifelse(!is.na(agb_t) & !is.na(prev_agb_t), (agb_t - prev_agb_t) / dT, NA_real_)]
 
-# 11e-bis. 1985 small-stem rounding correction (Section 10b): growth only.
+# 12e-bis. 1985 small-stem rounding correction (Section 10b): growth only.
 n_corrected_1985 <- correct_1985_small_stem_growth(df_stem)
 message(sprintf(
   "[ROUNDING] 1985->1990 growth replaced by 5-mm class means for %d small stems (stocks unchanged).",
@@ -651,7 +664,7 @@ message(sprintf(
 ))
 rm(n_corrected_1985)
 
-# 11f. Recruit gain: assign Dagb = agb / dT at the row where the recruit
+# 12f. Recruit gain: assign Dagb = agb / dT at the row where the recruit
 #      first appears.
 df_stem[is_recruit == TRUE, Dagb_t := fifelse(!is.na(dT) & dT > 0, agb_t / dT, NA_real_)]
 
@@ -723,15 +736,14 @@ df_stem[, c("tot_rawp_t") := NULL]
 #  At that row, if a next census exists, mortality flux = agb / dT_mort
 #  where dT_mort is the time from census c to census c+1.
 #
-# Rstatus codes used by the BCI RTABLES (per 3_PREPARE_R_TABLES/2_create_R_tables_BCI.R):
-#   A = alive,  D = dead (whole stem),  G = stem dead but tree alive,
-#   P = prior to first observation,  N = unresolved (rare; resolved to P/D/G)
+# Rstatus codes of the BCI R tables (3_PREPARE_R_TABLES/2_create_R_tables_BCI.R):
+#   A = alive,  G = stem dead and its tree alive,  D = stem dead and its whole
+#   tree dead,  P = before the stem's first record
 #
 # [EDGE CASE] Stems alive through the final census (9) have no forward
 #             interval → dT_mort = NA → DagbM = NA. Correctly NOT counted as dead.
-# [EDGE CASE] "Zombie" stems (A → D → A) have last_census_alive set to the
-#             LAST alive census. Intermediate dead intervals are not tracked
-#             as separate events here. (This is not an issue here; comment left for record.)
+# [EDGE CASE] The R tables never hold an A after a D or G (stage 3), so a stem
+#             dies at most once and last_census_alive is the end of its life.
 # [EDGE CASE] A stem alive in only one census is counted as a mortality
 #             if its next census is D or G — ecologically correct.
 # [EDGE CASE] Stem-level next_date can be NA if the stem has no row at c+1.
@@ -1122,20 +1134,21 @@ run_tests()
 # ============================================================
 #
 # Design:
-#   Stock  — aggregated directly from df_stem_status for ALL 9 censuses
-#            (every census with alive stems is included naturally).
+#   Stock  — aggregated from df_stem_status per quadrat and census; censuses
+#            2-9 are summarised (census 1 is left out, as for the fluxes).
 #   Fluxes — aggregated from df_stem_demo_quadrat, which covers intervals
-#            c → c+1 indexed at c. Census 1 (interval 1→2) is excluded
-#            at user request; the final interval (8→9) is included.
+#            c → c+1 indexed at c. Census 1 (interval 1→2) is excluded;
+#            the final interval (8→9) is included.
 #
 # Spatial replication: 1250 quadrats of 20×20 m (400 m²).
 # ha⁻¹ conversion: multiply by 10000/400 = 25.
-# Summary per census: plot mean ± 95% CI across quadrats (percentile bootstrap).
+# Summary per census: plot mean and 95% interval across quadrats (bootstrap of
+# the quadrat mean; highest-density interval of the bootstrap means).
 
 ha_factor <- 10000 / 400 # 400 m2 to ha-1
 
-# ExactDate has been filled in section 11 (quadrat median → plot median fallback),
-# so dT values are based on real measurement dates, not a mean census year.
+# Every row has a date (Section 2), so dT values are based on measurement
+# dates, not a mean census year.
 
 # get median year per census for plotting (x-axis labels)
 census_yr_lut <- df_stem_status[
@@ -1193,7 +1206,7 @@ bootstrap_ci <- function(data,
   return(result)
 }
 
-# --- Stock: all 9 censuses (CensusID 2–9) ---
+# --- Stock: censuses 2–9 ---
 
 stock_q <- df_stem_status[
   !is.na(quadrat) & quadrat != "",
@@ -1390,7 +1403,7 @@ ggsave(
 )
 
 # ============================================================
-# Section 16 — Figure D: AGB stock and fluxes by size class
+# Section 20 — Figure D: AGB stock and fluxes by size class
 # ============================================================
 # Uses df_stem_demo (per quadrat × size × CensusID) — already built.
 # Size classes: [0,10), [10,20), [20,50), [50,500) cm DBH.
@@ -1495,7 +1508,6 @@ setnames(
 )
 data.table::setorder(size_flux_summary, size, CensusID)
 
-# Flux midpoint on the real year axis (CensusYear, not CensusID).
 # Flux midpoint on the real year axis (CensusYear, not CensusID).
 df_size_flux_long <- rbind(
   size_flux_summary[, .(CensusID, CensusYear, size,

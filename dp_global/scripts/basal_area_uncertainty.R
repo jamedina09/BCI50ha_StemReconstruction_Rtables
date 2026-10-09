@@ -23,6 +23,19 @@
 ### Usage (from project root):
 ###   Rscript dp_global/scripts/basal_area_uncertainty.R \
 ###     --RUN_DIR=dp_global/output/<run_dir>
+###   (RUN_DIR may also be assigned before sourcing; a relative path is
+###   resolved against the project root)
+###
+### Inputs (read from RUN_DIR/):
+###   stem_reconstruction_dp_global_rcpp.csv — reconstruction (required;
+###     Tag, CensusID, DBH in cm, ExactDate, ReconstructedStemID, obs_row_id)
+###   posteriors/tag_<Tag>_posterior_samples_*_paths.csv — posterior paths.
+###     Only CSV path files are read; a run made with another
+###     POSTERIOR_SAMPLES_FORMAT gets the MAP outputs only.
+###   Paths are weighted by their path_prob.
+###
+### Packages: data.table, ggplot2, patchwork, scales (here, when installed,
+### resolves a relative RUN_DIR).
 ###
 ### Outputs (written to RUN_DIR/):
 ###   basal_area_tag_census.csv  — per-tag x census BA and stem count
@@ -79,10 +92,13 @@ census_dates <- rec[!is.na(ExactDate),
 ]
 setkey(census_dates, CensusID)
 
+# Basal area in m^2 of a stem with DBH in cm
 ba_m2 <- function(dbh) pi / 4 * (dbh / 100)^2
 
 # ---- 2. Map posterior files to tags -------------------------------------
 
+# Parse one `recon` string of a paths file ("<obs_row_id>:<StemID>;...") into
+# a data.table(obs_row_id, StemID)
 parse_recon <- function(recon_str) {
     pairs <- strsplit(recon_str, ";", fixed = TRUE)[[1]]
     parts <- strsplit(pairs, ":", fixed = TRUE)
@@ -140,6 +156,13 @@ cat("[BA] Tag x census rows:", nrow(tag_census), "\n")
 
 # ---- 4. BA change decomposition (MAP) ----------------------------------
 
+# BA change of one tag between the census pairs in census_pairs (c_from,
+# c_to), for one identity assignment.
+#   stem_dt : data.table(StemID, CensusID, BA), one row per measured stem
+# A stem present at both censuses is a survivor (Growth_BA = change of its
+# BA), at c_from only a death (Loss_BA = minus its BA) and at c_to only a
+# recruit (Gain_BA = its BA). Returns one row per pair with the three
+# components, DeltaBA_total and the three stem counts.
 decompose_ba_change <- function(stem_dt, census_pairs) {
     results <- vector("list", nrow(census_pairs))
     for (i in seq_len(nrow(census_pairs))) {
@@ -222,6 +245,7 @@ cat(
 
 # ---- 5. Posterior uncertainty in decomposition --------------------------
 
+# Smallest value whose cumulative weight reaches `prob` (weights `w` sum to 1)
 weighted_quantile <- function(vals, w, prob) {
     ord <- order(vals)
     cw <- cumsum(w[ord])
@@ -652,7 +676,9 @@ if (length(all_path_decomp_list) > 0L) {
         )
     }
 
-    # Helper: draw density panel for a component
+    # Helper: draw density panel for a component (weighted kernel density of
+    # `vals`, its weighted mean as a vertical line; a text panel when there
+    # are fewer than two values or the density fails)
     draw_density_panel <- function(vals, weights, col_fill, col_line, main_title, xlab_expr) {
         if (length(vals) < 2L || all(is.na(vals))) {
             plot.new()
@@ -761,6 +787,7 @@ if (length(all_path_decomp_list) > 0L) {
 # Helps visualise the *identity* uncertainty that drives the BA
 # decomposition uncertainty quantified below.
 
+# ggplot theme of the trajectory panels
 theme_traj <- function() {
     theme_bw(base_size = 9) +
         theme(
@@ -772,6 +799,9 @@ theme_traj <- function() {
         )
 }
 
+# One trajectory panel: DBH against census for the tag's measured rows
+# (rec_tag), coloured by the stem IDs in assign_dt (obs_row_id, StemID).
+# stem_levels and stem_palette keep the colours the same in every panel.
 build_traj_panel <- function(rec_tag, assign_dt, title_str, subtitle_str,
                              stem_levels, stem_palette) {
     d <- merge(rec_tag[, .(obs_row_id, CensusID, DBH)],
@@ -894,6 +924,7 @@ for (tg_str in names(post_tag_map)) {
 # Shows how identity uncertainty across posterior trajectories propagates
 # into per-stem BA paths and into the BA-change decomposition.
 
+# ggplot theme of the uncertainty-propagation page
 theme_prop <- function() {
     theme_bw(base_size = 10) +
         theme(

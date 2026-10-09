@@ -12,8 +12,9 @@
 # compared, while a recruit above the recruit limit is only penalised, so the
 # engine books a death plus an impossible recruit for one physical trunk.
 #
-# What: join an ended stem s0 (last measurement at census c) with a stem s1 of
-# the same tree that starts at c + 1, when
+# What: in trees flagged as multi-stem (single_stem_tags == FALSE), join an
+# ended stem s0 (last measurement at census c) with a stem s1 of the same
+# tree that starts at c + 1, when
 #   1. s1 is an impossible recruit: it starts at or above the recruit limit
 #      (no new stem starts that large) in a tree measured before;
 #   2. s0 is the only stem of the tree whose measurements end at c (the only
@@ -41,10 +42,19 @@
 # call finds nothing to join.
 #
 # Used by 2_STEM_IDENTIFICATION/2_merge_chunks_to_datatable.R (export) and
-# 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R (posterior samples).
+# 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R (posterior samples), both in
+# BCI_stem_reconstruction/.
+#
+# Units: DBH and the taper-corrected DBH (dbh_with_best_candidate_taper_corrected)
+# are in mm, as are recruit_max_mm and min_dbh_mm; max_shrink and max_growth
+# are in cm/yr and are compared with the growth of the taper-corrected DBH.
 # ========================================================================
 
 # Visible check (prints ✓ / ❌; on failure also warns, then stops).
+#   ok       : TRUE when the check passes
+#   msg      : what is checked
+#   examples : optional values shown on failure (first 10)
+#   n_bad    : optional number of failing cases shown on failure
 mr_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     ok <- isTRUE(ok)
     if (ok) {
@@ -62,7 +72,8 @@ mr_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
 
 .mr_r_regex <- "\\b(R|RP|RF|RT|QR|OR)\\b"
 
-# Measured observations of multi-stem trees, with what the rule needs.
+# Rows of multi-stem trees that carry a ReconstructedStemID (measured or not),
+# with what the rule needs. `dt` must hold the row index .mr_row.
 .mr_obs <- function(dt) {
     dt[single_stem_tags %in% FALSE & !is.na(ReconstructedStemID), .(
         row = .mr_row, Tag = as.character(Tag), c = as.integer(as.character(CensusID)),
@@ -73,7 +84,11 @@ mr_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     )]
 }
 
-# Eligibility of an observation pair (vectorised): returns the reason.
+# Eligibility of an observation pair (vectorised): returns "join" or the
+# reason the pair is kept apart (rules 3-5 of the header, in the order tested).
+#   d0 : DBH (mm) of the earlier measurement; ratio : d1 / d0 (taper-corrected)
+#   g_tc : annual growth of the taper-corrected DBH (cm/yr)
+#   R1 : TRUE when the later measurement has a break / resprout status or code
 .mr_eligibility <- function(d0, ratio, g_tc, R1, max_shrink, max_growth, min_dbh_mm, ratio_min, ratio_max) {
     outside <- g_tc < max_shrink | g_tc > max_growth
     fcase(
@@ -87,6 +102,14 @@ mr_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
 }
 
 # Candidate pairs in the current table, with the reason each is joined or kept apart.
+#   dt : stage-2 table with the row index .mr_row added by
+#        apply_measurement_rejoin(), and Tag, CensusID, DBH,
+#        dbh_with_best_candidate_taper_corrected, ExactDate, Status, ListOfTSM,
+#        TrueStemID, obs_row_id, single_stem_tags, ReconstructedStemID
+#   max_shrink, max_growth : hard growth bounds of the stage-2 run (cm/yr)
+#   recruit_max_mm : recruit limit (mm); min_dbh_mm, ratio_min, ratio_max : rule 5
+# Returns one row per candidate pair (rules 1-2) with `why` ("join" or the
+# reason) and, for joins, `target` and `source` (the ids kept and replaced).
 measurement_rejoin_candidates <- function(dt, max_shrink, max_growth, recruit_max_mm, min_dbh_mm = 100,
                                           ratio_min = 0.4, ratio_max = 1.5) {
     w <- .mr_obs(dt)
@@ -130,6 +153,9 @@ measurement_rejoin_candidates <- function(dt, max_shrink, max_growth, recruit_ma
 
 # Stage-2 table -> list(dt = repaired table, pairs = joined pairs, candidates = first pass,
 # obs_pairs = the joined observation pairs, for the posterior samples).
+# The input is not modified. Joins are applied in passes (at most max_iter):
+# a join can make a new candidate pair, and the loop ends when a pass joins
+# nothing. `verbose` prints the number of joins and the reasons of the first pass.
 apply_measurement_rejoin <- function(dt, max_shrink, max_growth, recruit_max_mm, min_dbh_mm = 100,
                                      ratio_min = 0.4, ratio_max = 1.5,
                                      max_iter = 10L, verbose = TRUE) {
@@ -172,6 +198,9 @@ apply_measurement_rejoin <- function(dt, max_shrink, max_growth, recruit_max_mm,
 #   paths      : data.table(tag, treeID, path_sig, path_count, path_prob, recon)
 #   obs_pairs  : data.table(Tag, obs0, obs1, c0, c1), from apply_measurement_rejoin()
 #   obs_info   : data.table(tag, obs, c, pin), census and TrueStemID of every measured observation
+# Returns a copy of `paths` keyed by tag. In the trees of obs_pairs, paths that
+# become identical are collapsed (path_count summed, path_sig of the first
+# one) and path_prob is recomputed as path_count / sum(path_count).
 apply_measurement_rejoin_to_paths <- function(paths, obs_pairs, obs_info, verbose = TRUE) {
     paths <- data.table::copy(paths)
     if (!nrow(obs_pairs)) return(paths)

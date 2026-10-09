@@ -2,14 +2,21 @@
 set -euo pipefail
 
 # package_bundle.sh
-# Create a minimal timestamped tarball containing everything needed to run DP
+# Create a timestamped tarball containing everything needed to run DP:
+# dist/dpglobal_bundle_full_<YYYYMMDD_HHMMSS>.tar.gz (dist/ is next to this script)
 # - auto-generates INSTALL.txt into the archive
-# - includes dpglobal_bundle minimal files + files used by scripts/main_cpp.R
+# - includes the dp_global tree (without dp_global/output, the bundle's dist/
+#   and .git), data_simulation/data, and at the archive root the bundle
+#   README.md, verify_bundle.R and, when they exist, dpglobal_bundle.RData and
+#   dpglobal_bundle_manifest.rds
 # - writes a checksum (.sha256) next to the tarball
 # - cleans up temporary staging area
 
-# Usage:
-# From project root or anywhere: dp_global/R/dpglobal_bundle/package_bundle.sh
+# Usage (bash is required):
+# From project root or anywhere: dp_global/R/dpglobal_bundle/package_bundle.sh [--build-bundle]
+#   --build-bundle  first run dpglobal_bundle_loader.R to rebuild
+#                   dpglobal_bundle.RData and the manifest (needs R)
+#   --help, -h      print the usage line
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -59,7 +66,8 @@ cp -v "${SCRIPT_DIR}/README.md" "${STAGE_DIR}/"
 # copy verify script if present (optional helper)
 if [ -f "${SCRIPT_DIR}/verify_bundle.R" ]; then cp -v "${SCRIPT_DIR}/verify_bundle.R" "${STAGE_DIR}/"; fi
 
-# Copy R wrapper and C++ source from the primary dp_global/src location (keep bundle lean)
+# Extra copies of the R wrapper and the C++ source under dp_global/R/dpglobal_bundle/
+# (INSTALL.txt points to this copy of the .cpp; dp_global/src is copied below too)
 if [ -f "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" ]; then
   mkdir -p "${STAGE_DIR}/dp_global/R/dpglobal_bundle"
   cp -v "${PROJECT_ROOT}/dp_global/src/transition_cost_rcpp.R" "${STAGE_DIR}/dp_global/R/dpglobal_bundle/transition_cost_rcpp.R"

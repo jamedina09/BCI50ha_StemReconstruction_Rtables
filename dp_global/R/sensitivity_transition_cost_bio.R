@@ -1,5 +1,5 @@
 ############################################################
-### Sensitivity analysis for transition_cost_tracks_bio()
+### Sensitivity analysis for transition_cost_tracks_bio_components()
 ############################################################
 #
 # Goal
@@ -13,7 +13,7 @@
 #   source("dp_global/R/dp_global_bio.R")
 #   source("dp_global/R/sensitivity_transition_cost_bio.R")
 #
-#   bio <- estimate_bio_pars(xraw, interval_years = 5)
+#   bio <- estimate_bio_pars(xraw, anchor_start_census = 1L)
 #   base <- bio_pars_to_transition_args(bio)
 #
 #   sc <- make_demo_scenarios(base, interval_years = 5)
@@ -28,8 +28,11 @@ if (!requireNamespace("data.table", quietly = TRUE)) {
 }
 
 bio_pars_to_transition_args <- function(bio_pars) {
-    # Converts output of estimate_bio_pars() into argument list for
-    # transition_cost_tracks_bio_components().
+    # Converts output of estimate_bio_pars() (one parameter set) into argument
+    # list for transition_cost_tracks_bio_components(): mu_const (growth$alpha,
+    # or growth$mu when alpha is missing), mu_gamma, sigma0, sigma1, h0, beta,
+    # the recruit_* values, max_shrink, k_shrink, max_growth, max_growth_soft,
+    # k_growth, use_measurement_error and the meas_* values.
     me <- bio_pars$measurement_error
     use_me <- isTRUE(bio_pars$settings$use_measurement_error)
     if (is.null(me)) {
@@ -39,7 +42,9 @@ bio_pars_to_transition_args <- function(bio_pars) {
     mu_const <- if (!is.null(g$alpha)) g$alpha else g$mu
     mu_gamma <- if (!is.null(g$gamma)) g$gamma else 0
 
-    # Support both the legacy flat layout and the newer nested layout.
+    # Guardrails and penalties are read from the nested layout
+    # (guardrails$hard$value, penalties$soft$k) and, when that is missing, from
+    # the flat fields (e.g. shrinkage$max_shrink).
     max_shrink0 <- tryCatch(bio_pars$shrinkage$guardrails$hard$value, error = function(e) NULL)
     if (is.null(max_shrink0)) max_shrink0 <- bio_pars$shrinkage$max_shrink
     k_shrink0 <- tryCatch(bio_pars$shrinkage$penalties$soft$k, error = function(e) NULL)
@@ -87,6 +92,10 @@ default_param_grids <- function(base_args, n = 200L) {
     # - Probabilities: linear in (0,1) avoiding exact 0/1.
     #
     # You can pass your own grids into build_all_sweeps() if you want different ranges.
+    #
+    # base_args: output of bio_pars_to_transition_args(); n: points per grid
+    # (200 when n is below 5). Returns a named list of numeric vectors, one per
+    # parameter.
 
     n <- as.integer(n)
     if (!is.finite(n) || n < 5L) n <- 200L
@@ -114,8 +123,7 @@ default_param_grids <- function(base_args, n = 200L) {
     # Pull baselines
     b <- base_args
 
-    # Defensive defaults for backward compatibility (in case base_args comes
-    # from an older script that didn't include these fields).
+    # Defaults used when base_args does not include these fields.
     mu_gamma0 <- b$mu_gamma
     if (is.null(mu_gamma0) || !is.finite(mu_gamma0)) mu_gamma0 <- 0
     meas_sd1_a0 <- b$meas_sd1_a
@@ -167,7 +175,7 @@ default_param_grids <- function(base_args, n = 200L) {
             if (is.null(kg) || !is.finite(kg) || is.na(kg) || kg <= 0) kg <- 50
             kg
         }, f_lo = 0.1, f_hi = 10),
-        # measurement error mixture (Condit-style)
+        # measurement error mixture (Chave et al. 2004; see dp_global_bio.R)
         meas_sd1_a = log_grid(meas_sd1_a0, f_lo = 0.2, f_hi = 5),
         meas_sd1_b = log_grid(meas_sd1_b0, f_lo = 0.2, f_hi = 5),
         meas_sd2 = log_grid(meas_sd20, f_lo = 0.2, f_hi = 5),
@@ -205,8 +213,15 @@ build_all_sweeps <- function(
     # - for each parameter in `params`
     # - sweep across `grids[[param]]`
     #
+    # scenarios: named list of list(name, t, tp1), e.g. from make_demo_scenarios();
+    # interval_years: years between t and t+1; base_args: baseline arguments
+    # (bio_pars_to_transition_args()); grids: named list of value vectors
+    # (NULL = default_param_grids()); params: parameters to sweep (NULL = all
+    # in grids); eps_tiebreak, hard_penalty: passed to the cost; abs_jump: size
+    # of a change in total cost reported as a jump.
+    #
     # Returns a list with:
-    # - dts: named list of per-sweep data.tables
+    # - dts: named list of per-sweep data.tables (names "<scenario>__<param>")
     # - all: one combined data.table
     # - jumps: combined jump table (where abs(diff(total)) >= abs_jump)
 
@@ -308,6 +323,10 @@ plot_all_sweeps_to_pdf <- function(all_dts, pdf_file, facet = FALSE, y_scale = c
     # - "absolute": plot raw costs (default).
     # - "delta": plot (cost - cost_at_baseline_parameter_value). This makes it easier
     #   to read sensitivity as "how much worse/better than baseline".
+    #
+    # all_dts: output of build_all_sweeps(); pdf_file: path of the PDF;
+    # facet: one panel per cost component; subtitle: replaces the generated
+    # subtitle. Needs ggplot2.
     y_scale <- match.arg(y_scale)
     if (!requireNamespace("ggplot2", quietly = TRUE)) {
         stop("Package 'ggplot2' is required.", call. = FALSE)
@@ -341,6 +360,11 @@ make_demo_scenarios <- function(base_args, interval_years) {
     #
     # NOTE: These are *illustrative*; you should also create scenarios based on
     # real observed pairs (d0,d1) from your data.
+    #
+    # Returns a named list of list(name, t, tp1) built around d0 = 20 cm:
+    # growth_ok, shrink_soft, shrink_hard, mortality, recruit_ok, recruit_bad,
+    # none, plus grow_soft / grow_hard when base_args has finite
+    # max_growth_soft / max_growth.
 
     interval_years <- as.numeric(interval_years)
 
@@ -398,7 +422,9 @@ make_demo_scenarios <- function(base_args, interval_years) {
 }
 
 summarize_components <- function(res) {
-    # res is output of transition_cost_tracks_bio_components()
+    # res is output of transition_cost_tracks_bio_components().
+    # Returns one row: total, tiebreak, each cost component summed over the
+    # tracks, and p_recruit.
     dt <- res$per_track
     data.table::data.table(
         total = res$total,
@@ -425,7 +451,11 @@ sweep_transition_cost <- function(
   hard_penalty = 1e6
 ) {
     # One-at-a-time sweep for a single parameter.
-    # Returns a long-ish data.table with total and component costs vs param value.
+    # track_dbh_t, track_dbh_tp1: DBH per track at t and t+1 (NA = no stem);
+    # base_args: baseline arguments; param: name of the argument to vary;
+    # values: its values (non-finite ones are dropped).
+    # Returns a data.table with one row per value: total and component costs,
+    # param, value and baseline_value. Stops when param is not in base_args.
 
     if (!exists("transition_cost_tracks_bio_components", mode = "function")) {
         stop("transition_cost_tracks_bio_components() not found. Source dp_global_bio.R first.", call. = FALSE)
@@ -475,6 +505,8 @@ sweep_transition_cost <- function(
 detect_jumps <- function(dt, abs_jump = 1e3) {
     # Identify large changes in total cost across adjacent grid points.
     # Useful for spotting where hard penalties switch on.
+    # dt: a sweep table; returns its rows (ordered by value, with d_total = the
+    # change from the previous value) where |d_total| >= abs_jump.
     dt <- data.table::copy(dt)
     data.table::setorder(dt, value)
     dt[, d_total := c(NA_real_, diff(total))]
@@ -590,6 +622,15 @@ param_meaning <- function(param) {
     )
 }
 
+# Plot one sweep: total cost and its components against the swept parameter,
+# with the baseline value as a dashed vertical line.
+#   dt       : output of sweep_transition_cost(), or one element of
+#              build_all_sweeps()$dts (which adds the scenario columns)
+#   title, subtitle, caption : text; NULL = generated from the sweep
+#   facet    : one panel per component
+#   y_scale  : "absolute" costs, or "delta" = cost minus the cost at the
+#              baseline value (interpolated on the grid)
+# Returns a ggplot. Needs ggplot2.
 plot_sweep_components <- function(
     dt,
     title = NULL,
@@ -715,7 +756,7 @@ plot_sweep_components <- function(
 
     transition_line <- NA_character_
     if (!is.na(d0_txt) && !is.na(d1_txt)) {
-        # Use 'd0'/'d1' terminology in the subtitle as requested.
+        # The subtitle uses the d0 / d1 notation.
         # (NA is printed as NA; values are in cm for DBH.)
         transition_line <- paste0(
             "Transition (per track): d0 = ", d0_txt, " cm  ->  d1 = ", d1_txt, " cm",
@@ -886,7 +927,10 @@ plot_sweep_components <- function(
 
 transition_thresholds <- function(track_dbh_t, track_dbh_tp1, interval_years, base_args) {
     # Quick “why did it jump?” helper.
-    # Returns a small table with the hard-threshold checks (and the soft growth cap).
+    # Returns a small table with the hard-threshold checks (and the soft growth cap):
+    # per track, d0, d1, the d1 thresholds implied by max_shrink, max_growth_soft
+    # and max_growth over interval_years, recruit_max_dbh, and one logical
+    # column per check.
 
     interval_years <- as.numeric(interval_years)
 
@@ -919,9 +963,14 @@ transition_thresholds <- function(track_dbh_t, track_dbh_tp1, interval_years, ba
 ############################################################
 ### Optional demo (opt-in)
 ############################################################
-# Set option and source this file to run a quick demo on the simulated CSV.
+# Set option and source this file to run a quick demo on a simulated CSV.
 #   options(dp_global_biol.run_sensitivity_example = TRUE)
 #   source("dp_global/R/sensitivity_transition_cost_bio.R")
+# The demo reads ../data_simulation/data/simulation_legacy_backup/
+# simulated_data_two_species.csv (relative to the working directory) and
+# writes ./transition_cost_sensitivity_demo.pdf. That input file is not in
+# the repository, and the demo passes `interval_years` to estimate_bio_pars(),
+# which has no such argument.
 
 if (isTRUE(getOption("dp_global_biol.run_sensitivity_example", FALSE))) {
     # Ensure we have the model functions

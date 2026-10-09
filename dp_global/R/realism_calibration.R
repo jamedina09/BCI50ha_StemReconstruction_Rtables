@@ -3,19 +3,23 @@
 ############################################################
 #
 # Goal
-# - Turn DP reconstruction output into diagnostic summaries of:
+# - Turn DP reconstruction output into diagnostic summaries of the steps
+#   between adjacent censuses inside each reconstructed track:
 #   - growth increments (DBH->DBH)
-#   - shrinkage frequency and magnitude
-#   - mortality frequency (DBH->NA)
-#   - recruitment frequency and recruited sizes (NA->DBH)
+#   - shrinkage frequency and hard-bound violations
+#   - DBH->NA and NA->DBH steps and the sizes after NA->DBH. A track is
+#     followed from its first to its last measured census, so these steps are
+#     census gaps inside a track; the start and the end of a track are not
+#     counted.
 # - Provide concrete "which parameter to tweak" suggestions.
+# - One constant interval_years is used for every census pair.
 #
 # Usage
 #   source("dp_global/R/dp_global_bio.R")
 #   source("dp_global/R/sensitivity_transition_cost_bio.R")
 #   source("dp_global/R/realism_calibration.R")
 #
-#   bio <- estimate_bio_pars(xraw, interval_years = 5)
+#   bio <- estimate_bio_pars(xraw, anchor_start_census = 1L)
 #   base <- bio_pars_to_transition_args(bio)
 #   rep <- realism_report_from_reconstruction(out, interval_years = 5, base_args = base)
 #   rep$summary
@@ -26,6 +30,15 @@ if (!requireNamespace("data.table", quietly = TRUE)) {
     stop("Package 'data.table' is required. Install it with install.packages('data.table')", call. = FALSE)
 }
 
+# One row per track and census between the track's first and last measured
+# census (dbh = NA at a census where the track has no measurement).
+#   out            : reconstruction table with group_cols, census_col, dbh_col, id_col
+#   interval_years : checked to be positive, otherwise not used here
+#   id_col, census_col, dbh_col : names of the track ID, census and DBH columns
+#   group_cols     : columns that identify a tree
+# Returns a data.table with group_cols, track_id, census, dbh (empty when no
+# row has both a DBH and an ID). With several measurements of a track in one
+# census the first is kept. Stops when a column is missing.
 extract_track_timeseries <- function(out,
                                     interval_years,
                                     id_col = "ReconstructedStemID",
@@ -82,6 +95,13 @@ extract_track_timeseries <- function(out,
     ts[, ..keep]
 }
 
+# Steps between adjacent censuses (c1 == c0 + 1) of each track.
+#   track_ts       : output of extract_track_timeseries()
+#   interval_years : years per census step, for the annual growth g
+#   group_cols     : grouping columns; the result is built from Tag and
+#                    species, so both must be present
+# Returns data.table(Tag, species, track_id, c0, c1, d0, d1, g, case) with
+# case one of "DBH->DBH", "DBH->NA", "NA->DBH", "NA->NA".
 extract_adjacent_transitions <- function(track_ts, interval_years, group_cols = c("Tag", "species")) {
     interval_years <- as.numeric(interval_years)
     dt <- data.table::copy(data.table::as.data.table(track_ts))
@@ -109,6 +129,14 @@ extract_adjacent_transitions <- function(track_ts, interval_years, group_cols = 
     dt[, .(Tag, species, track_id, c0, c1, d0, d1, g, case)]
 }
 
+# Frequencies of the step types, growth mean and SD, share of shrinking
+# steps, and shares of steps beyond base_args$max_shrink (cm/yr) or
+# base_args$recruit_max_dbh (cm).
+#   transitions : output of extract_adjacent_transitions()
+#   base_args   : transition arguments (bio_pars_to_transition_args())
+# Returns list(summary = one row, by_group = one row per Tag and species,
+# transitions = the input with the flag columns); with no transitions, only
+# empty summary and by_group tables.
 summarize_realism <- function(transitions, base_args) {
     dt <- data.table::copy(data.table::as.data.table(transitions))
     if (nrow(dt) == 0L) {
@@ -154,6 +182,13 @@ summarize_realism <- function(transitions, base_args) {
 tuning_suggestions <- function(realism, base_args) {
     # Heuristic suggestions based on the reconstruction-derived transition frequencies.
     # NOTE: This is not a formal optimizer; it provides *actionable starting points*.
+    # realism: output of summarize_realism(); base_args: transition arguments.
+    # A suggestion is made for: any hard shrink violation, more than 25% of
+    # shrinking steps, any recruit above recruit_max_dbh, more than 10% of
+    # NA->DBH steps, more than 10% of DBH->NA steps, and a growth SD above
+    # twice sigma0.
+    # Returns data.table(issue, parameter, change, rationale); empty when
+    # realism has no summary.
 
     if (is.null(realism$summary) || nrow(realism$summary) == 0L) {
         return(data.table::data.table())
@@ -263,7 +298,10 @@ tuning_suggestions <- function(realism, base_args) {
 }
 
 realism_report_from_reconstruction <- function(out, interval_years, base_args) {
-    # Convenience wrapper that returns a compact report.
+    # Convenience wrapper that returns a compact report:
+    # list(summary, by_group, transitions, suggestions).
+    # out: reconstruction table with Tag, species, CensusID, DBH and
+    # ReconstructedStemID; interval_years: years per census step.
     # Adds interval_years into base_args for internal comparisons.
     base_args2 <- base_args
     base_args2$interval_years <- as.numeric(interval_years)

@@ -4,6 +4,24 @@
 # Purpose: Merge stem-identification DP Feather chunks into final datasets,
 #          validate the merged multi-stem result, and reassemble the complete
 #          dataset with reconstructed stem IDs.
+#
+# Run from the project root, after 1_main_cpp_chunk_bci.R has finished.
+#
+# Inputs:
+#   <home_dir>/<run_code>/*.feather   per-chunk outputs of the stage-2 run
+#                                     (the folder must hold run_finished.txt)
+#   BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
+#                                     stage-1 table (all tags)
+# Outputs:
+#   BCI_stem_reconstruction/DATA/<run_code>/merged_output.parquet, .rds
+#       the chunks of the multiple-stem tags in one table
+#   BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds
+#       all tags: the stage-1 columns (recorded DBH in mm) plus TrueStemID,
+#       ReconstructedStemID (character; a per-tag stem number),
+#       ReconstructionMethod and the audit columns listed in section 8
+#   BCI_stem_reconstruction/DATA/PROCESSED/measurement_rejoin_audit.csv,
+#   measurement_rejoin_pairs.csv     joins made by apply_measurement_rejoin()
+# Packages: arrow, data.table.
 # =============================================================================
 
 # =============================================================================
@@ -13,9 +31,8 @@
 # Clear workspace to ensure no leftover objects affect the run
 rm(list = ls())
 
-# Packages
 library(arrow) # read/write Feather/Parquet and manage Arrow datasets
-library(data.table) # fast in-memory data manipulation
+library(data.table)
 
 # Project root when running from the repository root.
 workspace_root <- getwd()
@@ -24,8 +41,9 @@ workspace_root <- getwd()
 # 1. CONFIGURATION
 # =============================================================================
 
-# Root directory where the Feather chunk outputs from the DP run are stored.
-# Update this path if the prior run folder has moved.
+# Root directory where the Feather chunk outputs from the DP run are stored
+# (the BASE_OUT_DIR given to 1_main_cpp_chunk_bci.R). Update this path when
+# the run folder is elsewhere.
 home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 
 # Run subfolder to merge, selected by name: home_dir can hold several runs.
@@ -80,15 +98,11 @@ n_groups <- ceiling(length(feathers) / group_size)
 temp_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "temp_parts")
 dir.create(temp_dir, recursive = TRUE, showWarnings = FALSE)
 
-# Process each batch sequentially:
-#   1. Compute the index range for the current batch.
-#   2. Slice the sorted Feather list to get this batch's files.
-#   3. Open as a lazy Arrow dataset — no data loaded into RAM until written.
-#   4. Write the batch to a zero-padded, numbered Parquet part file.
-# ZSTD level-3 compression offers a good balance between file size and speed.
+# Process each batch sequentially: open its files as a lazy Arrow dataset
+# (no data loaded into RAM until written) and write them to a zero-padded,
+# numbered Parquet part file (ZSTD compression, level 3).
 for (i in seq_len(n_groups)) {
     cat("Processing group", i, "of", n_groups, "\n")
-    # Compute the index range for this batch
     start_idx <- (i - 1) * group_size + 1
     end_idx <- min(i * group_size, length(feathers))
     group_files <- feathers[start_idx:end_idx]
@@ -122,8 +136,7 @@ cat("Number of records in merged dataset:", nrow(data.table::as.data.table(ds_fi
 # Convert the Arrow dataset to a regular data.table for the remaining in-memory checks.
 ds_final <- data.table::as.data.table(ds_final)
 
-# Remove the intermediate Parquet parts — they are no longer needed now that
-# the single merged Parquet file has been written to disk.
+# Remove the intermediate Parquet parts (the merged Parquet file is on disk).
 unlink(temp_dir, recursive = TRUE)
 
 # =============================================================================
@@ -158,9 +171,11 @@ compare_columns <- function(dt1, dt2) {
 # 5. LOAD RAW INPUT AND PREPARE MULTI-STEM SUBSET FOR VALIDATION
 # =============================================================================
 
-# The raw table produced in step 6 of the data-preparation pipeline; it
-# contains both single-stem and multi-stem records and is the reference for
-# all validation steps below.
+# The table produced by stage 1 (1_DATA_PREPARATION/1_prepare_viewfulltable.R.R);
+# it contains both single-stem and multi-stem records and is the reference for
+# all validation steps below. Its Lifeform (Spanish labels of the species list)
+# is renamed growth_form here, the name the stage-2 output uses for its own
+# labels (tree, shrub, palm, strangler, fern).
 
 xraw <- as.data.table(readRDS(file.path(
     workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_single_vs_multiple_stem_tags.rds"
@@ -198,10 +213,12 @@ setorder(ds_final, RowID)
 # 6. FIRST VALIDATION PASS: DP OUTPUT VS. RAW MULTI-STEM DATA
 # =============================================================================
 
-# Known differences after DP output:
-#   - DBH: internal taper-corrected values were used; original DBH is preserved in backup.
-#   - ExactDate: some missing dates were imputed.
-#   - growth_form: categories were simplified for internal DP parameter estimation.
+# Expected differences in the DP output:
+#   - DBH: the engines used the taper-corrected DBH in cm; the recorded DBH (mm)
+#     is in DBH_mm_original_backup.
+#   - ExactDate: a missing date was filled with the mean date of its census.
+#   - growth_form: the stage-2 labels (tree, shrub, palm, strangler, fern)
+#     instead of the Lifeform of the species list.
 # Any other differences should be investigated.
 
 cat("\n--- Validation pass 1: DP output vs. raw multi-stem input ---\n")
@@ -228,7 +245,7 @@ if ("DBH_mm_original_backup" %in% names(ds_final)) {
 cat("\n--- Validation pass 2: after restoring original DBH ---\n")
 comparison2 <- compare_columns(input_multi_stem_data, ds_final)
 print(comparison2[result == "Different"])
-# Expected: only ExactDate remains "Different" (imputed NAs during DP run).
+# Expected: only ExactDate and growth_form remain "Different" (see the list above).
 
 # =============================================================================
 # 8. ASSEMBLE COMPLETE DATASET (SINGLE-STEM + MULTI-STEM)
@@ -238,19 +255,22 @@ ds_final
 names(ds_final)
 
 # Keep the original raw table columns plus the DP-specific output columns.
+# growth_form is taken from each source: the final table holds the Lifeform of
+# the species list on single-stem rows and the stage-2 label on multi-stem rows.
 original_names <- names(xraw)
 
-# Retain only the active DP output columns; omit posterior-probability diagnostics.
+# Retain the identity and audit columns of the DP output; the other posterior
+# diagnostics are dropped.
 new_names <- c(
-    "TrueStemID", # definitive stem identifier assigned by the DP run
-    "ReconstructedStemID", # stem ID reconstructed across historical censuses
-    "SweepAuditOverride", # boolean flag for manual override of DP assignment based on sweep-audit evidence
-    "ReconstructedStemID_PreSweep", # stem ID reconstructed by the DP before applying sweep-audit overrides
-    "SweepRollbackToPreSweep", # boolean flag indicating whether the final ReconstructedStemID was rolled back to the pre-sweep version due to an override
-    "ReconstructionMethod", # algorithm branch taken (e.g., "DP", "fallback")
-    "DP_FallbackReason", # reason a fallback was triggered; NA when DP succeeded
-    "obs_row_id", # sequential row number within each tag, assigned by the DP during processing
-    "DP_PosteriorReconstructedProb"
+    "TrueStemID", # database StemID pinned before the engine (Steps 1-3 of the driver); NA where the engine was free
+    "ReconstructedStemID", # reconstructed stem identity: a number 1..N within the tag
+    "SweepAuditOverride", # TRUE where the TrueStemID sweep replaced an ID the engine had assigned
+    "ReconstructedStemID_PreSweep", # the engine's ID before the TrueStemID sweep
+    "SweepRollbackToPreSweep", # TRUE where a pin was not applied (it would have put two rows on one ID in a census) or a terminal record went back to the engine's choice
+    "ReconstructionMethod", # how the row got its ID (e.g. "dp", "probabilistic", "given"; see dp_global/README.md)
+    "DP_FallbackReason", # why the tag went to the probabilistic matcher; NA when the DP solved it
+    "obs_row_id", # row number within the tag, the key of the posterior path files
+    "DP_PosteriorReconstructedProb" # posterior probability of the exported ID
 )
 
 # Select only the original columns plus the new DP-specific columns from the
@@ -259,7 +279,7 @@ original_new_names <- c(original_names, new_names)
 output_multistem_data <- ds_final[, ..original_new_names]
 names(ds_final)
 
-# Add the four new DP columns to xraw with NA values so that both the
+# Add the new DP columns to xraw with NA values so that both the
 # single-stem and multi-stem subsets share an identical column schema before
 # row-binding.  This mutates xraw in place.
 xraw[, (new_names) := NA]
@@ -277,8 +297,12 @@ print(table(chk_correctness_single$UniqueStemID, useNA = "ifany"))
 
 unique(chk_correctness_single[is.na(StemID)]$Tag)
 
-# Simplified renumbering for single-stem tags: renames ReconstructedStemID from 1 to N per tag.
-# Emits a warning if a tag has more than one unique stem.
+# renumber_single_stem_ids(): ReconstructedStemID for tags the engines did not
+# reconstruct. A missing ReconstructedStemID is first taken from StemID, then
+# the IDs of each tag are renumbered 1..N in order of appearance (1 for a
+# single-stem tag). Rows without a StemID keep NA. Warns (verbose = TRUE) when
+# a tag has more than one stem. Returns a copy of dt; dt itself is returned
+# when it lacks Tag or ReconstructedStemID.
 renumber_single_stem_ids <- function(dt, verbose = TRUE) {
     if (is.null(dt) || nrow(dt) == 0L) {
         return(dt)
@@ -289,7 +313,7 @@ renumber_single_stem_ids <- function(dt, verbose = TRUE) {
         return(dt)
     }
     dt <- copy(dt)
-    # Cast column to integer so assignments don't get coerced to logical
+    # Integer column (it is logical NA when created by `:= NA`)
     dt[, ReconstructedStemID := as.integer(ReconstructedStemID)]
     # Populate ReconstructedStemID from StemID where it is NA
     if ("StemID" %in% names(dt)) {
@@ -324,8 +348,8 @@ input_single_stem_data[is.na(ReconstructedStemID) & !is.na(StemID), .(Tag, Censu
 input_single_stem_data[is.na(ReconstructedStemID), .(Tag, CensusID, StemID, ReconstructedStemID)]
 input_single_stem_data[Tag == "528106", .(Tag, CensusID, StemID, ReconstructedStemID)]
 
-# Ensure ReconstructionMethod is character before assigning the label
-# (it may have been read in as a different type if xraw had a factor column).
+# ReconstructionMethod as character before assigning the label (the column
+# was created as logical NA above).
 input_single_stem_data[, ReconstructionMethod := as.character(ReconstructionMethod)]
 input_single_stem_data[, ReconstructionMethod := "single_stem_tag_no_reconstructed"]
 
@@ -421,12 +445,14 @@ complete_dataset_final[is.na(obs_row_id) & single_stem_tags == FALSE]
 table(complete_dataset_final$ReconstructionMethod, useNA = "ifany")
 
 complete_dataset_final[is.na(ReconstructionMethod)]
-# These rows are missing DBH and/or ReconstructionMethod; they require follow-up review.
+# Rows of multiple-stem tags that neither the engine nor the post-engine
+# helpers labelled: they have no DBH and keep ReconstructedStemID = NA.
 
 chk_skipped_full_na <- unique(complete_dataset_final[is.na(ReconstructionMethod)]$Tag)
 print(complete_dataset_final[Tag %in% chk_skipped_full_na, .(Tag, CensusID, ReconstructedStemID, StemID, DBH, ReconstructionMethod, ListOfTSM)][order(Tag, CensusID)], nrows = 200)
-# These rows correspond to dead tags appearing later as R/broken-below.
-# They are expected to be corrected during subsequent RTable reconstruction.
+# In the current run these are placeholder rows of stage 1 (a census in
+# which the tag has no record: no StemID, no Status). They are passed on to
+# stage 3 as they are.
 
 # =============================================================================
 # MEASUREMENT-DISCONTINUITY REJOIN
@@ -464,7 +490,8 @@ mr_check(two_pins <= 0L, "No stem gains a second TrueStemID pin through the rejo
 complete_dataset_final <- rejoin$dt
 rm(rejoin_dups, unchanged_cols, two_pins)
 
-# Output directory for the final complete dataset.
+# Output directory for the final complete dataset (relative to the working
+# directory, i.e. the project root).
 post_dir <- path.expand(
     file.path(
         "./BCI_stem_reconstruction/DATA/PROCESSED"

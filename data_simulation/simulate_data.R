@@ -4,9 +4,24 @@ rm(list = ls())
 ### FOREST CENSUS DATA SIMULATION FOR STEM IDENTIFICATION TESTING
 ################################################################################
 
-# This script simulates forest census data for testing stem identification algorithms.
-# It generates synthetic tree growth trajectories with measurement error, recruitment,
-# growth, and mortality processes.
+# This script builds the test dataset for the stem identification engines:
+#   - simulated multi-stem trees of three species (growth, recruitment and
+#     mortality; the exported DBH is the simulated true DBH: the measurement
+#     error settings in `params$obs` are defined but not applied);
+#   - hand-written tags appended to them: four "problematic" tags, tags copied
+#     from BCI multi-stem patterns, three tags with the M code and the
+#     row-count edge cases (tags 9901-9945).
+# TrueStemID is NA before census 7 in the simulated trees (identities to be
+# reconstructed); OriginalStemID keeps the simulated identity.
+#
+# Run from the project root (paths use here()):
+#   Rscript data_simulation/simulate_data.R
+# Outputs (data_simulation/data/, which must exist):
+#   simulated_data_1.csv   Species, Tag, OriginalStemID, TrueStemID, CensusID,
+#                          DBH (cm), ExactDate, ListOfTSM, Status, growth_form
+#   simulated_data_1.pdf, simulated_data_tag_level_trajectories_1.pdf
+#                          trajectory plots (when ggplot2 is installed)
+# Packages: data.table, here; ggplot2 for the plots.
 
 ################################################################################
 ### SETUP
@@ -19,6 +34,14 @@ library(here)
 ################################################################################
 ### SIMULATION PARAMETERS
 ################################################################################
+# Entries that the code below does not read: every value of `obs` (no
+# measurement error is applied, and no minimum observed DBH), and
+# initial_dbh$recruit_meanlog / recruit_sdlog (a recruit's first DBH comes from
+# recruitment$meanlog / sdlog, truncated below threshold_dbh).
+# mask$anchor_start_census is used for the four "problematic" tags; the
+# simulated trees are masked before census 7 directly.
+# recruitment$recruit_prob is the probability that a stem is born in a later
+# census (2 .. n_census - 1, chosen at random) and not present at census 1.
 params <- list(
     sim = list(
         n_census = 9L,
@@ -86,6 +109,8 @@ params <- list(
 ################################################################################
 ### HELPER FUNCTIONS
 ################################################################################
+# One row per species: name (sp1, sp2, ... unless species_names is given),
+# trait scale (evenly spaced over scale_range) and number of trees.
 generate_species_table <- function(params) {
     n_species <- params$species$n_species
     n_trees <- params$species$n_trees_per_species
@@ -96,6 +121,9 @@ generate_species_table <- function(params) {
     data.table(Species = species_names, Scale = scales, n_trees = n_trees)
 }
 
+# Matrix [species x census] of growth multipliers (1 = none). Each event
+# list(species, census, multiplier) multiplies the cell of its species (or of
+# every species when species = "all"); events on the same cell compound.
 make_growth_multipliers <- function(n_census, species_names, events) {
     multipliers <- matrix(1.0,
         nrow = length(species_names), ncol = n_census,
@@ -114,6 +142,7 @@ make_growth_multipliers <- function(n_census, species_names, events) {
     multipliers
 }
 
+# n draws from a lognormal truncated to [min, max] (rejection sampling).
 rtrunc_lnorm <- function(n, meanlog, sdlog, min = 0, max = Inf) {
     out <- numeric(0)
     while (length(out) < n) {
@@ -123,6 +152,8 @@ rtrunc_lnorm <- function(n, meanlog, sdlog, min = 0, max = Inf) {
     out[seq_len(n)]
 }
 
+# Parameters of one species: growth mean and SD coefficients and the baseline
+# hazard are multiplied by `scale`; the odds of late recruitment are too.
 scale_species_params <- function(base_params, scale) {
     p <- base_params
     p$growth$alpha <- p$growth$alpha * scale
@@ -157,6 +188,15 @@ growth_multipliers <- make_growth_multipliers(params$sim$n_census, species_table
 # Individual Stem Trajectory Simulation
 # ============================================================================
 
+# One stem over all censuses. The stem is present at census 1 (DBH from the
+# census-1 lognormal) or born in a later census (DBH below threshold_dbh).
+# Each interval: annual growth ~ Normal(alpha + gamma * log(DBH), sigma0 +
+# sigma1 * DBH) times the species multiplier of the census, clipped to
+# [min_annual_growth, max_annual_growth]; then death with probability
+# 1 - exp(-h0 * exp(beta * DBH) * interval). After death the DBH is NA.
+# interval_years: the n_census - 1 intervals of the stem's tree.
+# Returns one row per census (true DBH, annual growth, census date in years
+# since the first census, birth and death census).
 simulate_one_stem <- function(tag, original_stem_id, species, growth_multipliers, params, interval_years) {
     n_census <- params$sim$n_census
     threshold <- params$recruitment$threshold_dbh
@@ -214,6 +254,8 @@ simulate_one_stem <- function(tag, original_stem_id, species, growth_multipliers
 # Tree-Level Simulation (Multiple Stems per Tree)
 # ============================================================================
 
+# One tree: 2 to max_stems stems that share the tree's census intervals
+# (census_interval_years + Normal(0, 0.1) years each, at least 0.1).
 simulate_one_tree <- function(tag, species, growth_multipliers, params) {
     n_census <- params$sim$n_census
     interval_years <- params$sim$census_interval_years + rnorm(n_census - 1, 0, 0.1)
@@ -228,6 +270,7 @@ simulate_one_tree <- function(tag, species, growth_multipliers, params) {
 # Species-Level Simulation (Multiple Trees per Species)
 # ============================================================================
 
+# n_trees trees of one species, tagged tag_offset + 1, tag_offset + 2, ...
 simulate_one_species <- function(species, scale, n_trees, tag_offset, growth_multipliers, base_params) {
     p_species <- scale_species_params(base_params, scale)
     rbindlist(lapply(seq_len(n_trees), function(i) {
@@ -1405,7 +1448,10 @@ dt_complete_extra <- rbindlist(list(
 
 ############################################################
 ### M-CODE TEST TAGS
-### Three tags designed to test the M-coded main-stem constraint.
+### Three tags whose ListOfTSM carries the M code (multiple stems) on the
+### main stem. The dp_global engines do not read the M code, so the
+### "With M" / "Expected output" notes below describe what a main-stem
+### constraint would do, not what the engines do.
 ### OriginalStemID is provided for post-hoc validation ONLY —
 ### the DP algorithm must not use it.
 ############################################################
@@ -1455,7 +1501,7 @@ tag_M1 <- data.table(
 
 # tag_M2 (tag 902):
 # Same structure as tag_M1 but M appears at EVERY census from C3 onwards
-# (legacy M annotation after branching, stable stem count).
+# (M annotation kept after branching, stable stem count).
 # Only C3 is a branching event. C4-C6 stable-count M must NOT constrain.
 # Expected output: identical TrueStemID assignment to tag_M1.
 tag_M2 <- data.table(
@@ -1633,7 +1679,7 @@ tag_EC11 <- data.table(
     DBH = c(10.0, NA_real_, 11.5, 4.0)
 )
 
-# EC12: two rows at same census with same OriginalStemID but one has R flag
+# EC12: one stem measured at C5 and C7, then an unmeasured row with the R code at C8
 tag_EC12 <- data.table(
     Species = "sp1", Tag = 9912L,
     OriginalStemID = c(1L, 1L, 1L),
@@ -1895,7 +1941,7 @@ tag_EC37 <- data.table(
     DBH = c(NA_real_, NA_real_, 10.0, 3.0, 11.5, 4.5)
 )
 
-# EC38: 3 rows at same census (C7), different OriginalStemIDs — tests high K at anchor
+# EC38: 3 stems (different OriginalStemIDs) at C5 and at the anchor C7 — tests high K at anchor
 tag_EC38 <- data.table(
     Species = "sp2", Tag = 9938L,
     OriginalStemID = c(1L, 2L, 3L, 1L, 2L, 3L),
@@ -2150,8 +2196,6 @@ dt_complete_extra <- merge(dt_complete_extra, growth_forms, by = "Species", all.
 dt_complete_extra <- dt_complete_extra[order(Tag, CensusID)]
 
 fwrite(dt_complete_extra, here("data_simulation", "data", "simulated_data_1.csv"))
-# Apply stem ID masking to simulate ForestGEO protocol
-# In early censuses, stem identities are not trusted (TrueStemID = NA)
 
 ################################################################################
 ### DIAGNOSTIC PLOTS
@@ -2248,9 +2292,9 @@ if (isTRUE(params$plot$make_plot) && requireNamespace("ggplot2", quietly = TRUE)
 # The simulation has generated synthetic forest census data with the following features:
 # - Multiple species with different growth rates and scaling
 # - Multi-stem trees with recruitment and mortality
-# - Measurement error in DBH observations
 # - Variable census intervals with random noise
 # - Stem identity masking for early censuses
+# - Hand-written diagnostic and edge-case tags
 # - Diagnostic plots for validation
 
 unique(dt_complete_extra$Tag)

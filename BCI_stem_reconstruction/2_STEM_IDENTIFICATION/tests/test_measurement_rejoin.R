@@ -23,6 +23,8 @@ tree <- function(rows, tag = "T1") {
   )]
   x
 }
+# run(): apply_measurement_rejoin() with the bounds of the BCI stage-2 run
+# stems(): number of measured stems in its result
 run <- function(x, ...) apply_measurement_rejoin(x, max_shrink = -0.5, max_growth = 5, recruit_max_mm = 260, verbose = FALSE, ...)
 stems <- function(r) r$dt[!is.na(DBH), uniqueN(ReconstructedStemID)]
 
