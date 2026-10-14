@@ -40,7 +40,7 @@
 # Outputs:
 #   DATA/SPP_TABLE/bci_spptable.txt, bci_spptable.csv (both tab-separated) and
 #   bci_spptable.RData (object bci.spptable): one row per code of the plot
-#   except uniden, with Mnemonic, Order, Family, Genus, SpeciesName,
+#   except uniden, plus ficuau (kept without records, see 6a), with Mnemonic, Order, Family, Genus, SpeciesName,
 #   InfraspecificRank, InfraspecificEpithet, Authority, Synonyms,
 #   Lifeform_RFoster, Lifeform_RPerez_SAguilar, CommonName, Herbarium, Notes.
 #   DATA/CHECKS/species_wfo_review.csv (each name next to its WFO record),
@@ -408,8 +408,9 @@ mesubsp_sussubsp[Subspecies != subspecies] # no differences
 # ficutr and ficuau. In the database, ficutr carries the name Ficus aurea
 # (there is no Ficus trigonata in the plot), while the list of email 1 gives
 # ficutr as Ficus trigonata. Suzanne's change ficutr -> ficuau puts these trees
-# under the code of Ficus aurea. A row for ficuau is added here from Suzanne's
-# list; the ficutr row is removed in section 6, and the inventory is recoded in
+# under the code of Ficus aurea. The change is not decided yet, so both codes
+# are kept: a row for ficuau is added here from Suzanne's list, next to the
+# ficutr row (see 6a). The recode of the inventory is a switch in
 # 2_prepare_viewfulltable.R.
 viewt[Mnemonic == "ficutr"]
 viewt[Genus == "Ficus"][order(SpeciesName)]
@@ -497,8 +498,8 @@ viewt_tax1_updated_flor_pan <- merge(
 viewt_tax1_updated_flor_pan[, texto := NULL][, fotos := NULL][, pan_texto := NULL][, pan_fotos := NULL][, pan_mnbc := NULL]
 viewt_tax1_updated_flor_pan[, pan_forma_de_vida := NULL]
 
-# Codes of the table vs the database taxonomy: only ficuau is new; it replaces
-# ficutr in the inventory (2_prepare_viewfulltable.R)
+# Codes of the table vs the database taxonomy: only ficuau is new (it has no
+# records in the inventory unless ficutr is recoded, see 6a)
 setdiff(viewt_tax1_updated_flor_pan$mnemonic, viewt$Mnemonic)
 setdiff(viewt$Mnemonic, viewt_tax1_updated_flor_pan$mnemonic)
 
@@ -571,28 +572,33 @@ viewt_tax1_updated_flor_pan[!is.na(email_1_comment)]
 # =============================================================================
 
 # --- 6a. Codes replaced in the inventory ------------------------------------
-# Two codes of the inventory are replaced by another code. The same replacement
-# is made in 2_prepare_viewfulltable.R, before the species table is merged:
-#   ficutr -> ficuau  the trees recorded as ficutr are Ficus aurea, whose code
-#                     is ficuau (Suzanne, email 2)
+# A code of the inventory replaced by another code. The same replacement is
+# made in 2_prepare_viewfulltable.R, before the species table is merged:
 #   pterof -> pterro  all Pterocarpus in the plot are P. rohrii (Rolando, email 1)
-# After the replacement ficutr and pterof have no records in the plot, so their
-# rows are removed from the species table here.
-mnemonic_replace <- c(ficutr = "ficuau", pterof = "pterro")
+# After the replacement pterof has no records in the plot, so its row is
+# removed from the species table here.
+mnemonic_replace <- c(pterof = "pterro")
+
+# ficutr -> ficuau (Suzanne, email 2: the trees coded ficutr are Ficus aurea,
+# whose code is ficuau) is not decided yet. Both codes are kept in the species
+# table: ficutr with the trees of the inventory, and ficuau without records
+# until the inventory is recoded (switch REPLACE_FICUTR_WITH_FICUAU in
+# 2_prepare_viewfulltable.R). Both have the same growth form (6b).
+codes_without_records <- "ficuau"
 
 # rows of the replaced codes and of the codes that replace them
 viewt_tax1_updated_flor_pan[mnemonic %in% c(names(mnemonic_replace), mnemonic_replace)]
 
 check(
     all(mnemonic_replace %in% viewt_tax1_updated_flor_pan$mnemonic),
-    "the codes that replace ficutr and pterof have a row in the species table"
+    "the codes that replace other codes have a row in the species table"
 )
 
 # remove the replaced codes
 viewt_tax1_updated_flor_pan <- viewt_tax1_updated_flor_pan[!mnemonic %in% names(mnemonic_replace)]
 
 # The species table must now hold exactly the codes of the inventory after the
-# replacement. The codes come from the current inventory (oct_13_2026), the
+# replacement, plus the codes kept without records (ficuau). The codes come from the current inventory (oct_13_2026), the
 # same table 0_extract_ViewTaxonomy.R reads; only the Mnemonic column is loaded.
 inventory_mnemonics <- unique(fread(ViewFullTable_new, sep = "\t", select = "Mnemonic")$Mnemonic)
 inventory_mnemonics <- unique(fifelse(
@@ -600,11 +606,11 @@ inventory_mnemonics <- unique(fifelse(
     mnemonic_replace[inventory_mnemonics],
     inventory_mnemonics
 ))
-setdiff(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics) # in the table, not in the plot
+setdiff(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics) # in the table, not in the plot (ficuau)
 setdiff(inventory_mnemonics, viewt_tax1_updated_flor_pan$mnemonic) # in the plot, not in the table
 check(
-    setequal(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics),
-    "the species table holds exactly the codes present in the plot after the replacement"
+    setequal(viewt_tax1_updated_flor_pan$mnemonic, c(inventory_mnemonics, codes_without_records)),
+    "the species table holds exactly the codes present in the plot after the replacement, plus ficuau"
 )
 check(
     !anyDuplicated(viewt_tax1_updated_flor_pan$mnemonic),
@@ -631,15 +637,15 @@ viewt_tax1_updated_flor_pan[
 ]
 
 # Growth forms given by the botanists (2026-10-14):
-#   ficuau                  the trees coded ficutr until 2026 (Ficus aurea) are
-#                           stranglers (the list gave ficutr "árbol grande
-#                           mayor a 20m")
+#   ficutr, ficuau          the same trees (see 6a), stranglers (the list gave
+#                           ficutr "árbol grande mayor a 20m" and has no ficuau)
 #   apeihy, nects1, nects3  trees
-viewt_tax1_updated_flor_pan[mnemonic == "ficuau", f_de_vida_r_perez_s_aguilar := "árbol estrangulador mayor a 20m"]
+viewt_tax1_updated_flor_pan[mnemonic %in% c("ficutr", "ficuau"), f_de_vida_r_perez_s_aguilar := "árbol estrangulador mayor a 20m"]
 viewt_tax1_updated_flor_pan[mnemonic %in% c("apeihy", "nects1", "nects3"), f_de_vida_r_perez_s_aguilar := "árbol"]
 
-# R. Foster's code is empty for these four codes (they are not in his list
-# under these codes); fill it by hand if known, e.g.
+# R. Foster's code is empty for ficuau, apeihy, nects1 and nects3 (they are not
+# in his list under these codes), and is T (canopy tree) for ficutr; change it
+# by hand if the botanists give another value, e.g.
 # viewt_tax1_updated_flor_pan[mnemonic == "ficuau", f_de_vida_r_foster := "TE"]
 
 # Every code has a growth form, except uniden (unidentified stems, left out of
@@ -1126,6 +1132,80 @@ author_format
 print_accept_lines(author_format)
 
 # Adopted authority formats (paste the lines here):
+spp_new[mnemonic == "ade1tr", authority := "(Müll.Arg.) Hemsl."]
+spp_new[mnemonic == "alchco", authority := "Pax & K.Hoffm."]
+spp_new[mnemonic == "alibed", authority := "(Rich.) A.Rich. ex DC."]
+spp_new[mnemonic == "amaico", authority := "(Lam. ex Poir.) Delprete & C.H.Perss."]
+spp_new[mnemonic == "andiin", authority := "(W.Wright) Kunth ex DC."]
+spp_new[mnemonic == "aspicr", authority := "Benth. ex Müll.Arg."]
+spp_new[mnemonic == "ast1st", authority := "L.H.Bailey"]
+spp_new[mnemonic == "bactba", authority := "L.H.Bailey"]
+spp_new[mnemonic == "bactc1", authority := "L.H.Bailey"]
+spp_new[mnemonic == "bactc2", authority := "L.H.Bailey"]
+spp_new[mnemonic == "beilpe", authority := "(Klotzsch & H.Karst. ex Meisn.) Sachiko Nishida"]
+spp_new[mnemonic == "boropa", authority := "Delprete & C.H.Perss."]
+spp_new[mnemonic == "brosgu", authority := "(Aubl.) Huber ex Ducke"]
+spp_new[mnemonic == "carica", authority := "(Jacq.) A.DC."]
+spp_new[mnemonic == "cestme", authority := "G.Don"]
+spp_new[mnemonic == "chr1ec", authority := "L.O.Williams"]
+spp_new[mnemonic == "clidde", authority := "(D.Don) Michelang."]
+spp_new[mnemonic == "cnempe", authority := "(Hook.) R.M.Tryon"]
+spp_new[mnemonic == "cordbi", authority := "A.DC."]
+spp_new[mnemonic == "cou2cu", authority := "(Duchass. ex Griseb.) C.M.Taylor"]
+spp_new[mnemonic == "couthe", authority := "(Jacq.) K.Schum."]
+spp_new[mnemonic == "crotbi", authority := "Müll.Arg."]
+spp_new[mnemonic == "des2pa", authority := "(B.L.Rob.) Saff."]
+spp_new[mnemonic == "drypst", authority := "G.L.Webster"]
+spp_new[mnemonic == "entesc", authority := "(Benth.) A.R.M.Luz & E.R.Souza"]
+spp_new[mnemonic == "eugega", authority := "(C.Wright ex Griseb.) Krug & Urb."]
+spp_new[mnemonic == "eugeoe", authority := "O.Berg"]
+spp_new[mnemonic == "faraoc", authority := "(L.) A.Rich."]
+spp_new[mnemonic == "gustsu", authority := "(Kunth) O.Berg"]
+spp_new[mnemonic == "hampap", authority := "(Donn.Sm.) Standl."]
+spp_new[mnemonic == "herrpu", authority := "(Pittier) R.E.Schult."]
+spp_new[mnemonic == "ingaru", authority := "G.Don"]
+spp_new[mnemonic == "jac1co", authority := "(Aubl.) D.Don"]
+spp_new[mnemonic == "jac2sp", authority := "(Aubl.) A.DC."]
+spp_new[mnemonic == "koanwe", authority := "(B.L.Rob.) R.M.King & H.Rob."]
+spp_new[mnemonic == "laciag", authority := "(P.J.Bergius) Rusby"]
+spp_new[mnemonic == "lindla", authority := "C.Presl"]
+spp_new[mnemonic == "lozapi", authority := "(S.F.Blake) L.B.Sm."]
+spp_new[mnemonic == "micoho", authority := "Donn.Sm."]
+spp_new[mnemonic == "micoim", authority := "(Sw.) D.Don"]
+spp_new[mnemonic == "neeaam", authority := "Donn.Sm."]
+spp_new[mnemonic == "oenoma", authority := "H.Karst."]
+spp_new[mnemonic == "olmeas", authority := "(Pittier) C.C.Berg"]
+spp_new[mnemonic == "phoeci", authority := "(Sw.) R.Rohde"]
+spp_new[mnemonic == "pipeca", authority := "C.DC."]
+spp_new[mnemonic == "pipeco", authority := "(Miq.) C.DC."]
+spp_new[mnemonic == "pipecu", authority := "C.DC."]
+spp_new[mnemonic == "pipeim", authority := "C.DC."]
+spp_new[mnemonic == "pipelo", authority := "C.DC."]
+spp_new[mnemonic == "pit1ma", authority := "(Pittier) M.V.B.Soares, M.P.Morim & Iganci"]
+spp_new[mnemonic == "pochqu", authority := "(Seem.) W.S.Alverson & M.C.Duarte"]
+spp_new[mnemonic == "protpa", authority := "(Rose) I.M.Johnst."]
+spp_new[mnemonic == "psycli", authority := "K.Krause"]
+spp_new[mnemonic == "psycra", authority := "(Aubl.) G.Nicholson"]
+spp_new[mnemonic == "sch1zo", authority := "(Mutis ex L.f.) Wess.Boer"]
+spp_new[mnemonic == "schipa", authority := "(Vell.) S.F.Blake"]
+spp_new[mnemonic == "sennda", authority := "(Britton & Rose) H.S.Irwin & Barneby"]
+spp_new[mnemonic == "sipacr", authority := "(Poepp. & Endl.) A.DC."]
+spp_new[mnemonic == "sipapa", authority := "(Beurl.) A.DC."]
+spp_new[mnemonic == "socrex", authority := "(Mart.) H.Wendl."]
+spp_new[mnemonic == "sponra", authority := "Donn.Sm."]
+spp_new[mnemonic == "sterap", authority := "(Jacq.) H.Karst."]
+spp_new[mnemonic == "sympgl", authority := "L.f."]
+spp_new[mnemonic == "tab1gu", authority := "(Seem.) S.O.Grose"]
+spp_new[mnemonic == "tachve", authority := "van der Werff & N.Zamora"]
+spp_new[mnemonic == "termam", authority := "(J.F.Gmel.) Exell"]
+spp_new[mnemonic == "tripcu", authority := "Fisch. & C.A.Mey. ex C.A.Mey."]
+spp_new[mnemonic == "turpoc", authority := "(Sw.) G.Don"]
+spp_new[mnemonic == "virosp", authority := "D.Santam."]
+spp_new[mnemonic == "xyl2ch", authority := "Donn.Sm."]
+spp_new[mnemonic == "xyl2ol", authority := "Donn.Sm."]
+spp_new[mnemonic == "zantp1", authority := "P.Wilson"]
+spp_new[mnemonic == "zantse", authority := "P.Wilson"]
+spp_new[mnemonic == "zuelgu", authority := "(A.Rich.) Warb."]
 
 # --- 9e. Authority: different text -------------------------------------------
 # The authority differs in content. `wfo` is the authority of the WFO record,
@@ -1143,6 +1223,18 @@ author_different
 print_accept_lines(author_different[, .(mnemonic, column, suggested = wfo)])
 
 # Adopted or hand-corrected authorities (paste or write the lines here):
+# spp_new[mnemonic == "anacex", authority := "Skeels"]
+spp_new[mnemonic == "ficuc2", authority := "(Liebm.) Miq."]
+spp_new[mnemonic == "heisco", authority := "Standl."]
+spp_new[mnemonic == "maclti", authority := "(L.) D.Don ex G.Don"]
+spp_new[mnemonic == "ouralu", authority := "(Kunth) Engl."]
+spp_new[mnemonic == "pse2sp", authority := "(Sw.) Griseb."]
+spp_new[mnemonic == "tab1ro", authority := "(Bertol.) DC."]
+# spp_new[mnemonic == "thevah", authority := "A.DC."]
+spp_new[mnemonic == "thevah", authority := "(L.) Vahl"]
+spp_new[mnemonic == "tri2tu", authority := "(Triana & Planch.) C.DC."]
+spp_new[mnemonic == "tropra", authority := "(L.) Urb."]
+spp_new[mnemonic == "zantpr", authority := "(Sw.) Sw."]
 
 # --- 9f. Authority not compared ----------------------------------------------
 # The WFO record has no authority. Check these authorities by eye and correct
@@ -1281,8 +1373,8 @@ names(full_out)
 
 check(!anyDuplicated(full_out$Mnemonic), "one row per mnemonic in the exported table")
 check(
-    setequal(full_out$Mnemonic, setdiff(inventory_mnemonics, "uniden")),
-    "the exported table holds every code of the plot except uniden"
+    setequal(full_out$Mnemonic, setdiff(c(inventory_mnemonics, codes_without_records), "uniden")),
+    "the exported table holds every code of the plot except uniden, plus ficuau"
 )
 check(
     full_out[, !anyNA(Order) && !anyNA(Family) && !anyNA(Genus) && !anyNA(SpeciesName)],
