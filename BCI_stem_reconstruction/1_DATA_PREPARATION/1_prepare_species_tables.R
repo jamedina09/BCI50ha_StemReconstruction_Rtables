@@ -59,6 +59,8 @@ TAXONOMY_1 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW"
 TAXONOMY_2 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "email_2", "bci_name_changes.xlsx")
 flora_panama_oct_9_2026 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "flora_panama_oct_9_2026", "Lista de especies de la Flora de Panamá_nov25 original.xlsx")
 ViewFullTable_old <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv")
+# current inventory (the table 0_extract_ViewTaxonomy.R reads)
+ViewFullTable_new <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "oct_13_2026", "ViewFullTable_bci.csv")
 
 # =============================================================================
 # 1. LOAD ALL DATA
@@ -441,20 +443,18 @@ viewt_tax1_updated <- rbindlist(
     fill = TRUE
 )
 
-
 ## lets check wether all species are included in the viwefulltables
 
 setdiff(viewt_tax1_updated$Mnemonic, viewt$Mnemonic)
 
 # FINISHED: Rolando email 1 and 2, Suzanne email 1 included
 
-# TODO: PREPARE BCI DATA Needs to replace ficutr with ficuau in the BCI inventory (raw data).
-
+# NOTE: ficutr is replaced with ficuau in the BCI inventory in
+# 2_prepare_viewfulltable.R; the ficutr row is removed from this table in Section 4.
 
 # =============================================================================
 # 3. ASSESS FIX 3
 # =============================================================================
-
 
 # Hola José,
 
@@ -579,6 +579,100 @@ viewt_tax1_updated_flor_pan[mnemonic == "ficutr"]
 viewt_tax1_updated_flor_pan[mnemonic == "ficuau"]
 
 viewt_tax1_updated_flor_pan[!is.na(email_1_comment)]
+
+# =============================================================================
+# 4. MNEMONICS REPLACED IN THE INVENTORY
+# =============================================================================
+# Two codes of the inventory are replaced by another code. The same replacement
+# is made in 2_prepare_viewfulltable.R, before the species table is merged:
+#   ficutr -> ficuau  the trees recorded as ficutr are Ficus aurea, whose code
+#                     is ficuau (Suzanne, email 2)
+#   pterof -> pterro  all Pterocarpus in the plot are P. rohrii (Rolando, email 1)
+# After the replacement ficutr and pterof have no records in the plot, so their
+# rows are removed from the species table here.
+mnemonic_replace <- c(ficutr = "ficuau", pterof = "pterro")
+
+# Loud check (the script is run line by line): prints ❌, raises an immediate
+# warning, writes to the log, and only then stops.
+log_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "CHECKS", "prepare_species_tables_log.txt")
+dir.create(dirname(log_file), showWarnings = FALSE, recursive = TRUE)
+check <- function(ok, msg) {
+    if (isTRUE(all(ok))) {
+        cat("✓", msg, "\n")
+        return(invisible(TRUE))
+    }
+    full_msg <- paste0("CHECK FAILED: ", msg)
+    cat("❌", full_msg, "\n")
+    warning(full_msg, call. = FALSE, immediate. = TRUE)
+    cat(format(Sys.time()), full_msg, "\n", file = log_file, append = TRUE)
+    stop(full_msg, call. = FALSE)
+}
+
+# rows of the replaced codes and of the codes that replace them
+viewt_tax1_updated_flor_pan[mnemonic %in% c(names(mnemonic_replace), mnemonic_replace)]
+
+check(
+    all(mnemonic_replace %in% viewt_tax1_updated_flor_pan$mnemonic),
+    "the codes that replace ficutr and pterof have a row in the species table"
+)
+
+# remove the replaced codes
+viewt_tax1_updated_flor_pan <- viewt_tax1_updated_flor_pan[!mnemonic %in% names(mnemonic_replace)]
+
+# the species table must now hold exactly the codes of the inventory after the
+# replacement. The codes come from the current inventory (oct_13_2026), the
+# same table 0_extract_ViewTaxonomy.R reads; only the Mnemonic column is loaded.
+inventory_mnemonics <- unique(fread(ViewFullTable_new, sep = "\t", select = "Mnemonic")$Mnemonic)
+inventory_mnemonics <- unique(fifelse(
+    inventory_mnemonics %in% names(mnemonic_replace),
+    mnemonic_replace[inventory_mnemonics],
+    inventory_mnemonics
+))
+setdiff(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics) # in the table, not in the plot
+setdiff(inventory_mnemonics, viewt_tax1_updated_flor_pan$mnemonic) # in the plot, not in the table
+check(
+    setequal(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics),
+    "the species table holds exactly the codes present in the plot after the replacement"
+)
+check(
+    !anyDuplicated(viewt_tax1_updated_flor_pan$mnemonic),
+    "one row per mnemonic in the species table"
+)
+nrow(viewt_tax1_updated_flor_pan)
+
+viewt_tax1_updated_flor_pan
+
+## remove suffix "_corrected" from the column names
+colnames(viewt_tax1_updated_flor_pan) <- gsub("_corrected$", "", colnames(viewt_tax1_updated_flor_pan))
+
+colnames(viewt_tax1_updated_flor_pan)
+
+## translate the Spanish column names (from "orden" onwards) to English, one to one
+names_es_en <- c(
+    orden = "order",
+    familia = "family",
+    genero = "genus",
+    especie = "species",
+    autoridad = "authority",
+    sinonimos = "synonyms",
+    nombre_comun = "common_name",
+    herbario = "herbarium"
+)
+
+check(
+    all(names(names_es_en) %in% colnames(viewt_tax1_updated_flor_pan)),
+    "all Spanish column names to translate are in the species table"
+)
+check(
+    !any(unname(names_es_en) %in% colnames(viewt_tax1_updated_flor_pan)),
+    "no English column name is already in the species table"
+)
+
+setnames(viewt_tax1_updated_flor_pan, old = names(names_es_en), new = unname(names_es_en))
+
+colnames(viewt_tax1_updated_flor_pan)
+
+
 
 # # --- 1a. New taxonomy --------------------------------------------------------
 # spp_new <- as.data.table(readxl::read_xlsx(TAXONOMY_NEW))
