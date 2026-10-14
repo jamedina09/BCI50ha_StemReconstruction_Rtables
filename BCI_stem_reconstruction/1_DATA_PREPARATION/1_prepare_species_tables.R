@@ -699,41 +699,115 @@ viewt_tax1_updated_flor_pan[mnemonic %in% "pterro", notes := "Previously identif
 # =============================================================================
 # 2. PREPARE NEW TAXONOMY FOR TNRS VALIDATION
 # =============================================================================
-# Standardise the taxon names and build the strings that will be sent to TNRS.
+# Split every name into its parts and mark which rows hold a name that a name
+# service can validate. The names in this table are those of the Flora de
+# Panamá list and stay as the reference: TNRS / WorldFlora results are added
+# later in their own columns and are used only to detect spelling mistakes.
+#
+# Columns created here:
+#   species_panama   species column exactly as it came from the merge
+#                    (e.g. "simplex var. grandiflora"), kept for traceability
+#   species          specific epithet only ("simplex")
+#   rank             infraspecific rank ("var.", "subsp.", "f."); NA for species
+#   variety          infraspecific name ("grandiflora"); NA for species
+#   name_type        "species", "infraspecific" or "morphospecies"
+#   tnrs_check       TRUE for the rows whose name can be sent to a name service
+#   scientific_name  full name without authority, built from the parts above
 spp_new <- copy(viewt_tax1_updated_flor_pan[mnemonic != "uniden"])
 
 # Genus must be capitalised for TNRS.
-spp_new[, genus := str_to_sentence(genus)]
+spp_new[, genus := str_to_sentence(str_squish(genus))]
 
-# Species epithets should be lower-case.
-spp_new[, species := str_to_lower(species)]
+# Species epithets should be lower-case, without repeated spaces
+# ("simplex  var. grandiflora" has two spaces in the Flora de Panamá list).
+spp_new[, species := str_to_lower(str_squish(species))]
+
+# --- 2a. Separate species, infraspecific rank and infraspecific name ---------
+# Names with an infraspecific rank come as one string in `species`
+# ("<species> <rank> <name>", e.g. swars1 and swars2, the two varieties of
+# Swartzia simplex). They are split so that the two codes are told apart by
+# `rank` + `variety` and not merged into the same binomial.
+spp_new[, species_panama := species]
+
+infra_ranks <- c("var.", "subsp.", "ssp.", "f.")
+infra_pattern <- "^([a-z-]+) (var\\.|subsp\\.|ssp\\.|f\\.) ([a-z-]+)$"
 
 spp_new[, rank := NA_character_]
 spp_new[, variety := NA_character_]
+spp_new[grepl(infra_pattern, species_panama), `:=`(
+    species = sub(infra_pattern, "\\1", species_panama),
+    rank = sub(infra_pattern, "\\2", species_panama),
+    variety = sub(infra_pattern, "\\3", species_panama)
+)]
+# one spelling per rank
+spp_new[rank == "ssp.", rank := "subsp."]
 
+# rows that were split
+spp_new[!is.na(rank), .(mnemonic, genus, species_panama, species, rank, variety, authority)]
 
-spp_new[codigo %in% inc[1], `:=`(
-    rank = subp_in_old[subspmnemonic %in% inc[1]]$rank,
-    variety = subp_in_old[subspmnemonic %in% inc[1]]$subspecies
+# --- 2a.1 Classify the kind of name ------------------------------------------
+# morphospecies: field names that are not published names ("sp.", "sp.4_...",
+#                or a label such as "hybrid" / "fuzzy"). They are recognised by
+#                the "sp." prefix or by having no authority, and cannot be
+#                validated by a name service.
+# infraspecific: species + rank + infraspecific name
+# species:       genus + a single specific epithet
+spp_new[, name_type := fcase(
+    grepl("^sp\\.", species) | is.na(authority), "morphospecies",
+    !is.na(rank), "infraspecific",
+    grepl("^[a-z-]+$", species), "species"
+)]
+spp_new[, tnrs_check := name_type %in% c("species", "infraspecific")]
+
+spp_new[, .N, by = .(name_type, tnrs_check)]
+# morphospecies: set aside, not sent to the name service
+spp_new[name_type == "morphospecies", .(mnemonic, family, genus, species, authority, notes)]
+
+# Full name without authority, built from the separated parts. This is the
+# Flora de Panamá name that the name-service result is compared with.
+spp_new[, scientific_name := fifelse(
+    name_type %in% "infraspecific",
+    paste(genus, species, rank, variety),
+    paste(genus, species)
 )]
 
-spp_new[codigo %in% inc[2], `:=`(
-    rank = subp_in_old[subspmnemonic %in% inc[2]]$rank,
-    variety = subp_in_old[subspmnemonic %in% inc[2]]$subspecies
-)]
+# --- 2a.2 Checks on the separated names --------------------------------------
+check(
+    !anyNA(spp_new$name_type),
+    "every row is classified as species, infraspecific or morphospecies"
+)
+check(
+    spp_new[tnrs_check == TRUE, all(grepl("^[A-Z][a-z-]+$", genus) & grepl("^[a-z-]+$", species))],
+    "names to validate have a one-word genus and a one-word specific epithet"
+)
+check(
+    spp_new[name_type == "infraspecific", all(rank %in% setdiff(infra_ranks, "ssp.") & grepl("^[a-z-]+$", variety))] &&
+        spp_new[name_type != "infraspecific", all(is.na(rank) & is.na(variety))],
+    "rank and variety are filled for infraspecific names and empty for all others"
+)
+check(
+    !any(grepl("(^| )(var|subsp|ssp|f)\\.( |$)", spp_new$species)),
+    "no infraspecific rank is left inside the species column"
+)
+check(
+    !anyDuplicated(spp_new[tnrs_check == TRUE, scientific_name]),
+    "names to validate are unique (no two codes share the same full name)"
+)
 
-spp_new[codigo %in% inc[1]]
-spp_new[codigo %in% inc[2]]
-
+# --- 2a.3 Authority ----------------------------------------------------------
 # Strip non-authority annotations (sensu, auct., nom. dub., ined.) from the
 # authority field; they confuse the TNRS parser
-spp_new[, autoridad := stringr::str_replace_all(
-    autoridad,
+spp_new[, authority := stringr::str_replace_all(
+    authority,
     regex("sensu.*|auct\\.|nom\\. dub\\.|ined\\.", ignore_case = TRUE),
     ""
 )]
-spp_new[, autoridad := str_trim(autoridad)]
-spp_new[autoridad == "", autoridad := NA_character_]
+spp_new[, authority := str_squish(authority)]
+spp_new[authority == "", authority := NA_character_]
+check(
+    spp_new[tnrs_check == TRUE, !anyNA(authority)],
+    "every name to validate still has an authority after removing annotations"
+)
 
 # TNRS only accepts families ending in -aceae, so other families are omitted
 # from the generated name string.
@@ -742,6 +816,11 @@ spp_new[
     !is.na(family) & !grepl("aceae$", family, ignore.case = TRUE),
     .(family)
 ]
+
+# The table, separated: reference names (Flora de Panamá) by part
+spp_new[, .(mnemonic, name_type, tnrs_check, family, genus, species, rank, variety, authority, scientific_name)][name_type == "species"]
+spp_new[, .(mnemonic, name_type, tnrs_check, family, genus, species, rank, variety, authority, scientific_name)][name_type == "morphospecies"]
+spp_new[, .(mnemonic, name_type, tnrs_check, family, genus, species, rank, variety, authority, scientific_name)][name_type == "infraspecific"]
 
 
 # # --- 2b. Build the TNRS name string -----------------------------------------
