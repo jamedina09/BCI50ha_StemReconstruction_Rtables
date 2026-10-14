@@ -103,6 +103,21 @@ ViewFullTable[Mnemonic == "pterof", Mnemonic := "pterro"]
 # Check
 ViewFullTable[Mnemonic == "pterof"]
 
+# Check script BCI_stem_reconstruction/1_DATA_PREPARATION/1_prepare_species_tables.R:
+# Solamente un código cambió: todos los "ficutr" cambiaron a "ficuau".
+# The trees with code ficutr are Ficus aurea, whose code is ficuau.
+unique(ViewFullTable[Mnemonic == "ficutr", .(Mnemonic, Family, Genus, SpeciesName)])
+nrow(ViewFullTable[Mnemonic == "ficutr"])
+
+# Correct (no rows before the replacement)
+ViewFullTable[Mnemonic == "ficuau"]
+# Incorrect
+ViewFullTable[Mnemonic == "ficutr"]
+# Replace
+ViewFullTable[Mnemonic == "ficutr", Mnemonic := "ficuau"]
+# Check
+ViewFullTable[Mnemonic == "ficutr"]
+
 # length(unique(ViewFullTable$Mnemonic))
 
 # Rename CensusID to CensusID_raw to preserve original labels, then assign
