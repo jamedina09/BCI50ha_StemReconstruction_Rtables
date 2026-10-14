@@ -168,7 +168,7 @@ viewt_tax1 <- merge(
 
 
 # 1) El nombre Appunia siebertiii es correcto y actualizado, Morinda siebertii es un sinónimo.
-viewt_tax1[genero == "Appunia", email_1_comment := "Appunia siebertiii es correcto; Morinda siebertii es un sinónimo"]
+viewt_tax1[genero == "Appunia", email_1_comment := "Appunia siebertii es correcto; Morinda siebertii es un sinónimo"]
 
 # 2) Apeiba "hybrida" murió.
 viewt_tax1[Mnemonic == "apeihy", email_1_comment := "Apeiba hybrida murió"]
@@ -499,7 +499,7 @@ viewt_tax1_updated_flor_pan <- merge(
     all.y = FALSE
 )
 
-viewt_tax1_updated_flor_pan[, texto := NULL][, fotos := NULL][, pan_texto := NULL][, pan_fotos := NULL]
+viewt_tax1_updated_flor_pan[, texto := NULL][, fotos := NULL][, pan_texto := NULL][, pan_fotos := NULL][, pan_mnbc := NULL]
 
 # check wether all mnemonic in viewt_tax1_updated_flor_pan are present in the viewfulltable
 
@@ -572,8 +572,13 @@ viewt_tax1_updated_flor_pan[, herbario_corrected := fcoalesce(pan_herbario, herb
 viewt_tax1_updated_flor_pan[(is.na(herbario) | is.na(pan_herbario)) | herbario != pan_herbario, .(mnemonic, herbario, pan_herbario, herbario_corrected)]
 viewt_tax1_updated_flor_pan[, herbario := NULL][, pan_herbario := NULL]
 
+viewt_tax1_updated_flor_pan[mnemonic == "appuse"]
 
+viewt_tax1_updated_flor_pan[mnemonic == "ficutr"]
 
+viewt_tax1_updated_flor_pan[mnemonic == "ficuau"]
+
+viewt_tax1_updated_flor_pan[!is.na(email_1_comment)]
 
 # # --- 1a. New taxonomy --------------------------------------------------------
 # spp_new <- as.data.table(readxl::read_xlsx(TAXONOMY_NEW))
