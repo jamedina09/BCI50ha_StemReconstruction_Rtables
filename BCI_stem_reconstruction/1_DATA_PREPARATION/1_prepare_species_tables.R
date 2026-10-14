@@ -38,6 +38,8 @@ options(
 library(data.table) # Fast table manipulation
 library(TNRS) # Taxonomic Name Resolution Service
 library(stringr) # String helpers (trimming, case, etc.)
+library(compareDF) # Compare data frames and generate difference tables
+library(janitor) # Clean column names, check duplicates, etc.
 
 # Number of threads data.table will use
 data.table::getDTthreads()
@@ -50,13 +52,528 @@ if (basename(workspace_root) == "BCI_stem_reconstruction") {
     workspace_root <- dirname(workspace_root)
 }
 
-TAXONOMY_NEW <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "Lista_bci_mnemonics_formadevida.xlsx")
-TAXONOMY_OLD <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewTaxonomy_bci.csv")
-INPUT_FILE <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv")
+# load raw Mnemonics
+
+ViewTaxonomy <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "oct_13_2026", "ViewTaxonomy_bci.rds")
+TAXONOMY_1 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "email_1", "Lista_bci_mnemonics_formadevida.xlsx")
+TAXONOMY_2 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "email_2", "bci_name_changes.xlsx")
+flora_panama_oct_9_2026 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "flora_panama_oct_9_2026", "Lista de especies de la Flora de Panamá_nov25 original.xlsx")
+ViewFullTable_old <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv")
 
 # =============================================================================
-# 1. LOAD DATA
+# 1. LOAD ALL DATA
 # =============================================================================
+
+viewt <- as.data.table(readRDS(ViewTaxonomy))
+tax1 <- as.data.table(readxl::read_xlsx(TAXONOMY_1))
+tax2 <- as.data.table(readxl::read_xlsx(TAXONOMY_2))
+flor_pan <- as.data.table(readxl::read_xlsx(flora_panama_oct_9_2026))
+viewftold <- as.data.table(fread(ViewFullTable_old))
+
+inc <- colnames(viewt)
+
+viewtold <- unique(viewftold[, ..inc])
+setorder(viewtold, Mnemonic)
+
+# =============================================================================
+# 2. COMPARE OLD vs. NEW taxonomy in the viewfulltable datasets
+# =============================================================================
+
+viewt[, .N, by = Mnemonic][order(-N)]
+
+viewtold[, .N, by = Mnemonic][order(-N)]
+viewtold[, RowID := .I]
+viewtold[Mnemonic == "protte"]
+viewtold[Mnemonic == "quaras"]
+viewtold <- viewtold[!RowID %in% c(236, 257)]
+viewtold[, RowID := NULL]
+
+viewt[, .N, by = Mnemonic][order(-N)]
+viewtold[, .N, by = Mnemonic][order(-N)]
+
+viewt <- viewt[, .(Mnemonic, Family, Genus, SpeciesName, Subspecies)]
+viewtold <- viewtold[, .(Mnemonic, Family, Genus, SpeciesName, Subspecies)]
+
+# is NA or is NULL, make NA
+viewt[viewt == "NULL"] <- NA
+viewtold[viewtold == "NULL"] <- NA
+
+# if character "", make NA
+viewt[viewt == ""] <- NA
+viewtold[viewtold == ""] <- NA
+
+unique(viewt$Mnemonic == viewtold$Mnemonic)
+
+ctable_mnemonic <- compare_df(viewt, viewtold, c("Mnemonic"))
+ctable_mnemonic$comparison_df
+
+# create_output_table(ctable_mnemonic)
+
+# create_output_table(ctable_mnemonic, output_type = "xlsx", file_name = "./BCI_stem_reconstruction/1_DATA_PREPARATION/compare_2025_vs_oct2026_taxonomy_from_viewfulltables.xlsx")
+
+# viewt[Mnemonic == "appuse"]
+# viewt[Mnemonic == "clidse"]
+
+rm(viewtold)
+
+# =============================================================================
+# 2. ASSESS FIX 1
+# =============================================================================
+
+# NOTE: The following email from Rolando Pérez (Sep 28, 2026) provides context for the species list and known corrections. It is included here for reference.
+
+# Monday, September 28, 2026 at 9:07:43
+# Subject: Lista de las 50 has
+# Date: Thursday, May 14, 2026 at 09:25:16
+# From: Perez, Rolando
+# To: Lao, Suzanne, Medina-Vega, Jose A.
+# CC: Aguilar, Salomon, Mitre, David S., Davies, Stuart J.
+# Attachments: Lista_bci_mnemonics_formadevida.xlsx
+# Buenos días a todos,
+# Esta es la lista de especies actualizada y elaborada por R. Pérez y S. Aguilar registradas en todos
+# los censos de la parcela de 50 hectáreas de BCI.
+# Quiero aclarar algunas correcciones que realizamos:
+# El nombre Appunia siebertiii es correcto y actualizado, Morinda siebertii es un sinónimo.
+# Apeiba "hybrida" murió.
+# Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una
+# con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla.
+# Pterocarpus officinalis no existe en la parcela, yo personalmente revisé todos los Pterocarpus y
+# corresponden a P. rohrii.
+# Beilschmiedia pendula y Quararibea asterolepis son especies que no existen para BCI. Las
+# especies correctas son Beilschmiedia tovarensis y Quararibea stenophylla, ambas fueron
+# confirmadas por los especialistas en nuestras muestras de herbario.
+# Añadimos las formas de vida que utilizo Robin Foster con pequeñas modificaciones realizadas por
+# R. Pérez y S. Aguilar. También está la forma de vida que Salomón y Yo le hemos asignado a las
+# especies de la parcela en español.
+# Los nombres comunes de las especies y nuestras colecciones de herbario.
+# Tengan en cuenta esto para las publicaciones
+# Esperamos sea de utilidad.
+# Saludos
+# Rolando
+
+## So far, I have 329 mnemonic codes. Rolando provided 327. Lets see which ones i have extra
+setdiff(viewt$Mnemonic, tax1$codigo)
+
+## Lets merge my table with Rolando's table to proceed with the checking process
+viewt_tax1 <- merge(
+    viewt,
+    tax1,
+    by.x = "Mnemonic",
+    by.y = "codigo",
+    all.x = TRUE,
+    all.y = TRUE
+)
+
+## Lets assess comments one by one. I will create a new column called "notes" to store the comments and observations.
+
+
+# 1) El nombre Appunia siebertiii es correcto y actualizado, Morinda siebertii es un sinónimo.
+viewt_tax1[genero == "Appunia", email_1_comment := "Appunia siebertiii es correcto; Morinda siebertii es un sinónimo"]
+
+# 2) Apeiba "hybrida" murió.
+viewt_tax1[Mnemonic == "apeihy", email_1_comment := "Apeiba hybrida murió"]
+
+# 3) Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una
+# con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla.
+viewt_tax1[Mnemonic == "nects1", email_1_comment := "Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla."]
+viewt_tax1[Mnemonic == "nects3", email_1_comment := "Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla."]
+
+
+# 4) Pterocarpus officinalis no existe en la parcela, yo personalmente revisé todos los Pterocarpus y
+# corresponden a P. rohrii.
+viewt_tax1[Genus == "Pterocarpus"]
+viewt_tax1[Mnemonic == "pterof", email_1_comment := "Pterocarpus officinalis no existe en la parcela; corresponde a P. rohrii"]
+viewt_tax1[Mnemonic == "pterro", email_1_comment := "Pterocarpus officinalis no existe en la parcela; corresponde a P. rohrii"]
+
+# 5) Beilschmiedia pendula y Quararibea asterolepis son especies que no existen para BCI. Las
+# especies correctas son Beilschmiedia tovarensis y Quararibea stenophylla, ambas fueron
+# confirmadas por los especialistas en nuestras muestras de herbario.
+viewt_tax1[Genus == "Beilschmiedia" & SpeciesName == "tovarensis", email_1_comment := "Beilschmiedia pendula no existe para BCI; la especie correcta es Beilschmiedia tovarensis"]
+viewt_tax1[Genus == "Quararibea" & SpeciesName == "stenophylla", email_1_comment := "Quararibea asterolepis no existe para BCI; la especie correcta es Quararibea stenophylla"]
+
+viewt_tax1[!is.na(email_1_comment), .(Mnemonic, Family, Genus, SpeciesName, email_1_comment)]
+
+# Añadimos las formas de vida que utilizo Robin Foster con pequeñas modificaciones realizadas por
+# R. Pérez y S. Aguilar. También está la forma de vida que Salomón y Yo le hemos asignado a las
+# especies de la parcela en español.
+# Los nombres comunes de las especies y nuestras colecciones de herbario.
+
+## check differences in family, genus, species, subspecies, and order
+
+viewt_tax1[(is.na(familia) & !is.na(Family)) | Family != familia, .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
+viewt_tax1[is.na(familia), .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
+viewt_tax1[is.na(familia), familia := Family]
+
+viewt_tax1[(is.na(genero) & !is.na(Genus)) | Genus != genero, .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
+viewt_tax1[is.na(genero), .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
+viewt_tax1[is.na(genero), genero := Genus]
+
+viewt_tax1[(is.na(especie) & !is.na(SpeciesName)) | SpeciesName != especie, .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
+viewt_tax1[is.na(especie), .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
+viewt_tax1[is.na(especie), especie := SpeciesName]
+
+viewt_tax1[!is.na(Subspecies)]
+
+viewt_tax1[, Family := NULL]
+viewt_tax1[, Genus := NULL]
+viewt_tax1[, SpeciesName := NULL]
+
+# FINISHED: Rolando email 1 included
+
+# =============================================================================
+# 2. ASSESS FIX 2
+# =============================================================================
+
+# NOTE: The following emails from Suzanne Lao (July 28 , 2026) provides corrections.
+# NOTE: Rolando Perez responded to the email making an additional correction. The email is included here for reference.
+
+# First Suzanne email
+
+# From: Lao, Suzanne <LAOZ@si.edu>
+# Sent: Tuesday, July 28, 2026 2:28 PM
+# To: Medina-Vega, Jose A. <MedinaJA@si.edu>
+# Cc: Davies, Stuart J. <DaviesS@si.edu>; Perez, Rolando <PerezRo@si.edu>
+# Subject: BCI species name changes
+
+# Hola José,
+
+# Adjunto le envío el listado de los nombres de especies de la parcela de BCI. Las primeras
+# columnas son los nombres nuevos y las columnas al final son los nombres viejos.
+
+# Solamente un código cambió: todos los "ficutr" cambiaron a "ficuar".
+# NOTE: ficur is wrong, Suzanne ment ficuau, not ficuar. There is no ficuar.
+# Me avisa si este listado es diferente al que le envió Rolando. Es posible que el listado de
+# Rolando esté más actualizado.
+
+# Gracias y saludos,
+# Suzanne
+
+## So far, I have 329 mnemonic codes. Suzanne provided 330, Let's investigate the difference
+# i have one per mnemonic
+viewt_tax1[, .N, by = Mnemonic][order(-N)]
+
+# Suzanne has 2 per mnemonic - the problematic protte
+tax2[, .N, by = mnemonic][order(-N)]
+tax2[mnemonic == "protte"]
+# lets exclude it to make a clean join
+tax2[, RowID := .I]
+tax2[mnemonic == "protte"]
+tax2 <- tax2[!RowID %in% c(267)]
+tax2[, RowID := NULL]
+
+# lets count again
+# i have 1 per mnemonic
+setorder(viewt_tax1, Mnemonic)
+viewt_tax1[, .N, by = Mnemonic][order(-N)]
+
+# suzame has 1 per mnemonic
+setorder(tax2, mnemonic)
+tax2[, .N, by = mnemonic][order(-N)]
+
+## lets find the differences
+# i have "ficutr" and Suzanne has "ficuar"
+setdiff(viewt_tax1$Mnemonic, tax2$mnemonic)
+setdiff(tax2$mnemonic, viewt_tax1$Mnemonic)
+
+viewt_tax1[Mnemonic == "ficutr"]
+# viewt_tax1[Mnemonic == "ficuau"]
+# tax2[mnemonic == "ficutr"]
+tax2[mnemonic == "ficuau"]
+
+tax2[, speciesid := NULL]
+tax2[, subspeciesid := NULL]
+tax2[, speciesidold := NULL]
+tax2[, subspeciesidold := NULL]
+
+# Second, Rolands email correcting Suzanne email
+
+# Subject: RE: BCI species name changes
+# Date: Wednesday, August 5, 2026 at 06:07:09 Eastern Standard Time
+# From: Perez, Rolando
+# To: Lao, Suzanne, Medina-Vega, Jose A.
+# CC: Davies, Stuart J
+
+# Buenos días a todos,
+
+# En el listado hay que actualizar dos nombres: (stemgr ahora es Tabernaemontana
+# grandiflora Jacq.) y (pla1pi ahora es Platymiscium pinnatum (Jacq.) Dugand).
+# Los nombres que aparecen en la lista no son sinónimos. Los sinónimos de ambas
+# especies son: Stemmadenia grandiflora y Platymiscium polystachyum.
+
+# Saludos
+# Rolando
+
+## Make corrections Rolando suggested
+
+# first explore whats going on
+tax2[mnemonic %in% c("stemgr", "pla1pi")]
+
+# viewt_tax1 is already corrected, however, it only missed the sinonimo for pla1pi
+viewt_tax1[Mnemonic %in% c("stemgr", "pla1pi")]
+
+viewt_tax1[Mnemonic %in% c("pla1pi")]
+viewt_tax1[Mnemonic %in% c("pla1pi"), sinonimos := "Platymiscium polystachyum"]
+
+## check
+viewt_tax1[Mnemonic %in% c("stemgr", "pla1pi"), .(Mnemonic, genero, especie, autoridad, sinonimos)]
+
+# FINISHED: Rolando email 2 included
+
+tax2
+setorder(tax2, mnemonic)
+
+viewt_tax1
+setorder(viewt_tax1, Mnemonic)
+
+susfam <- tax2[, .(mnemonic, family, familyold)]
+mefam <- viewt_tax1[, .(Mnemonic, familia)]
+
+mefam_susfam <- merge(
+    mefam,
+    susfam,
+    by.x = "Mnemonic",
+    by.y = "mnemonic",
+    all.x = TRUE,
+    all.y = TRUE
+)
+
+mefam_susfam[familia != family]
+## There are several inconsistencies in the family names between my table and Suzanne's table. I will keep my family names as they are correct.
+## ones provided by Rolando. Also, Suzanne agrees in the email that Rolando's are more up to date.
+
+susgen <- tax2[, .(mnemonic, genus, genusold)]
+megen <- viewt_tax1[, .(Mnemonic, genero)]
+
+megen_susgen <- merge(
+    megen,
+    susgen,
+    by.x = "Mnemonic",
+    by.y = "mnemonic",
+    all.x = TRUE,
+    all.y = TRUE
+)
+
+megen_susgen[genero != genus]
+
+## Same with genera
+
+# Now with species
+sussp <- tax2[, .(mnemonic, speciesname, speciesnameold)]
+mesp <- viewt_tax1[, .(Mnemonic, especie)]
+
+mesp_sussp <- merge(
+    mesp,
+    sussp,
+    by.x = "Mnemonic",
+    by.y = "mnemonic",
+    all.x = TRUE,
+    all.y = TRUE
+)
+
+mesp_sussp[especie != speciesname]
+
+## same with specues
+
+# now with subspecies
+
+sussubsp <- tax2[, .(mnemonic, subspecies, subspeciesold)]
+mesubsp <- viewt_tax1[, .(Mnemonic, Subspecies)]
+
+mesubsp_sussubsp <- merge(
+    mesubsp,
+    sussubsp,
+    by.x = "Mnemonic",
+    by.y = "mnemonic",
+    all.x = TRUE,
+    all.y = TRUE
+)
+
+mesubsp_sussubsp[Subspecies != subspecies]
+
+# we are good here.
+
+## so far, viewt_tax1 is correct
+
+## now, whats missing regarding the mnemonic codes
+setdiff(viewt_tax1$Mnemonic, tax2$mnemonic)
+setdiff(tax2$mnemonic, viewt_tax1$Mnemonic)
+##
+
+## We are back to email 2, were Suzanne is telling us that all "ficutr" should be changed to "ficuar".
+# NOTE: ficuar is wrong. It should be ficuau
+
+# lets check again what does viewt_tax1 has for "ficutr" and "ficuau"
+viewt_tax1[Mnemonic == "ficutr"] # it has ficus trigonata
+viewt_tax1[Mnemonic == "ficuau"] # it does not have ficus aurea
+
+# why viewt_tax1 has "ficutr" and not "ficuau"? Lets check the original viewt table
+viewt[Mnemonic == "ficutr"] # there is ficus aurea in the plot, but the mnemonic is wrong. It should be ficuau, not ficutr
+viewt[Mnemonic == "ficuau"]
+
+# the original viewt has ficutr with name ficus aurea, which, logically, should be ficuau
+# lets see wether it has ficus trigonata
+viewt_tax1[Mnemonic == "ficutr"]
+
+viewt[Genus == "Ficus"][order(SpeciesName)]
+# no, the plot does not have ficus trigonata, so the mnemonic ficutr is wrong.
+# It should be ficuar However, if I exclude it from viewt_tax1, I will have a
+# missing mnemonic code. So, I will keep it in the table, but I will add a
+# comment to the email_2_comment column.
+
+setdiff(viewt_tax1$Mnemonic, tax2$mnemonic)
+setdiff(tax2$mnemonic, viewt_tax1$Mnemonic)
+
+tax2[mnemonic == "ficuau"]
+
+# Include ficuar mnemonic to viewt_tax1
+viewt_tax1_updated <- rbindlist(
+    list(
+        viewt_tax1,
+        data.table(
+            Mnemonic = "ficuau",
+            familia = tax2[mnemonic == "ficuau"]$family,
+            genero = tax2[mnemonic == "ficuau"]$genus,
+            especie = tax2[mnemonic == "ficuau"]$speciesname,
+            email_2_comment = "Solamente un codigo cambio: todos los 'ficutr' cambiaron a 'ficuau'"
+        )
+    ),
+    use.names = TRUE,
+    fill = TRUE
+)
+
+
+## lets check wether all species are included in the viwefulltables
+
+setdiff(viewt_tax1_updated$Mnemonic, viewt$Mnemonic)
+
+# FINISHED: Rolando email 1 and 2, Suzanne email 1 included
+
+# TODO: PREPARE BCI DATA Needs to replace ficutr with ficuau in the BCI inventory (raw data).
+
+
+# =============================================================================
+# 3. ASSESS FIX 3
+# =============================================================================
+
+
+# Hola José,
+
+# Creo que esta lista te puede aclarar algunas interrogantes, incluye árboles, arbustos,
+# palmas y lianas de la Flora de Panamá. Es lo más actualizado que tenemos hasta el
+# momento. MNC indica la presencia en el Monumento de Barro Colorado, todavía sigo
+# trabajando en esto.
+
+# Tiene los códigos de 6 letras que Susy hizo, algunos son registros recientes y
+# hay que agregarles un código, pocos casos, si tienes alguna pregunta con gusto
+# hablamos.
+
+# Incluye nombres comunes, sinónimos, forma de vida (todavía por trabajar más), si
+# tenemos fotos, testigos de herbario y descripciones. Estamos trabajando en esto para
+# antes de salir de STRI montar todo en la página web de ForestGEO, esa es nuestra meta,
+# tener una flora digital de plantas leñosas de Panamá. Es como dejar nuestra herencia
+# botánica para las futuras generaciones.
+
+# Saludos y espero te sea útil.
+
+# Rolando
+
+viewt_tax1_updated
+
+# clean columnames for flor_pan
+flor_pan <- clean_names(flor_pan)
+viewt_tax1_updated <- clean_names(viewt_tax1_updated)
+
+# add the prefix "pan" to the column names of flor_pan to avoid name clashes
+colnames(flor_pan) <- paste0("pan_", colnames(flor_pan))
+
+# make all NA as NA in viewt_tax1_updated
+viewt_tax1_updated <- viewt_tax1_updated[, lapply(.SD, function(x) ifelse(x == "NULL", NA, x))]
+flor_pan <- flor_pan[, lapply(.SD, function(x) ifelse(x == "NULL", NA, x))]
+
+viewt_tax1_updated_flor_pan <- merge(
+    viewt_tax1_updated,
+    flor_pan,
+    by.x = "mnemonic",
+    by.y = "pan_codigo",
+    all.x = TRUE,
+    all.y = FALSE
+)
+
+viewt_tax1_updated_flor_pan[, texto := NULL][, fotos := NULL][, pan_texto := NULL][, pan_fotos := NULL]
+
+# check wether all mnemonic in viewt_tax1_updated_flor_pan are present in the viewfulltable
+
+setdiff(viewt_tax1_updated_flor_pan$mnemonic, viewt$Mnemonic)
+setdiff(viewt$Mnemonic, viewt_tax1_updated_flor_pan$mnemonic)
+
+# yes, the new one doesnt have ficuau, its because I include it and this one
+# needs to be replaced in the BCI inventory (raw data). I will do that in the
+# next script.
+
+## now, lets compare one by one and accept the most updated one
+
+# orden
+viewt_tax1_updated_flor_pan[(is.na(orden) | is.na(pan_orden)) | orden != pan_orden, .(mnemonic, orden, pan_orden)]
+## create orden_corrected, when they are different or one is not available, I will use the pan_orden, otherwise I will use orden
+viewt_tax1_updated_flor_pan[, orden_corrected := fcoalesce(pan_orden, orden)]
+viewt_tax1_updated_flor_pan[(is.na(orden) | is.na(pan_orden)) | orden != pan_orden, .(mnemonic, orden, pan_orden, orden_corrected)]
+viewt_tax1_updated_flor_pan[, orden := NULL][, pan_orden := NULL]
+
+# familia
+viewt_tax1_updated_flor_pan[(is.na(familia) | is.na(pan_familia)) | familia != pan_familia, .(mnemonic, familia, pan_familia)]
+# create familia_corrected, when they are different or one is not available, I will use the pan_familia, otherwise I will use familia
+viewt_tax1_updated_flor_pan[, familia_corrected := fcoalesce(pan_familia, familia)]
+viewt_tax1_updated_flor_pan[(is.na(familia) | is.na(pan_familia)) | familia != pan_familia, .(mnemonic, familia, pan_familia, familia_corrected)]
+viewt_tax1_updated_flor_pan[, familia := NULL][, pan_familia := NULL]
+
+# genero
+viewt_tax1_updated_flor_pan[(is.na(genero) | is.na(pan_genero)) | genero != pan_genero, .(mnemonic, genero, pan_genero)]
+# create genero_corrected, when they are different or one is not available, I will use the pan_genero, otherwise I will use genero
+viewt_tax1_updated_flor_pan[, genero_corrected := fcoalesce(pan_genero, genero)]
+viewt_tax1_updated_flor_pan[(is.na(genero) | is.na(pan_genero)) | genero != pan_genero, .(mnemonic, genero, pan_genero, genero_corrected)]
+viewt_tax1_updated_flor_pan[, genero := NULL][, pan_genero := NULL]
+
+# especies
+viewt_tax1_updated_flor_pan[(is.na(especie) | is.na(pan_especie)) | especie != pan_especie, .(mnemonic, especie, pan_especie)]
+# create especie_corrected, when they are different or one is not available, I will use the pan_especie, otherwise I will use especie
+viewt_tax1_updated_flor_pan[, especie_corrected := fcoalesce(pan_especie, especie)]
+viewt_tax1_updated_flor_pan[(is.na(especie) | is.na(pan_especie)) | especie != pan_especie, .(mnemonic, especie, pan_especie, especie_corrected)]
+viewt_tax1_updated_flor_pan[, especie := NULL][, pan_especie := NULL]
+
+# subspecies is already included in especies_corrected. Lets remove it from the table
+viewt_tax1_updated_flor_pan[!is.na(subspecies)]
+viewt_tax1_updated_flor_pan[, subspecies := NULL]
+
+# autoridad
+viewt_tax1_updated_flor_pan[(is.na(autoridad) | is.na(pan_autoridad)) | autoridad != pan_autoridad, .(mnemonic, autoridad, pan_autoridad)]
+# create autoridad_corrected, when they are different or one is not available, I will use the pan_autoridad, otherwise I will use autoridad
+viewt_tax1_updated_flor_pan[, autoridad_corrected := fcoalesce(pan_autoridad, autoridad)]
+viewt_tax1_updated_flor_pan[(is.na(autoridad) | is.na(pan_autoridad)) | autoridad != pan_autoridad, .(mnemonic, autoridad, pan_autoridad, autoridad_corrected)]
+viewt_tax1_updated_flor_pan[, autoridad := NULL][, pan_autoridad := NULL]
+
+# sinonimos
+viewt_tax1_updated_flor_pan[(is.na(sinonimos) | is.na(pan_sinonimos)) | sinonimos != pan_sinonimos, .(mnemonic, sinonimos, pan_sinonimos)]
+# create sinonimos_corrected, when they are different or one is not available, I will use the pan_sinonimos, otherwise I will use sinonimos
+viewt_tax1_updated_flor_pan[, sinonimos_corrected := fcoalesce(pan_sinonimos, sinonimos)]
+viewt_tax1_updated_flor_pan[(is.na(sinonimos) | is.na(pan_sinonimos)) | sinonimos != pan_sinonimos, .(mnemonic, sinonimos, pan_sinonimos, sinonimos_corrected)]
+viewt_tax1_updated_flor_pan[, sinonimos := NULL][, pan_sinonimos := NULL]
+
+# nombre comun
+viewt_tax1_updated_flor_pan[(is.na(nombre_comum) | is.na(pan_nombre_comum)) | nombre_comum != pan_nombre_comum, .(mnemonic, nombre_comum, pan_nombre_comum)]
+# create nombre_comun_corrected, when they are different or one is not available, I will use the pan_nombre_comum, otherwise I will use nombre_comum
+viewt_tax1_updated_flor_pan[, nombre_comun_corrected := fcoalesce(pan_nombre_comum, nombre_comum)]
+viewt_tax1_updated_flor_pan[(is.na(nombre_comum) | is.na(pan_nombre_comum)) | nombre_comum != pan_nombre_comum, .(mnemonic, nombre_comum, pan_nombre_comum, nombre_comun_corrected)]
+viewt_tax1_updated_flor_pan[, nombre_comum := NULL][, pan_nombre_comum := NULL]
+
+# herbario
+viewt_tax1_updated_flor_pan[(is.na(herbario) | is.na(pan_herbario)) | herbario != pan_herbario, .(mnemonic, herbario, pan_herbario)]
+# create herbario_corrected, when they are different or one is not available, I will use the pan_herbario, otherwise I will use herbario
+viewt_tax1_updated_flor_pan[, herbario_corrected := fcoalesce(pan_herbario, herbario)]
+viewt_tax1_updated_flor_pan[(is.na(herbario) | is.na(pan_herbario)) | herbario != pan_herbario, .(mnemonic, herbario, pan_herbario, herbario_corrected)]
+viewt_tax1_updated_flor_pan[, herbario := NULL][, pan_herbario := NULL]
+
+
+
 
 # --- 1a. New taxonomy --------------------------------------------------------
 spp_new <- as.data.table(readxl::read_xlsx(TAXONOMY_NEW))
