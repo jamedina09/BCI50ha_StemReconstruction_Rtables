@@ -1,25 +1,36 @@
 # =============================================================================
-# 0_prepare_species_tables.R
+# 1_prepare_species_tables.R
 #
-# Purpose: Prepare the BCI 50-ha plot species table: the species list (with
-#          growth forms) checked against the TNRS name service, completed from
-#          the ViewTaxonomy table, with notes on known data issues.
+# Purpose: Prepare the BCI 50-ha plot species table, one row per mnemonic of
+#          the plot: the database taxonomy, corrected with the emails of
+#          R. Pérez and S. Lao and completed from the Flora de Panamá list,
+#          which has priority. The names are then checked against TNRS (World
+#          Flora Online) step by step: TNRS only suggests corrections, mainly
+#          spelling and authority format, and each one is reviewed and
+#          accepted by hand; nothing is changed automatically.
 #
-# Run from the project root (or from BCI_stem_reconstruction/). The TNRS calls
-# need an internet connection.
+# Run from the project root (or from BCI_stem_reconstruction/), line by line.
+# The TNRS calls need an internet connection.
 #
 # Inputs (BCI_stem_reconstruction/DATA/RAW/):
-#   sp_tables/Lista_bci_mnemonics_formadevida.xlsx   species list ("new" taxonomy;
-#                                                    the file must be at this path)
-#   ViewFiles_bci_allcensuses/ViewTaxonomy_bci.csv    database taxonomy ("old")
-#   ViewFiles_bci_allcensuses/ViewFullTable_bci.csv   census records (mnemonics in use)
-# Outputs (BCI_stem_reconstruction/DATA/SPP_TABLE/, which must exist):
-#   bci_spptable.txt, bci_spptable.csv (both tab-separated) and
-#   bci_spptable.RData (object bci.spptable), one row per mnemonic with
-#   Mnemonic, Order, Family, Genus, SpeciesName, InfraspecificRank,
-#   InfraspecificEpithet, Authority, Synonyms, Lifeform_RFoster,
-#   Lifeform_RPerez_SAguilar, CommonName, Herbarium, Notes.
-# Packages: data.table, TNRS, stringr, readxl, inspectdf.
+#   oct_13_2026/ViewTaxonomy_bci.rds               database taxonomy (from
+#                                                  0_extract_ViewTaxonomy.R)
+#   oct_13_2026/ViewFullTable_bci.csv              current inventory (codes in the plot)
+#   ViewFiles_bci_allcensuses/ViewFullTable_bci.csv  previous inventory (taxonomy comparison)
+#   sp_tables/email_1/Lista_bci_mnemonics_formadevida.xlsx  list of R. Pérez & S. Aguilar
+#   sp_tables/email_2/bci_name_changes.xlsx        name changes of S. Lao
+#   sp_tables/flora_panama_oct_9_2026/Lista de especies de la Flora de Panamá_nov25 original.xlsx
+# Outputs:
+#   DATA/SPP_TABLE/bci_spptable.txt, bci_spptable.csv (both tab-separated) and
+#   bci_spptable.RData (object bci.spptable): one row per code of the plot
+#   except uniden, with Mnemonic, Order, Family, Genus, SpeciesName,
+#   InfraspecificRank, InfraspecificEpithet, Authority, Synonyms,
+#   Lifeform_RFoster, Lifeform_RPerez_SAguilar, Lifeform_FloraPanama,
+#   CommonName, Herbarium, Notes.
+#   DATA/CHECKS/species_tnrs_results_raw.rds (TNRS answer),
+#   species_tnrs_review.csv, species_tnrs_accepted_changes.csv,
+#   prepare_species_tables_log.txt (failed checks).
+# Packages: data.table, TNRS, stringr, compareDF, janitor, readxl.
 # =============================================================================
 
 # Clear all objects from the workspace to avoid accidental contamination
@@ -450,7 +461,8 @@ setdiff(viewt_tax1_updated$Mnemonic, viewt$Mnemonic)
 # FINISHED: Rolando email 1 and 2, Suzanne email 1 included
 
 # NOTE: ficutr is replaced with ficuau in the BCI inventory in
-# 2_prepare_viewfulltable.R; the ficutr row is removed from this table in Section 4.
+# 2_prepare_viewfulltable.R; the ficutr row is removed from this table in section
+# "4. MNEMONICS REPLACED IN THE INVENTORY".
 
 # =============================================================================
 # 3. ASSESS FIX 3
@@ -823,511 +835,572 @@ spp_new[, .(mnemonic, name_type, tnrs_check, family, genus, species, rank, varie
 spp_new[, .(mnemonic, name_type, tnrs_check, family, genus, species, rank, variety, authority, scientific_name)][name_type == "infraspecific"]
 
 
-# # --- 2b. Build the TNRS name string -----------------------------------------
-# # build_tnrs_name(): query string for TNRS, "<Family> <Genus> <species>
-# # [<rank> <infraspecific name>] [<authority>]", vectorised over its arguments.
-# # Empty or NA parts are left out; the family is only included when it ends in
-# # -aceae; an infraspecific name without a rank gets "subsp.". Returns a
-# # character vector.
-
-# build_tnrs_name <- function(
-#   family,
-#   genus,
-#   species,
-#   infra_rank = NULL, # e.g. "subsp.", "var.", "f."
-#   infra_name = NULL,
-#   authority = NULL
-# ) {
-#     name <- genus
-#     name <- ifelse(
-#         !is.na(species) & species != "",
-#         paste(name, species),
-#         name
-#     )
-#     # Infraspecific rank + epithet
-#     has_infra <- !is.na(infra_name) & infra_name != ""
-#     name <- ifelse(
-#         has_infra,
-#         paste(
-#             name,
-#             ifelse(is.na(infra_rank) | infra_rank == "", "subsp.", infra_rank),
-#             infra_name
-#         ),
-#         name
-#     )
-#     name <- ifelse(
-#         !is.na(authority) & authority != "",
-#         paste(name, authority),
-#         name
-#     )
-#     # Prepend family if valid
-#     name <- ifelse(
-#         !is.na(family) &
-#             family != "" &
-#             grepl("aceae$", family, ignore.case = TRUE),
-#         paste(family, name),
-#         name
-#     )
-#     return(name)
-# }
-
-# spp_new[, name_string := build_tnrs_name(
-#     family = familia,
-#     genus = genero,
-#     species = especie,
-#     infra_rank = rank,
-#     infra_name = variety,
-#     authority = autoridad
-# )]
-
-# # Assign a stable row ID used as the join key to merge TNRS results back
-# spp_new[, ID := .I]
-
-# # Spot-check: confirm name strings look correct before sending to TNRS
-# spp_new[, .(ID, orden, familia, genero, especie, autoridad, name_string)]
-
-# # --- 2c. Split by genus availability ----------------------------------------
-# # Rows without a genus cannot be sent to TNRS; set aside for manual review.
-
-# spp_new_no_genero <- spp_new[is.na(genero) | genero == ""]
-# spp_new_to_check <- spp_new[!is.na(genero) & genero != ""]
-
-# cat(nrow(spp_new_no_genero), "rows have no genus and will be skipped\n")
-# spp_new[is.na(genero)]
-# # apeihy, nects1 and nects3 have no genus in the new list (Apeiba "hybrida" and two Nectandra morphospecies); their taxonomy is filled from the old table in section 3
-# cat(nrow(spp_new_to_check), "rows will be sent to TNRS\n")
-
-# # Prepare the two-column input expected by TNRS(): ID + name_string
-# tnrs_input <- spp_new_to_check[, .(ID, name_string)]
-
-# # --- 2d. TNRS parse mode: verify parsing before resolving -------------------
-# # TNRS parse mode checks the name string syntax and component extraction.
-# # Run this before resolve mode to catch any badly formed names early.
-
-# # Boyle, B. L., Matasci, N., Mozzherin, D., Rees, T., Barbosa, G. C., Kumar
-# # Sajja, R., & Enquist, B. J. (2021). Taxonomic Name Resolution Service, version
-# # 5.1. In Botanical Information and Ecology Network. https://tnrs.biendata.org/
-# parsed <- TNRS(
-#     taxonomic_names = tnrs_input,
-#     mode = "parse"
-# )
-# parsed <- as.data.table(parsed)
-# parsed
-
-# # Display parsed components for review
-# chk <- parsed[, .(
-#     ID, Name_submitted, Family, Genus,
-#     Specific_epithet, Infraspecific_rank,
-#     Infraspecific_epithet, Author
-# )]
-
-# # Any IDs that were dropped by the parser (should be empty)
-# chk_missing <- setdiff(min(spp_new_to_check$ID):max(spp_new_to_check$ID), chk$ID)
-# spp_new_to_check[ID %in% chk_missing] # inspect dropped rows if any
-
-# # --- 2e. TNRS resolve mode: retrieve accepted names -------------------------
-# # Only run after confirming parse output looks correct.
-# # sources: WFO (World Flora Online) + WCVP (Kew Plants of the World Online)
-# # matches = "best": return only the single best match per name
-
-# results <- TNRS(
-#     taxonomic_names = tnrs_input,
-#     # World Flora Online - WFO
-#     # World Checklist of Vascular Plants - WCVP
-#     sources         = c("wfo", "wcvp"),
-#     matches         = "best"
-# )
-# results_dt <- as.data.table(results)
-
-# # --- 2f. Check for TNRS merged-ID results ------------------------------------
-# # TNRS can merge two rows that submitted identical name strings into a single
-# # result with a comma-separated ID (e.g. "1559,1558"). The two Swartzia simplex
-# # varieties are told apart by the variety added to their name string in
-# # section 2. The lines below list any merged ID and compare the returned IDs
-# # with those of the species list; nothing is repaired here (a merged ID would
-# # become NA in the numeric conversion further down).
-
-# # Merged-ID rows, if any
-# results_dt[grepl(",", ID)]$ID
-
-# # IDs returned versus IDs of the species list
-# setdiff(results_dt$ID, 1:nrow(spp_new)) # IDs in results not in spp_new
-# setdiff(1:nrow(spp_new), results_dt$ID) # IDs in spp_new not in results
-
-# ## apeihy, nects1, and nects3 are not in results because they had no genus and were not sent to TNRS
-# spp_new[ID %in% setdiff(1:nrow(spp_new), results_dt$ID)] # inspect any missing IDs in results
-
-# # Convert ID to numeric for joining and sort for readability
-# results_dt[, ID := as.numeric(as.character(ID))]
-# setorder(results_dt, ID)
-
-# # --- 2g. Diagnose problems ---------------------------------------------------
-# # Assign a human-readable problem label to each row using TNRS score columns.
-# # Rules are evaluated in order; fcase() returns the first matching condition.
-# # Labels are written in Spanish to match the final output format.
-
-# results_dt[, problem := fcase(
-#     # ── MORPHOSPECIES ─────────────────────────────────────────────────────
-#     grepl("\\bsp\\.?\\s*(\\d+|nov\\.?)?$",
-#         Name_submitted,
-#         ignore.case = TRUE
-#     ),
-#     "Morfoespecie — solo género, sin resolución a especie posible",
-#     # ── PERFECT MATCHES ───────────────────────────────────────────────────
-#     Overall_score == 1 &
-#         Taxonomic_status == "Accepted" &
-#         !is.na(Accepted_name),
-#     "OK",
-#     Overall_score == 1 & is.na(Accepted_name),
-#     "Sin resolver en backbone — verificar literatura",
-#     # ── AUTHORITY FORMAT ONLY ─────────────────────────────────────────────
-#     Genus_score == 1 &
-#         Specific_epithet_score == 1 &
-#         Family_score == 1 &
-#         Taxonomic_status == "Accepted" &
-#         !is.na(Accepted_name),
-#     "OK — solo formato de autoridad",
-#     # ── FAMILY NOT RECOGNISED ─────────────────────────────────────────────
-#     Warnings == 4 &
-#         Genus_score == 1 &
-#         Specific_epithet_score == 1,
-#     "Familia no está en backbone — reclasificada (verificar familia_aceptada)",
-#     Warnings == 4 &
-#         (Genus_score < 1 | Specific_epithet_score < 1),
-#     "Familia no está en backbone + problema en nombre — verificar manualmente",
-#     # ── SYNONYMS ──────────────────────────────────────────────────────────
-#     Taxonomic_status == "Synonym",
-#     "Sinónimo — reemplazar con nombre_aceptado",
-#     # ── INFRASPECIFIC ERRORS ──────────────────────────────────────────────
-#     Genus_score == 1 &
-#         Specific_epithet_score == 1 &
-#         Infraspecific_epithet_score < 1,
-#     "Epíteto infraespecífico mal escrito",
-#     # ── COMPONENT SPELLING ERRORS ─────────────────────────────────────────
-#     Genus_score < 1 &
-#         Specific_epithet_score == 1,
-#     "Género mal escrito",
-#     Genus_score == 1 &
-#         Specific_epithet_score < 1,
-#     "Epíteto específico mal escrito",
-#     Genus_score < 1 &
-#         Specific_epithet_score < 1,
-#     "Género y epíteto mal escritos",
-#     Family_score < 1 &
-#         Genus_score == 1 &
-#         Specific_epithet_score == 1,
-#     "Solo discrepancia en familia",
-#     # ── LOW CONFIDENCE ────────────────────────────────────────────────────
-#     Overall_score < 0.5,
-#     "Coincidencia pobre — verificar manualmente",
-#     is.na(Name_matched),
-#     "Sin coincidencia encontrada",
-#     default = "Revisar — caso no clasificado"
-# )]
-
-# # Frequency table of problem categories — useful triage overview
-# results_dt[, .N, by = problem][order(-N)]
-
-# # --- 2h. Select and retain TNRS output columns ------------------------------
-# # Keep only the columns used in the curation below.
-
-# # Inspect any Swartzia varieties that may need special handling.
-# results_dt[Genus_submitted == "Swartzia"]
-
-# # Inspect rows that did not match cleanly.
-# results_dt[Unmatched_terms != ""]
-
-# cols_tnrs_clean <- c(
-#     # Join key
-#     "ID",
-#     "Accepted_name", # full currently-accepted name
-#     "Accepted_species", # binomial only, no infraspecific rank
-#     "Accepted_name_author", # standardised authority
-#     "Accepted_family", # correct family per backbone
-#     "Infraspecific_rank", # infraspecific rank assigned by TNRS (e.g. subsp., var., f.)
-#     "Infraspecific_epithet_matched", # infraspecific epithet matched by TNRS (if any)
-#     # Custom diagnosis
-#     "problem"
-# )
-
-# results_dt <- results_dt[, ..cols_tnrs_clean]
-
-# # --- 2i. Merge TNRS results back to new taxonomy -----------------------------
-
-# # Remove the helper column created for the TNRS submission
-# spp_new[, name_string := NULL]
-
-# # Full join on ID (all = TRUE): every row of spp_new is kept, with the TNRS
-# # columns where a result exists
-# spp_new <- merge(
-#     spp_new,
-#     results_dt,
-#     by  = "ID",
-#     all = TRUE
-# )
-
-# # =============================================================================
-# # 3. APPLY TNRS CORRECTIONS
-# # =============================================================================
-# # Use the TNRS diagnosis labels to apply safe fixes.
-# # - Not sent to TNRS (no genus): accepted here, completed from the old taxonomy below.
-# # - Reclassified family: update only the family.
-# # - Morphospecies: accept genus-only names.
-# # - Authority formatting: standardise authority text.
-# # After these steps, clean up temporary TNRS helper columns and finalise the table.
-
-# # Add a stable row index for reference during curation
-# spp_new[, I := .I]
-
-# # Create a working copy of the diagnosis column; `solution` will be updated
-# # to "OK" as each issue is resolved, leaving unresolved cases visible.
-# spp_new[, solution := problem]
-
-# # Frequency table before corrections — baseline overview
-# message("Problem distribution before corrections:")
-# print(table(spp_new$solution, useNA = "ifany"))
-
-# # --- Check 1: Rows that were not sent to TNRS --------------------------------
-# # The rows without a genus in the new list (apeihy, nects1, nects3) were not
-# # sent to TNRS and therefore have NA in `problem`. Their family, genus and
-# # species are filled from the old taxonomy further below; mark them as OK.
-# spp_new[is.na(solution)]
-# spp_new[is.na(solution), solution := "OK"]
-# print(table(spp_new$solution, useNA = "ifany"))
-
-# # --- Check 2: Family reclassified by backbone --------------------------------
-# # Warnings = 4 in TNRS indicates the submitted family is not recognised by
-# # WFO/WCVP (e.g. Cordiaceae → Boraginaceae, Meliaceae reclassifications).
-# # The species name is correct; only the family needs updating.
-# message("Families to update (reclassified in backbone):")
-# print(
-#     spp_new[
-#         solution == "Familia no está en backbone — reclasificada (verificar familia_aceptada)",
-#         .(familia, Accepted_family)
-#     ]
-# )
-
-# #       familia familia_aceptada
-# # 1: Cordiaceae     Boraginaceae
-# # 2: Cordiaceae     Boraginaceae
-# # 3: Cordiaceae     Boraginaceae
-# # 4:  Meliaceae        Meliaceae
-
-# # Previous family is Boraginaceae
-# # We'll keep it like that
-# sp_bci_raw_input[Family == "Cordiaceae"]
-# sp_bci_raw_input[Family == "Boraginaceae"]
-
-# spp_new[
-#     solution == "Familia no está en backbone — reclasificada (verificar familia_aceptada)",
-#     familia := Accepted_family # overwrite with backbone-accepted family
-# ]
-# spp_new[
-#     solution == "Familia no está en backbone — reclasificada (verificar familia_aceptada)",
-#     solution := "OK"
-# ]
-# message("After Check 2 (family reclassified):")
-# print(table(spp_new$solution, useNA = "ifany"))
-
-# # --- Check 3: Morphospecies (sp.) -------------------------------------------
-# # Entries with "sp." cannot be resolved beyond genus level; this is expected
-# # behaviour, not an error. No name fields need updating.
-# spp_new[solution == "Morfoespecie — solo género, sin resolución a especie posible"]
-# spp_new[
-#     solution == "Morfoespecie — solo género, sin resolución a especie posible",
-#     solution := "OK"
-# ]
-# message("After Check 3 (morphospecies):")
-# print(table(spp_new$solution, useNA = "ifany"))
-
-# # --- Check 4: Authority format difference only --------------------------------
-# # The name and family are correct; only the punctuation/spacing of the
-# # authority string differs from the backbone standard. Overwrite with the
-# # standardised backbone authority.
-# message("Authority differences to standardise:")
-# print(
-#     spp_new[
-#         solution == "OK — solo formato de autoridad",
-#         .(genero, especie, Accepted_name, autoridad, Accepted_name_author)
-#     ]
-# )
-
-# spp_new[
-#     solution == "OK — solo formato de autoridad",
-#     `:=`(
-#         autoridad = Accepted_name_author,
-#         solution  = "OK"
-#     )
-# ]
-# message("After Check 4 (authority format):")
-# print(table(spp_new$solution, useNA = "ifany"))
-
-# # --- Final authority sweep ---------------------------------------------------
-# # Catch any remaining rows where the authority still differs from the backbone
-# # value (e.g. minor formatting differences not covered by Check 4).
-# message("Remaining authority mismatches after all checks:")
-# print(spp_new[autoridad != Accepted_name_author, .(codigo, autoridad, Accepted_name_author)])
-# spp_new[
-#     !is.na(Accepted_name_author) & autoridad != Accepted_name_author,
-#     autoridad := Accepted_name_author
-# ]
-
-# spp_new[, texto := NULL] # column of the species list that is not exported
-# spp_new[, fotos := NULL] # column of the species list that is not exported
-
-# spp_new[autoridad != Accepted_name_author]
-# spp_new[, Accepted_name_author := NULL]
-# spp_new[, Accepted_name := NULL]
-# spp_new[, Accepted_species := NULL]
-
-# spp_new[familia != Accepted_family]
-# spp_new[, Accepted_family := NULL]
-
-# spp_new[, Infraspecific_rank := ifelse(Infraspecific_rank == "", NA_character_, Infraspecific_rank)]
-# spp_new[, Infraspecific_epithet_matched := ifelse(Infraspecific_epithet_matched == "", NA_character_, Infraspecific_epithet_matched)]
-
-# # Swartzia simplex carries an intraspecific rank (not a true synonym); clear sinonimos for those rows.
-# spp_new[!is.na(Infraspecific_rank) | !is.na(Infraspecific_epithet_matched)]$codigo
-# spp_new[codigo %in% spp_new[!is.na(Infraspecific_rank) | !is.na(Infraspecific_epithet_matched)]$codigo, sinonimos := NA_character_]
-
-# spp_new[, rank := NULL]
-# spp_new[, variety := NULL]
-
-# table(spp_new$solution)
-
-# spp_new[solution == "Sinónimo — reemplazar con nombre_aceptado"]
-# # Swartzia simplex is flagged as a synonym because of the presence of an intraspecific rank; no fix required.
-
-# cols_to_keep <- c(
-#     "codigo", "orden", "familia", "genero",
-#     "especie", "Infraspecific_rank", "Infraspecific_epithet_matched",
-#     "autoridad", "sinonimos", "f_de_vida_r_foster", "f_de_vida_r_perez_s_aguilar",
-#     "nombre_comum", "herbario", "notes"
-# )
-
-# spp_new <- spp_new[, ..cols_to_keep]
-
-# inc <- unique(spp_new[is.na(orden) | is.na(familia) | is.na(genero) | is.na(especie)]$codigo)
-
-# to_replace <- spp_old[mnemonic %in% inc]
-
-# # Fill missing taxonomy fields from the old ViewTaxonomy (the codes without a genus in the new list)
-# spp_new[codigo %in% inc[1]]
-# spp_new[
-#     codigo %in% inc[1],
-#     `:=`(
-#         familia = to_replace[mnemonic %in% inc[1]]$family,
-#         genero = to_replace[mnemonic %in% inc[1]]$genus,
-#         especie = to_replace[mnemonic %in% inc[1]]$speciesname
-#     )
-# ]
-
-# spp_new[codigo %in% inc[2]]
-# spp_new[
-#     codigo %in% inc[2],
-#     `:=`(
-#         familia = to_replace[mnemonic %in% inc[2]]$family,
-#         genero = to_replace[mnemonic %in% inc[2]]$genus,
-#         especie = to_replace[mnemonic %in% inc[2]]$speciesname
-#     )
-# ]
-
-# spp_new[codigo %in% inc[3]]
-# spp_new[
-#     codigo %in% inc[3],
-#     `:=`(
-#         familia = to_replace[mnemonic %in% inc[3]]$family,
-#         genero = to_replace[mnemonic %in% inc[3]]$genus,
-#         especie = to_replace[mnemonic %in% inc[3]]$speciesname
-#     )
-# ]
-
-# spp_new[is.na(orden) | is.na(familia) | is.na(genero) | is.na(especie)]
-
-# spp_new[is.na(orden) & familia == "Malvaceae", orden := unique(spp_new[!is.na(orden) & familia == "Malvaceae"]$orden)]
-# spp_new[is.na(orden) & familia == "Lauraceae", orden := unique(spp_new[!is.na(orden) & familia == "Lauraceae"]$orden)]
-
-# spp_new[is.na(orden) | is.na(familia) | is.na(genero) | is.na(especie)]
-
-# spp_new[codigo == "apeihy"]
-# spp_new[codigo == "apeihy", f_de_vida_r_perez_s_aguilar := "árbol"]
-
-# spp_new[codigo == "nects1"]
-# spp_new[codigo == "nects1", f_de_vida_r_perez_s_aguilar := "árbol"]
-
-# spp_new[codigo == "nects3"]
-# spp_new[codigo == "nects3", f_de_vida_r_perez_s_aguilar := "árbol"]
-
-# spp_new[codigo %in% c(inc, "swars1", "swars2")]
-
-# # =============================================================================
-# # 4. ASSEMBLE FINAL bci.spptable AND EXPORT
-# # =============================================================================
-
-# # Retain only the columns needed for the species table; drop all comparison
-# # and curation helper columns.
-# cols_clean <- c(
-#     "codigo", # BCI mnemonic code (primary key)
-#     "orden", # accepted order
-#     "familia", # accepted family
-#     "genero", # accepted genus
-#     "especie", # accepted species epithet
-#     "Infraspecific_rank", # infraspecific rank assigned by TNRS (e.g. subsp., var., f.)
-#     "Infraspecific_epithet_matched", # infraspecific epithet matched by TNRS (if any)
-#     "autoridad", # accepted authority (standardised by TNRS)
-#     "sinonimos", # previous synonymised name where applicable
-#     "f_de_vida_r_foster", # growth form (from Foster's list)
-#     "f_de_vida_r_perez_s_aguilar", # growth form (from Pérez & Aguilar's list)
-#     "nombre_comum", # common name
-#     "herbario", # herbarium voucher reference
-#     "notes"
-# )
-
-# full_out <- spp_new[, ..cols_clean]
-
-# names(full_out)
-
-# # --- Rename columns to English ------------------------------------------
-
-# setnames(
-#     full_out,
-#     old = c(
-#         "codigo", "orden", "familia", "genero", "especie", "Infraspecific_rank", "Infraspecific_epithet_matched",
-#         "autoridad", "sinonimos", "f_de_vida_r_foster", "f_de_vida_r_perez_s_aguilar", "nombre_comum", "herbario", "notes"
-#     ),
-#     new = c(
-#         "Mnemonic", "Order", "Family", "Genus", "SpeciesName", "InfraspecificRank", "InfraspecificEpithet",
-#         "Authority", "Synonyms", "Lifeform_RFoster", "Lifeform_RPerez_SAguilar", "CommonName", "Herbarium", "Notes"
-#     )
-# )
-
-# # count nrows per Lifeform_RPerez_SAguilar
-# full_out[, .N, by = Lifeform_RPerez_SAguilar]
-
-# # --- Export ------------------------------------------------------------------
-# bci.spptable <- full_out
-
-# output_path <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "SPP_TABLE")
-
-# # Tab-delimited plain text — portable, version-control friendly
-# fwrite(
-#     bci.spptable,
-#     file.path(output_path, "bci_spptable.txt"),
-#     sep = "\t"
-# )
-# message("Exported: DATA/SPP_TABLE/bci_spptable.txt")
-
-# # R binary format — for direct use in downstream R scripts
-# save(
-#     bci.spptable,
-#     file = file.path(output_path, "bci_spptable.RData")
-# )
-# message("Exported: DATA/SPP_TABLE/bci_spptable.RData")
-
-# # Same table with a .csv extension (also tab-separated)
-# fwrite(
-#     bci.spptable,
-#     file.path(output_path, "bci_spptable.csv"),
-#     sep = "\t"
-# )
-# message("Exported: DATA/SPP_TABLE/bci_spptable.csv")
+# --- 2b. Build the TNRS name string -----------------------------------------
+# build_tnrs_name(): query string for TNRS, "<Family> <Genus> <species>
+# [<rank> <infraspecific name>] [<authority>]", vectorised over its arguments.
+# Empty or NA parts are left out; the family is only included when it ends in
+# -aceae; an infraspecific name without a rank gets "subsp.". Returns a
+# character vector.
+
+build_tnrs_name <- function(
+  family,
+  genus,
+  species,
+  infra_rank = NULL, # e.g. "subsp.", "var.", "f."
+  infra_name = NULL,
+  authority = NULL
+) {
+    name <- genus
+    name <- ifelse(
+        !is.na(species) & species != "",
+        paste(name, species),
+        name
+    )
+    # Infraspecific rank + epithet
+    has_infra <- !is.na(infra_name) & infra_name != ""
+    name <- ifelse(
+        has_infra,
+        paste(
+            name,
+            ifelse(is.na(infra_rank) | infra_rank == "", "subsp.", infra_rank),
+            infra_name
+        ),
+        name
+    )
+    name <- ifelse(
+        !is.na(authority) & authority != "",
+        paste(name, authority),
+        name
+    )
+    # Prepend family if valid
+    name <- ifelse(
+        !is.na(family) &
+            family != "" &
+            grepl("aceae$", family, ignore.case = TRUE),
+        paste(family, name),
+        name
+    )
+    return(name)
+}
+
+# Row ID: the key that joins the TNRS results back to the species table
+spp_new[, ID := .I]
+
+spp_new[, name_string := build_tnrs_name(
+    family = family,
+    genus = genus,
+    species = species,
+    infra_rank = rank,
+    infra_name = variety,
+    authority = authority
+)]
+
+# Spot-check: confirm name strings look correct before sending to TNRS
+spp_new[, .(ID, mnemonic, name_type, name_string)]
+spp_new[name_type == "infraspecific", .(ID, mnemonic, name_string)]
+
+# --- 2c. Names sent to TNRS --------------------------------------------------
+# Only the names marked in 2a.1 (tnrs_check) are sent. The morphospecies are
+# not published names; they are kept as they are (see 3i).
+spp_new_to_check <- spp_new[tnrs_check == TRUE]
+spp_new_not_sent <- spp_new[tnrs_check == FALSE]
+
+cat(nrow(spp_new_not_sent), "rows are morphospecies and are not sent to TNRS\n")
+spp_new_not_sent[, .(ID, mnemonic, family, genus, species)]
+cat(nrow(spp_new_to_check), "rows will be sent to TNRS\n")
+
+# TNRS merges rows that send the same string, so each string must be unique
+check(
+    !anyDuplicated(spp_new_to_check$name_string),
+    "every name string sent to TNRS is unique"
+)
+
+# Prepare the two-column input expected by TNRS(): ID + name_string
+tnrs_input <- spp_new_to_check[, .(ID, name_string)]
+
+# Helpers to compare the TNRS output with the species table.
+# TNRS returns "" for empty fields; turn them into NA so they compare like the
+# columns of the species table.
+blank_to_na <- function(x) {
+    if (is.logical(x)) x <- as.character(x)
+    if (!is.character(x)) {
+        return(x)
+    }
+    fifelse(!is.na(x) & trimws(x) == "", NA_character_, x)
+}
+# TRUE where two values differ (NA vs NA is equal, NA vs a value differs)
+differs <- function(x, y) {
+    (is.na(x) != is.na(y)) | (!is.na(x) & !is.na(y) & x != y)
+}
+
+# --- 2d. TNRS parse mode: check that each name is read as intended ----------
+# Parse mode only splits each string into its parts (no matching). The parts
+# must be the ones separated in 2a; a difference means the string would be
+# misread in resolve mode. Run this before resolve mode.
+
+# Boyle, B. L., Matasci, N., Mozzherin, D., Rees, T., Barbosa, G. C., Kumar
+# Sajja, R., & Enquist, B. J. (2021). Taxonomic Name Resolution Service, version
+# 5.1. In Botanical Information and Ecology Network. https://tnrs.biendata.org/
+parsed <- TNRS(
+    taxonomic_names = tnrs_input,
+    mode = "parse"
+)
+parsed <- as.data.table(parsed)[, lapply(.SD, blank_to_na)]
+parsed[, ID := as.integer(ID)]
+
+check(
+    setequal(parsed$ID, tnrs_input$ID),
+    "TNRS parsed every name that was sent"
+)
+
+parse_review <- merge(
+    spp_new_to_check[, .(ID, mnemonic, genus, species, rank, variety, authority)],
+    parsed[, .(ID, Genus, Specific_epithet, Infraspecific_rank, Infraspecific_epithet, Author, Unmatched_terms)],
+    by = "ID"
+)
+
+# Genus, species, rank or variety read differently by the parser (should be empty).
+# The TNRS service now and then returns, for one ID, the parse of another name
+# (seen 2026-10-13: guazul came back as "Annona acuminata Saff." with its own
+# name in Unmatched_terms). That is a fault of the service, not of the name:
+# run the parse call again until this table is empty.
+parse_review[
+    differs(genus, Genus) | differs(species, Specific_epithet) |
+        differs(rank, Infraspecific_rank) | differs(variety, Infraspecific_epithet)
+]
+check(
+    parse_review[, !any(
+        differs(genus, Genus) | differs(species, Specific_epithet) |
+            differs(rank, Infraspecific_rank) | differs(variety, Infraspecific_epithet)
+    )],
+    "TNRS parsed every name into the parts of section 2a (if not, run the parse call again)"
+)
+
+# Authorities read differently. The parser drops accents and commas (e.g.
+# "Müll. Arg." is read as "Mull. Arg."), which is harmless; review the rest,
+# and any text the parser could not place (Unmatched_terms).
+parse_review[
+    differs(authority, Author) | !is.na(Unmatched_terms),
+    .(mnemonic, authority, Author, Unmatched_terms)
+]
+
+# --- 2e. TNRS resolve mode: match each name in the backbone ------------------
+# Only run after confirming parse output looks correct.
+# sources: World Flora Online (WFO); add "wcvp" (World Checklist of Vascular
+# Plants, Kew) to compare with a second backbone.
+# matches = "best": return only the single best match per name.
+results <- TNRS(
+    taxonomic_names = tnrs_input,
+    sources = c("wfo"),
+    # sources = c("wfo", "wcvp"),
+    matches = "best"
+)
+results_dt <- as.data.table(results)
+
+# Keep the raw answer: TNRS results change when the backbone is updated, and
+# the review below can be redone from this file without querying TNRS again.
+checks_folder <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "CHECKS")
+tnrs_results_file <- file.path(checks_folder, "species_tnrs_results_raw.rds")
+saveRDS(results_dt, tnrs_results_file)
+# results_dt <- readRDS(tnrs_results_file)
+
+# --- 2f. Check the IDs returned ----------------------------------------------
+# TNRS merges rows that submit the same string into one result with a
+# comma-separated ID (e.g. "12,13"). The strings are unique (2c), so there
+# should be none.
+results_dt <- results_dt[, lapply(.SD, blank_to_na)]
+results_dt[grepl(",", ID)] # merged IDs (should be empty)
+check(!any(grepl(",", results_dt$ID)), "no TNRS result merges two names")
+
+results_dt[, ID := as.integer(ID)]
+check(
+    setequal(results_dt$ID, tnrs_input$ID) && !anyDuplicated(results_dt$ID),
+    "one TNRS result for every name sent"
+)
+setorder(results_dt, ID)
+
+# Each result must belong to the name sent with its ID: the service can return,
+# for one ID, the answer of another name (see 2d). Rows where the genus or
+# species TNRS received is not the one sent (should be empty):
+id_mixups <- merge(
+    spp_new_to_check[, .(ID, mnemonic, genus, species, name_string)],
+    results_dt[, .(ID, Genus_submitted, Specific_epithet_submitted, Name_submitted)],
+    by = "ID"
+)[differs(genus, Genus_submitted) | differs(species, Specific_epithet_submitted)]
+id_mixups
+check(
+    nrow(id_mixups) == 0,
+    "every TNRS result belongs to the name sent with its ID (if not, run the resolve call again)"
+)
+
+# --- 2g. Compare each TNRS match with the Flora de Panamá name ---------------
+# One row per name sent: the name parts of the species table next to the parts
+# TNRS matched, and four comparisons:
+#   name_check        "same"; "spelling differs" (TNRS matched the name with
+#                     another spelling of the genus, species, rank or
+#                     variety); or "not matched at its rank" (no match, or a
+#                     match only at a higher rank, e.g. the genus)
+#   author_check      "same"; "spacing only" (same text apart from spaces,
+#                     e.g. "C. DC." and "C.DC."); "different"; or
+#                     "not compared" (TNRS returned no author)
+#   family_check      "same" or "differs" (family of the matched name in the
+#                     backbone)
+#   Taxonomic_status  status of the matched name in the backbone (Accepted,
+#                     Synonym, ...)
+# The author compared is the author of the matched name (Author_matched), not
+# that of the accepted name: for a synonym the accepted name has another author.
+
+# Rank of each name in the words TNRS uses in Name_matched_rank
+rank_words <- c("var." = "variety", "subsp." = "subspecies", "f." = "forma")
+
+tnrs_review <- merge(
+    spp_new_to_check[, .(ID, mnemonic, name_type, family, genus, species, rank, variety, authority, scientific_name)],
+    results_dt[, .(
+        ID, Name_matched, Name_matched_rank, Overall_score,
+        Genus_matched, Genus_score,
+        Specific_epithet_matched, Specific_epithet_score,
+        Infraspecific_rank_matched = Infraspecific_rank,
+        Infraspecific_epithet_matched, Infraspecific_epithet_score,
+        Author_matched, Name_matched_accepted_family,
+        Taxonomic_status, Accepted_name, Accepted_name_author, Accepted_family,
+        Unmatched_terms, Name_matched_url
+    )],
+    by = "ID",
+    all.x = TRUE
+)
+
+tnrs_review[, submitted_rank := fifelse(is.na(rank), "species", unname(rank_words[rank]))]
+
+tnrs_review[, name_check := fcase(
+    is.na(Name_matched) | differs(Name_matched_rank, submitted_rank),
+    "not matched at its rank",
+    differs(genus, Genus_matched) | differs(species, Specific_epithet_matched) |
+        (name_type == "infraspecific" &
+            (differs(rank, Infraspecific_rank_matched) | differs(variety, Infraspecific_epithet_matched))),
+    "spelling differs",
+    default = "same"
+)]
+
+tnrs_review[, author_check := fcase(
+    is.na(Author_matched), "not compared",
+    authority == Author_matched, "same",
+    gsub(" ", "", authority) == gsub(" ", "", Author_matched), "spacing only",
+    default = "different"
+)]
+
+tnrs_review[, family_check := fifelse(differs(family, Name_matched_accepted_family), "differs", "same")]
+
+check(
+    !anyNA(tnrs_review$name_check) && !anyNA(tnrs_review$author_check),
+    "every name sent has a name and an author comparison"
+)
+
+# =============================================================================
+# 3. REVIEW THE TNRS SUGGESTIONS (STEP BY STEP)
+# =============================================================================
+# The Flora de Panamá names have priority, and nothing below changes them
+# automatically. Each step prints what TNRS suggests, and a suggestion is
+# accepted only by copying its line (printed by print_accept_lines()) into the
+# place indicated and running it.
+# TNRS is used mainly to correct spelling: the spelling of the name parts (3c)
+# and the format of the authority (3d). Differences in content (3b, 3e, 3f)
+# are checked by hand. Family and synonymy in the backbone are shown for
+# information only (3g, 3h) and are not applied.
+
+# Copy of the names before the review, to record what is changed (3j)
+spp_panama <- copy(spp_new)
+
+# print_accept_lines(): print, for each suggestion, the line that accepts it,
+# ready to copy. Nothing is run. `suggestions` needs the columns mnemonic,
+# column (column of spp_new to change) and suggested (new value).
+print_accept_lines <- function(suggestions) {
+    if (nrow(suggestions) == 0) {
+        cat("No suggestions\n")
+        return(invisible(NULL))
+    }
+    cat(sprintf(
+        "spp_new[mnemonic == %s, %s := %s]\n",
+        encodeString(suggestions$mnemonic, quote = '"'),
+        suggestions$column,
+        encodeString(suggestions$suggested, quote = '"')
+    ), sep = "")
+    invisible(NULL)
+}
+
+# --- 3a. Overview ------------------------------------------------------------
+tnrs_review[, .N, by = name_check]
+tnrs_review[, .N, by = author_check]
+tnrs_review[, .N, by = family_check]
+tnrs_review[, .N, by = Taxonomic_status]
+
+# --- 3b. Names not matched at their rank -------------------------------------
+# TNRS found no name, or only a higher rank (e.g. the genus). Check these names
+# in the Flora de Panamá list and the literature; keep them unless you find an
+# error, and in that case correct the column by hand, e.g.
+# spp_new[mnemonic == "xxxxxx", species := "..."]
+tnrs_review[
+    name_check == "not matched at its rank",
+    .(mnemonic, scientific_name, authority, Name_matched, Name_matched_rank, Overall_score, Unmatched_terms)
+]
+
+# Corrections (write the lines here):
+
+
+# --- 3c. Spelling of genus, species, rank and variety ------------------------
+# TNRS matched the name with another spelling. Review each suggestion (score:
+# 1 = identical; check the name in Tropicos or IPNI if unsure) and accept only
+# true spelling mistakes.
+spelling_suggestions <- rbindlist(list(
+    tnrs_review[
+        name_check == "spelling differs" & differs(genus, Genus_matched),
+        .(mnemonic, column = "genus", current = genus, suggested = Genus_matched, score = Genus_score)
+    ],
+    tnrs_review[
+        name_check == "spelling differs" & differs(species, Specific_epithet_matched),
+        .(mnemonic, column = "species", current = species, suggested = Specific_epithet_matched, score = Specific_epithet_score)
+    ],
+    tnrs_review[
+        name_check == "spelling differs" & name_type == "infraspecific" & differs(rank, Infraspecific_rank_matched),
+        .(mnemonic, column = "rank", current = rank, suggested = Infraspecific_rank_matched, score = NA_real_)
+    ],
+    tnrs_review[
+        name_check == "spelling differs" & name_type == "infraspecific" & differs(variety, Infraspecific_epithet_matched),
+        .(mnemonic, column = "variety", current = variety, suggested = Infraspecific_epithet_matched, score = Infraspecific_epithet_score)
+    ]
+))
+spelling_suggestions
+
+# Lines that accept each suggestion: copy the ones you accept below and run them
+print_accept_lines(spelling_suggestions)
+
+# Accepted spelling corrections (paste the lines here):
+
+
+# --- 3d. Authority: spacing only ---------------------------------------------
+# Same authority written with other spaces: the backbone writes initials
+# without spaces (e.g. "C.DC." for "C. DC."). Accept the ones you want written
+# as in the backbone.
+author_spacing <- tnrs_review[
+    author_check == "spacing only",
+    .(mnemonic, scientific_name, column = "authority", current = authority, suggested = Author_matched)
+]
+author_spacing
+
+# Lines that accept each suggestion: copy the ones you accept below and run them
+print_accept_lines(author_spacing)
+
+# Accepted authority formats (paste the lines here):
+
+# --- 3e. Authority: different text -------------------------------------------
+# The authority differs in content. The backbone often gives the author of the
+# name without the author of the basionym in parentheses, or another variant,
+# so keep the Flora de Panamá authority unless it has an error. The comparison
+# also helps to spot spelling mistakes in the authority: check these in IPNI or
+# Tropicos and correct them by hand.
+# `backbone` is the authority as WFO stores it, not a recommendation: WFO
+# sometimes keeps the place of publication in it (e.g. "Exell in Pulle", where
+# "in Pulle" is the book, not an author), so most of these are not corrections.
+author_different <- tnrs_review[
+    author_check == "different",
+    .(mnemonic, scientific_name, column = "authority", current = authority, backbone = Author_matched, Taxonomic_status)
+]
+author_different
+
+# Lines that copy the backbone authority as it is (only where the backbone is right)
+print_accept_lines(author_different[, .(mnemonic, column, suggested = backbone)])
+
+# Accepted or hand-corrected authorities (paste or write the lines here):
+
+
+# --- 3f. Authority not compared ----------------------------------------------
+# TNRS returned no author for the matched name, usually because it could not
+# read the authority (see Unmatched_terms). Check these authorities by eye and
+# correct them by hand, e.g.
+# spp_new[mnemonic == "xxxxxx", authority := "..."]
+tnrs_review[
+    author_check == "not compared",
+    .(mnemonic, scientific_name, authority, Unmatched_terms)
+]
+
+# Corrections (write the lines here):
+
+
+# --- 3g. Family (information only) -------------------------------------------
+# The family of the matched name in the backbone differs from the Flora de
+# Panamá family (e.g. Cordiaceae, which WFO includes in Boraginaceae). The
+# Flora de Panamá family is kept.
+tnrs_review[
+    family_check == "differs",
+    .(mnemonic, scientific_name, family, Name_matched_accepted_family)
+]
+
+# --- 3h. Names that are synonyms in the backbone (information only) ----------
+# Flora de Panamá has priority, so these names are kept. The accepted name of
+# the backbone is shown for information (e.g. WFO treats the two varieties of
+# Swartzia simplex as synonyms of the species).
+tnrs_review[
+    is.na(Taxonomic_status) | Taxonomic_status != "Accepted",
+    .(mnemonic, scientific_name, Taxonomic_status, Accepted_name, Accepted_name_author, Accepted_family)
+]
+
+# --- 3i. Morphospecies (not sent to TNRS) ------------------------------------
+# Kept as they are; their missing fields are completed in section 4.
+spp_new_not_sent[, .(mnemonic, family, genus, species, notes)]
+
+# --- 3j. Changes made to the Flora de Panamá names ---------------------------
+# Rebuild the full name from the (possibly corrected) parts
+spp_new[, scientific_name := fifelse(
+    name_type %in% "infraspecific",
+    paste(genus, species, rank, variety),
+    paste(genus, species)
+)]
+
+# Every value that now differs from the Flora de Panamá name, one row per change
+name_cols <- c("family", "genus", "species", "rank", "variety", "authority")
+accepted_changes <- rbindlist(lapply(name_cols, function(col) {
+    before <- spp_panama[, .(mnemonic, panama = get(col))]
+    after <- spp_new[, .(mnemonic, now = get(col))]
+    changed <- merge(before, after, by = "mnemonic")[differs(panama, now)]
+    changed[, column := col]
+    changed
+}))
+setcolorder(accepted_changes, c("mnemonic", "column", "panama", "now"))
+accepted_changes
+
+# Save the review and the changes made
+fwrite(tnrs_review, file.path(checks_folder, "species_tnrs_review.csv"))
+fwrite(accepted_changes, file.path(checks_folder, "species_tnrs_accepted_changes.csv"))
+
+# =============================================================================
+# 4. COMPLETE AND CHECK THE REMAINING FIELDS
+# =============================================================================
+
+# --- 4a. Order ---------------------------------------------------------------
+# Rows without an order (morphospecies not in the Flora de Panamá list)
+spp_new[is.na(order), .(mnemonic, family, genus, species)]
+
+# The order is taken from the other species of the same family
+family_orders <- spp_new[!is.na(order), .(n_orders = uniqueN(order), order = order[1]), by = family]
+check(all(family_orders$n_orders == 1), "each family has a single order in the table")
+family_orders[family %in% spp_new[is.na(order), family]]
+
+order_malvaceae <- family_orders[family == "Malvaceae", order]
+order_lauraceae <- family_orders[family == "Lauraceae", order]
+spp_new[is.na(order) & family == "Malvaceae", order := order_malvaceae]
+spp_new[is.na(order) & family == "Lauraceae", order := order_lauraceae]
+
+spp_new[is.na(order), .(mnemonic, family, genus, species)] # should be empty
+check(!anyNA(spp_new$order), "every species has an order")
+
+# --- 4b. Growth form (R. Pérez & S. Aguilar) ---------------------------------
+# 2_prepare_viewfulltable.R uses this column (Lifeform_RPerez_SAguilar).
+# Rows without one:
+spp_new[
+    is.na(f_de_vida_r_perez_s_aguilar),
+    .(mnemonic, genus, species, f_de_vida_r_foster, pan_forma_de_vida)
+]
+
+# apeihy, nects1 and nects3 are trees (as in the previous version of this script)
+spp_new[mnemonic == "apeihy", f_de_vida_r_perez_s_aguilar := "árbol"]
+spp_new[mnemonic == "nects1", f_de_vida_r_perez_s_aguilar := "árbol"]
+spp_new[mnemonic == "nects3", f_de_vida_r_perez_s_aguilar := "árbol"]
+
+# ficuau (Ficus aurea) has no growth form in this column: the list of R. Pérez
+# and S. Aguilar gave it to ficutr, now replaced ("árbol grande mayor a 20m"),
+# and the Flora de Panamá list says "árbol". Decide and fill it, e.g.
+# spp_new[mnemonic == "ficuau", f_de_vida_r_perez_s_aguilar := "..."]
+
+spp_new[is.na(f_de_vida_r_perez_s_aguilar), .(mnemonic, genus, species)]
+
+# --- 4c. Synonyms ------------------------------------------------------------
+# A synonym must not repeat the name itself. For a variety, the old name of
+# the same variety is a valid synonym (e.g. Swartzia simplex var. ochnacea for
+# swars2, its name in the database until October 2026).
+spp_new[
+    !is.na(synonyms) &
+        unname(mapply(
+            function(name, syn) name %in% trimws(strsplit(syn, "[,;]")[[1]]),
+            scientific_name,
+            synonyms
+        )),
+    .(mnemonic, scientific_name, synonyms)
+]
+
+# Remove the repeated name by hand, e.g.
+# spp_new[mnemonic == "xxxxxx", synonyms := NA_character_]
+
+
+# =============================================================================
+# 5. ASSEMBLE THE SPECIES TABLE AND EXPORT
+# =============================================================================
+# Columns of the species table (left) and their names in the exported table
+# (right). The names are those used by the downstream scripts.
+cols_export <- c(
+    mnemonic = "Mnemonic", # BCI mnemonic code (primary key)
+    order = "Order",
+    family = "Family",
+    genus = "Genus",
+    species = "SpeciesName", # specific epithet
+    rank = "InfraspecificRank", # e.g. "var."; NA for species
+    variety = "InfraspecificEpithet", # NA for species
+    authority = "Authority",
+    synonyms = "Synonyms",
+    f_de_vida_r_foster = "Lifeform_RFoster", # growth form, R. Foster
+    f_de_vida_r_perez_s_aguilar = "Lifeform_RPerez_SAguilar", # growth form, R. Pérez & S. Aguilar
+    pan_forma_de_vida = "Lifeform_FloraPanama", # growth form, Flora de Panamá list
+    common_name = "CommonName",
+    herbarium = "Herbarium", # herbarium vouchers
+    notes = "Notes"
+)
+
+full_out <- spp_new[, names(cols_export), with = FALSE]
+setnames(full_out, old = names(cols_export), new = unname(cols_export))
+setorder(full_out, Mnemonic)
+
+names(full_out)
+
+check(!anyDuplicated(full_out$Mnemonic), "one row per mnemonic in the exported table")
+check(
+    setequal(full_out$Mnemonic, setdiff(inventory_mnemonics, "uniden")),
+    "the exported table holds every code of the plot except uniden"
+)
+check(
+    full_out[, !anyNA(Order) && !anyNA(Family) && !anyNA(Genus) && !anyNA(SpeciesName)],
+    "order, family, genus and species are filled for every row"
+)
+check(
+    full_out[, all(is.na(InfraspecificRank) == is.na(InfraspecificEpithet))],
+    "infraspecific rank and epithet are both filled or both empty"
+)
+
+# count nrows per Lifeform_RPerez_SAguilar
+full_out[, .N, by = Lifeform_RPerez_SAguilar]
+
+# --- Export ------------------------------------------------------------------
+bci.spptable <- full_out
+
+output_path <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "SPP_TABLE")
+dir.create(output_path, showWarnings = FALSE, recursive = TRUE)
+
+# Tab-delimited plain text — portable, version-control friendly
+fwrite(
+    bci.spptable,
+    file.path(output_path, "bci_spptable.txt"),
+    sep = "\t"
+)
+message("Exported: DATA/SPP_TABLE/bci_spptable.txt")
+
+# R binary format — for direct use in downstream R scripts
+save(
+    bci.spptable,
+    file = file.path(output_path, "bci_spptable.RData")
+)
+message("Exported: DATA/SPP_TABLE/bci_spptable.RData")
+
+# Same table with a .csv extension (also tab-separated)
+fwrite(
+    bci.spptable,
+    file.path(output_path, "bci_spptable.csv"),
+    sep = "\t"
+)
+message("Exported: DATA/SPP_TABLE/bci_spptable.csv")
