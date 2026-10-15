@@ -457,21 +457,32 @@ print(complete_dataset_final[Tag %in% chk_skipped_full_na, .(Tag, CensusID, Reco
 # =============================================================================
 # MEASUREMENT-DISCONTINUITY REJOIN
 # =============================================================================
-# A trunk whose point of measurement moved (1982 diameters taken around the
-# buttresses, POM raised in later censuses) or that has one wrongly recorded
-# DBH can show a change outside the engine's hard growth bounds; the engine
-# then books a death plus an impossible recruit for one physical trunk.
-# apply_measurement_rejoin() joins those stems again (rules and evidence:
-# dp_global/R/measurement_rejoin.R). The bounds must be those of the stage-2
-# run: MAX_SHRINK_FIXED and MAX_GROWTH_FIXED (cm/yr) and RECRUIT_MAX_FIXED
-# (cm, here in mm) of 1_main_cpp_chunk_bci.R.
+# A trunk whose point of measurement (POM) moved (buttresses, deformities,
+# strangler figs; the new height recorded or not) can show a change outside
+# the engine's hard growth bounds; the engine then books a stem loss plus an
+# impossible recruit for one physical trunk. apply_measurement_rejoin() joins
+# those stems again, only in trees that show a sign of a moved POM (a height
+# of measurement away from 1.3 m, a buttress code B, a strangler growth form,
+# or, in the censuses without buttress codes, a species that usually has
+# buttresses). Recording errors and trunks missed in one census are not joined.
+# Rules and their justification: dp_global/R/measurement_rejoin.R. The bounds
+# must be those of the stage-2 run: MAX_SHRINK_FIXED and MAX_GROWTH_FIXED
+# (cm/yr) and RECRUIT_MAX_FIXED (cm, here in mm) of 1_main_cpp_chunk_bci.R.
 source(file.path(workspace_root, "dp_global", "R", "measurement_rejoin.R"))
 REJOIN_MAX_SHRINK <- -0.5
 REJOIN_MAX_GROWTH <- 5
 REJOIN_RECRUIT_MAX_MM <- 260
+REJOIN_IRREGULAR_FORMS <- "strangler|estrangulador" # growth forms without a stable POM (stage-2 and species-list labels)
+# Buttress codes (B) exist from census 3 (1990); in censuses 1-2 the species decides:
+# species with >= 80% of their trees >= 30 cm carrying B (at least 10 such trees).
+REJOIN_CODED_CENSUSES <- 3:9
+REJOIN_BUTTRESS_SPECIES <- mr_buttress_species(complete_dataset_final, coded_censuses = REJOIN_CODED_CENSUSES)
+cat("Buttress species for the rejoin:", length(REJOIN_BUTTRESS_SPECIES), "\n")
 rejoin <- apply_measurement_rejoin(
     complete_dataset_final,
-    max_shrink = REJOIN_MAX_SHRINK, max_growth = REJOIN_MAX_GROWTH, recruit_max_mm = REJOIN_RECRUIT_MAX_MM
+    max_shrink = REJOIN_MAX_SHRINK, max_growth = REJOIN_MAX_GROWTH, recruit_max_mm = REJOIN_RECRUIT_MAX_MM,
+    irregular_forms = REJOIN_IRREGULAR_FORMS,
+    buttress_species = REJOIN_BUTTRESS_SPECIES, coded_censuses = REJOIN_CODED_CENSUSES
 )
 mr_check(
     identical(rejoin$dt$RowID, complete_dataset_final$RowID),
@@ -512,7 +523,7 @@ saveRDS(
 # pairs that 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R joins inside the
 # posterior samples.
 fwrite(
-    rejoin$pairs[, .(Tag, route, c0, c1, obs0, obs1, d0, d1, tc0, tc1, ratio, g_tc, source, target)],
+    rejoin$pairs[, .(Tag, route, c0, c1, obs0, obs1, d0, d1, h0, h1, tc0, tc1, ratio, g_tc, evidence, source, target)],
     file.path(post_dir, "measurement_rejoin_audit.csv")
 )
 fwrite(rejoin$obs_pairs, file.path(post_dir, "measurement_rejoin_pairs.csv"))
