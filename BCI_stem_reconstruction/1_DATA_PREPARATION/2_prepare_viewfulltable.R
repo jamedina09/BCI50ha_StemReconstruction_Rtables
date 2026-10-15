@@ -66,12 +66,6 @@ INPUT_folder_old <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA",
 # every tag not visited in 2020.
 EXCLUDE_PLOT_CENSUS_NUMBER <- 9
 
-# Replace the code ficutr with ficuau in the inventory? (S. Lao, email of
-# 2026-07-28: the trees coded ficutr are Ficus aurea, whose code is ficuau.)
-# Not decided yet: FALSE keeps ficutr. The species table has both codes, with
-# the same growth form (1_prepare_species_tables.R, 6a and 6b).
-REPLACE_FICUTR_WITH_FICUAU <- FALSE
-
 # Output and diagnostics folders
 OUTPUT_folder <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED")
 if (!dir.exists(OUTPUT_folder)) {
@@ -174,22 +168,6 @@ ViewFullTable[Mnemonic == "pterof"]
 ViewFullTable[Mnemonic == "pterof", Mnemonic := "pterro"]
 # Check
 ViewFullTable[Mnemonic == "pterof"]
-
-# Check script BCI_stem_reconstruction/1_DATA_PREPARATION/1_prepare_species_tables.R:
-# Solamente un código cambió: todos los "ficutr" cambiaron a "ficuau".
-# The trees with code ficutr are Ficus aurea, whose code is ficuau. Replaced
-# only when REPLACE_FICUTR_WITH_FICUAU is TRUE (see the configuration).
-unique(ViewFullTable[Mnemonic == "ficutr", .(Mnemonic, Family, Genus, SpeciesName)])
-nrow(ViewFullTable[Mnemonic == "ficutr"])
-
-# Correct (no rows before the replacement)
-ViewFullTable[Mnemonic == "ficuau"]
-# Incorrect
-ViewFullTable[Mnemonic == "ficutr"]
-# Replace (only when REPLACE_FICUTR_WITH_FICUAU is TRUE)
-if (REPLACE_FICUTR_WITH_FICUAU) ViewFullTable[Mnemonic == "ficutr", Mnemonic := "ficuau"]
-# Check
-ViewFullTable[Mnemonic == "ficutr"]
 
 # length(unique(ViewFullTable$Mnemonic))
 

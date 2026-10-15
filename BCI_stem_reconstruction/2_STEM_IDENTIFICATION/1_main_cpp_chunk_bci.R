@@ -277,7 +277,7 @@ PROB_N_SAMPLES <- 200L
 # with a strangler growth form: eight strangler figs and Oreopanax capitatus;
 # DP_FALLBACK_GROWTH_FORMS = "strangler" routes them there too). Provide a
 # character vector of species codes (Mnemonic, copied to the Species column);
-# every code must occur in the data (ficuau has no trees).
+# every code must occur in the data.
 PROB_SPECIES <- c("oenoma", "bactma", "ficuob", "ficupo", "ficuc2", "ficubu", "ficuc1", "ficuci", "ficupe", "ficutr", "oreoca")
 
 # Lookahead weight for probabilistic matcher (0 = disabled; engine default 0.5, this driver uses 1)

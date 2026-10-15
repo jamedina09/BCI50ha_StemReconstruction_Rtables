@@ -40,7 +40,7 @@
 # Outputs:
 #   DATA/SPP_TABLE/bci_spptable.txt, bci_spptable.csv (both tab-separated) and
 #   bci_spptable.RData (object bci.spptable): one row per code of the plot
-#   except uniden, plus ficuau (kept without records, see 6a), with Mnemonic, Order, Family, Genus, SpeciesName,
+#   except uniden, with Mnemonic, Order, Family, Genus, SpeciesName,
 #   InfraspecificRank, InfraspecificEpithet, Authority, Synonyms,
 #   Lifeform_RFoster, Lifeform_RPerez_SAguilar, CommonName, Herbarium, Notes.
 #   DATA/CHECKS/species_wfo_review.csv (each name next to its WFO record),
@@ -299,7 +299,9 @@ viewt_tax1[, SpeciesName := NULL]
 # columnas son los nombres nuevos y las columnas al final son los nombres viejos.
 
 # Solamente un código cambió: todos los "ficutr" cambiaron a "ficuar".
-# NOTE: "ficuar" is a typo for ficuau (Ficus aurea); there is no code ficuar.
+# NOTE: this change is not applied. The new code is not a code of the plot
+# (the database has no such code and no tree carries it): the trees keep the
+# code ficutr.
 # Me avisa si este listado es diferente al que le envió Rolando. Es posible que el listado de
 # Rolando esté más actualizado.
 
@@ -323,12 +325,13 @@ check(!anyDuplicated(tax2$mnemonic), "one row per code in the list of S. Lao")
 setorder(viewt_tax1, Mnemonic)
 setorder(tax2, mnemonic)
 
-# Codes in only one of the two: ficutr in the table, ficuau in Suzanne's list
+# Codes in only one of the two: ficutr in the table and, in Suzanne's list, the
+# new code she gives to ficutr (not a code of the plot, not used)
 setdiff(viewt_tax1$Mnemonic, tax2$mnemonic)
 setdiff(tax2$mnemonic, viewt_tax1$Mnemonic)
 
 viewt_tax1[Mnemonic == "ficutr"]
-tax2[mnemonic == "ficuau"]
+tax2[mnemonic %in% setdiff(tax2$mnemonic, viewt_tax1$Mnemonic)]
 
 # Species and subspecies IDs of the list are not used
 tax2[, speciesid := NULL]
@@ -405,32 +408,17 @@ mesubsp_sussubsp <- merge(
 )
 mesubsp_sussubsp[Subspecies != subspecies] # no differences
 
-# ficutr and ficuau. In the database, ficutr carries the name Ficus aurea
-# (there is no Ficus trigonata in the plot), while the list of email 1 gives
-# ficutr as Ficus trigonata. Suzanne's change ficutr -> ficuau puts these trees
-# under the code of Ficus aurea. The change is not decided yet, so both codes
-# are kept: a row for ficuau is added here from Suzanne's list, next to the
-# ficutr row (see 6a). The recode of the inventory is a switch in
-# 2_prepare_viewfulltable.R.
+# ficutr. In the database, ficutr carries the name Ficus aurea (there is no
+# Ficus trigonata in the plot), while the list of email 1 gives ficutr as Ficus
+# trigonata. The trees keep the code ficutr, and the species table keeps the
+# name of the lists of Rolando Pérez (email 1 and the Flora de Panamá, section 5).
 viewt[Mnemonic == "ficutr"]
 viewt[Genus == "Ficus"][order(SpeciesName)]
 
-viewt_tax1_updated <- rbindlist(
-    list(
-        viewt_tax1,
-        data.table(
-            Mnemonic = "ficuau",
-            familia = tax2[mnemonic == "ficuau"]$family,
-            genero = tax2[mnemonic == "ficuau"]$genus,
-            especie = tax2[mnemonic == "ficuau"]$speciesname,
-            email_2_comment = "Solamente un codigo cambio: todos los 'ficutr' cambiaron a 'ficuau'"
-        )
-    ),
-    use.names = TRUE,
-    fill = TRUE
-)
+# The table after the corrections of email 2 (the synonym of pla1pi)
+viewt_tax1_updated <- copy(viewt_tax1)
 
-# Codes of the table not in the database taxonomy (ficuau only)
+# Codes of the table not in the database taxonomy (none)
 setdiff(viewt_tax1_updated$Mnemonic, viewt$Mnemonic)
 
 # Done: email 1, email 2 and Rolando's reply included
@@ -498,8 +486,7 @@ viewt_tax1_updated_flor_pan <- merge(
 viewt_tax1_updated_flor_pan[, texto := NULL][, fotos := NULL][, pan_texto := NULL][, pan_fotos := NULL][, pan_mnbc := NULL]
 viewt_tax1_updated_flor_pan[, pan_forma_de_vida := NULL]
 
-# Codes of the table vs the database taxonomy: only ficuau is new (it has no
-# records in the inventory unless ficutr is recoded, see 6a)
+# Codes of the table vs the database taxonomy
 setdiff(viewt_tax1_updated_flor_pan$mnemonic, viewt$Mnemonic)
 setdiff(viewt$Mnemonic, viewt_tax1_updated_flor_pan$mnemonic)
 
@@ -564,7 +551,6 @@ viewt_tax1_updated_flor_pan[, herbario := NULL][, pan_herbario := NULL]
 # Spot checks: rows discussed in the emails
 viewt_tax1_updated_flor_pan[mnemonic == "appuse"]
 viewt_tax1_updated_flor_pan[mnemonic == "ficutr"]
-viewt_tax1_updated_flor_pan[mnemonic == "ficuau"]
 viewt_tax1_updated_flor_pan[!is.na(email_1_comment)]
 
 # =============================================================================
@@ -579,13 +565,6 @@ viewt_tax1_updated_flor_pan[!is.na(email_1_comment)]
 # removed from the species table here.
 mnemonic_replace <- c(pterof = "pterro")
 
-# ficutr -> ficuau (Suzanne, email 2: the trees coded ficutr are Ficus aurea,
-# whose code is ficuau) is not decided yet. Both codes are kept in the species
-# table: ficutr with the trees of the inventory, and ficuau without records
-# until the inventory is recoded (switch REPLACE_FICUTR_WITH_FICUAU in
-# 2_prepare_viewfulltable.R). Both have the same growth form (6b).
-codes_without_records <- "ficuau"
-
 # rows of the replaced codes and of the codes that replace them
 viewt_tax1_updated_flor_pan[mnemonic %in% c(names(mnemonic_replace), mnemonic_replace)]
 
@@ -598,7 +577,7 @@ check(
 viewt_tax1_updated_flor_pan <- viewt_tax1_updated_flor_pan[!mnemonic %in% names(mnemonic_replace)]
 
 # The species table must now hold exactly the codes of the inventory after the
-# replacement, plus the codes kept without records (ficuau). The codes come from the current inventory (oct_13_2026), the
+# replacement. The codes come from the current inventory (oct_13_2026), the
 # same table 0_extract_ViewTaxonomy.R reads; only the Mnemonic column is loaded.
 inventory_mnemonics <- unique(fread(ViewFullTable_new, sep = "\t", select = "Mnemonic")$Mnemonic)
 inventory_mnemonics <- unique(fifelse(
@@ -606,11 +585,11 @@ inventory_mnemonics <- unique(fifelse(
     mnemonic_replace[inventory_mnemonics],
     inventory_mnemonics
 ))
-setdiff(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics) # in the table, not in the plot (ficuau)
+setdiff(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics) # in the table, not in the plot
 setdiff(inventory_mnemonics, viewt_tax1_updated_flor_pan$mnemonic) # in the plot, not in the table
 check(
-    setequal(viewt_tax1_updated_flor_pan$mnemonic, c(inventory_mnemonics, codes_without_records)),
-    "the species table holds exactly the codes present in the plot after the replacement, plus ficuau"
+    setequal(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics),
+    "the species table holds exactly the codes present in the plot after the replacement"
 )
 check(
     !anyDuplicated(viewt_tax1_updated_flor_pan$mnemonic),
@@ -637,16 +616,15 @@ viewt_tax1_updated_flor_pan[
 ]
 
 # Growth forms given by the botanists (2026-10-14):
-#   ficutr, ficuau          the same trees (see 6a), stranglers (the list gave
-#                           ficutr "árbol grande mayor a 20m" and has no ficuau)
+#   ficutr                  strangler (the list gave "árbol grande mayor a 20m")
 #   apeihy, nects1, nects3  trees
-viewt_tax1_updated_flor_pan[mnemonic %in% c("ficutr", "ficuau"), f_de_vida_r_perez_s_aguilar := "árbol estrangulador mayor a 20m"]
+viewt_tax1_updated_flor_pan[mnemonic == "ficutr", f_de_vida_r_perez_s_aguilar := "árbol estrangulador mayor a 20m"]
 viewt_tax1_updated_flor_pan[mnemonic %in% c("apeihy", "nects1", "nects3"), f_de_vida_r_perez_s_aguilar := "árbol"]
 
-# R. Foster's code is empty for ficuau, apeihy, nects1 and nects3 (they are not
-# in his list under these codes), and is T (canopy tree) for ficutr; change it
-# by hand if the botanists give another value, e.g.
-# viewt_tax1_updated_flor_pan[mnemonic == "ficuau", f_de_vida_r_foster := "TE"]
+# R. Foster's code is empty for apeihy, nects1 and nects3 (they are not in his
+# list under these codes), and is T (canopy tree) for ficutr; change it by hand
+# if the botanists give another value, e.g.
+# viewt_tax1_updated_flor_pan[mnemonic == "ficutr", f_de_vida_r_foster := "TE"]
 
 # Every code has a growth form, except uniden (unidentified stems, left out of
 # the species table in section 8)
@@ -1373,8 +1351,8 @@ names(full_out)
 
 check(!anyDuplicated(full_out$Mnemonic), "one row per mnemonic in the exported table")
 check(
-    setequal(full_out$Mnemonic, setdiff(c(inventory_mnemonics, codes_without_records), "uniden")),
-    "the exported table holds every code of the plot except uniden, plus ficuau"
+    setequal(full_out$Mnemonic, setdiff(inventory_mnemonics, "uniden")),
+    "the exported table holds every code of the plot except uniden"
 )
 check(
     full_out[, !anyNA(Order) && !anyNA(Family) && !anyNA(Genus) && !anyNA(SpeciesName)],
