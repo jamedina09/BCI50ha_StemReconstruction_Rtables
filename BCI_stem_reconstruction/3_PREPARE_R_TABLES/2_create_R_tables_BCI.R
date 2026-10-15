@@ -437,7 +437,8 @@ ViewFullTable <- copy(ViewFullTable_RAW)
 # IMPORTANT: Rows with NA ReconstructedStemID become StemID = "TreeID_NA".
 #   These are rows without a stem identity from stage 2 (in the current data:
 #   placeholder rows of a census in which the tree has no record, with no
-#   status and no DBH). That they carry no DBH is checked below.
+#   status and no DBH). That they carry no DBH is checked below; they are
+#   dropped at the start of Section 3.
 ViewFullTable[, Raw_StemID := StemID] # preserve original DB StemID
 
 # unique(ViewFullTable$StemID)
@@ -562,8 +563,26 @@ fwrite(show_levels(ViewFullTable, n_to_print = Inf, output = "df"),
 # Create master stem list with fixed attributes
 # --------------------------------------------------------------------
 
-# Apply this immediately after the StemID overwrite block
-# ViewFullTable <- ViewFullTable[!grepl("_NA$", StemID)]
+# Placeholder rows without a stem identity are dropped. Stage 1 adds a
+# placeholder row (no StemID, no status, no DBH, no codes) for a census in
+# which the tree has no record between its first and last record; stage 2
+# gives it a stem identity only when one stem can own it. Kept, the others
+# would become one "TreeID_NA" stem per tree, P in every census, a stem that
+# does not exist. The tree's real stems keep their rows in those censuses.
+no_identity <- ViewFullTable[, grepl("_NA$", StemID)]
+bio_check(
+  ViewFullTable[no_identity, all(is.na(ReconstructedStemID) & is.na(Raw_StemID) & is.na(Status) & is.na(DBH) & is.na(ListOfTSM))],
+  "Rows without a stem identity are empty placeholder rows (no stem identity, StemID, status, DBH or codes)",
+  examples = ViewFullTable[no_identity & !(is.na(Raw_StemID) & is.na(Status) & is.na(DBH) & is.na(ListOfTSM)), unique(TreeID)],
+  n_bad = ViewFullTable[no_identity & !(is.na(Raw_StemID) & is.na(Status) & is.na(DBH) & is.na(ListOfTSM)), .N]
+)
+cat(sprintf(
+  "Placeholder rows without a stem identity dropped: %d rows in %d trees\n",
+  sum(no_identity), ViewFullTable[no_identity, uniqueN(TreeID)]
+))
+ViewFullTable <- ViewFullTable[!no_identity]
+bio_check(!any(grepl("_NA$", ViewFullTable$StemID)), "Every remaining row has a stem identity (no 'TreeID_NA' stem)")
+rm(no_identity)
 
 # fixed_columns: the minimum identifier set that does not change across
 # censuses. StemID below is the composite TreeID_ReconstructedStemID created
@@ -2146,10 +2165,10 @@ cat("  ✓ Saved: status_changed.csv\n")
 #     DBH, then dead). P until their first record, then G or D; they never
 #     keep a tree alive. Could indicate stems that died before being
 #     measured, or data quality issues.
-# (b) Never recorded: P in every census. Their only rows are "missing" or
-#     empty placeholder rows (StemID "TreeID_NA": a tree row with a date but
-#     no stem, status or DBH). Kept in the R tables as all-P stems and
-#     listed here.
+# (b) Never recorded: P in every census. Their only rows are "missing"
+#     records without DBH. Kept in the R tables as all-P stems and listed
+#     here. (Empty placeholder rows without a stem identity were dropped in
+#     Section 3, so they no longer appear here as "TreeID_NA" stems.)
 problem.ID <- unique_StemID$StemID[
   !grepl("A", corrected_new_status, fixed = TRUE) & grepl("[GD]", corrected_new_status)
 ]
@@ -3007,8 +3026,8 @@ for (census in seq_along(ViewFullTable_split)) {
   export_stem_order[[census]] <- X$stemID
   # stemID: the reconstructed stem number within its tree (1, 2, ...). The
   # internal key is "TreeID_ReconstructedStemID"; its second part is
-  # exported, so treeID + stemID identify a stem. A stem without a DP
-  # identity ("TreeID_NA": records with no status and no DBH) gets NA.
+  # exported, so treeID + stemID identify a stem. (Rows without a DP
+  # identity were dropped in Section 3, so no exported stemID is NA.)
   rs_part <- substring(X$stemID, nchar(X$treeID) + 2L)
   bad_key <- paste(X$treeID, rs_part, sep = "_") != X$stemID | !(rs_part == "NA" | grepl("^[0-9]+$", rs_part))
   bio_check(

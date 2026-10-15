@@ -48,7 +48,10 @@ posterior file, which is used by
   a stem alive later is `A` too.
 - After the last evidence of life a stem is dead from the first census
   without one. A stem never alive is `P` until its first record, then `G`/`D`.
-  A stem never recorded (only `missing` or empty rows) is `P` in every census.
+  A stem never recorded (only `missing` records) is `P` in every census.
+  Empty placeholder rows without a stem identity (stage 1 adds one for a
+  census in which the tree has no record) are dropped, so every exported stem
+  has a `stemID`.
 - `dbh` is exported exactly as recorded: no DBH is removed or imputed. A `G`
   or `D` cell carries a DBH only when it was recorded on a `dead` / `stem dead`
   record of a stem never alive later (listed in
