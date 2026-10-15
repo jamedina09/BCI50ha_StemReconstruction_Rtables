@@ -154,7 +154,7 @@ Scripts (run in order): `0_prepare_species_tables.R` → `1_prepare_viewfulltabl
 Runs `dp_global` on the multiple-stem tags of the cleaned ViewFullTable, chunk by chunk (the tags of a chunk run in parallel), and merges the outputs with the single-stem tags.
 
 - `1_main_cpp_chunk_bci.R` — chunked driver for BCI data; writes feather chunk outputs with resume support.
-- `2_merge_chunks_to_datatable.R` — merges chunk feathers into `merged_output.parquet` and `.rds`, joins trunks that the engine split only because their point of measurement moved or one diameter was recorded wrongly (`apply_measurement_rejoin()`, `dp_global/R/measurement_rejoin.R`), and writes the final table `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`.
+- `2_merge_chunks_to_datatable.R` — merges chunk feathers into `merged_output.parquet` and `.rds`, joins trunks that the engine split only because their point of measurement moved, in trees that show a sign of it (`apply_measurement_rejoin()`, `dp_global/R/measurement_rejoin.R`), and writes the final table `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`.
 
 See `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_chunk_bci.md` for run and resume commands.
 
