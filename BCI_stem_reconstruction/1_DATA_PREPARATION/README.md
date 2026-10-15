@@ -22,7 +22,8 @@ print inspection tables and draw diagnostic plots.
    - Loads the raw `ViewFullTable` (DBH in mm, HOM in m), replaces the
      mnemonic `pterof` by `pterro`, and renumbers the censuses 1..n by date.
    - Adds a placeholder row for every census between a tag's first and last
-     record in which the tag has no row.
+     record in which the tag has no row (the stage-3 R tables drop the
+     placeholders that stage 2 leaves without a stem).
    - Keeps one measurement per stem and census (the highest HOM; ties go to
      the larger DBH).
    - Flags likely DBH entry errors (a jump in and back out between three

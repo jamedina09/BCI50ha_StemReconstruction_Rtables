@@ -366,6 +366,10 @@ if (real_ok) {
   cat(sprintf("\nReal data: %s\n           %s\n", rtables_dir, stage2_file))
   # Raw input, built the way the script builds it (one row per stem x census)
   raw <- as.data.table(readRDS(stage2_file))
+  # Rows without a stem identity are empty placeholder rows (a census in which
+  # the tree has no record); the script drops them at the start of Section 3
+  placeholders <- raw[is.na(ReconstructedStemID)]
+  raw <- raw[!is.na(ReconstructedStemID)]
   raw <- raw[, .(
     TreeID = as.character(TreeID),
     StemID = paste(as.character(TreeID), as.character(as.numeric(as.character(ReconstructedStemID))), sep = "_"),
@@ -377,7 +381,7 @@ if (real_ok) {
   cells <- raw[grid, on = .(TreeID, StemID, census)]
   files <- file.path(rtables_dir, sprintf("bci.stem%d.Rdata", seq_len(n_cens)))
   # The exported stemID is the stem number within its tree; StemID below is
-  # the script's internal key "TreeID_stemID" ("TreeID_NA" for stemID NA).
+  # the script's internal key "TreeID_stemID".
   rt <- rbindlist(lapply(seq_len(n_cens), function(i) {
     e <- new.env()
     load(files[i], envir = e)
@@ -463,14 +467,23 @@ test_that("real data: stemID is the reconstructed stem number within its tree", 
   expect_true(all(is.na(rt$stemID) | rt$stemID >= 1L))
   # treeID + stemID identify one row per census, and the same stems in every census
   expect_identical(rt[, .N, by = .(TreeID, stemID, census)][N > 1L, .N], 0L)
-  # stemID NA only for stems without a DP identity (no status and no DBH ever)
-  no_id <- rt[is.na(stemID), unique(StemID)]
-  expect_true(all(grepl("_NA$", no_id)))
-  expect_identical(rt[is.na(stemID) & (!is.na(dbh) | !is.na(DFstatus)), .N], 0L)
+  # every exported stem has a DP identity: no stemID is NA
+  expect_false(anyNA(rt$stemID))
   cat(sprintf(
-    "  stemID: %s stems in %s trees | largest stem number %d | stems without a DP identity (stemID NA): %d\n",
+    "  stemID: %s stems in %s trees | largest stem number %d\n",
     format(uniqueN(rt$StemID), big.mark = ","), format(uniqueN(rt$TreeID), big.mark = ","),
-    max(rt$stemID, na.rm = TRUE), length(no_id)
+    max(rt$stemID, na.rm = TRUE)
+  ))
+})
+
+test_that("real data: rows without a stem identity are empty placeholders and are not exported", {
+  skip_if_not(real_ok, "no R tables / stage-2 file found")
+  # no StemID, status, DBH or codes: nothing of the raw data is lost by dropping them
+  expect_true(placeholders[, all(is.na(StemID) & is.na(Status) & is.na(DBH) & is.na(ListOfTSM))])
+  expect_false(any(grepl("_NA$", rt$StemID)))
+  cat(sprintf(
+    "  placeholder rows without a stem identity in the stage-2 table: %d (%d trees), none exported\n",
+    nrow(placeholders), uniqueN(placeholders$TreeID)
   ))
 })
 
