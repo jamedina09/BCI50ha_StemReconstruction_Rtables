@@ -102,7 +102,7 @@ In long-term forest census plots, individual trees can have multiple stems measu
 
 The DP solver works backward from the anchor census, evaluating the assignments of earlier measurements to identity tracks (the anchor's stems plus spare tracks for stems that died earlier). Each candidate is scored using biology: size-dependent growth rates, mortality hazard, and recruitment probability. The algorithm picks the single jointly optimal assignment across all censuses.
 
-The number of assignments grows factorially with stem count. With `DP_MAX_STATES = 40,000` the DP handles tags with up to about **6 measured stems per census** (the exact limit depends on the number of tracks; see *Understanding `max_states`* in `dp_global/README.md`, which also describes the case in which the DP works on a truncated set of assignments); larger tags go to the probabilistic matcher.
+The number of assignments grows factorially with stem count. With `DP_MAX_STATES = 40,000` the DP handles tags with up to about **6 measured stems per census** (the exact limit depends on the number of tracks and, where pins or growth bounds restrict them, on the assignments they allow; see *Understanding `max_states`* in `dp_global/README.md`); larger tags go to the probabilistic matcher.
 
 #### Probabilistic greedy matcher (fallback)
 
