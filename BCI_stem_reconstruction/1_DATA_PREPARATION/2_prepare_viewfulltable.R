@@ -1,5 +1,5 @@
 # =============================================================================
-# 1_prepare_viewfulltable.R.R
+# 2_prepare_viewfulltable.R
 #
 # Purpose: Load and prepare the BCI ViewFullTable for stem identification.
 #          Give every tag a row at every census between its first and last
@@ -7,14 +7,17 @@
 #          replace likely DBH entry errors, apply the taper correction, and
 #          label single- vs multiple-stem tags.
 #
-# Run from the project root: the species table is loaded with a path relative
-# to the working directory.
+# Run from the project root (or from BCI_stem_reconstruction/).
 #
 # Inputs:
+#   BCI_stem_reconstruction/DATA/RAW/oct_13_2026/ViewFullTable_bci.csv
+#     (export received on 2026-10-13; tab-separated; DBH in mm, HOM in m).
+#     Census 9 (2020, partial) is removed on loading.
 #   BCI_stem_reconstruction/DATA/RAW/ViewFiles_bci_allcensuses/ViewFullTable_bci.csv
-#     (tab-separated; DBH in mm, HOM in m)
+#     (previous export; only its DBHID column is read, to check that the
+#     records are the same)
 #   BCI_stem_reconstruction/DATA/SPP_TABLE/bci_spptable.RData
-#     (from 0_prepare_species_tables.R; growth forms)
+#     (from 1_prepare_species_tables.R; growth forms)
 # Output:
 #   BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
 #     the ViewFullTable columns (CensusID renumbered 1..n by mean census date,
@@ -49,7 +52,25 @@ if (basename(workspace_root) == "BCI_stem_reconstruction") {
   workspace_root <- dirname(workspace_root)
 }
 
-INPUT_folder_1 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses")
+# Export received on 2026-10-13. Compared with the previous export (see
+# DATA/RAW/compare_viewfulltable_bci_old_and_oct23_2026.R) it adds census 9 and
+# new taxonomy names for 49 species; all other columns and records are the same.
+INPUT_folder_1 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "oct_13_2026")
+# Previous export, read only to check that the records are the same
+INPUT_folder_old <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses")
+
+# Censuses removed on loading (PlotCensusNumber). Census 9 (CensusID 351) is
+# the 2020 census, which covers only 135 of the 1,250 quadrats
+# (January-March 2020). It is not in the previous export, and kept here it
+# would become a census of its own, with a placeholder row (Section 3) for
+# every tag not visited in 2020.
+EXCLUDE_PLOT_CENSUS_NUMBER <- 9
+
+# Replace the code ficutr with ficuau in the inventory? (S. Lao, email of
+# 2026-07-28: the trees coded ficutr are Ficus aurea, whose code is ficuau.)
+# Not decided yet: FALSE keeps ficutr. The species table has both codes, with
+# the same growth form (1_prepare_species_tables.R, 6a and 6b).
+REPLACE_FICUTR_WITH_FICUAU <- FALSE
 
 # Output and diagnostics folders
 OUTPUT_folder <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED")
@@ -63,6 +84,22 @@ if (!dir.exists(CHECK_folder)) {
 }
 
 # End of configuration (adjust above values as needed for local runs)
+
+# ---- Helper: check ----
+# Loud check (the script is run line by line): prints ❌, raises an immediate
+# warning, writes to the log, and only then stops.
+log_file <- file.path(CHECK_folder, "prepare_viewfulltable_log.txt")
+check <- function(ok, msg) {
+  if (isTRUE(all(ok))) {
+    cat("✓", msg, "\n")
+    return(invisible(TRUE))
+  }
+  full_msg <- paste0("CHECK FAILED: ", msg)
+  cat("❌", full_msg, "\n")
+  warning(full_msg, call. = FALSE, immediate. = TRUE)
+  cat(format(Sys.time()), full_msg, "\n", file = log_file, append = TRUE)
+  stop(full_msg, call. = FALSE)
+}
 
 # ---- 2. Load and verify the input data ----
 # Read the BCI ViewFullTable from the raw data folder. The table must contain
@@ -84,7 +121,42 @@ ViewFullTable <- fread(
   na.strings = c("NA", "NULL", "")
 )
 
-# Check script BCI_stem_reconstruction/1_DATA_PREPARATION/0_prepare_species_tables.R:
+# Rows per census as loaded
+ViewFullTable[, .N, keyby = .(PlotCensusNumber, CensusID)]
+
+# Remove the excluded census(es) and the factor level they leave behind
+ViewFullTable <- ViewFullTable[!PlotCensusNumber %in% EXCLUDE_PLOT_CENSUS_NUMBER]
+ViewFullTable[, CensusID := droplevels(CensusID)]
+ViewFullTable[, .N, keyby = .(PlotCensusNumber, CensusID)]
+
+# After the removal the records must be those of the previous export: same
+# number of rows and same DBHIDs (the measurement key)
+old_dbhid <- fread(
+  file = file.path(INPUT_folder_old, paste0("ViewFullTable_", site, ".csv")),
+  sep = "\t",
+  select = "DBHID"
+)$DBHID
+check(
+  !anyNA(ViewFullTable$DBHID) && !anyDuplicated(ViewFullTable$DBHID),
+  "DBHID is filled and unique in the loaded table"
+)
+check(
+  nrow(ViewFullTable) == length(old_dbhid),
+  sprintf(
+    "same number of rows as the previous export (%s loaded, %s in the previous export)",
+    format(nrow(ViewFullTable), big.mark = ","), format(length(old_dbhid), big.mark = ",")
+  )
+)
+check(
+  setequal(ViewFullTable$DBHID, old_dbhid),
+  "same records (DBHID) as the previous export"
+)
+# Same row order as the previous export (information: TRUE means the steps
+# below see the rows in the same order as in the previous runs)
+identical(ViewFullTable$DBHID, old_dbhid)
+rm(old_dbhid)
+
+# Check script BCI_stem_reconstruction/1_DATA_PREPARATION/1_prepare_species_tables.R:
 # Pterocarpus officinalis no existe en la parcela, yo personalmente revisé todos los Pterocarpus y
 # corresponden a P. rohrii.
 unique(ViewFullTable[SpeciesName == "rohrii", .(Mnemonic, Family, Genus, SpeciesName)])
@@ -105,7 +177,8 @@ ViewFullTable[Mnemonic == "pterof"]
 
 # Check script BCI_stem_reconstruction/1_DATA_PREPARATION/1_prepare_species_tables.R:
 # Solamente un código cambió: todos los "ficutr" cambiaron a "ficuau".
-# The trees with code ficutr are Ficus aurea, whose code is ficuau.
+# The trees with code ficutr are Ficus aurea, whose code is ficuau. Replaced
+# only when REPLACE_FICUTR_WITH_FICUAU is TRUE (see the configuration).
 unique(ViewFullTable[Mnemonic == "ficutr", .(Mnemonic, Family, Genus, SpeciesName)])
 nrow(ViewFullTable[Mnemonic == "ficutr"])
 
@@ -113,8 +186,8 @@ nrow(ViewFullTable[Mnemonic == "ficutr"])
 ViewFullTable[Mnemonic == "ficuau"]
 # Incorrect
 ViewFullTable[Mnemonic == "ficutr"]
-# Replace
-ViewFullTable[Mnemonic == "ficutr", Mnemonic := "ficuau"]
+# Replace (only when REPLACE_FICUTR_WITH_FICUAU is TRUE)
+if (REPLACE_FICUTR_WITH_FICUAU) ViewFullTable[Mnemonic == "ficutr", Mnemonic := "ficuau"]
 # Check
 ViewFullTable[Mnemonic == "ficutr"]
 
@@ -948,9 +1021,8 @@ ViewFullTable_measurement_error_indication[HOM_for_taper_correction == 0, HOM_fo
 # Re-check range after conversion
 range(ViewFullTable_measurement_error_indication$HOM_for_taper_correction, na.rm = TRUE)
 
-# Load species table with growth-form classifications (object bci.spptable;
-# path relative to the working directory)
-load("./BCI_stem_reconstruction/DATA/SPP_TABLE/bci_spptable.RData")
+# Load species table with growth-form classifications (object bci.spptable)
+load(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.RData"))
 
 # check database
 setdiff(bci.spptable$Mnemonic, ViewFullTable_measurement_error_indication$Mnemonic)
@@ -1166,8 +1238,18 @@ table(ViewFullTable_single_vs_multiple_stem_tags$single_stem_tags, useNA = "ifan
 # Add the growth form (`Lifeform`) of each species to the observation table.
 # The summaries below count the records per growth form and show the
 # mnemonics without one.
+n_rows_before_species_merge <- nrow(ViewFullTable_single_vs_multiple_stem_tags)
 ViewFullTable_single_vs_multiple_stem_tags <- merge(ViewFullTable_single_vs_multiple_stem_tags, unique(growth_forms[, .(Mnemonic, Lifeform)]), by = "Mnemonic", all.x = TRUE)
 setorder(ViewFullTable_single_vs_multiple_stem_tags, RowID)
+# A code with two growth forms in the species table would duplicate its rows
+check(
+  nrow(ViewFullTable_single_vs_multiple_stem_tags) == n_rows_before_species_merge,
+  sprintf(
+    "the species merge keeps every row once (%s before, %s after; more after = a code with two growth forms in the species table)",
+    format(n_rows_before_species_merge, big.mark = ","), format(nrow(ViewFullTable_single_vs_multiple_stem_tags), big.mark = ",")
+  )
+)
+rm(n_rows_before_species_merge)
 
 # Summaries
 ViewFullTable_single_vs_multiple_stem_tags[, .N, by = Lifeform][order(-N)]
