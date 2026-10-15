@@ -273,10 +273,12 @@ ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 PROB_N_SAMPLES <- 200L
 
 # Species that bypass the DP and go directly to the probabilistic matcher
-# (two colonial palms, Oenocarpus mapora and Bactris major, and seven strangler
-# figs). Provide a character vector of species codes (Mnemonic, copied to the
-# Species column).
-PROB_SPECIES <- c("oenoma", "bactma", "ficuob", "ficupo", "ficuc2", "ficubu", "ficuc1", "ficuci", "ficupe")
+# (two colonial palms, Oenocarpus mapora and Bactris major, and every species
+# with a strangler growth form: eight strangler figs and Oreopanax capitatus;
+# DP_FALLBACK_GROWTH_FORMS = "strangler" routes them there too). Provide a
+# character vector of species codes (Mnemonic, copied to the Species column);
+# every code must occur in the data (ficuau has no trees).
+PROB_SPECIES <- c("oenoma", "bactma", "ficuob", "ficupo", "ficuc2", "ficubu", "ficuc1", "ficuci", "ficupe", "ficutr", "oreoca")
 
 # Lookahead weight for probabilistic matcher (0 = disabled; engine default 0.5, this driver uses 1)
 PROB_LOOKAHEAD_WEIGHT <- 1

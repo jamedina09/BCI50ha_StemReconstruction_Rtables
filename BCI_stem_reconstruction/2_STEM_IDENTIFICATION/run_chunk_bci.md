@@ -11,7 +11,7 @@ To start a new chunked run, use the following command:
 ```sh
 caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
   --DP_MAX_STATES=10000 \
-  --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
+  --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe,ficutr,oreoca" \
   --DP_FALLBACK_GROWTH_FORMS="strangler" \
   --POSTERIOR_SAMPLE_SEED=42 \
   --MANUAL_CORES=TRUE \
@@ -24,7 +24,7 @@ caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_c
 **Flag explanations:**
 
 - `DP_MAX_STATES`: Largest number of assignment states per census that the DP solves; a tag above it goes to the probabilistic matcher (higher = more tags solved exactly, longer runtime).
-- `PROB_SPECIES`: Comma-separated species codes (`Mnemonic`) routed to the probabilistic matcher: the clump-forming palms *Oenocarpus mapora* (`oenoma`) and *Bactris major* (`bactma`) and seven strangler figs (`ficu*`). Every code must occur in the data; otherwise the run stops at load with `❌ CHECK FAILED`.
+- `PROB_SPECIES`: Comma-separated species codes (`Mnemonic`) routed to the probabilistic matcher: the clump-forming palms *Oenocarpus mapora* (`oenoma`) and *Bactris major* (`bactma`) and every species with a strangler growth form: eight strangler figs (`ficu*`, including `ficutr`) and *Oreopanax capitatus* (`oreoca`). `DP_FALLBACK_GROWTH_FORMS="strangler"` already sends all strangler trees to the matcher; listing them here as well keeps them there if the growth-form option is changed. `ficuau` has no trees and must not be listed. Every code must occur in the data; otherwise the run stops at load with `❌ CHECK FAILED`.
 - `DP_FALLBACK_GROWTH_FORMS`: `growth_form` labels routed to the probabilistic matcher. The labels are those the script assigns: `tree`, `shrub`, `palm`, `strangler`, `fern` (singular, matched exactly). A value that is not a label (e.g. `palms`) stops the run at load with `❌ CHECK FAILED` instead of silently routing nothing.
 - `PROB_BIRTH_DEATH` (default `TRUE`, not needed on the command line): the probabilistic matcher lets every stem continue, die or be recruited in every census pair, scored by the same biological model as the DP. `--PROB_BIRTH_DEATH=FALSE` selects count-based slots, which force every stem to continue when the stem count does not change (before 2010 this gives 0.8–4.4 palm stem replacements, a death and a recruit in one tree, per 100 trees per year, against 4.6–6.9 with the 2010–2023 stem tags). The DP is not affected.
 - `RECRUIT_RATE_UNIT` (default `"tree"`, not needed on the command line): the recruitment rate of both engines is the number of new stems per established tree per year (2010–2023 data). `--RECRUIT_RATE_UNIT=slot` selects the rate per empty slot of the estimation grid (~0.08/yr for every species).
@@ -49,7 +49,7 @@ caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_c
   --OUT_DIR_OVERRIDE=/Users/medinaja/outputs_bci_stem_identification/<timestamp_run_code> \
   --DP_CHUNK_RESUME=TRUE \
   --DP_MAX_STATES=10000 \
-  --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe" \
+  --PROB_SPECIES="oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe,ficutr,oreoca" \
   --DP_FALLBACK_GROWTH_FORMS="strangler" \
   --POSTERIOR_SAMPLE_SEED=42 \
   --MANUAL_CORES=TRUE \
