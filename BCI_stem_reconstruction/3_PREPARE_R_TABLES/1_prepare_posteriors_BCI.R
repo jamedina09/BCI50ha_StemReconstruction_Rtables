@@ -234,7 +234,7 @@ cat(
 
 # ---- Measurement-discontinuity rejoin inside the samples ---------------------
 # 2_merge_chunks_to_datatable.R joined stems split by a moved point of
-# measurement or a recording error, and wrote the joined observation pairs
+# measurement, and wrote the joined observation pairs
 # (DATA/PROCESSED/measurement_rejoin_pairs.csv). Each pair is joined here in
 # every sample where it is split with a clean end/start and at most one pin,
 # so the posterior follows the same rule as the exported stems.

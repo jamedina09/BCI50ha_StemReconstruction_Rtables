@@ -55,16 +55,24 @@ Merges completed chunk outputs into final files.
   (mm) and adds the single-stem tags, whose one stem gets
   `ReconstructedStemID = 1` (`ReconstructionMethod =
   "single_stem_tag_no_reconstructed"`).
-- Joins stems that the engine split only because a diameter change fell
-  outside its hard growth bounds: the point of measurement of the trunk moved
-  (e.g. 1982 diameters taken around buttresses) or one diameter was recorded
-  wrongly. An ended stem is joined to the stem of the same tree that starts in
-  the next census when the new stem would be an impossible recruit (it starts
-  above the recruit limit) and the ended stem is the only candidate; database
-  StemIDs are not used (`apply_measurement_rejoin()`; rules in
-  `dp_global/R/measurement_rejoin.R` and `dp_global/README.md`;
-  `ReconstructionMethod = "measurement_rejoin"`). The joined stem keeps one of
-  its two IDs, so the tree's IDs skip one number per join.
+- Joins stems that the engine split only because the point of measurement
+  (POM) of the trunk moved (buttresses, deformities, strangler figs; the new
+  height recorded or not), so that a diameter change fell outside its hard
+  growth bounds. An ended stem is joined to the stem of the same tree that
+  starts in the next census (or two censuses later, when the trunk was not
+  measured in between and its recorded height of measurement rose) when the
+  new stem would be an impossible recruit (it starts above the recruit
+  limit), the size change is the one a moved POM gives, the tree shows a sign
+  of a moved POM (a height of measurement away from 1.3 m, a buttress code B,
+  a strangler growth form, or, in the censuses without buttress codes, a
+  species that usually has buttresses) and the ended stem is clearly its best
+  candidate (same height of measurement, then the closest size). Recording
+  errors and trunks only missed in one census are not joined; database
+  StemIDs are not used (`apply_measurement_rejoin()`; rules and their
+  justification in `dp_global/R/measurement_rejoin.R`, summary in
+  `dp_global/README.md`; `ReconstructionMethod = "measurement_rejoin"`). The
+  joined stem keeps one of its two IDs, so the tree's IDs skip one number per
+  join.
 - Writes the final reconstructed stem table
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds` (the
   input of stage 3), the joins to `DATA/PROCESSED/measurement_rejoin_audit.csv`

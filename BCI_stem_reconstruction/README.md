@@ -15,7 +15,7 @@ This directory contains a four-stage workflow to reconstruct stem identities for
      multiple-stem tags of the prepared input.
    - Merges chunk outputs into the final reconstructed stem table, after joining
      trunks that the engine split only because their point of measurement moved
-     or one diameter was recorded wrongly, and adds the single-stem tags.
+     (in trees that show a sign of it), and adds the single-stem tags.
 
 3. **R table creation** (`3_PREPARE_R_TABLES/`)
    - Consolidates the posterior samples of the reconstruction.
