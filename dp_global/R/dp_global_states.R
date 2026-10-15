@@ -86,11 +86,11 @@ enumerate_states_constrained <- function(K, n_obs, allowed_tracks, max_states) {
     # OUTPUT
     # - Matrix with one row per feasible injective assignment, n_obs columns
     #   (a 1 × 0 matrix when n_obs is 0).
-    # - Returns NULL when n_obs > K or no feasible assignment exists.
-    # - The enumeration stops at max_states: when more feasible assignments
-    #   exist, the first max_states of them (in enumeration order) are
-    #   returned, not NULL, so a result with exactly max_states rows can be
-    #   incomplete.
+    # - Returns NULL when n_obs > K, when no feasible assignment exists, or when
+    #   more than max_states feasible assignments exist (the enumeration stops
+    #   at the first assignment beyond max_states). The DP then sends the tag
+    #   to the probabilistic matcher (enum_exceeded), as it does when
+    #   enumerate_states_injective() overflows.
     # - Stops with an error when allowed_tracks does not have length n_obs.
 
     if (n_obs == 0L) {
@@ -108,17 +108,21 @@ enumerate_states_constrained <- function(K, n_obs, allowed_tracks, max_states) {
     row_ctr <- 1L
     current_row <- integer(n_obs)
     avail <- rep(TRUE, K)  # tracks not yet used by earlier obs
+    overflow <- FALSE  # TRUE once a feasible assignment beyond max_states is found
 
     fill <- function(col) {
         if (col > n_obs) {
-            if (row_ctr > max_states) return()
+            if (row_ctr > max_states) {
+                overflow <<- TRUE
+                return()
+            }
             mat[row_ctr, ] <<- current_row
             row_ctr <<- row_ctr + 1L
             return()
         }
         for (t in allowed_tracks[[col]]) {
+            if (overflow) return()
             if (!avail[t]) next  # injectivity: track already used
-            if (row_ctr > max_states) return()
             current_row[col] <<- t
             avail[t] <<- FALSE
             fill(col + 1L)
@@ -127,9 +131,9 @@ enumerate_states_constrained <- function(K, n_obs, allowed_tracks, max_states) {
     }
     fill(1L)
 
+    if (overflow) return(NULL)
     n_actual <- row_ctr - 1L
     if (n_actual == 0L) return(NULL)
-    if (n_actual > max_states) return(NULL)
     mat[seq_len(n_actual), , drop = FALSE]
 }
 

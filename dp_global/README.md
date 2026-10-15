@@ -183,7 +183,7 @@ $$P(K, n_{obs}) = K \times (K-1) \times \cdots \times (K-n_{obs}+1)$$
 
 `DP_MAX_STATES` (passed as `max_states` to the solver) is the single parameter that controls when the DP solver falls back to the probabilistic matcher. It imposes two limits:
 
-1. **Per-census enumeration (`enum_exceeded`):** If $P(K, n_{obs})$ exceeds `max_states` at any single census, the solver cannot enumerate the assignment states and falls back. This holds for a census whose observations may use every track. When pins or growth bounds restrict the tracks of a census, `enumerate_states_constrained()` is used: it stops at `max_states` and returns the first `max_states` assignments instead of signalling an overflow, so a constrained census with more feasible assignments than `max_states` is solved on a truncated state set.
+1. **Per-census enumeration (`enum_exceeded`):** If $P(K, n_{obs})$ exceeds `max_states` at any single census, the solver cannot enumerate the assignment states and falls back. This holds for a census whose observations may use every track. When pins or growth bounds restrict the tracks of a census, `enumerate_states_constrained()` is used: it counts only the assignments those restrictions allow, and when they are more than `max_states` the tag falls back in the same way (it stops at the first assignment beyond `max_states`).
 2. **Inter-census transitions (`edge_count_exceeded`):** If the cross-product of state counts between two adjacent censuses reaches `max_states`² (called `max_edges`), the transition matrix is too large and the solver falls back.
 
 In practice, the per-census enumeration limit is reached first because state counts grow factorially.
@@ -1170,7 +1170,7 @@ Both arguments take a character vector or one comma- or semicolon-separated stri
 The DP solver also falls back to the probabilistic matcher when:
 
 1. No DBH is observed up to the anchor, or no usable anchor exists (see *Anchor fallback behavior*)
-2. A census has too many injective states for `max_states` → reason: `enum_exceeded` (see *Understanding `max_states`* for the constrained-enumeration caveat)
+2. A census has more injective states than `max_states`, counting only the tracks that pins and growth bounds allow → reason: `enum_exceeded` (see *Understanding `max_states`*)
 3. The cross-product of adjacent census states reaches `max_states²` → reason: `edge_count_exceeded`
 4. K is insufficient ($K < \max$ observed stems) → reason: `K_too_small`
 5. The backward recursion, the decoding or the forward pass finds no feasible state or transition
