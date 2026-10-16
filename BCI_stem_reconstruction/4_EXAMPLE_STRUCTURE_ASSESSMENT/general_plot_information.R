@@ -288,21 +288,11 @@ bio_check(
 )
 
 # ---- Species / taxonomy table ---------------------------------------
+# Written by 3_PREPARE_R_TABLES/3_create_species_table_BCI.R. Its Latin already
+# holds the infraspecific name when there is one (e.g. "Swartzia simplex var.
+# grandiflora"); uniden has a row without names (Latin NA).
 load(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.rdata"))
 bci.spptable <- as.data.table(bci.spptable)
-
-# Append infraspecific epithet to the Latin name when available
-# (e.g. "Quercus robur subsp. robur")
-if (all(c("InfraspecificRank", "InfraspecificEpithet") %in% names(bci.spptable))) {
-    bci.spptable[, Latin := fifelse(
-        !is.na(InfraspecificRank) &
-            nchar(trimws(as.character(InfraspecificRank))) > 0 &
-            !is.na(InfraspecificEpithet) &
-            nchar(trimws(as.character(InfraspecificEpithet))) > 0,
-        paste(Latin, InfraspecificRank, InfraspecificEpithet),
-        Latin
-    )]
-}
 
 # Retain only the columns needed downstream
 lf_cols <- intersect(
