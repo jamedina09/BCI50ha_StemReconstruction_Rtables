@@ -219,7 +219,7 @@ bio_check(
 )
 
 # Species table (Family, Genus, Species, Latin) for the palm and strangler-fig
-# rules. Stage 3 does not write it: copy bci.spptable.rdata into DATA/RTABLES.
+# rules, written by 3_PREPARE_R_TABLES/3_create_species_table_BCI.R.
 spp_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.rdata")
 bio_check(file.exists(spp_file), paste("Species table found:", spp_file))
 load(spp_file)

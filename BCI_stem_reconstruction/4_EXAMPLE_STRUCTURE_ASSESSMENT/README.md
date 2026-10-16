@@ -8,8 +8,8 @@ All three are run from the project root.
 Inputs:
 
 - the stage-3 R tables `DATA/RTABLES/bci.stem1.Rdata` … `bci.stem9.Rdata` (all scripts);
-- the species table `DATA/RTABLES/bci.spptable.rdata` (all three scripts). Stage 3 does not write it: copy the ForestGEO-format
-  table there (for example `data_paper_and_repo_publication/RTABLES/bci.spptable.rdata`);
+- the species table `DATA/RTABLES/bci.spptable.rdata` (all three scripts), written by
+  `3_PREPARE_R_TABLES/3_create_species_table_BCI.R`;
 - the posterior samples `DATA/POSTERIORS/posterior_sampled_paths.rds` and the stage-2 table
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds`
   (`basal_area_uncertainty.R`);
