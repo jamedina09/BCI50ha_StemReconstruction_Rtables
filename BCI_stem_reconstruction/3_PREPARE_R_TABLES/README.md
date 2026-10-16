@@ -141,6 +141,10 @@ The changes of species code since Condit et al. (2019) are in two files:
   `spCondit2019`, `LatinCondit2019`, `sp` and `Latin`. Tags are text with their
   leading zeros; read the `.csv` with the tag column as text.
 
+The three `.csv` files are UTF-8 with a byte order mark, so that Excel shows
+the Spanish characters (`árbol`, `Pérez`) correctly; `fread()` reads them as
+they are, and `read.csv()` needs `fileEncoding = "UTF-8-BOM"`.
+
 ## Tests
 
 `tests/test_Rstatus.R` (testthat) checks the rules with hand-written
