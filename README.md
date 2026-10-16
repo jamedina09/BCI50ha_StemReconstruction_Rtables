@@ -160,10 +160,11 @@ See `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_chunk_bci.md` for run and
 
 ### Stage 3 — Prepare R Tables (`3_PREPARE_R_TABLES/`)
 
-Consolidates posterior path files and builds ForestGEO-format census R tables.
+Consolidates posterior path files and builds the ForestGEO-format census R tables and their species table.
 
 - `1_prepare_posteriors_BCI.R` — aggregates `_paths.feather` files into `posterior_sampled_paths.rds`, applying the merge step's joins to every sample.
-- `2_create_R_tables_BCI.R` — resolves encounter histories into the corrected status (`Rstatus`), gives every tree one location, fills the `date` column (days since 1960-01-01; `ExactDate`, `dbh` and `DFstatus` stay exactly as recorded), and exports `<site>.stemN.Rdata`. The species table is not written here (see `BCI_stem_reconstruction/3_PREPARE_R_TABLES/README.md`).
+- `2_create_R_tables_BCI.R` — resolves encounter histories into the corrected status (`Rstatus`), gives every tree one location, fills the `date` column (days since 1960-01-01; `ExactDate`, `dbh` and `DFstatus` stay exactly as recorded), and exports `<site>.stemN.Rdata`.
+- `3_create_species_table_BCI.R` — builds the species table of the R tables (`bci.spptable.rdata`) from the stage-1 table, with notes on the species codes and names that changed since the last public release of the plot data (Condit et al. 2019), and lists the changes of species code, one row per change with its number of trees (`bci.species_code_changes_summary`) and one row per tree (`bci.species_code_changes`).
 
 ### Stage 4 — Example Structure Assessment (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)
 

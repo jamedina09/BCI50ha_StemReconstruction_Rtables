@@ -20,8 +20,11 @@ This directory contains a four-stage workflow to reconstruct stem identities for
 3. **R table creation** (`3_PREPARE_R_TABLES/`)
    - Consolidates the posterior samples of the reconstruction.
    - Converts the reconstructed stems into ForestGEO-compatible stem tables.
-   - Exports final `stemN` tables and QC/check files (the species table used in
-     stage 4 is not written here; see `3_PREPARE_R_TABLES/README.md`).
+   - Exports final `stemN` tables and QC/check files.
+   - Builds the species table of the R tables (`bci.spptable`), with notes on
+     the codes and names that changed since the last public release (Condit
+     et al. 2019), and the changes of species code (one row per change and
+     one row per tree).
 
 4. **Example structure assessment** (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)
    - Demonstrates downstream analyses (plot summaries, biomass and basal-area
