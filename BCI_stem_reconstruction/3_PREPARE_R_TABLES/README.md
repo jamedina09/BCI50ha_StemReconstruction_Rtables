@@ -19,14 +19,23 @@ ForestGEO-format census tables plus QC exports used for downstream analysis.
   It assigns each stem a corrected status (`Rstatus`) in every census,
   gives every tree one location, fills the `date` column, and
   exports ForestGEO-format `.Rdata` (and supporting `.csv`) tables.
+- `3_create_species_table_BCI.R` — Builds the species table of the R tables,
+  `DATA/RTABLES/bci.spptable.rdata`, from the stage-1 species table, with
+  notes on how codes and names changed since the last public release of the
+  plot data (Condit et al. 2019), and the changes of species code since then,
+  one row per change and one row per tree (see [Species table](#species-table)).
 - `rstatus_functions.R` — The `Rstatus` and `dbh` rules as small functions,
   sourced by `2_create_R_tables_BCI.R` and by the tests.
+- `species_table_functions.R` — The name, code and note rules of
+  `3_create_species_table_BCI.R`, sourced by it and by the tests.
 
-Both scripts are run from the project root and read the output of the
-stage-2 merge (`2_STEM_IDENTIFICATION/2_merge_chunks_to_datatable.R`), so run
-it first. They do not depend on each other: `2_create_R_tables_BCI.R` does not read the
-posterior file, which is used by
+All scripts are run from the project root. The first two read the output of
+the stage-2 merge (`2_STEM_IDENTIFICATION/2_merge_chunks_to_datatable.R`), so
+run it first. They do not depend on each other: `2_create_R_tables_BCI.R` does
+not read the posterior file, which is used by
 `4_EXAMPLE_STRUCTURE_ASSESSMENT/basal_area_uncertainty.R`.
+`3_create_species_table_BCI.R` reads the R tables, so it runs after
+`2_create_R_tables_BCI.R`.
 
 ## Rstatus and dbh rules
 
@@ -93,6 +102,45 @@ posterior file, which is used by
   `quadrat` is derived from that pair (20 m quadrats named `XXYY`); a tree
   without coordinates keeps `NA` coordinates and its most common raw quadrat.
 
+## Species table
+
+`3_create_species_table_BCI.R` writes one row per species code (`sp`) of the
+R tables, in order of code with `uniden` last. The names and the other columns come unchanged from the stage-1
+table (`DATA/SPP_TABLE/bci_spptable.RData`, `Mnemonic` renamed `sp`), plus
+`Latin` = `Genus SpeciesName`, followed by the infraspecific name when there is
+one (`Swartzia simplex var. grandiflora`), as in Condit's species table.
+
+The new columns compare each code with the last public release of the plot
+data: Condit R, Pérez R, Aguilar S, Lao S, Foster R, Hubbell S (2019),
+*Complete data from the Barro Colorado 50-ha plot: 423617 trees, 35 years*,
+Dryad, doi:10.15146/5xcp-0d46. Only codes and names (genus, epithet,
+infraspecific name) are compared, not authority, family or other columns.
+
+| Column | Content |
+| --- | --- |
+| `NameCondit2019` | the name of the code in Condit et al. (2019), when it differs from `Latin` |
+| `NameChange` | kind of change: `genus`, `genus and epithet`, `genus and epithet gender`, `epithet`, `epithet gender` (only the gender ending, e.g. *micrantha* → *micranthum*), `epithet spelling` (at most 2 other letters), `infraspecific name` or `morphospecies label`. It describes the change; it does not say which spelling is correct |
+| `ReidentifiedFrom` | the codes that the trees now under this code had in Condit et al. (2019), with the number of trees, e.g. `tremsp (84)` |
+| `ReidentifiedTo` | the codes that the trees of this code in Condit et al. (2019) have now |
+| `Notes` | the note of the stage-1 table, then sentences built from these columns: the former name, a code not used in Condit et al. (2019), and the trees of a code no longer used, e.g. "Includes the 84 trees recorded as tremsp (Trema unidentified) in Condit et al. (2019), a code no longer used." |
+
+The releases are matched tree by tree on `treeID`, which pairs the same trees
+as matching on `tag`. A code no longer used (on 2026-10-15: tremsp, ingaun,
+pterof) has no row, so its trees are described in the notes of the code that
+holds them now. `uniden` (unidentified stems) gets a row without names, the
+last row (`INCLUDE_UNIDEN` at the top of the script), so that every code of the R
+tables has a row: `merge()` of a census table with the species table is an
+inner join by default and would drop the uniden stems otherwise.
+
+The changes of species code since Condit et al. (2019) are in two files:
+
+- `bci.species_code_changes_summary`: one row per change (former code → code
+  now), with `spCondit2019`, `LatinCondit2019`, `sp`, `Latin` and `trees`, the
+  number of trees, largest changes first;
+- `bci.species_code_changes`: one row per tree, with `treeID`, `tag`,
+  `spCondit2019`, `LatinCondit2019`, `sp` and `Latin`. Tags are text with their
+  leading zeros; read the `.csv` with the tag column as text.
+
 ## Tests
 
 `tests/test_Rstatus.R` (testthat) checks the rules with hand-written
@@ -114,10 +162,21 @@ and `RSTATUS_STAGE2_FILE` point the real-data tests at other tables (default:
 missing, the real-data tests are skipped. `RSTATUS_CORES` sets the cores of
 the reference implementation (default: all but two).
 
+`tests/test_species_table.R` (testthat) checks the functions of
+`species_table_functions.R` on hand-written cases and recomputes the two
+species outputs from the R tables and Condit's files with separate code
+(skipped when the outputs are missing; `SPECIES_RTABLES_DIR` points it at
+other tables, default `DATA/RTABLES`):
+
+```r
+testthat::test_file("BCI_stem_reconstruction/3_PREPARE_R_TABLES/tests/test_species_table.R")
+```
+
 ## Requirements
 
 R packages: `data.table`, `arrow` and `inspectdf`; `igraph` (transition
-diagram in `2_create_R_tables_BCI.R`); `testthat` and `parallel` for the tests.
+diagram in `2_create_R_tables_BCI.R`); `digest` (`3_create_species_table_BCI.R`);
+`testthat` and `parallel` for the tests.
 
 ## Outputs
 
@@ -126,6 +185,13 @@ diagram in `2_create_R_tables_BCI.R`); `testthat` and `parallel` for the tests.
   `StemTag`, `sp`, `quadrat`, `gx`, `gy`, `dbh` (mm), `hom` (m), `ExactDate`,
   `date`, `codes`, `DFstatus`, `Rstatus` and `StemPaths` (the row key of the
   posterior paths); every table lists the same stems in the same order
+- `BCI_stem_reconstruction/DATA/RTABLES/bci.spptable.rdata` (object
+  `bci.spptable`, a data.frame) and `bci.spptable.csv`: the species table
+- `BCI_stem_reconstruction/DATA/RTABLES/bci.species_code_changes_summary.rdata`
+  and `.csv`: the changes of species code since Condit et al. (2019), one row
+  per change with its number of trees
+- `BCI_stem_reconstruction/DATA/RTABLES/bci.species_code_changes.rdata` and
+  `.csv`: the trees whose species code changed since Condit et al. (2019)
 - `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`
 - QC exports in `BCI_stem_reconstruction/DATA/CHECKS/`, among them
   `dbh_on_dead_records.csv`, `location_conflicts.csv`,
@@ -133,9 +199,5 @@ diagram in `2_create_R_tables_BCI.R`); `testthat` and `parallel` for the tests.
   `duplicate_measurements.csv` (likely duplicates: two stems of one tree
   measured on the same date at heights at least 0.5 m apart, taper-corrected
   DBHs within 20 %; the trunk measured at the old and the new height when its
-  point of measurement was raised)
-
-The species table is not written by this stage (Section 15 of
-`2_create_R_tables_BCI.R` is commented out). The stage-4 scripts read
-`DATA/RTABLES/bci.spptable.rdata`, so copy the ForestGEO-format table there
-(for example `data_paper_and_repo_publication/RTABLES/bci.spptable.rdata`).
+  point of measurement was raised), and `check_species_table_bci.txt` (failed
+  checks and notes of `3_create_species_table_BCI.R`)
