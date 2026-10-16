@@ -572,9 +572,51 @@ assign(changes_name, as.data.frame(species_code_changes))
 save(list = spptable_name, file = file.path(RTABLES_folder, paste0(spptable_name, ".rdata")))
 save(list = summary_name, file = file.path(RTABLES_folder, paste0(summary_name, ".rdata")))
 save(list = changes_name, file = file.path(RTABLES_folder, paste0(changes_name, ".rdata")))
-fwrite(spptable, file.path(RTABLES_folder, paste0(spptable_name, ".csv")))
-fwrite(species_code_changes_summary, file.path(RTABLES_folder, paste0(summary_name, ".csv")))
-fwrite(species_code_changes, file.path(RTABLES_folder, paste0(changes_name, ".csv")))
+# The .csv files are UTF-8 with a byte order mark (BOM), so that Excel shows
+# the Spanish characters (árbol, Pérez) correctly; R reads them with
+# fread() or read.csv(fileEncoding = "UTF-8-BOM"). fwrite() never writes a
+# header in append mode (its documented behaviour, regardless of col.names),
+# so the header is written by a normal fwrite() first, and the BOM is
+# prepended to the finished file, header included.
+write_csv_utf8 <- function(x, file) {
+  x <- copy(x)
+  for (col in names(x)[vapply(x, is.character, NA)]) set(x, j = col, value = enc2utf8(x[[col]]))
+  tmp <- tempfile()
+  fwrite(x, tmp)
+  body <- readBin(tmp, "raw", file.size(tmp))
+  file.remove(tmp)
+  writeBin(c(as.raw(c(0xEF, 0xBB, 0xBF)), body), file)
+}
+write_csv_utf8(spptable, file.path(RTABLES_folder, paste0(spptable_name, ".csv")))
+write_csv_utf8(species_code_changes_summary, file.path(RTABLES_folder, paste0(summary_name, ".csv")))
+write_csv_utf8(species_code_changes, file.path(RTABLES_folder, paste0(changes_name, ".csv")))
+
+# The bytes: BOM first, valid UTF-8, header present, and the Spanish
+# characters of the table written as UTF-8 (á = C3 A1), not as Latin-1 (E1)
+csv_cols <- list(spptable = out_cols, species_code_changes_summary = names(species_code_changes_summary), species_code_changes = names(species_code_changes))
+for (nm in c(spptable_name, summary_name, changes_name)) {
+  csv_file <- file.path(RTABLES_folder, paste0(nm, ".csv"))
+  bytes <- readBin(csv_file, "raw", file.size(csv_file))
+  text <- rawToChar(bytes[-(1:3)])
+  Encoding(text) <- "UTF-8"
+  header <- strsplit(sub("\n.*", "", text), ",", fixed = TRUE)[[1]]
+  bio_check(
+    identical(bytes[1:3], as.raw(c(0xEF, 0xBB, 0xBF))) && validUTF8(text),
+    paste0(nm, ".csv is UTF-8 with a BOM")
+  )
+  bio_check(
+    identical(header, csv_cols[[sub(paste0("^", site, "\\."), "", nm)]]),
+    paste0(nm, ".csv has its column names as the first row")
+  )
+}
+spp_bytes <- readBin(file.path(RTABLES_folder, paste0(spptable_name, ".csv")), "raw", file.size(file.path(RTABLES_folder, paste0(spptable_name, ".csv"))))
+spp_text <- rawToChar(spp_bytes[-(1:3)])
+Encoding(spp_text) <- "UTF-8"
+bio_check(
+  !grepl("\u00c3|\ufffd", spp_text) && grepl("\u00e1rbol", spp_text),
+  "the Spanish characters of bci.spptable.csv are written correctly (árbol)"
+)
+rm(bytes, text, header, csv_file, csv_cols, spp_bytes, spp_text)
 
 # Read back: the .rdata files hold the same objects, and the .csv files the
 # same text (tags read as text, empty = NA; the tree counts are compared as
