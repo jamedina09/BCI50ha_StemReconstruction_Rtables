@@ -13,7 +13,7 @@
 # Outputs:
 #   - BCI_stem_reconstruction/DATA/RTABLES/[site].stem[n].Rdata (and [site].stem[n].csv)
 #   - BCI_stem_reconstruction/DATA/CHECKS/ diagnostic CSV / text files and the log check_[site].txt
-#   (the species-table export, Section 15, is commented out)
+#   (the species table is built from these tables by 3_create_species_table_BCI.R)
 #
 # Packages: data.table, inspectdf, igraph (transition diagram).
 #
@@ -29,7 +29,7 @@
 #    9. Assess biology across all history versions          (Section 11)
 #   10. Data-quality diagnostics; status × DBH audit         (Sections 12–13)
 #   11. One location per tree; record dates; export per-census R tables
-#       (Section 14; the species table, Section 15, is commented out)
+#       (Section 14)
 # The status and DBH rules live in rstatus_functions.R (same folder), which
 # tests/test_Rstatus.R also uses.
 ################################################################################
@@ -3069,103 +3069,3 @@ bio_check(
 rm(export_stem_order)
 
 cat(sprintf("\n✓✓ All %d census tables exported successfully\n\n", length(ViewFullTable_split)))
-
-# # ========================================================================
-# # SECTION 15: EXPORT SPECIES TABLE
-# # ========================================================================
-# # Build a ForestGEO species taxonomy table from ViewTaxonomy, keep only
-# # species observed in this plot, clean NULL values, and export it as
-# # .rdata and .csv.
-
-# # --------------------------------------------------------------------
-# # --------------------------------------------------------------------
-# ViewTaxonomy <- fread(
-#   file = file.path(main_path, "BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.txt"),
-#   sep = "\t",
-#   stringsAsFactors = FALSE, # Keep text as character strings
-#   na.strings = c("NA", "NULL", "")
-# )
-
-# # Export unique values for QA/QC
-# show_levels(ViewTaxonomy, n_to_print = Inf, output = "print")
-# fwrite(show_levels(ViewTaxonomy, n_to_print = Inf, output = "df"),
-#   file = file.path(CHECK_folder, paste0("ViewTaxonomy_levels_", site, ".csv")),
-#   sep = ",",
-#   na = "",
-#   row.names = FALSE
-# )
-
-# cat("📚 Creating and exporting species table...\n")
-
-# ## Transform ViewTaxonomy into ForestGEO species table format ####
-
-# # Create independent copy to avoid modifying original ViewTaxonomy
-# sptable <- copy(ViewTaxonomy)
-
-# # Sort alphabetically by species code (Mnemonic)
-# # This makes the table easier to browse and reference
-# setorder(sptable, Mnemonic)
-
-# # Create full Latin name by combining Genus and SpeciesName
-# # Example: Genus="Acer" + SpeciesName="rubrum" → Latin="Acer rubrum"
-# sptable[, Latin := paste(Genus, SpeciesName)]
-
-# # Select columns needed for ForestGEO format
-# cols_to_keep <- c(
-#   "Mnemonic", # Species code (e.g., "ACERUB")
-#   "Order", # Taxonomic order
-#   "Family", # Taxonomic family
-#   "Genus", # Genus name
-#   "SpeciesName", # Species epithet
-#   "Latin", # Full scientific name
-#   "InfraspecificRank", # Subspecies/variety rank (if applicable)
-#   "InfraspecificEpithet", # Subspecies/variety name (if applicable
-#   "Authority", # Taxonomic authority
-#   "Synonyms", # Historical synonyms
-#   "Lifeform_RFoster",
-#   "Lifeform_RPerez_SAguilar",
-#   "CommonName", # Common name (if available)
-#   "Herbarium", # Herbarium voucher information (if available)
-#   "Notes"
-# )
-
-# sptable <- sptable[, ..cols_to_keep]
-
-# # Rename columns to ForestGEO standard names
-# # Database names → ForestGEO R names
-# setnames(sptable,
-#   old = c(
-#     "Mnemonic"
-#   ),
-#   new = c(
-#     "sp"
-#   )
-# )
-
-# # Filter to only species that actually appear in the census data
-# # This removes species from the taxonomy list that aren't in this plot
-# species_in_census <- sort(unique(ViewFullTable$Mnemonic))
-# sptable <- sptable[sp %in% species_in_census]
-
-# cat(sprintf("  Species in this plot: %d\n", nrow(sptable)))
-
-# # Clean up "NULL" and empty strings by converting to NA
-# # Some databases export NULL values as the string "NULL"
-# for (col in names(sptable)) {
-#   sptable[get(col) == "NULL", (col) := NA]
-#   sptable[get(col) == "", (col) := NA]
-# }
-
-# # Convert to data.frame for compatibility with legacy ForestGEO code
-# sptable <- as.data.frame(sptable)
-
-# # Export species table as .Rdata file
-# obj_name <- paste0(site, ".spptable")
-# assign(obj_name, sptable)
-# save(list = obj_name, file = file.path(OUTPUT_folder, paste0(obj_name, ".rdata")))
-
-# fwrite(sptable,
-#   file = file.path(OUTPUT_folder, sprintf("%s.spptable.csv", site))
-# )
-
-# cat(sprintf("  ✓ Saved: %s.spptable.rdata\n\n", site))
