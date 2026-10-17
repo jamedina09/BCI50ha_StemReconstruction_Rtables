@@ -300,6 +300,7 @@ viewt_tax1[, SpeciesName := NULL]
 
 # Solamente un código cambió: todos los "ficutr" cambiaron a "ficuar".
 # NOTE: this change is not applied. The new code is not a code of the plot
+# NOTE: this change was flagged as incorrect by the team after discussion
 # (the database has no such code and no tree carries it): the trees keep the
 # code ficutr.
 # Me avisa si este listado es diferente al que le envió Rolando. Es posible que el listado de
@@ -1200,6 +1201,7 @@ author_different
 # Lines that copy the WFO authority as it is (only where WFO is right)
 print_accept_lines(author_different[, .(mnemonic, column, suggested = wfo)])
 
+# TODO: Add the lines
 # Adopted or hand-corrected authorities (paste or write the lines here):
 # spp_new[mnemonic == "anacex", authority := "Skeels"]
 spp_new[mnemonic == "ficuc2", authority := "(Liebm.) Miq."]
