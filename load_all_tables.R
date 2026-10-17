@@ -15,9 +15,3 @@ for (i in 1:9) {
 }
 
 bci.stem <- as.data.table(bci.stem)
-
-# 460211
-
-length(unique(bci.stem$sp))
-
-fwrite(data.frame(sp = sort(unique(bci.stem$sp))), "./sp.csv")
