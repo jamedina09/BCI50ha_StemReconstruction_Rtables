@@ -50,5 +50,7 @@ BCI_stem_reconstruction/DATA/RTABLES.zip
 BCI_stem_reconstruction/DATA/RTABLES_OLD
 BCI_stem_reconstruction/DATA/RAW/oct_13_2026
 BCI_stem_reconstruction/DATA/RAW
+bci_lines
+1ha_plots_species
 COMPARE_DATASETS
 static_bci
