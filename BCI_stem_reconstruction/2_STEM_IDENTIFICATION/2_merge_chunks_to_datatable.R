@@ -16,7 +16,8 @@
 #   BCI_stem_reconstruction/DATA/<run_code>/merged_output.parquet, .rds
 #       the chunks of the multiple-stem tags in one table
 #   BCI_stem_reconstruction/DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds
-#       all tags: the stage-1 columns (recorded DBH in mm) plus TrueStemID,
+#       all tags: the stage-1 columns (DBH in mm and ExactDate as recorded)
+#       plus TrueStemID,
 #       ReconstructedStemID (character; a per-tag stem number),
 #       ReconstructionMethod and the audit columns listed in section 8
 #   BCI_stem_reconstruction/DATA/PROCESSED/measurement_rejoin_audit.csv,
@@ -216,7 +217,9 @@ setorder(ds_final, RowID)
 # Expected differences in the DP output:
 #   - DBH: the engines used the taper-corrected DBH in cm; the recorded DBH (mm)
 #     is in DBH_mm_original_backup.
-#   - ExactDate: a missing date was filled with the mean date of its census.
+#   - ExactDate: a missing date was filled with the mean date of the tag in
+#     its census (else of the census); the recorded date is restored at the
+#     end of the script, after the rejoin, which uses the filled dates.
 #   - growth_form: the stage-2 labels (tree, shrub, palm, strangler, fern)
 #     instead of the Lifeform of the species list.
 # Any other differences should be investigated.
@@ -245,7 +248,8 @@ if ("DBH_mm_original_backup" %in% names(ds_final)) {
 cat("\n--- Validation pass 2: after restoring original DBH ---\n")
 comparison2 <- compare_columns(input_multi_stem_data, ds_final)
 print(comparison2[result == "Different"])
-# Expected: only ExactDate and growth_form remain "Different" (see the list above).
+# Expected: only ExactDate and growth_form remain "Different" (see the list
+# above); ExactDate is restored at the end of the script.
 
 # =============================================================================
 # 8. ASSEMBLE COMPLETE DATASET (SINGLE-STEM + MULTI-STEM)
@@ -385,7 +389,9 @@ cat("\n--- Final validation: complete dataset vs. raw table (shared columns) ---
 comparison_final <- compare_columns(complete_dataset, xraw)
 print(comparison_final[result == "Different"])
 
-# Differences should be limited to the new DP-specific columns and imputed ExactDate values.
+# Differences should be limited to the new DP-specific columns, growth_form
+# and the ExactDate filled by stage 2 (restored, and checked again, after the
+# rejoin).
 
 # =============================================================================
 # 10. CHECK RECONSTRUCTEDSTEMID ASSIGNMENTS
@@ -500,6 +506,58 @@ two_pins <- rejoin$dt[!is.na(TrueStemID), uniqueN(TrueStemID), by = .(Tag, Recon
 mr_check(two_pins <= 0L, "No stem gains a second TrueStemID pin through the rejoin", n_bad = two_pins)
 complete_dataset_final <- rejoin$dt
 rm(rejoin_dups, unchanged_cols, two_pins)
+
+# =============================================================================
+# RESTORE THE RECORDED EXACTDATE
+# =============================================================================
+# The stage-2 driver fills a missing ExactDate (the mean date of the tag in its
+# census, else of the census; 1_main_cpp_chunk_bci.R), because the engines and
+# the rejoin above need a date to compute growth over an interval. The
+# exported table keeps the field date as recorded, like the DBH (Section 7):
+# the filled dates are replaced by the date of the stage-1 table, matched on
+# RowID, after the rejoin so that the rejoin sees the same dates as the
+# engines. Stage 3 gives every row a date in its own column `date` (the
+# recorded date, else the modal date of the tree, quadrat or census).
+raw_dates <- xraw[, .(RowID, ExactDate_raw = ExactDate)]
+mr_check(
+    !anyDuplicated(raw_dates$RowID) && setequal(raw_dates$RowID, complete_dataset_final$RowID),
+    "The final table and the stage-1 table hold the same rows (RowID)"
+)
+date_cmp <- merge(
+    complete_dataset_final[, .(RowID, Tag, CensusID, Status, DBH, ExactDate)],
+    raw_dates,
+    by = "RowID"
+)
+dates_changed <- date_cmp[!is.na(ExactDate_raw) & (is.na(ExactDate) | ExactDate != ExactDate_raw)]
+mr_check(
+    nrow(dates_changed) == 0L,
+    "Stage 2 changed no recorded ExactDate (it only filled missing ones)",
+    examples = dates_changed$Tag, n_bad = nrow(dates_changed)
+)
+# Dates filled by stage 2, set back to NA (run 20261014_220452: 16 records in
+# 5 trees, 1 alive and 15 "missing")
+dates_filled <- date_cmp[is.na(ExactDate_raw) & !is.na(ExactDate)]
+dates_filled[order(Tag, CensusID)]
+complete_dataset_final[raw_dates, ExactDate := i.ExactDate_raw, on = "RowID"]
+rm(raw_dates, date_cmp, dates_changed)
+
+# Every stage-1 column of the final table now equals the stage-1 table (the
+# recorded DBH and ExactDate, Status, codes, ...). growth_form is the
+# exception: the stage-2 label on the rows of multiple-stem tags. (The
+# stage-2 columns are left out by name: xraw got them in Section 8, and
+# original_names, taken by reference before, lists them too.)
+stage1_cols <- setdiff(names(xraw), c("growth_form", new_names))
+final_vs_raw <- compare_columns(
+    complete_dataset_final[order(RowID), ..stage1_cols],
+    xraw[order(RowID), ..stage1_cols]
+)
+final_vs_raw[result == "Different"]
+mr_check(
+    final_vs_raw[, all(result == "Similar")],
+    "Every stage-1 column of the final table equals the stage-1 table (growth_form aside)",
+    examples = final_vs_raw[result == "Different", column]
+)
+rm(stage1_cols, final_vs_raw)
 
 # Output directory for the final complete dataset (relative to the working
 # directory, i.e. the project root).
