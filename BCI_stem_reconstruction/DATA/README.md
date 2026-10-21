@@ -48,10 +48,10 @@ Details: `CHECKS/revision_oct16/botanicos/`.
 - [x] Rebuild the species tables (done 2026-10-21; previous outputs in `BACKUPS/species_tables_20261021/`).
 - [ ] Paste the spelling lines into `1_DATA_PREPARATION/1_prepare_species_tables.R` section 9c/9e once the botanists answer (appuse, ardiba, rinosy, malmsp).
 - [ ] Decide whether to switch the pipeline to the Oct 16 export (needs the path changed in stage-1 scripts 1 and 2; script 1 reads only the codes and the names of apeihy, nects1 and nects3, and gives the same species table with either export, tested 2026-10-21).
-- [ ] Merge: restore the raw ExactDate on the 16 records filled by stage 2.
+- [x] Merge: the raw ExactDate is restored (2026-10-21; merge and stage 3 rerun in production: 16 cells of the final table and 66 of the R tables changed, stage 4 unchanged).
 - [ ] Project downstream (stage 4 and the publication folder) from run 20261014_220452.
 - [ ] Delete `COMPARE_DATASETS/bci.stem.mine/` (unused).
-- [ ] Commit the species-table changes of 2026-10-21 (stage 1 and stage 3; nothing is committed yet). Earlier commits are pushed.
+- [x] Commit and push the species-table changes (2026-10-21: ad6eeca..23bac81).
 
 ## Fixed rules
 
