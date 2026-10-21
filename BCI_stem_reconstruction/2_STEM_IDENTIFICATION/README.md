@@ -73,6 +73,14 @@ Merges completed chunk outputs into final files.
   `dp_global/README.md`; `ReconstructionMethod = "measurement_rejoin"`). The
   joined stem keeps one of its two IDs, so the tree's IDs skip one number per
   join.
+- Restores the recorded `ExactDate`. The stage-2 driver fills a missing date
+  (the mean date of the tag in its census, else of the census), because the
+  engines and the rejoin need one to compute growth; after the rejoin the
+  merge sets those dates back to the stage-1 value (NA), as it does for the
+  DBH. Checks: stage 2 changed no recorded date, and every stage-1 column of
+  the final table equals the stage-1 table (`growth_form` aside, the stage-2
+  label on multiple-stem tags). Stage 3 gives every row a date in its own
+  column `date`.
 - Writes the final reconstructed stem table
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds` (the
   input of stage 3), the joins to `DATA/PROCESSED/measurement_rejoin_audit.csv`
