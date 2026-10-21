@@ -8,8 +8,13 @@
 #   latin_stem()          epithet without its gender ending
 #   name_change_kind()    kind of change between two names
 #   format_code_counts()  codes with their tree counts, "tremsp (84)"
-#   absorbed_sentence()   note on the trees of a code no longer used
+#   absorbed_sentence()   note on a code no longer used, whose trees are
+#                         now under another code
 #   join_notes()          sentences of a note joined into one text
+#   split_epithet()       epithet and infraspecific name of one text field
+#   authority_key()       authority without its format (spaces, periods,
+#                         capitals, accents), to compare authors only
+#   name_parts_changed()  parts of a name that differ between two versions
 # Every function is vectorised over its arguments (one element per code or
 # per pair of codes). Requires data.table.
 # ========================================================================
@@ -100,20 +105,11 @@ format_code_counts <- function(codes, counts) {
 }
 
 # Sentence for the note of a code that holds trees of a code no longer used:
-# n_moved of the n_old trees recorded as old_code (old_name) in the reference
-# release, e.g. "Includes the 84 trees recorded as tremsp (Trema unidentified)
-# in Condit et al. (2019), a code no longer used."
-absorbed_sentence <- function(old_code, old_name, n_moved, n_old,
-                              reference = "Condit et al. (2019)") {
-  trees <- data.table::fcase(
-    n_moved == n_old & n_old == 1L, "the tree",
-    n_moved == n_old, paste("the", n_old, "trees"),
-    default = paste(n_moved, "of the", n_old, "trees")
-  )
-  paste0(
-    "Includes ", trees, " recorded as ", old_code, " (", old_name, ") in ",
-    reference, ", a code no longer used."
-  )
+# the old code and its name in the reference release, e.g. "Code tremsp,
+# Trema unidentified in Condit et al. (2019), is no longer used." The number
+# of trees is not repeated: it is in the column ReidentifiedFrom.
+absorbed_sentence <- function(old_code, old_name, reference = "Condit et al. (2019)") {
+  paste0("Code ", old_code, ", ", old_name, " in ", reference, ", is no longer used.")
 }
 
 # The sentences of a note joined into one text, row by row: each part is
@@ -126,6 +122,51 @@ join_notes <- function(...) {
     data.table::fifelse(x == "" | grepl("[.!?]$", x), x, paste0(x, "."))
   })
   out <- clean_text(do.call(paste, parts))
+  out[out == ""] <- NA_character_
+  out
+}
+
+# Epithet and infraspecific name of a field that holds both, as the species
+# column of the Flora de Panamá list does for the varieties ("simplex var.
+# grandiflora", sometimes with two spaces): the first word is the epithet, the
+# rest the infraspecific name with its rank ("" when there is none).
+split_epithet <- function(x) {
+  x <- clean_text(x)
+  list(
+    epithet = sub(" .*$", "", x),
+    infra = data.table::fifelse(grepl(" ", x, fixed = TRUE), sub("^[^ ]+ ", "", x), "")
+  )
+}
+
+# Authority reduced to its authors, so that two ways of writing the same
+# authority compare equal: without spaces and periods, in lower case and
+# without accents ("(L.) D. Don ex G. Don." and "(L.) D.Don ex G.Don";
+# "(aubl.)" and "(Aubl.)"; "Müll. Arg." and "Mull.Arg."). Another author, an
+# author added or dropped ("Engl." -> "(Kunth) Engl.") or another "ex" still
+# differ. "" for NA.
+authority_key <- function(x) {
+  x <- tolower(gsub("[[:space:].]", "", clean_text(x)))
+  chartr("áàâäãåéèêëíìîïóòôöõøúùûüñçý", "aaaaaaeeeeiiiioooooouuuuncy", x)
+}
+
+# Parts of a name that differ between version a and version b, as one text
+# ("genus", "epithet", "infraspecific name", "authority", joined by ", "); NA
+# when none differs. Genus, epithet and infraspecific name (with its rank)
+# are compared letter by letter (clean_text: spaces aside); the authority by
+# its authors only (authority_key).
+name_parts_changed <- function(genus_a, epithet_a, infra_a, authority_a,
+                               genus_b, epithet_b, infra_b, authority_b) {
+  parts <- list(
+    genus = clean_text(genus_a) != clean_text(genus_b),
+    epithet = clean_text(epithet_a) != clean_text(epithet_b),
+    `infraspecific name` = clean_text(infra_a) != clean_text(infra_b),
+    authority = authority_key(authority_a) != authority_key(authority_b)
+  )
+  labels <- do.call(cbind, lapply(names(parts), function(p) data.table::fifelse(parts[[p]], p, NA_character_)))
+  if (!length(labels)) {
+    return(character(0))
+  }
+  out <- apply(labels, 1L, function(r) paste(r[!is.na(r)], collapse = ", "))
   out[out == ""] <- NA_character_
   out
 }

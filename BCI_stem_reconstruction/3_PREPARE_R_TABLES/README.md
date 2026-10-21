@@ -24,6 +24,8 @@ ForestGEO-format census tables plus QC exports used for downstream analysis.
   notes on how codes and names changed since the last public release of the
   plot data (Condit et al. 2019), and the changes of species code since then,
   one row per change and one row per tree (see [Species table](#species-table)).
+  For the botanists it also lists the codes whose name or authority differs
+  from the Flora de Panamá list (`DATA/CHECKS/species_changes_from_flora_panama_bci.csv`).
 - `rstatus_functions.R` — The `Rstatus` and `dbh` rules as small functions,
   sourced by `2_create_R_tables_BCI.R` and by the tests.
 - `species_table_functions.R` — The name, code and note rules of
@@ -122,12 +124,12 @@ infraspecific name) are compared, not authority, family or other columns.
 | `NameChange` | kind of change: `genus`, `genus and epithet`, `genus and epithet gender`, `epithet`, `epithet gender` (only the gender ending, e.g. *micrantha* → *micranthum*), `epithet spelling` (at most 2 other letters), `infraspecific name` or `morphospecies label`. It describes the change; it does not say which spelling is correct |
 | `ReidentifiedFrom` | the codes that the trees now under this code had in Condit et al. (2019), with the number of trees, e.g. `tremsp (84)` |
 | `ReidentifiedTo` | the codes that the trees of this code in Condit et al. (2019) have now |
-| `Notes` | the note of the stage-1 table, then sentences built from these columns: the former name, a code not used in Condit et al. (2019), and the trees of a code no longer used, e.g. "Includes the 84 trees recorded as tremsp (Trema unidentified) in Condit et al. (2019), a code no longer used." |
+| `Notes` | only what no column says, so that each fact is written once: the note of the stage-1 table, then that `uniden` is not a taxon, that the code was not used in Condit et al. (2019), and the codes no longer used whose trees are now under this code, with their former name, e.g. "Code tremsp, Trema unidentified in Condit et al. (2019), is no longer used." Former names are only in `NameCondit2019` and `NameChange`, and numbers of trees only in `ReidentifiedFrom` and `ReidentifiedTo` |
 
 The releases are matched tree by tree on `treeID`, which pairs the same trees
 as matching on `tag`. A code no longer used (on 2026-10-15: tremsp, ingaun,
-pterof) has no row, so its trees are described in the notes of the code that
-holds them now. `uniden` (unidentified stems) gets a row without names, the
+pterof) has no row: the code that holds its trees names it in `Notes`, and
+counts the trees in `ReidentifiedFrom`. `uniden` (unidentified stems) gets a row without names, the
 last row (`INCLUDE_UNIDEN` at the top of the script), so that every code of the R
 tables has a row: `merge()` of a census table with the species table is an
 inner join by default and would drop the uniden stems otherwise.
@@ -141,7 +143,28 @@ The changes of species code since Condit et al. (2019) are in two files:
   `spCondit2019`, `LatinCondit2019`, `sp` and `Latin`. Tags are text with their
   leading zeros; read the `.csv` with the tag column as text.
 
-The three `.csv` files are UTF-8 with a byte order mark, so that Excel shows
+### Changes from the Flora de Panamá list
+
+The stage-1 names come from the Flora de Panamá list (R. Pérez, 2026-10-09,
+`DATA/RAW/sp_tables/flora_panama_oct_9_2026/`) and change only by the hand
+corrections of `1_DATA_PREPARATION/1_prepare_species_tables.R` (section 9).
+For the botanists to review those corrections, the script writes
+`DATA/CHECKS/species_changes_from_flora_panama_bci.csv`: one row per code
+whose genus, epithet, infraspecific name or authority differs from the Flora
+list, with `sp`, `FloraName` and `Name` (the full names with authority),
+`Changed` (the parts that differ: `genus`, `epithet`, `infraspecific name`,
+`authority`) and the parts of both names. The authority is compared by its
+authors only: another way of writing the same authors (spaces, periods,
+capitals, accents: `C. DC.` = `C.DC.`) is not a change. Family, synonyms and
+the other columns are not compared. Codes not in the Flora list (the
+morphospecies apeihy, nects1, nects3) have no baseline and are named in the
+log. On 2026-10-21 the file lists 10 codes, all by the authority (anacex,
+ficuc2, heisco, ouralu, pse2sp, tab1ro, thevah, tri2tu, tropra, zantpr): the
+WFO authorities adopted in stage 1. They are the same codes as in the
+stage-1 file `CHECKS/species_wfo_vs_flora_panama.csv` (WFO against the Flora
+de Panamá). It is a review file and is not part of the R tables.
+
+The four `.csv` files are UTF-8 with a byte order mark, so that Excel shows
 the Spanish characters (`árbol`, `Pérez`) correctly; `fread()` reads them as
 they are, and `read.csv()` needs `fileEncoding = "UTF-8-BOM"`.
 
@@ -167,10 +190,12 @@ missing, the real-data tests are skipped. `RSTATUS_CORES` sets the cores of
 the reference implementation (default: all but two).
 
 `tests/test_species_table.R` (testthat) checks the functions of
-`species_table_functions.R` on hand-written cases and recomputes the two
-species outputs from the R tables and Condit's files with separate code
-(skipped when the outputs are missing; `SPECIES_RTABLES_DIR` points it at
-other tables, default `DATA/RTABLES`):
+`species_table_functions.R` on hand-written cases, recomputes the species
+outputs from the R tables and Condit's files with separate code, and the
+changes from the Flora de Panamá list from the stage-1 table and the Flora
+list (skipped when the outputs are missing; `SPECIES_RTABLES_DIR` and
+`SPECIES_CHECKS_DIR` point it at other folders, default `DATA/RTABLES` and
+`DATA/CHECKS`):
 
 ```r
 testthat::test_file("BCI_stem_reconstruction/3_PREPARE_R_TABLES/tests/test_species_table.R")
@@ -179,7 +204,7 @@ testthat::test_file("BCI_stem_reconstruction/3_PREPARE_R_TABLES/tests/test_speci
 ## Requirements
 
 R packages: `data.table`, `arrow` and `inspectdf`; `igraph` (transition
-diagram in `2_create_R_tables_BCI.R`); `digest` (`3_create_species_table_BCI.R`);
+diagram in `2_create_R_tables_BCI.R`); `digest` and `readxl` (`3_create_species_table_BCI.R`);
 `testthat` and `parallel` for the tests.
 
 ## Outputs
@@ -203,5 +228,7 @@ diagram in `2_create_R_tables_BCI.R`); `digest` (`3_create_species_table_BCI.R`)
   `duplicate_measurements.csv` (likely duplicates: two stems of one tree
   measured on the same date at heights at least 0.5 m apart, taper-corrected
   DBHs within 20 %; the trunk measured at the old and the new height when its
-  point of measurement was raised), and `check_species_table_bci.txt` (failed
-  checks and notes of `3_create_species_table_BCI.R`)
+  point of measurement was raised), `species_changes_from_flora_panama_bci.csv`
+  (the codes whose name or authority differs from the Flora de Panamá list,
+  for the botanists) and `check_species_table_bci.txt` (failed checks and
+  notes of `3_create_species_table_BCI.R`)

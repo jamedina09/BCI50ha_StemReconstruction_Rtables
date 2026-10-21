@@ -4,8 +4,10 @@
 # Purpose: Build the species table of the BCI R tables (bci.spptable), one
 # row per species code of the R tables, with the names of the stage-1 species
 # table and notes on how codes and names changed since the last public
-# release of the plot data (Condit et al. 2019); and the changes of species
-# code since that release, one row per change and one row per tree.
+# release of the plot data (Condit et al. 2019); the changes of species
+# code since that release, one row per change and one row per tree; and, for
+# the botanists to review, the codes whose name or authority differs from the
+# Flora de Panamá list, the baseline of the stage-1 names.
 #
 # Run from the project root, after 2_create_R_tables_BCI.R (it reads the R
 # tables), line by line or with source().
@@ -26,6 +28,9 @@
 #                                         Dryad version 3; SHA-256 checked)
 #   RAW/bci_dryad_condit.rds              Condit's plot data: the 8 Dryad stem
 #                                         tables (bci.stem1-8) in one table
+#   RAW/sp_tables/flora_panama_oct_9_2026/Lista de especies de la Flora de Panamá_nov25 original.xlsx
+#                                         Flora de Panamá list (R. Pérez,
+#                                         2026-10-09), read by stage 1 too
 #
 # Outputs:
 #   DATA/RTABLES/bci.spptable.rdata (object bci.spptable, a data.frame) and
@@ -43,6 +48,11 @@
 #                                         since Condit et al. (2019): treeID,
 #                                         tag, spCondit2019, LatinCondit2019,
 #                                         sp, Latin
+#   DATA/CHECKS/species_changes_from_flora_panama_bci.csv
+#                                         for the botanists: one row per code
+#                                         whose genus, epithet, infraspecific
+#                                         name or authority differs from the
+#                                         Flora de Panamá list (section 8)
 #   DATA/CHECKS/check_species_table_bci.txt  failed checks and notes
 #
 # Columns of bci.spptable (all text, NA when empty):
@@ -63,9 +73,14 @@
 #                     et al. (2019), with the number of trees: "tremsp (84)"
 #   ReidentifiedTo    codes that the trees of this code in Condit et al.
 #                     (2019) have now, with the number of trees
-#   Notes             the note of the stage-1 table, then sentences built from
-#                     the columns above: the former name, a code not used in
-#                     Condit et al. (2019), the trees of a code no longer used
+#   Notes             only what no column says, so that nothing is repeated:
+#                     the note of the stage-1 table, then that uniden is not a
+#                     taxon, that the code was not used in Condit et al.
+#                     (2019), and the codes no longer used whose trees are now
+#                     under this code, with their former name ("Code tremsp,
+#                     Trema unidentified in Condit et al. (2019), is no longer
+#                     used."). Name changes are in NameCondit2019 and
+#                     NameChange, tree counts in ReidentifiedFrom/To.
 # Only the codes and the names (genus, epithet, infraspecific name) are
 # compared with Condit et al. (2019); authority, family and the other columns
 # are not.
@@ -86,9 +101,10 @@
 #   5. Names compared with Condit et al. (2019)
 #   6. Notes
 #   7. Assemble and check
-#   8. Export
+#   8. Names compared with the Flora de Panamá list
+#   9. Export
 #
-# Packages: data.table, digest.
+# Packages: data.table, digest, readxl.
 ################################################################################
 
 # ========================================================================
@@ -99,7 +115,8 @@
 rm(list = ls())
 
 library(data.table)
-# digest (SHA-256 of a file) is called with digest::
+# digest (SHA-256 of a file) and readxl (the Flora de Panamá list) are called
+# with digest:: and readxl::
 
 # Paths (run from the project root)
 main_path <- getwd()
@@ -110,6 +127,11 @@ CHECK_folder <- file.path(DATA_folder, "CHECKS")
 SPP_STAGE1_FILE <- file.path(DATA_folder, "SPP_TABLE", "bci_spptable.RData")
 CONDIT_SPPTABLE_FILE <- file.path(DATA_folder, "SPP_TABLE", "condit", "bci.spptable.rdata")
 CONDIT_PLOT_FILE <- file.path(DATA_folder, "RAW", "bci_dryad_condit.rds")
+FLORA_PANAMA_FILE <- file.path(
+  DATA_folder, "RAW", "sp_tables", "flora_panama_oct_9_2026",
+  "Lista de especies de la Flora de Panamá_nov25 original.xlsx"
+)
+FLORA_CHANGES_FILE <- file.path(CHECK_folder, paste0("species_changes_from_flora_panama_", site, ".csv"))
 
 # Condit et al. (2019): SHA-256 of bci.spptable.rdata in Dryad version 3, as
 # listed by https://datadryad.org/api/v2/versions/31849/files (checked on
@@ -162,7 +184,7 @@ show_codes <- function(x) if (length(x)) paste(sort(x), collapse = ", ") else "(
 # Name, code and note rules (shared with tests/test_species_table.R)
 source(file.path(main_path, "BCI_stem_reconstruction", "3_PREPARE_R_TABLES", "species_table_functions.R"))
 
-inputs <- c(SPP_STAGE1_FILE, CONDIT_SPPTABLE_FILE, CONDIT_PLOT_FILE)
+inputs <- c(SPP_STAGE1_FILE, CONDIT_SPPTABLE_FILE, CONDIT_PLOT_FILE, FLORA_PANAMA_FILE)
 bio_check(all(file.exists(inputs)), "all input files exist", examples = inputs[!file.exists(inputs)])
 
 # ========================================================================
@@ -270,6 +292,30 @@ bio_check(
 bio_check(!anyDuplicated(trees_condit$tag), "Condit's plot data: one tree per tag")
 codes_condit <- sort(unique(trees_condit$sp))
 bio_check(all(codes_condit %in% condit_spp$sp), "every code of Condit's plot data is in his species table")
+
+# --- 2e. Flora de Panamá list --------------------------------------------------
+# The list of trees, shrubs, palms and lianas of Panama (3,918 rows), with the
+# codes of the plot in Código. Stage 1 takes its names where it has them; for
+# the two varieties of Swartzia simplex, Especie holds the epithet and the
+# variety ("simplex var. grandiflora"). The text "NULL" means no value, as in
+# stage 1.
+flora <- as.data.table(readxl::read_xlsx(FLORA_PANAMA_FILE))
+flora_cols <- c("Código", "Género", "Especie", "Autoridad")
+bio_check(
+  all(flora_cols %in% names(flora)),
+  "the Flora de Panamá list has the columns Código, Género, Especie and Autoridad",
+  examples = setdiff(flora_cols, names(flora))
+)
+flora <- flora[, ..flora_cols]
+setnames(flora, c("sp", "genus", "species", "authority"))
+for (col in names(flora)) set(flora, j = col, value = clean_text(sub("^NULL$", "", flora[[col]])))
+flora <- flora[sp %in% spp_stage1$Mnemonic]
+bio_check(
+  !anyDuplicated(flora$sp),
+  "each code of the stage-1 species table appears at most once in the Flora de Panamá list",
+  examples = flora[duplicated(sp), sp]
+)
+nrow(flora) # 324 of the 327 codes (2026-10-17)
 
 # ========================================================================
 # SECTION 3: CODES OF THE R TABLES
@@ -451,10 +497,9 @@ spp[pairs[, .(x = format_code_counts(sp_new, N)), by = sp_condit], ReidentifiedT
 # ingaun -> uniden (47), pterof -> pterro (9).
 absorbed <- pairs[sp_condit %in% codes_gone]
 absorbed[condit_spp, name_old := clean_text(i.Latin), on = .(sp_condit = sp)]
-absorbed[counts, n_old := i.n_condit, on = .(sp_condit = sp)]
-absorbed[, sentence := absorbed_sentence(sp_condit, name_old, N, n_old, reference = CONDIT_REF)]
+absorbed[, sentence := absorbed_sentence(sp_condit, name_old, reference = CONDIT_REF)]
 setorder(absorbed, sp_new, -N, sp_condit)
-absorbed[, .(sp_condit, sp_new, N, n_old)]
+absorbed[, .(sp_condit, name_old, sp_new, N)]
 
 # Codes no longer used whose trees all left the database, or went to a code
 # without a row (uniden when INCLUDE_UNIDEN = FALSE), have no note: they are
@@ -465,25 +510,40 @@ if (length(codes_gone_unplaced)) {
 }
 
 # --- 6c. Notes --------------------------------------------------------------------
-# The note of the stage-1 table first, then: uniden is not a taxon; the former
-# name; a code not used in Condit et al. (2019); the trees of codes no longer
-# used.
+# Each fact is written once. The columns hold what changed since Condit et al.
+# (2019): the former name and the kind of change (NameCondit2019,
+# NameChange), and the re-identified trees with their numbers
+# (ReidentifiedFrom, ReidentifiedTo). Notes holds only what no column says:
+# the note of the stage-1 table first, then that uniden is not a taxon, that
+# the code was not used in Condit et al. (2019), and the codes no longer used
+# whose trees are now under this code, with their former name.
 spp[, note_uniden := fifelse(sp == UNIDEN_CODE, "Stems not identified to species; not a taxon.", "")]
-spp[, note_name := fifelse(is.na(NameCondit2019), "", paste0("Named ", NameCondit2019, " in ", CONDIT_REF, "."))]
 spp[, note_new := fifelse(sp %in% codes_new, paste0("Code not used in ", CONDIT_REF, "."), "")]
 spp[, note_absorbed := ""]
 spp[absorbed[, .(x = paste(sentence, collapse = " ")), by = sp_new], note_absorbed := i.x, on = .(sp = sp_new)]
-spp[, Notes := join_notes(Notes, note_uniden, note_name, note_new, note_absorbed)]
-spp[, c("note_uniden", "note_name", "note_new", "note_absorbed") := NULL]
+spp[, Notes := join_notes(Notes, note_uniden, note_new, note_absorbed)]
+spp[, c("note_uniden", "note_new", "note_absorbed") := NULL]
 
 absorbed_rows <- merge(absorbed[, .(sp = sp_new, sp_condit)], spp[, .(sp, Notes)], by = "sp")
 bio_check(
-  absorbed_rows[, all(mapply(grepl, paste0("recorded as ", sp_condit, " ("), Notes, fixed = TRUE))],
+  absorbed_rows[, all(mapply(grepl, paste0("Code ", sp_condit, ", "), Notes, fixed = TRUE))],
   "every code no longer used is named in the notes of the codes that hold its trees"
 )
 rm(absorbed_rows)
 
-# The codes with a note (2026-10-15: 55)
+# No repetition: the notes do not repeat the former name of the code, nor the
+# numbers of trees of ReidentifiedFrom / ReidentifiedTo
+bio_check(
+  spp[!is.na(Notes) & !is.na(NameCondit2019), !any(mapply(grepl, NameCondit2019, Notes, fixed = TRUE))],
+  "the notes do not repeat NameCondit2019",
+  examples = spp[!is.na(Notes) & !is.na(NameCondit2019) & mapply(grepl, NameCondit2019, Notes, fixed = TRUE), sp]
+)
+bio_check(
+  !any(grepl("[a-z0-9]{6} \\([0-9]+\\)", spp$Notes)),
+  "the notes do not repeat the counts of re-identified trees"
+)
+
+# The codes with a note
 spp[!is.na(Notes), .(sp, Notes)]
 
 # ========================================================================
@@ -559,7 +619,86 @@ bio_check(
 species_code_changes_summary[trees > 4L]
 
 # ========================================================================
-# SECTION 8: EXPORT
+# SECTION 8: NAMES COMPARED WITH THE FLORA DE PANAMÁ LIST
+# ========================================================================
+# For the botanists: the codes whose name in the species table differs from
+# the Flora de Panamá list, the baseline of the stage-1 names (they change by
+# the hand corrections of 1_prepare_species_tables.R, section 9). Compared by
+# code: genus, epithet and infraspecific name letter by letter, and the
+# authority by its authors only (authority_key(): another way of writing the
+# same authors, with other spaces, periods, capitals or accents, is not a
+# change). Family, synonyms and the other columns are not compared.
+
+# Codes without a row in the Flora de Panamá list have no baseline (the
+# morphospecies apeihy, nects1, nects3, which stage 1 names from the database
+# export, checked against the email of R. Pérez)
+codes_not_in_flora <- setdiff(spptable[sp != UNIDEN_CODE, sp], flora$sp)
+if (length(codes_not_in_flora)) {
+  note(paste("codes not in the Flora de Panamá list (no baseline to compare):", show_codes(codes_not_in_flora)))
+}
+
+flora[, c("epithet", "infra") := split_epithet(species)]
+bio_check(
+  flora[, all(genus != "" & epithet != "")],
+  "every code in the Flora de Panamá list has a genus and an epithet",
+  examples = flora[genus == "" | epithet == "", sp]
+)
+bio_check(
+  flora[infra != "", all(grepl("^(var|subsp|f)\\. [a-z-]+$", infra))],
+  "the Flora de Panamá infraspecific names have a rank and one epithet (\"var. grandiflora\")",
+  examples = flora[infra != "" & !grepl("^(var|subsp|f)\\. [a-z-]+$", infra), paste(sp, species)]
+)
+
+flora_cmp <- merge(
+  flora[, .(sp, FloraGenus = genus, FloraSpeciesName = epithet, FloraInfraspecific = infra, FloraAuthority = authority)],
+  spptable[, .(
+    sp,
+    Genus = clean_text(Genus), SpeciesName = clean_text(SpeciesName),
+    Infraspecific = full_name(InfraspecificRank, InfraspecificEpithet), Authority = clean_text(Authority)
+  )],
+  by = "sp"
+)
+flora_cmp[, Changed := name_parts_changed(
+  FloraGenus, FloraSpeciesName, FloraInfraspecific, FloraAuthority,
+  Genus, SpeciesName, Infraspecific, Authority
+)]
+flora_cmp[, FloraName := full_name(FloraGenus, FloraSpeciesName, FloraInfraspecific, FloraAuthority)]
+flora_cmp[, Name := full_name(Genus, SpeciesName, Infraspecific, Authority)]
+
+# One row per code with a change, in order of code; empty parts are NA
+flora_changes <- flora_cmp[!is.na(Changed), .(
+  sp, FloraName, Name, Changed,
+  FloraGenus, FloraSpeciesName, FloraInfraspecific, FloraAuthority,
+  Genus, SpeciesName, Infraspecific, Authority
+)]
+setorder(flora_changes, sp)
+for (col in names(flora_changes)) set(flora_changes, i = which(flora_changes[[col]] == ""), j = col, value = NA_character_)
+
+bio_check(
+  flora_changes[, all(FloraName != Name | authority_key(FloraAuthority) != authority_key(Authority))],
+  "every code listed differs from the Flora de Panamá list"
+)
+bio_check(
+  flora_cmp[is.na(Changed), all(
+    FloraGenus == Genus & FloraSpeciesName == SpeciesName & FloraInfraspecific == Infraspecific &
+      authority_key(FloraAuthority) == authority_key(Authority)
+  )],
+  "every code not listed has the genus, epithet, infraspecific name and authors of the Flora de Panamá list"
+)
+
+# 2026-10-21: 10 codes, all by the authority (anacex, ficuc2, heisco, ouralu,
+# pse2sp, tab1ro, thevah, tri2tu, tropra, zantpr: the WFO authorities adopted
+# in stage 1, section 9e); genus, epithet and infraspecific name are those of
+# the Flora de Panamá list for every code. The same 10 codes are in the
+# stage-1 file CHECKS/species_wfo_vs_flora_panama.csv (WFO against the Flora
+# de Panamá), since the species table now equals its WFO record in every part
+# (stage-1 file CHECKS/species_table_vs_wfo.csv).
+nrow(flora_changes)
+flora_changes[, .N, by = Changed]
+flora_changes[, .(sp, FloraName, Name, Changed)]
+
+# ========================================================================
+# SECTION 9: EXPORT
 # ========================================================================
 # The species table and the changes of code (one row per change, one row per
 # tree), as .rdata (a data.frame, the ForestGEO convention) and .csv
@@ -637,6 +776,27 @@ for (nm in c(spptable_name, summary_name, changes_name)) {
 }
 rm(e, loaded, csv_back, as_text)
 
+# The botanists' file (DATA/CHECKS): UTF-8 with a BOM, its header, and the
+# same text read back
+write_csv_utf8(flora_changes, FLORA_CHANGES_FILE)
+bytes <- readBin(FLORA_CHANGES_FILE, "raw", file.size(FLORA_CHANGES_FILE))
+text <- rawToChar(bytes[-(1:3)])
+Encoding(text) <- "UTF-8"
+bio_check(
+  identical(bytes[1:3], as.raw(c(0xEF, 0xBB, 0xBF))) && validUTF8(text),
+  paste0(basename(FLORA_CHANGES_FILE), " is UTF-8 with a BOM")
+)
+bio_check(
+  identical(strsplit(sub("\n.*", "", text), ",", fixed = TRUE)[[1]], names(flora_changes)),
+  paste0(basename(FLORA_CHANGES_FILE), " has its column names as the first row")
+)
+csv_back <- fread(FLORA_CHANGES_FILE, colClasses = "character", na.strings = "", encoding = "UTF-8")
+bio_check(
+  isTRUE(all.equal(as.data.frame(csv_back), as.data.frame(flora_changes), check.attributes = FALSE)),
+  paste0(basename(FLORA_CHANGES_FILE), " reads back identical")
+)
+rm(bytes, text, csv_back)
+
 cat(
   "\nSummary\n",
   " species table:", nrow(spptable), "codes", if (INCLUDE_UNIDEN) "(uniden included, last row)" else "(uniden left out)", "\n",
@@ -644,5 +804,7 @@ cat(
   " codes with re-identified trees:", spptable[!is.na(ReidentifiedFrom) | !is.na(ReidentifiedTo), .N], "\n",
   " codes with a note:", spptable[!is.na(Notes), .N], "\n",
   " changes of code:", nrow(species_code_changes_summary), "| trees whose code changed:", nrow(species_code_changes), "\n",
-  " written to", RTABLES_folder, "\n"
+  " written to", RTABLES_folder, "\n",
+  " codes whose name or authority differs from the Flora de Panamá list:", nrow(flora_changes),
+  "| written to", FLORA_CHANGES_FILE, "\n"
 )
