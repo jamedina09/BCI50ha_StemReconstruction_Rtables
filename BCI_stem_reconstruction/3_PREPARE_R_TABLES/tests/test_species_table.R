@@ -7,11 +7,16 @@
 #   1. The functions of species_table_functions.R on hand-written cases
 #   2. Real data: bci.spptable, bci.species_code_changes_summary and
 #      bci.species_code_changes, recomputed from the R tables and Condit's
-#      files with separate code (skipped when the outputs are missing)
+#      files with separate code, and the codes whose name differs from the
+#      Flora de Panamá list (species_changes_from_flora_panama_bci.csv),
+#      recomputed from the stage-1 table and the Flora list (skipped when the
+#      outputs are missing)
 #
-# Option (environment variable):
+# Options (environment variables):
 #   SPECIES_RTABLES_DIR  folder with the R tables and the three outputs
 #                        (default DATA/RTABLES)
+#   SPECIES_CHECKS_DIR   folder with species_changes_from_flora_panama_bci.csv
+#                        (default DATA/CHECKS)
 # ========================================================================
 suppressMessages({
   library(testthat)
@@ -89,21 +94,14 @@ test_that("format_code_counts: largest group first, ties by code, NA when empty"
   expect_identical(format_code_counts(character(0), integer(0)), NA_character_)
 })
 
-test_that("absorbed_sentence: all the trees, one tree, part of the trees", {
+test_that("absorbed_sentence: the old code and its name, no tree counts", {
   expect_identical(
-    absorbed_sentence("tremsp", "Trema unidentified", 84L, 84L),
-    "Includes the 84 trees recorded as tremsp (Trema unidentified) in Condit et al. (2019), a code no longer used."
+    absorbed_sentence("tremsp", "Trema unidentified"),
+    "Code tremsp, Trema unidentified in Condit et al. (2019), is no longer used."
   )
   expect_identical(
-    absorbed_sentence("xxxxxx", "Xus yus", 1L, 1L),
-    "Includes the tree recorded as xxxxxx (Xus yus) in Condit et al. (2019), a code no longer used."
-  )
-  expect_identical(
-    absorbed_sentence(c("a", "b"), c("A a", "B b"), c(2L, 3L), c(5L, 3L), reference = "R"),
-    c(
-      "Includes 2 of the 5 trees recorded as a (A a) in R, a code no longer used.",
-      "Includes the 3 trees recorded as b (B b) in R, a code no longer used."
-    )
+    absorbed_sentence(c("a", "b"), c("A a", "B b"), reference = "R"),
+    c("Code a, A a in R, is no longer used.", "Code b, B b in R, is no longer used.")
   )
 })
 
@@ -114,6 +112,41 @@ test_that("join_notes: full stops, empty parts dropped, NA when nothing", {
     c("", NA, "", "Code new.")
   )
   expect_identical(out, c("No longer present: dead in 1990. Named X in R.", NA, NA, "Is it? Code new."))
+})
+
+test_that("split_epithet: the first word is the epithet, the rest the infraspecific name", {
+  out <- split_epithet(c("simplex  var. grandiflora", "concinna", NA, " tenuifolium subsp. sessiliflorum "))
+  expect_identical(out$epithet, c("simplex", "concinna", "", "tenuifolium"))
+  expect_identical(out$infra, c("var. grandiflora", "", "", "subsp. sessiliflorum"))
+})
+
+test_that("authority_key: the same authors written differently compare equal, other authors do not", {
+  same <- function(a, b) authority_key(a) == authority_key(b)
+  expect_true(same("(L.) D. Don ex G. Don.", "(L.) D.Don ex G.Don"))
+  expect_true(same("(aubl.) Huber ex Ducke", "(Aubl.) Huber ex Ducke"))
+  expect_true(same("(Müll. Arg.) Hemsl.", "(Mull.Arg.) Hemsl."))
+  expect_true(same("C. DC.", "C.DC."))
+  expect_true(same(NA, ""))
+  expect_false(same("Jacq.", "Standl."))
+  expect_false(same("Engl.", "(Kunth) Engl."))
+  expect_false(same("(Bertol.) Bertero ex A. DC.", "(Bertol.) DC."))
+  expect_false(same("(Liemb.) Miq.", "(Liebm.) Miq."))
+  expect_false(same("Sw.", NA))
+})
+
+test_that("name_parts_changed: lists the parts that differ, NA when none", {
+  out <- name_parts_changed(
+    c("Heisteria", "Appunia", "Swartzia", "Tremma", "Brosimum"),
+    c("concinna", "siebertii", "simplex", "micranthum", "guianense"),
+    c(NA, NA, "var. continentalis", "", NA),
+    c("Jacq.", "Standl.", "Urb.", "(L.) Blume", "(aubl.) Huber ex Ducke"),
+    c("Heisteria", "Appunia", "Swartzia", "Trema", "Brosimum"),
+    c("concinna", "seibertii", "simplex", "micranthum", "guianense"),
+    c("", NA, "var.  ochnacea", NA, ""),
+    c("Standl.", "Standl", "Urb.", "Blume", "(Aubl.) Huber ex Ducke")
+  )
+  expect_identical(out, c("authority", "epithet", "infraspecific name", "genus, authority", NA))
+  expect_identical(name_parts_changed(character(0), character(0), character(0), character(0), character(0), character(0), character(0), character(0)), character(0))
 })
 
 # ------------------------------------------------------------------------
@@ -212,6 +245,30 @@ test_that("real data: ReidentifiedFrom / ReidentifiedTo equal the counts of the 
   expect_identical(spp$ReidentifiedTo, unname(to))
 })
 
+flora_file <- file.path(data_dir, "RAW", "sp_tables", "flora_panama_oct_9_2026", "Lista de especies de la Flora de Panamá_nov25 original.xlsx")
+flora_changes_file <- file.path(Sys.getenv("SPECIES_CHECKS_DIR", file.path(data_dir, "CHECKS")), "species_changes_from_flora_panama_bci.csv")
+flora_ok <- real_ok && file.exists(flora_file) && file.exists(flora_changes_file)
+
+test_that("real data: the codes whose name differs from the Flora de Panamá list, recomputed", {
+  skip_if_not(flora_ok, "no Flora de Panamá list / species_changes_from_flora_panama_bci.csv found")
+  cl <- function(x) trimws(gsub("\\s+", " ", ifelse(is.na(x) | x == "NULL", "", x)))
+  authors <- function(x) tolower(gsub("[ .]", "", cl(x)))
+  fl <- as.data.table(readxl::read_xlsx(flora_file))[, .(sp = `Código`, g = cl(`Género`), e = cl(Especie), a = cl(Autoridad))]
+  fl <- fl[sp %in% stage1$Mnemonic]
+  s1 <- stage1[, .(sp = Mnemonic, g2 = cl(Genus), e2 = cl(paste(cl(SpeciesName), cl(InfraspecificRank), cl(InfraspecificEpithet))), a2 = cl(Authority))]
+  m <- merge(fl, s1, by = "sp")
+  expected <- m[g != g2 | e != e2 | authors(a) != authors(a2)]
+  got <- fread(flora_changes_file, colClasses = "character", na.strings = "", encoding = "UTF-8")
+  expect_identical(got$sp, sort(expected$sp, method = "radix"))
+  expected <- expected[match(got$sp, sp)]
+  expect_identical(cl(got$FloraName), cl(paste(expected$g, expected$e, expected$a)))
+  expect_identical(cl(got$Name), cl(paste(expected$g2, expected$e2, expected$a2)))
+  expect_identical(grepl("authority", got$Changed), authors(expected$a) != authors(expected$a2))
+  expect_identical(grepl("genus", got$Changed), expected$g != expected$g2)
+  # codes absent from the Flora list (morphospecies) have no row
+  expect_false(any(got$sp %in% setdiff(stage1$Mnemonic, fl$sp)))
+})
+
 test_that("real data: former names and notes", {
   skip_if_not(real_ok, "no R tables / species-table outputs found")
   cl <- function(x) trimws(gsub("\\s+", " ", ifelse(is.na(x), "", x)))
@@ -220,14 +277,18 @@ test_that("real data: former names and notes", {
   expect_identical(!is.na(spp$NameCondit2019), changed)
   expect_identical(spp$NameCondit2019[changed], old[changed])
   expect_identical(!is.na(spp$NameChange), changed)
-  # Every former name, code new to the plot and code no longer used is in the notes
-  expect_true(all(mapply(grepl, paste0("Named ", spp$NameCondit2019[changed], " in Condit et al. (2019)."), spp$Notes[changed], fixed = TRUE)))
+  # Each fact once: the notes do not repeat the former name (NameCondit2019)
+  # nor the tree counts (ReidentifiedFrom / ReidentifiedTo)
+  with_both <- changed & !is.na(spp$Notes)
+  expect_false(any(mapply(grepl, spp$NameCondit2019[with_both], spp$Notes[with_both], fixed = TRUE)))
+  expect_false(any(grepl("[a-z0-9]{6} \\([0-9]+\\)", spp$Notes)))
+  # Codes new to the plot and codes no longer used are in the notes
   codes_new <- setdiff(spp$sp, condit_trees$sp)
   expect_true(all(grepl("Code not used in Condit et al. (2019).", spp[sp %in% codes_new, Notes], fixed = TRUE)))
   gone <- setdiff(unique(condit_trees$sp), unique(new_trees$sp))
   for (g in intersect(gone, chg$spCondit2019)) {
     holders <- unique(chg[spCondit2019 == g, sp])
-    expect_true(all(grepl(paste0("recorded as ", g, " ("), spp[sp %in% holders, Notes], fixed = TRUE)), info = g)
+    expect_true(all(grepl(paste0("Code ", g, ", "), spp[sp %in% holders, Notes], fixed = TRUE)), info = g)
   }
   # Stage-1 notes open the Notes
   s1 <- stage1[!is.na(Notes)]
