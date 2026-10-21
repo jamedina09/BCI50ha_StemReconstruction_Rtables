@@ -2,21 +2,25 @@
 # 1_prepare_species_tables.R
 #
 # Purpose: Prepare the BCI 50-ha plot species table, one row per species code
-#          (mnemonic) of the plot. The database taxonomy is corrected with the
-#          emails of R. Pérez and S. Lao and completed from the Flora de Panamá
-#          list, which has priority. The names are then checked, step by step,
-#          against the current World Flora Online (WFO) backbone (a local copy
-#          of the June 2026 release) with the WorldFlora package. WFO only
-#          suggests corrections, mainly of spelling and of the format of the
-#          authority; each one is adopted by hand, nothing is changed
-#          automatically.
+#          (mnemonic) of the plot. The names come from the botanists: the
+#          species list of R. Pérez and S. Aguilar (email 1), the name changes
+#          of S. Lao and the reply of R. Pérez (email 2), and the Flora de
+#          Panamá list, which has priority. The database export
+#          (ViewFullTable) gives the species codes; its names are not up to
+#          date and are used only for the three codes that no list names (the
+#          morphospecies apeihy, nects1 and nects3), checked against the email
+#          of R. Pérez. The names are then checked, step by step, against the
+#          current World Flora Online (WFO) backbone (a local copy of the June
+#          2026 release) with the WorldFlora package. WFO only suggests
+#          corrections, mainly of spelling and of the format of the authority;
+#          each one is adopted by hand, nothing is changed automatically.
 #
 # Run from the project root (or from BCI_stem_reconstruction/), line by line.
 #
 # Sections:
 #    0. Setup: packages, check helper, input paths
 #    1. Load the data
-#    2. Compare the old and new database taxonomy (information only)
+#    2. Species codes of the plot and their database names
 #    3. Fix 1: species list of R. Pérez and S. Aguilar (email 1)
 #    4. Fix 2: name changes of S. Lao and the reply of R. Pérez (email 2)
 #    5. Fix 3: Flora de Panamá list (has priority)
@@ -28,10 +32,9 @@
 #   11. Assemble the species table and export
 #
 # Inputs (BCI_stem_reconstruction/DATA/RAW/):
-#   oct_13_2026/ViewTaxonomy_bci.rds               database taxonomy (from
-#                                                  0_extract_ViewTaxonomy.R)
-#   oct_13_2026/ViewFullTable_bci.csv              current inventory (codes in the plot)
-#   ViewFiles_bci_allcensuses/ViewFullTable_bci.csv  previous inventory (section 2 only)
+#   oct_13_2026/ViewFullTable_bci.csv              current inventory export: its
+#                                                  species codes, and the names
+#                                                  of the codes no list names
 #   sp_tables/email_1/Lista_bci_mnemonics_formadevida.xlsx  list of R. Pérez & S. Aguilar
 #   sp_tables/email_2/bci_name_changes.xlsx        name changes of S. Lao
 #   sp_tables/flora_panama_oct_9_2026/Lista de especies de la Flora de Panamá_nov25 original.xlsx
@@ -46,8 +49,13 @@
 #   DATA/CHECKS/species_wfo_review.csv (each name next to its WFO record),
 #   species_wfo_candidates.csv (names with several WFO records),
 #   species_wfo_accepted_changes.csv (changes adopted in the review),
+#   species_wfo_vs_flora_panama.csv (for the botanists: names whose WFO record
+#   differs from the Flora de Panamá in family, genus, species, infraspecific
+#   name or authority, part by part),
+#   species_table_vs_wfo.csv (names of the species table, after the review,
+#   that still differ from their WFO record, or that WFO treats as synonyms),
 #   prepare_species_tables_log.txt (failed checks).
-# Packages: data.table, WorldFlora, stringr, compareDF, janitor, readxl.
+# Packages: data.table, WorldFlora, stringr, janitor, readxl.
 # =============================================================================
 
 # Clear all objects from the workspace to avoid accidental contamination
@@ -68,7 +76,6 @@ options(
 library(data.table) # Fast table manipulation
 library(WorldFlora) # Matching plant names against the WFO backbone
 library(stringr) # String helpers (squish, case)
-library(compareDF) # Comparison of the old and new database taxonomy (section 2)
 library(janitor) # clean_names() for the spreadsheet column names
 
 # Number of threads data.table will use
@@ -80,19 +87,15 @@ if (basename(workspace_root) == "BCI_stem_reconstruction") {
     workspace_root <- dirname(workspace_root)
 }
 
-# Database taxonomy: one row per code, extracted from the current inventory by
-# 0_extract_ViewTaxonomy.R
-ViewTaxonomy <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "oct_13_2026", "ViewTaxonomy_bci.rds")
+# Current inventory export: its species codes (Mnemonic), and the names of the
+# codes that no list names (section 3)
+ViewFullTable_new <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "oct_13_2026", "ViewFullTable_bci.csv")
 # Species list of R. Pérez and S. Aguilar (email 1)
 TAXONOMY_1 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "email_1", "Lista_bci_mnemonics_formadevida.xlsx")
 # Name changes of S. Lao (email 2)
 TAXONOMY_2 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "email_2", "bci_name_changes.xlsx")
 # Flora de Panamá list (R. Pérez, received 2026-10-09)
 flora_panama_oct_9_2026 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "flora_panama_oct_9_2026", "Lista de especies de la Flora de Panamá_nov25 original.xlsx")
-# Previous inventory export, used only for the comparison of section 2
-ViewFullTable_old <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "ViewFiles_bci_allcensuses", "ViewFullTable_bci.csv")
-# Current inventory (the table 0_extract_ViewTaxonomy.R reads)
-ViewFullTable_new <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "oct_13_2026", "ViewFullTable_bci.csv")
 # Current WFO backbone: World Flora Online Plant List June 2026 (v.2026-06,
 # CC0), file _DwC_backbone_R.zip of doi:10.5281/zenodo.20782718, unzipped
 WFO_BACKBONE <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "sp_tables", "wfo_plant_list_2026_06", "classification.csv")
@@ -121,59 +124,34 @@ is_empty <- function(x) is.na(x) | x %in% c("", "NULL")
 # =============================================================================
 # 1. LOAD THE DATA
 # =============================================================================
-viewt <- as.data.table(readRDS(ViewTaxonomy))
+check(
+    file.exists(c(ViewFullTable_new, TAXONOMY_1, TAXONOMY_2, flora_panama_oct_9_2026, WFO_BACKBONE)),
+    "every input file exists"
+)
 tax1 <- as.data.table(readxl::read_xlsx(TAXONOMY_1))
 tax2 <- as.data.table(readxl::read_xlsx(TAXONOMY_2))
 flor_pan <- as.data.table(readxl::read_xlsx(flora_panama_oct_9_2026))
 
-# Previous inventory: only the taxonomy columns of the database taxonomy
-inc <- colnames(viewt)
-viewftold <- fread(ViewFullTable_old, select = inc)
-
-viewtold <- unique(viewftold[, ..inc])
-setorder(viewtold, Mnemonic)
-
 # =============================================================================
-# 2. COMPARE THE OLD AND NEW DATABASE TAXONOMY (INFORMATION ONLY)
+# 2. SPECIES CODES OF THE PLOT AND THEIR DATABASE NAMES
 # =============================================================================
-# Names of every code in the previous inventory export against those of the
-# current one (the database renamed 49 species in October 2026). Nothing here
-# changes the species table.
-
-# One row per code in the current taxonomy
-viewt[, .N, by = Mnemonic][order(-N)]
-
-# The previous export has two rows for protte and quaras: one with an empty
-# subspecies name but a SubspeciesID, one without either. The first is dropped
-# (the same rule 0_extract_ViewTaxonomy.R applies to the current export).
-viewtold[, .N, by = Mnemonic][order(-N)]
-viewtold[Mnemonic %in% viewtold[duplicated(Mnemonic), Mnemonic]]
-viewtold <- viewtold[!(
-    Mnemonic %in% viewtold[duplicated(Mnemonic), Mnemonic] &
-        is_empty(Subspecies) & !is_empty(SubspeciesID)
-)]
-check(!anyDuplicated(viewtold$Mnemonic), "one row per code in the previous database taxonomy")
-
-viewt <- viewt[, .(Mnemonic, Family, Genus, SpeciesName, Subspecies)]
-viewtold <- viewtold[, .(Mnemonic, Family, Genus, SpeciesName, Subspecies)]
-
-# The text "NULL" and empty strings mean no value
-viewt[viewt == "NULL"] <- NA
-viewtold[viewtold == "NULL"] <- NA
-viewt[viewt == ""] <- NA
-viewtold[viewtold == ""] <- NA
-
-check(identical(viewt$Mnemonic, viewtold$Mnemonic), "the old and new database taxonomy have the same codes, in the same order")
-
-# Codes whose names changed ("+" new, "-" old)
-ctable_mnemonic <- compare_df(viewt, viewtold, c("Mnemonic"))
-ctable_mnemonic$comparison_df
-
-# To view the comparison as a table, or save it as a spreadsheet:
-# create_output_table(ctable_mnemonic)
-# create_output_table(ctable_mnemonic, output_type = "xlsx", file_name = "./BCI_stem_reconstruction/1_DATA_PREPARATION/compare_2025_vs_oct2026_taxonomy_from_viewfulltables.xlsx")
-
-rm(viewtold, viewftold)
+# The six-letter codes recorded in the inventory export, with the names the
+# database gives them. The database names (Family, Genus, SpeciesName) are not
+# up to date: they are used only for the codes that no list names (section 3).
+# Census 9 (2020, partial), which 2_prepare_viewfulltable.R removes, adds no
+# code (checked 2026-10-21).
+db_names <- unique(fread(
+    ViewFullTable_new,
+    sep = "\t",
+    select = c("Mnemonic", "Family", "Genus", "SpeciesName"),
+    na.strings = c("", "NA", "NULL")
+))
+plot_codes <- sort(unique(db_names$Mnemonic))
+check(
+    !anyNA(plot_codes) && all(nchar(plot_codes) == 6L),
+    "every species code of the plot is a six-letter code"
+)
+length(plot_codes) # 329 codes, uniden (unidentified stems) included (export of 2026-10-13)
 
 # =============================================================================
 # 3. FIX 1: SPECIES LIST OF R. PÉREZ AND S. AGUILAR (EMAIL 1)
@@ -210,72 +188,125 @@ rm(viewtold, viewftold)
 # Saludos
 # Rolando
 
-# The database has 329 codes and the list 327: codes not in the list
-setdiff(viewt$Mnemonic, tax1$codigo)
+# The list has one row per code, and every code of the list is a code of the
+# plot. Codes of the plot not in the list (329 against 327): pterof (named in
+# the Flora de Panamá list, section 5, and replaced by pterro in section 6a)
+# and uniden (unidentified stems, left out of the table in section 8).
+check(!anyDuplicated(tax1$codigo), "one row per code in the list of email 1")
+setdiff(tax1$codigo, plot_codes)
+check(all(tax1$codigo %in% plot_codes), "every code of the list of email 1 is a code of the plot")
+setdiff(plot_codes, tax1$codigo)
 
-# Database taxonomy next to the list (all codes of both)
-viewt_tax1 <- merge(
-    viewt,
+# One row per code of the plot, with the columns of the list
+spp_email <- merge(
+    data.table(Mnemonic = plot_codes),
     tax1,
     by.x = "Mnemonic",
     by.y = "codigo",
-    all.x = TRUE,
-    all.y = TRUE
+    all.x = TRUE
 )
 
 # The corrections of the email, one by one, recorded in `email_1_comment`
 
 # 1) El nombre Appunia siebertiii es correcto y actualizado, Morinda siebertii es un sinónimo.
-viewt_tax1[genero == "Appunia", email_1_comment := "Appunia siebertii es correcto; Morinda siebertii es un sinónimo"]
+spp_email[genero == "Appunia", email_1_comment := "Appunia siebertii es correcto; Morinda siebertii es un sinónimo"]
 
 # 2) Apeiba "hybrida" murió.
-viewt_tax1[Mnemonic == "apeihy", email_1_comment := "Apeiba hybrida murió"]
+spp_email[Mnemonic == "apeihy", email_1_comment := "Apeiba hybrida murió"]
 
 # 3) Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una
 # con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla.
-viewt_tax1[Mnemonic == "nects1", email_1_comment := "Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla."]
-viewt_tax1[Mnemonic == "nects3", email_1_comment := "Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla."]
+spp_email[Mnemonic == "nects1", email_1_comment := "Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla."]
+spp_email[Mnemonic == "nects3", email_1_comment := "Nectandra s1 y Nectandra s3 son dos morfoespecies de Lauraceae, una murió. Solo queda una con vida y sugiero darle un seguimiento para colectarla fértil y poder identificarla."]
 
 # 4) Pterocarpus officinalis no existe en la parcela, yo personalmente revisé todos los Pterocarpus y
 # corresponden a P. rohrii.
-viewt_tax1[Genus == "Pterocarpus"]
-viewt_tax1[Mnemonic == "pterof", email_1_comment := "Pterocarpus officinalis no existe en la parcela; corresponde a P. rohrii"]
-viewt_tax1[Mnemonic == "pterro", email_1_comment := "Pterocarpus officinalis no existe en la parcela; corresponde a P. rohrii"]
+spp_email[Mnemonic %in% c("pterof", "pterro"), .(Mnemonic, familia, genero, especie)]
+spp_email[Mnemonic == "pterof", email_1_comment := "Pterocarpus officinalis no existe en la parcela; corresponde a P. rohrii"]
+spp_email[Mnemonic == "pterro", email_1_comment := "Pterocarpus officinalis no existe en la parcela; corresponde a P. rohrii"]
 
 # 5) Beilschmiedia pendula y Quararibea asterolepis son especies que no existen para BCI. Las
 # especies correctas son Beilschmiedia tovarensis y Quararibea stenophylla, ambas fueron
 # confirmadas por los especialistas en nuestras muestras de herbario.
-viewt_tax1[Genus == "Beilschmiedia"]
-viewt_tax1[Genus == "Beilschmiedia" & SpeciesName == "tovarensis", email_1_comment := "Beilschmiedia pendula no existe para BCI; la especie correcta es Beilschmiedia tovarensis"]
-viewt_tax1[Genus == "Quararibea"]
-viewt_tax1[Genus == "Quararibea" & SpeciesName == "stenophylla", email_1_comment := "Quararibea asterolepis no existe para BCI; la especie correcta es Quararibea stenophylla"]
+spp_email[genero == "Beilschmiedia", .(Mnemonic, familia, genero, especie)]
+spp_email[genero == "Beilschmiedia" & especie == "tovarensis", email_1_comment := "Beilschmiedia pendula no existe para BCI; la especie correcta es Beilschmiedia tovarensis"]
+spp_email[genero == "Quararibea", .(Mnemonic, familia, genero, especie)]
+spp_email[genero == "Quararibea" & especie == "stenophylla", email_1_comment := "Quararibea asterolepis no existe para BCI; la especie correcta es Quararibea stenophylla"]
 
-viewt_tax1[!is.na(email_1_comment), .(Mnemonic, Family, Genus, SpeciesName, email_1_comment)]
+spp_email[!is.na(email_1_comment), .(Mnemonic, familia, genero, especie, email_1_comment)]
 
 # The growth forms (R. Foster; R. Pérez & S. Aguilar), common names and
 # herbarium collections come with the list (its columns).
 
-# Family, genus and species: database vs list. The list is kept; where it has
-# no value (the codes it does not include), the database value is used.
-viewt_tax1[(is.na(familia) & !is.na(Family)) | Family != familia, .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
-viewt_tax1[is.na(familia), .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
-viewt_tax1[is.na(familia), familia := Family]
+# Three codes of the list have no name at all (no family, genus or species):
+# the morphospecies apeihy, nects1 and nects3, which are not in the Flora de
+# Panamá list either. Their names are taken from the database export (section
+# 2) and checked against the email (points 2 and 3 above): the genus must be
+# that of the email, and the family that of the email (Lauraceae for the two
+# Nectandra) and of the other species of the genus in the list. The labels
+# differ and are not compared: the database has those of Condit et al. (2019),
+# "hybrid", "fuzzy" and "sp.4_(tiny_leaf)", and the email "hybrida", s1 and
+# s3. (The other codes of the plot without a name are not in the list: pterof,
+# named by the Flora de Panamá list in section 5, and uniden.) The order of
+# the three is completed in section 10.
+codes_without_name <- spp_email[
+    Mnemonic %in% tax1$codigo & is_empty(familia) & is_empty(genero) & is_empty(especie),
+    Mnemonic
+]
+codes_without_name
 
-viewt_tax1[(is.na(genero) & !is.na(Genus)) | Genus != genero, .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
-viewt_tax1[is.na(genero), .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
-viewt_tax1[is.na(genero), genero := Genus]
+# The three codes as the email names them
+names_email_1 <- data.table(
+    Mnemonic = c("apeihy", "nects1", "nects3"),
+    name_email_1 = c('Apeiba "hybrida"', "Nectandra s1", "Nectandra s3"),
+    genus_email_1 = c("Apeiba", "Nectandra", "Nectandra"),
+    family_email_1 = c(NA, "Lauraceae", "Lauraceae")
+)
+check(
+    setequal(codes_without_name, names_email_1$Mnemonic),
+    "the codes without a name in the list are the morphospecies of the email (apeihy, nects1, nects3)"
+)
 
-viewt_tax1[(is.na(especie) & !is.na(SpeciesName)) | SpeciesName != especie, .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
-viewt_tax1[is.na(especie), .(Mnemonic, Family, familia, Genus, genero, SpeciesName, especie, email_1_comment)]
-viewt_tax1[is.na(especie), especie := SpeciesName]
+# Their names in the database export
+names_db <- db_names[Mnemonic %in% codes_without_name]
+check(
+    setequal(names_db$Mnemonic, codes_without_name) && !anyDuplicated(names_db$Mnemonic) &&
+        !names_db[, anyNA(Family) || anyNA(Genus) || anyNA(SpeciesName)],
+    "the database export gives one full name (family, genus, species) to each code without a name"
+)
 
-# Codes with a subspecies in the database (kept in `Subspecies` until section 5)
-viewt_tax1[!is.na(Subspecies)]
+# Family of the other species of each genus in the list
+genus_family <- unique(spp_email[
+    genero %in% names_db$Genus & !Mnemonic %in% codes_without_name & !is_empty(familia),
+    .(Genus = genero, family_list = familia)
+])
+genus_family # Apeiba: Malvaceae; Nectandra: Lauraceae
+check(
+    !anyDuplicated(genus_family$Genus) && setequal(genus_family$Genus, names_db$Genus),
+    "each genus of the codes without a name has other species in the list, all of one family"
+)
 
-# The database names are no longer needed
-viewt_tax1[, Family := NULL]
-viewt_tax1[, Genus := NULL]
-viewt_tax1[, SpeciesName := NULL]
+# The database names next to the email and the list
+names_db <- merge(names_db, names_email_1, by = "Mnemonic")
+names_db <- merge(names_db, genus_family, by = "Genus")
+names_db[, .(Mnemonic, Family, Genus, SpeciesName, name_email_1, family_email_1, family_list)]
+check(
+    names_db[, all(Genus == genus_email_1)],
+    "the database genus of each code without a name is the genus of the email"
+)
+check(
+    names_db[, all((is.na(family_email_1) | Family == family_email_1) & Family == family_list)],
+    "the database family of each code without a name is that of the email and of its genus in the list"
+)
+
+spp_email[names_db, on = "Mnemonic", `:=`(familia = i.Family, genero = i.Genus, especie = i.SpeciesName)]
+spp_email[Mnemonic %in% codes_without_name, .(Mnemonic, familia, genero, especie, email_1_comment)]
+
+# Every code of the list now has a family, a genus and a species
+check(
+    spp_email[Mnemonic %in% tax1$codigo, !any(is_empty(familia) | is_empty(genero) | is_empty(especie))],
+    "every code of the list of email 1 has a family, a genus and a species"
+)
 
 # Done: email 1 included
 
@@ -311,11 +342,11 @@ viewt_tax1[, SpeciesName := NULL]
 
 # The table has one row per code; Suzanne's list has 330 rows, with two for
 # protte
-viewt_tax1[, .N, by = Mnemonic][order(-N)]
+spp_email[, .N, by = Mnemonic][order(-N)]
 tax2[, .N, by = mnemonic][order(-N)]
 
 # protte: one row with the SubspeciesID 15 but no subspecies name, one with
-# neither; the first is dropped (the same rule as in section 2)
+# neither; the first is dropped
 tax2[mnemonic %in% tax2[duplicated(mnemonic), mnemonic]]
 tax2 <- tax2[!(
     mnemonic %in% tax2[duplicated(mnemonic), mnemonic] &
@@ -323,16 +354,16 @@ tax2 <- tax2[!(
 )]
 check(!anyDuplicated(tax2$mnemonic), "one row per code in the list of S. Lao")
 
-setorder(viewt_tax1, Mnemonic)
+setorder(spp_email, Mnemonic)
 setorder(tax2, mnemonic)
 
 # Codes in only one of the two: ficutr in the table and, in Suzanne's list, the
 # new code she gives to ficutr (not a code of the plot, not used)
-setdiff(viewt_tax1$Mnemonic, tax2$mnemonic)
-setdiff(tax2$mnemonic, viewt_tax1$Mnemonic)
+setdiff(spp_email$Mnemonic, tax2$mnemonic)
+setdiff(tax2$mnemonic, spp_email$Mnemonic)
 
-viewt_tax1[Mnemonic == "ficutr"]
-tax2[mnemonic %in% setdiff(tax2$mnemonic, viewt_tax1$Mnemonic)]
+spp_email[Mnemonic == "ficutr"]
+tax2[mnemonic %in% setdiff(tax2$mnemonic, spp_email$Mnemonic)]
 
 # Species and subspecies IDs of the list are not used
 tax2[, speciesid := NULL]
@@ -361,16 +392,16 @@ tax2[, subspeciesidold := NULL]
 # The two corrections of Rolando: the table already has both names (from the
 # list of email 1); only the synonym of pla1pi is missing
 tax2[mnemonic %in% c("stemgr", "pla1pi")]
-viewt_tax1[Mnemonic %in% c("stemgr", "pla1pi")]
+spp_email[Mnemonic %in% c("stemgr", "pla1pi")]
 
-viewt_tax1[Mnemonic %in% c("pla1pi"), sinonimos := "Platymiscium polystachyum"]
-viewt_tax1[Mnemonic %in% c("stemgr", "pla1pi"), .(Mnemonic, genero, especie, autoridad, sinonimos)]
+spp_email[Mnemonic %in% c("pla1pi"), sinonimos := "Platymiscium polystachyum"]
+spp_email[Mnemonic %in% c("stemgr", "pla1pi"), .(Mnemonic, genero, especie, autoridad, sinonimos)]
 
-# Family, genus, species and subspecies: the table vs Suzanne's list. The
-# table (the list of email 1) is kept: Suzanne says that Rolando's list may be
-# more up to date. The rows printed are the differences, for information.
+# Family, genus and species: the table vs Suzanne's list. The table (the list
+# of email 1) is kept: Suzanne says that Rolando's list may be more up to
+# date. The rows printed are the differences, for information.
 mefam_susfam <- merge(
-    viewt_tax1[, .(Mnemonic, familia)],
+    spp_email[, .(Mnemonic, familia)],
     tax2[, .(mnemonic, family, familyold)],
     by.x = "Mnemonic",
     by.y = "mnemonic",
@@ -380,7 +411,7 @@ mefam_susfam <- merge(
 mefam_susfam[familia != family]
 
 megen_susgen <- merge(
-    viewt_tax1[, .(Mnemonic, genero)],
+    spp_email[, .(Mnemonic, genero)],
     tax2[, .(mnemonic, genus, genusold)],
     by.x = "Mnemonic",
     by.y = "mnemonic",
@@ -390,7 +421,7 @@ megen_susgen <- merge(
 megen_susgen[genero != genus]
 
 mesp_sussp <- merge(
-    viewt_tax1[, .(Mnemonic, especie)],
+    spp_email[, .(Mnemonic, especie)],
     tax2[, .(mnemonic, speciesname, speciesnameold)],
     by.x = "Mnemonic",
     by.y = "mnemonic",
@@ -399,28 +430,15 @@ mesp_sussp <- merge(
 )
 mesp_sussp[especie != speciesname]
 
-mesubsp_sussubsp <- merge(
-    viewt_tax1[, .(Mnemonic, Subspecies)],
-    tax2[, .(mnemonic, subspecies, subspeciesold)],
-    by.x = "Mnemonic",
-    by.y = "mnemonic",
-    all.x = TRUE,
-    all.y = TRUE
-)
-mesubsp_sussubsp[Subspecies != subspecies] # no differences
+# Suzanne's subspecies (information only: the infraspecific names of the table
+# come from the Flora de Panamá list, section 5)
+tax2[!is_empty(subspecies) | !is_empty(subspeciesold), .(mnemonic, genus, speciesname, subspecies, subspeciesold)]
 
-# ficutr. In the database, ficutr carries the name Ficus aurea (there is no
-# Ficus trigonata in the plot), while the list of email 1 gives ficutr as Ficus
-# trigonata. The trees keep the code ficutr, and the species table keeps the
-# name of the lists of Rolando Pérez (email 1 and the Flora de Panamá, section 5).
-viewt[Mnemonic == "ficutr"]
-viewt[Genus == "Ficus"][order(SpeciesName)]
-
-# The table after the corrections of email 2 (the synonym of pla1pi)
-viewt_tax1_updated <- copy(viewt_tax1)
-
-# Codes of the table not in the database taxonomy (none)
-setdiff(viewt_tax1_updated$Mnemonic, viewt$Mnemonic)
+# ficutr: the list of email 1 and the Flora de Panamá list (section 5) give
+# Ficus trigonata, and the table keeps it; Suzanne's list renames the code
+# (not applied, see above). The trees keep the code ficutr.
+spp_email[Mnemonic == "ficutr", .(Mnemonic, familia, genero, especie, autoridad)]
+tax2[mnemonic %in% c("ficutr", setdiff(tax2$mnemonic, spp_email$Mnemonic)), .(mnemonic, family, genus, speciesname, genusold, speciesnameold)]
 
 # Done: email 1, email 2 and Rolando's reply included
 
@@ -452,27 +470,27 @@ setdiff(viewt_tax1_updated$Mnemonic, viewt$Mnemonic)
 
 # Rolando
 
-viewt_tax1_updated
+spp_email
 
 # Column names in lower case without spaces or accents; the Flora de Panamá
 # columns get the prefix "pan_" so both tables can be merged
 flor_pan <- clean_names(flor_pan)
-viewt_tax1_updated <- clean_names(viewt_tax1_updated)
+spp_email <- clean_names(spp_email)
 colnames(flor_pan) <- paste0("pan_", colnames(flor_pan))
 
 # The text "NULL" means no value
-viewt_tax1_updated <- viewt_tax1_updated[, lapply(.SD, function(x) ifelse(x == "NULL", NA, x))]
+spp_email <- spp_email[, lapply(.SD, function(x) ifelse(x == "NULL", NA, x))]
 flor_pan <- flor_pan[, lapply(.SD, function(x) ifelse(x == "NULL", NA, x))]
 
 # Each code must appear only once in the Flora de Panamá list, otherwise the
 # merge would duplicate rows
 check(
-    !anyDuplicated(flor_pan[pan_codigo %in% viewt_tax1_updated$mnemonic, pan_codigo]),
+    !anyDuplicated(flor_pan[pan_codigo %in% spp_email$mnemonic, pan_codigo]),
     "each code of the table appears at most once in the Flora de Panamá list"
 )
 
-viewt_tax1_updated_flor_pan <- merge(
-    viewt_tax1_updated,
+spp_flora <- merge(
+    spp_email,
     flor_pan,
     by.x = "mnemonic",
     by.y = "pan_codigo",
@@ -484,75 +502,72 @@ viewt_tax1_updated_flor_pan <- merge(
 # the Barro Colorado Nature Monument (MNC), and the growth form of the Flora de
 # Panamá list (incomplete; the growth forms of the list of email 1 are used,
 # see 6b)
-viewt_tax1_updated_flor_pan[, texto := NULL][, fotos := NULL][, pan_texto := NULL][, pan_fotos := NULL][, pan_mnbc := NULL]
-viewt_tax1_updated_flor_pan[, pan_forma_de_vida := NULL]
+spp_flora[, texto := NULL][, fotos := NULL][, pan_texto := NULL][, pan_fotos := NULL][, pan_mnbc := NULL]
+spp_flora[, pan_forma_de_vida := NULL]
 
-# Codes of the table vs the database taxonomy
-setdiff(viewt_tax1_updated_flor_pan$mnemonic, viewt$Mnemonic)
-setdiff(viewt$Mnemonic, viewt_tax1_updated_flor_pan$mnemonic)
+# Codes of the plot without a row in the Flora de Panamá list: the
+# morphospecies apeihy, nects1, nects3 and uniden
+setdiff(spp_flora$mnemonic, flor_pan$pan_codigo)
+check(setequal(spp_flora$mnemonic, plot_codes), "the table holds every code of the plot")
 
 # Each field: the Flora de Panamá value where it has one, otherwise the value
 # of the table (`<field>_corrected`). The rows printed before and after are
 # those where the two sources differ or one is missing.
 
 # orden
-viewt_tax1_updated_flor_pan[(is.na(orden) | is.na(pan_orden)) | orden != pan_orden, .(mnemonic, orden, pan_orden)]
-viewt_tax1_updated_flor_pan[, orden_corrected := fcoalesce(pan_orden, orden)]
-viewt_tax1_updated_flor_pan[(is.na(orden) | is.na(pan_orden)) | orden != pan_orden, .(mnemonic, orden, pan_orden, orden_corrected)]
-viewt_tax1_updated_flor_pan[, orden := NULL][, pan_orden := NULL]
+spp_flora[(is.na(orden) | is.na(pan_orden)) | orden != pan_orden, .(mnemonic, orden, pan_orden)]
+spp_flora[, orden_corrected := fcoalesce(pan_orden, orden)]
+spp_flora[(is.na(orden) | is.na(pan_orden)) | orden != pan_orden, .(mnemonic, orden, pan_orden, orden_corrected)]
+spp_flora[, orden := NULL][, pan_orden := NULL]
 
 # familia
-viewt_tax1_updated_flor_pan[(is.na(familia) | is.na(pan_familia)) | familia != pan_familia, .(mnemonic, familia, pan_familia)]
-viewt_tax1_updated_flor_pan[, familia_corrected := fcoalesce(pan_familia, familia)]
-viewt_tax1_updated_flor_pan[(is.na(familia) | is.na(pan_familia)) | familia != pan_familia, .(mnemonic, familia, pan_familia, familia_corrected)]
-viewt_tax1_updated_flor_pan[, familia := NULL][, pan_familia := NULL]
+spp_flora[(is.na(familia) | is.na(pan_familia)) | familia != pan_familia, .(mnemonic, familia, pan_familia)]
+spp_flora[, familia_corrected := fcoalesce(pan_familia, familia)]
+spp_flora[(is.na(familia) | is.na(pan_familia)) | familia != pan_familia, .(mnemonic, familia, pan_familia, familia_corrected)]
+spp_flora[, familia := NULL][, pan_familia := NULL]
 
 # genero
-viewt_tax1_updated_flor_pan[(is.na(genero) | is.na(pan_genero)) | genero != pan_genero, .(mnemonic, genero, pan_genero)]
-viewt_tax1_updated_flor_pan[, genero_corrected := fcoalesce(pan_genero, genero)]
-viewt_tax1_updated_flor_pan[(is.na(genero) | is.na(pan_genero)) | genero != pan_genero, .(mnemonic, genero, pan_genero, genero_corrected)]
-viewt_tax1_updated_flor_pan[, genero := NULL][, pan_genero := NULL]
+spp_flora[(is.na(genero) | is.na(pan_genero)) | genero != pan_genero, .(mnemonic, genero, pan_genero)]
+spp_flora[, genero_corrected := fcoalesce(pan_genero, genero)]
+spp_flora[(is.na(genero) | is.na(pan_genero)) | genero != pan_genero, .(mnemonic, genero, pan_genero, genero_corrected)]
+spp_flora[, genero := NULL][, pan_genero := NULL]
 
 # especie (for the two varieties of Swartzia simplex the Flora de Panamá
 # species includes the variety, e.g. "simplex var. grandiflora"; it is split in
 # section 8)
-viewt_tax1_updated_flor_pan[(is.na(especie) | is.na(pan_especie)) | especie != pan_especie, .(mnemonic, especie, pan_especie)]
-viewt_tax1_updated_flor_pan[, especie_corrected := fcoalesce(pan_especie, especie)]
-viewt_tax1_updated_flor_pan[(is.na(especie) | is.na(pan_especie)) | especie != pan_especie, .(mnemonic, especie, pan_especie, especie_corrected)]
-viewt_tax1_updated_flor_pan[, especie := NULL][, pan_especie := NULL]
-
-# The database subspecies is now part of especie_corrected
-viewt_tax1_updated_flor_pan[!is.na(subspecies)]
-viewt_tax1_updated_flor_pan[, subspecies := NULL]
+spp_flora[(is.na(especie) | is.na(pan_especie)) | especie != pan_especie, .(mnemonic, especie, pan_especie)]
+spp_flora[, especie_corrected := fcoalesce(pan_especie, especie)]
+spp_flora[(is.na(especie) | is.na(pan_especie)) | especie != pan_especie, .(mnemonic, especie, pan_especie, especie_corrected)]
+spp_flora[, especie := NULL][, pan_especie := NULL]
 
 # autoridad
-viewt_tax1_updated_flor_pan[(is.na(autoridad) | is.na(pan_autoridad)) | autoridad != pan_autoridad, .(mnemonic, autoridad, pan_autoridad)]
-viewt_tax1_updated_flor_pan[, autoridad_corrected := fcoalesce(pan_autoridad, autoridad)]
-viewt_tax1_updated_flor_pan[(is.na(autoridad) | is.na(pan_autoridad)) | autoridad != pan_autoridad, .(mnemonic, autoridad, pan_autoridad, autoridad_corrected)]
-viewt_tax1_updated_flor_pan[, autoridad := NULL][, pan_autoridad := NULL]
+spp_flora[(is.na(autoridad) | is.na(pan_autoridad)) | autoridad != pan_autoridad, .(mnemonic, autoridad, pan_autoridad)]
+spp_flora[, autoridad_corrected := fcoalesce(pan_autoridad, autoridad)]
+spp_flora[(is.na(autoridad) | is.na(pan_autoridad)) | autoridad != pan_autoridad, .(mnemonic, autoridad, pan_autoridad, autoridad_corrected)]
+spp_flora[, autoridad := NULL][, pan_autoridad := NULL]
 
 # sinonimos
-viewt_tax1_updated_flor_pan[(is.na(sinonimos) | is.na(pan_sinonimos)) | sinonimos != pan_sinonimos, .(mnemonic, sinonimos, pan_sinonimos)]
-viewt_tax1_updated_flor_pan[, sinonimos_corrected := fcoalesce(pan_sinonimos, sinonimos)]
-viewt_tax1_updated_flor_pan[(is.na(sinonimos) | is.na(pan_sinonimos)) | sinonimos != pan_sinonimos, .(mnemonic, sinonimos, pan_sinonimos, sinonimos_corrected)]
-viewt_tax1_updated_flor_pan[, sinonimos := NULL][, pan_sinonimos := NULL]
+spp_flora[(is.na(sinonimos) | is.na(pan_sinonimos)) | sinonimos != pan_sinonimos, .(mnemonic, sinonimos, pan_sinonimos)]
+spp_flora[, sinonimos_corrected := fcoalesce(pan_sinonimos, sinonimos)]
+spp_flora[(is.na(sinonimos) | is.na(pan_sinonimos)) | sinonimos != pan_sinonimos, .(mnemonic, sinonimos, pan_sinonimos, sinonimos_corrected)]
+spp_flora[, sinonimos := NULL][, pan_sinonimos := NULL]
 
 # nombre comun (the column is spelled "nombre_comum" in both lists)
-viewt_tax1_updated_flor_pan[(is.na(nombre_comum) | is.na(pan_nombre_comum)) | nombre_comum != pan_nombre_comum, .(mnemonic, nombre_comum, pan_nombre_comum)]
-viewt_tax1_updated_flor_pan[, nombre_comun_corrected := fcoalesce(pan_nombre_comum, nombre_comum)]
-viewt_tax1_updated_flor_pan[(is.na(nombre_comum) | is.na(pan_nombre_comum)) | nombre_comum != pan_nombre_comum, .(mnemonic, nombre_comum, pan_nombre_comum, nombre_comun_corrected)]
-viewt_tax1_updated_flor_pan[, nombre_comum := NULL][, pan_nombre_comum := NULL]
+spp_flora[(is.na(nombre_comum) | is.na(pan_nombre_comum)) | nombre_comum != pan_nombre_comum, .(mnemonic, nombre_comum, pan_nombre_comum)]
+spp_flora[, nombre_comun_corrected := fcoalesce(pan_nombre_comum, nombre_comum)]
+spp_flora[(is.na(nombre_comum) | is.na(pan_nombre_comum)) | nombre_comum != pan_nombre_comum, .(mnemonic, nombre_comum, pan_nombre_comum, nombre_comun_corrected)]
+spp_flora[, nombre_comum := NULL][, pan_nombre_comum := NULL]
 
 # herbario
-viewt_tax1_updated_flor_pan[(is.na(herbario) | is.na(pan_herbario)) | herbario != pan_herbario, .(mnemonic, herbario, pan_herbario)]
-viewt_tax1_updated_flor_pan[, herbario_corrected := fcoalesce(pan_herbario, herbario)]
-viewt_tax1_updated_flor_pan[(is.na(herbario) | is.na(pan_herbario)) | herbario != pan_herbario, .(mnemonic, herbario, pan_herbario, herbario_corrected)]
-viewt_tax1_updated_flor_pan[, herbario := NULL][, pan_herbario := NULL]
+spp_flora[(is.na(herbario) | is.na(pan_herbario)) | herbario != pan_herbario, .(mnemonic, herbario, pan_herbario)]
+spp_flora[, herbario_corrected := fcoalesce(pan_herbario, herbario)]
+spp_flora[(is.na(herbario) | is.na(pan_herbario)) | herbario != pan_herbario, .(mnemonic, herbario, pan_herbario, herbario_corrected)]
+spp_flora[, herbario := NULL][, pan_herbario := NULL]
 
 # Spot checks: rows discussed in the emails
-viewt_tax1_updated_flor_pan[mnemonic == "appuse"]
-viewt_tax1_updated_flor_pan[mnemonic == "ficutr"]
-viewt_tax1_updated_flor_pan[!is.na(email_1_comment)]
+spp_flora[mnemonic == "appuse"]
+spp_flora[mnemonic == "ficutr"]
+spp_flora[!is.na(email_1_comment)]
 
 # =============================================================================
 # 6. CODES REPLACED IN THE INVENTORY; GROWTH FORMS; ENGLISH COLUMN NAMES
@@ -567,36 +582,34 @@ viewt_tax1_updated_flor_pan[!is.na(email_1_comment)]
 mnemonic_replace <- c(pterof = "pterro")
 
 # rows of the replaced codes and of the codes that replace them
-viewt_tax1_updated_flor_pan[mnemonic %in% c(names(mnemonic_replace), mnemonic_replace)]
+spp_flora[mnemonic %in% c(names(mnemonic_replace), mnemonic_replace)]
 
 check(
-    all(mnemonic_replace %in% viewt_tax1_updated_flor_pan$mnemonic),
+    all(mnemonic_replace %in% spp_flora$mnemonic),
     "the codes that replace other codes have a row in the species table"
 )
 
 # remove the replaced codes
-viewt_tax1_updated_flor_pan <- viewt_tax1_updated_flor_pan[!mnemonic %in% names(mnemonic_replace)]
+spp_flora <- spp_flora[!mnemonic %in% names(mnemonic_replace)]
 
-# The species table must now hold exactly the codes of the inventory after the
-# replacement. The codes come from the current inventory (oct_13_2026), the
-# same table 0_extract_ViewTaxonomy.R reads; only the Mnemonic column is loaded.
-inventory_mnemonics <- unique(fread(ViewFullTable_new, sep = "\t", select = "Mnemonic")$Mnemonic)
+# The species table must now hold exactly the codes of the plot (section 2)
+# after the replacement
 inventory_mnemonics <- unique(fifelse(
-    inventory_mnemonics %in% names(mnemonic_replace),
-    mnemonic_replace[inventory_mnemonics],
-    inventory_mnemonics
+    plot_codes %in% names(mnemonic_replace),
+    mnemonic_replace[plot_codes],
+    plot_codes
 ))
-setdiff(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics) # in the table, not in the plot
-setdiff(inventory_mnemonics, viewt_tax1_updated_flor_pan$mnemonic) # in the plot, not in the table
+setdiff(spp_flora$mnemonic, inventory_mnemonics) # in the table, not in the plot
+setdiff(inventory_mnemonics, spp_flora$mnemonic) # in the plot, not in the table
 check(
-    setequal(viewt_tax1_updated_flor_pan$mnemonic, inventory_mnemonics),
+    setequal(spp_flora$mnemonic, inventory_mnemonics),
     "the species table holds exactly the codes present in the plot after the replacement"
 )
 check(
-    !anyDuplicated(viewt_tax1_updated_flor_pan$mnemonic),
+    !anyDuplicated(spp_flora$mnemonic),
     "one row per mnemonic in the species table"
 )
-nrow(viewt_tax1_updated_flor_pan)
+nrow(spp_flora)
 
 # --- 6b. Growth forms --------------------------------------------------------
 # The growth forms are those of the list of email 1: R. Pérez & S. Aguilar
@@ -611,7 +624,7 @@ nrow(viewt_tax1_updated_flor_pan)
 # stem identification picks the growth parameters of each class.
 
 # Species without a growth form of R. Pérez & S. Aguilar
-viewt_tax1_updated_flor_pan[
+spp_flora[
     is.na(f_de_vida_r_perez_s_aguilar),
     .(mnemonic, genero_corrected, especie_corrected, f_de_vida_r_foster, f_de_vida_r_perez_s_aguilar)
 ]
@@ -619,19 +632,19 @@ viewt_tax1_updated_flor_pan[
 # Growth forms given by the botanists (2026-10-14):
 #   ficutr                  strangler (the list gave "árbol grande mayor a 20m")
 #   apeihy, nects1, nects3  trees
-viewt_tax1_updated_flor_pan[mnemonic == "ficutr", f_de_vida_r_perez_s_aguilar := "árbol estrangulador mayor a 20m"]
-viewt_tax1_updated_flor_pan[mnemonic %in% c("apeihy", "nects1", "nects3"), f_de_vida_r_perez_s_aguilar := "árbol"]
+spp_flora[mnemonic == "ficutr", f_de_vida_r_perez_s_aguilar := "árbol estrangulador mayor a 20m"]
+spp_flora[mnemonic %in% c("apeihy", "nects1", "nects3"), f_de_vida_r_perez_s_aguilar := "árbol"]
 
 # R. Foster's code is empty for apeihy, nects1 and nects3 (they are not in his
 # list under these codes), and is T (canopy tree) for ficutr; change it by hand
 # if the botanists give another value, e.g.
-# viewt_tax1_updated_flor_pan[mnemonic == "ficutr", f_de_vida_r_foster := "TE"]
+# spp_flora[mnemonic == "ficutr", f_de_vida_r_foster := "TE"]
 
 # Every code has a growth form, except uniden (unidentified stems, left out of
 # the species table in section 8)
-viewt_tax1_updated_flor_pan[is.na(f_de_vida_r_perez_s_aguilar), .(mnemonic, genero_corrected, especie_corrected)]
+spp_flora[is.na(f_de_vida_r_perez_s_aguilar), .(mnemonic, genero_corrected, especie_corrected)]
 check(
-    viewt_tax1_updated_flor_pan[mnemonic != "uniden", !anyNA(f_de_vida_r_perez_s_aguilar)],
+    spp_flora[mnemonic != "uniden", !anyNA(f_de_vida_r_perez_s_aguilar)],
     "every species has a growth form of R. Pérez & S. Aguilar"
 )
 
@@ -648,20 +661,20 @@ lifeform_class <- function(x) {
     )
 }
 check(
-    viewt_tax1_updated_flor_pan[!is.na(f_de_vida_r_perez_s_aguilar), !anyNA(lifeform_class(f_de_vida_r_perez_s_aguilar))],
+    spp_flora[!is.na(f_de_vida_r_perez_s_aguilar), !anyNA(lifeform_class(f_de_vida_r_perez_s_aguilar))],
     "every growth form of R. Pérez & S. Aguilar is read as tree, shrub, palm, tree fern or strangler"
 )
 
 # Growth forms by class, and against R. Foster's code
 dcast(
-    viewt_tax1_updated_flor_pan[, .N, by = .(class = lifeform_class(f_de_vida_r_perez_s_aguilar), foster = f_de_vida_r_foster)],
+    spp_flora[, .N, by = .(class = lifeform_class(f_de_vida_r_perez_s_aguilar), foster = f_de_vida_r_foster)],
     class ~ foster,
     value.var = "N",
     fill = 0
 )
 
 # Ficus and other stranglers
-viewt_tax1_updated_flor_pan[
+spp_flora[
     genero_corrected == "Ficus" | lifeform_class(f_de_vida_r_perez_s_aguilar) %in% "strangler",
     .(mnemonic, genero_corrected, especie_corrected, f_de_vida_r_foster, f_de_vida_r_perez_s_aguilar)
 ]
@@ -669,8 +682,8 @@ viewt_tax1_updated_flor_pan[
 # --- 6c. English column names -----------------------------------------------
 # Column names: the suffix "_corrected" is dropped, and the Spanish names (from
 # "orden" onwards) are translated to English, one to one
-colnames(viewt_tax1_updated_flor_pan) <- gsub("_corrected$", "", colnames(viewt_tax1_updated_flor_pan))
-colnames(viewt_tax1_updated_flor_pan)
+colnames(spp_flora) <- gsub("_corrected$", "", colnames(spp_flora))
+colnames(spp_flora)
 
 names_es_en <- c(
     orden = "order",
@@ -684,42 +697,45 @@ names_es_en <- c(
 )
 
 check(
-    all(names(names_es_en) %in% colnames(viewt_tax1_updated_flor_pan)),
+    all(names(names_es_en) %in% colnames(spp_flora)),
     "all Spanish column names to translate are in the species table"
 )
 check(
-    !any(unname(names_es_en) %in% colnames(viewt_tax1_updated_flor_pan)),
+    !any(unname(names_es_en) %in% colnames(spp_flora)),
     "no English column name is already in the species table"
 )
 
-setnames(viewt_tax1_updated_flor_pan, old = names(names_es_en), new = unname(names_es_en))
+setnames(spp_flora, old = names(names_es_en), new = unname(names_es_en))
 
-colnames(viewt_tax1_updated_flor_pan)
+colnames(spp_flora)
 
-viewt_tax1_updated_flor_pan
+spp_flora
 
 # =============================================================================
 # 7. NOTES ON KNOWN DATA PROBLEMS
 # =============================================================================
 # Notes exported with the species table (column Notes)
-viewt_tax1_updated_flor_pan[, notes := NA_character_]
+spp_flora[, notes := NA_character_]
 
 # Apeiba "hybrida" (apeihy): one tree, alive in 1982 and 1985, recorded dead
 # in 1990.
-viewt_tax1_updated_flor_pan[mnemonic %in% "apeihy", notes := "No longer present: recorded alive until 1985, dead in 1990"]
-viewt_tax1_updated_flor_pan[mnemonic %in% "apeihy"]
+spp_flora[mnemonic %in% "apeihy", notes := "No longer present: recorded alive until 1985, dead in 1990"]
+spp_flora[mnemonic %in% "apeihy"]
 
 # Nectandra s1 (nects1) and s3 (nects3) are Lauraceae morphospecies. nects3
 # (one tree) was alive in 1982 and 1985 and recorded dead in 1990; nects1 is
 # still alive (one tree in 2022-23) and should be followed to collect it
 # fertile and identify it.
-viewt_tax1_updated_flor_pan[mnemonic %in% "nects1"]
-viewt_tax1_updated_flor_pan[mnemonic %in% "nects3"]
-viewt_tax1_updated_flor_pan[mnemonic %in% "nects3", notes := "No longer present: recorded alive until 1985, dead in 1990"]
+spp_flora[mnemonic %in% "nects1"]
+spp_flora[mnemonic %in% "nects3"]
+spp_flora[mnemonic %in% "nects3", notes := "No longer present: recorded alive until 1985, dead in 1990"]
 
 # pterro includes the trees recorded as pterof (Pterocarpus officinalis does
-# not occur in the plot; R. Pérez, email 1)
-viewt_tax1_updated_flor_pan[mnemonic %in% "pterro", notes := "Previously identified as 'pterof' (Pterocarpus officinalis) are incorrect; those are 'pterro' (Pterocarpus rohrii)"]
+# not occur in the plot; R. Pérez, email 1). The note gives only the reason:
+# the code pterof and its trees are described by the stage-3 species table
+# (3_create_species_table_BCI.R: Notes and ReidentifiedFrom), so they are not
+# repeated here.
+spp_flora[mnemonic %in% "pterro", notes := "Pterocarpus officinalis does not occur in the plot (R. Pérez, 2026)"]
 
 # =============================================================================
 # 8. CHECK THE NAMES AGAINST THE CURRENT WFO BACKBONE
@@ -741,7 +757,7 @@ viewt_tax1_updated_flor_pan[mnemonic %in% "pterro", notes := "Previously identif
 #   wfo_check        TRUE for the rows whose name is checked against WFO
 #   scientific_name  full name without authority, built from the parts above
 # uniden (unidentified stems) is not a species and is left out of the table.
-spp_new <- copy(viewt_tax1_updated_flor_pan[mnemonic != "uniden"])
+spp_new <- copy(spp_flora[mnemonic != "uniden"])
 
 # Helpers used below.
 # TRUE where two values differ (NA vs NA is equal, NA vs a value differs)
@@ -1019,6 +1035,73 @@ check(
     "every name checked has a name and an author comparison"
 )
 
+# --- 8j. Parts of each name where WFO differs from the Flora de Panamá -------
+# For the botanists: one row per name checked whose WFO record differs from the
+# Flora de Panamá name in the family, genus, specific epithet, infraspecific
+# name (rank and epithet) or authority, with both versions of each part and
+# `differing_parts` naming the parts that differ. The authority is compared by
+# its authors only: another way of writing the same authors (spaces, periods,
+# capital letters, accents, e.g. "C. DC." and "C.DC.") is not a difference;
+# where the WFO record has no authority, the authority is not compared. The
+# Flora de Panamá values are those before the review of section 9. Written to
+# DATA/CHECKS/species_wfo_vs_flora_panama.csv (9j).
+authors_only <- function(x) {
+    x <- tolower(gsub("[[:space:].]", "", x))
+    chartr("áàâäãåéèêëíìîïóòôöõøúùûüñçý", "aaaaaaeeeeiiiioooooouuuuncy", x)
+}
+# Rank abbreviation of each WFO taxonRank ("variety" -> "var.")
+rank_abbreviations <- setNames(names(rank_words), rank_words)
+
+wfo_vs_flora <- wfo_review[, .(
+    mnemonic,
+    flora_name = paste(scientific_name, authority),
+    wfo_name = fifelse(is.na(wfo_author), wfo_name, paste(wfo_name, wfo_author)),
+    flora_family = family,
+    wfo_family,
+    flora_genus = genus,
+    wfo_genus,
+    flora_species = species,
+    wfo_species,
+    flora_infraspecific = fifelse(is.na(rank), NA_character_, paste(rank, variety)),
+    wfo_infraspecific = fifelse(
+        is.na(wfo_variety),
+        NA_character_,
+        paste(fcoalesce(unname(rank_abbreviations[wfo_rank]), wfo_rank), wfo_variety)
+    ),
+    flora_authority = authority,
+    wfo_authority = wfo_author,
+    name_check,
+    wfo_status,
+    wfo_id
+)]
+wfo_vs_flora[, differing_parts := gsub("^, |, $", "", gsub("(, )+", ", ", paste(
+    fifelse(differs(flora_family, wfo_family), "family", ""),
+    fifelse(differs(flora_genus, wfo_genus), "genus", ""),
+    fifelse(differs(flora_species, wfo_species), "species", ""),
+    fifelse(differs(flora_infraspecific, wfo_infraspecific), "infraspecific", ""),
+    fifelse(
+        !is.na(wfo_authority) & differs(authors_only(flora_authority), authors_only(wfo_authority)),
+        "authority", ""
+    ),
+    sep = ", "
+)))]
+wfo_vs_flora[differing_parts == "", differing_parts := NA_character_]
+setcolorder(wfo_vs_flora, c("mnemonic", "differing_parts"))
+wfo_vs_flora <- wfo_vs_flora[!is.na(differing_parts)]
+
+# Names whose WFO record differs, and the count per part
+wfo_vs_flora[, .(mnemonic, differing_parts, flora_name, wfo_name)]
+wfo_vs_flora[, .N, by = differing_parts][order(-N)]
+check(
+    setequal(
+        wfo_vs_flora[grepl("family", differing_parts), mnemonic],
+        wfo_review[family_check == "differs", mnemonic]
+    ) &&
+        all(wfo_vs_flora[grepl("authority", differing_parts), mnemonic] %in% wfo_review[author_check == "different", mnemonic]) &&
+        all(wfo_review[name_check != "same", mnemonic] %in% wfo_vs_flora$mnemonic),
+    "the parts that differ agree with the comparisons of 8i"
+)
+
 # =============================================================================
 # 9. REVIEW THE WFO SUGGESTIONS (STEP BY STEP)
 # =============================================================================
@@ -1201,17 +1284,15 @@ author_different
 # Lines that copy the WFO authority as it is (only where WFO is right)
 print_accept_lines(author_different[, .(mnemonic, column, suggested = wfo)])
 
-# TODO: Add the lines
 # Adopted or hand-corrected authorities (paste or write the lines here):
-# spp_new[mnemonic == "anacex", authority := "Skeels"]
+spp_new[mnemonic == "anacex", authority := "Skeels"]
 spp_new[mnemonic == "ficuc2", authority := "(Liebm.) Miq."]
 spp_new[mnemonic == "heisco", authority := "Standl."]
 spp_new[mnemonic == "maclti", authority := "(L.) D.Don ex G.Don"]
 spp_new[mnemonic == "ouralu", authority := "(Kunth) Engl."]
 spp_new[mnemonic == "pse2sp", authority := "(Sw.) Griseb."]
 spp_new[mnemonic == "tab1ro", authority := "(Bertol.) DC."]
-# spp_new[mnemonic == "thevah", authority := "A.DC."]
-spp_new[mnemonic == "thevah", authority := "(L.) Vahl"]
+spp_new[mnemonic == "thevah", authority := "A.DC."]
 spp_new[mnemonic == "tri2tu", authority := "(Triana & Planch.) C.DC."]
 spp_new[mnemonic == "tropra", authority := "(L.) Urb."]
 spp_new[mnemonic == "zantpr", authority := "(Sw.) Sw."]
@@ -1268,6 +1349,70 @@ accepted_changes <- rbindlist(lapply(name_cols, function(col) {
 setcolorder(accepted_changes, c("mnemonic", "column", "panama", "now"))
 accepted_changes
 
+# Where the species table (after the review) still differs from its WFO
+# record: one row per name checked that differs in family, genus, species,
+# infraspecific name or authority ("authority" when the authors differ,
+# "authority format" when only the writing differs: spaces, periods, capital
+# letters, accents), or whose WFO record is not an accepted name (status and
+# accepted name shown). The morphospecies are not checked against WFO and are
+# not listed. Written to DATA/CHECKS/species_table_vs_wfo.csv.
+table_vs_wfo <- merge(
+    spp_new[wfo_check == TRUE, .(
+        mnemonic,
+        table_name = paste(scientific_name, authority),
+        table_family = family,
+        table_genus = genus,
+        table_species = species,
+        table_infraspecific = fifelse(is.na(rank), NA_character_, paste(rank, variety)),
+        table_authority = authority
+    )],
+    wfo_review[, .(
+        mnemonic,
+        wfo_name = fifelse(is.na(wfo_author), wfo_name, paste(wfo_name, wfo_author)),
+        wfo_family,
+        wfo_genus,
+        wfo_species,
+        wfo_infraspecific = fifelse(
+            is.na(wfo_variety),
+            NA_character_,
+            paste(fcoalesce(unname(rank_abbreviations[wfo_rank]), wfo_rank), wfo_variety)
+        ),
+        wfo_authority = wfo_author,
+        wfo_status,
+        wfo_accepted_name = fifelse(
+            is.na(wfo_accepted_author), wfo_accepted_name, paste(wfo_accepted_name, wfo_accepted_author)
+        ),
+        wfo_id
+    )],
+    by = "mnemonic"
+)
+check(
+    nrow(table_vs_wfo) == nrow(wfo_review),
+    "every name checked against WFO is compared with the species table"
+)
+table_vs_wfo[, differing_parts := gsub("^, |, $", "", gsub("(, )+", ", ", paste(
+    fifelse(differs(table_family, wfo_family), "family", ""),
+    fifelse(differs(table_genus, wfo_genus), "genus", ""),
+    fifelse(differs(table_species, wfo_species), "species", ""),
+    fifelse(differs(table_infraspecific, wfo_infraspecific), "infraspecific", ""),
+    fcase(
+        is.na(wfo_authority), "",
+        differs(authors_only(table_authority), authors_only(wfo_authority)), "authority",
+        differs(table_authority, wfo_authority), "authority format",
+        default = ""
+    ),
+    sep = ", "
+)))]
+table_vs_wfo[differing_parts == "", differing_parts := NA_character_]
+table_vs_wfo[wfo_status %in% "Accepted", wfo_accepted_name := NA_character_]
+setcolorder(table_vs_wfo, c("mnemonic", "differing_parts", "wfo_status"))
+table_vs_wfo <- table_vs_wfo[!is.na(differing_parts) | differs(wfo_status, "Accepted")]
+
+# Names of the species table that differ from WFO (2026-10-21: none by any
+# part; 4 names are synonyms in WFO: guargr, laetth, swars1, swars2)
+table_vs_wfo[, .N, by = .(differing_parts, wfo_status)]
+table_vs_wfo[, .(mnemonic, differing_parts, wfo_status, table_name, wfo_name, wfo_accepted_name)]
+
 # Save the review, the candidate records and the changes made
 checks_folder <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "CHECKS")
 fwrite(wfo_review, file.path(checks_folder, "species_wfo_review.csv"))
@@ -1276,6 +1421,10 @@ fwrite(
     file.path(checks_folder, "species_wfo_candidates.csv")
 )
 fwrite(accepted_changes, file.path(checks_folder, "species_wfo_accepted_changes.csv"))
+# For the botanists (8j); with a byte order mark so that Excel shows the
+# accents of the authorities (Müll.Arg.) correctly
+fwrite(wfo_vs_flora, file.path(checks_folder, "species_wfo_vs_flora_panama.csv"), bom = TRUE)
+fwrite(table_vs_wfo, file.path(checks_folder, "species_table_vs_wfo.csv"), bom = TRUE)
 
 # =============================================================================
 # 10. COMPLETE AND CHECK THE REMAINING FIELDS
