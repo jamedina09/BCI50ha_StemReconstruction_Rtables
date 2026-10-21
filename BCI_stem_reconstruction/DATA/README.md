@@ -1,6 +1,6 @@
 # DATA: pending tasks
 
-Last updated 2026-10-16. Run in use: `20261014_220452_unknown_allT_DP_MB_NME_R12_BD_LT_CU_g5_sm0p5_kg0_ks0_rcpp`.
+Last updated 2026-10-21. Run in use: `20261014_220452_unknown_allT_DP_MB_NME_R12_BD_LT_CU_g5_sm0p5_kg0_ks0_rcpp`.
 
 ## Folders
 
@@ -12,7 +12,7 @@ Last updated 2026-10-16. Run in use: `20261014_220452_unknown_allT_DP_MB_NME_R12
 | `<run folder>/` | stage-2 engine output and merge |
 | `POSTERIORS/`, `RTABLES/` | stage-3 posterior preparation and R tables |
 | `CHECKS/` | check files; `revision_oct16/` holds the Oct 16 review lists |
-| `BACKUPS/` | copy of the run of 2026-10-05 |
+| `BACKUPS/` | copy of the run of 2026-10-05; species-table outputs archived before the rebuild (`species_tables_20261021/`) |
 
 ## To do: data manager (Oct 16 export)
 
@@ -40,17 +40,18 @@ Details: `CHECKS/revision_oct16/botanicos/`.
 - [ ] Synonym column: swars1 synonym equals its own name; 20 entries WFO assigns to other species (consider a "previous names" column); hassfl *Hasseltia panamensis* not found.
 - [ ] Authorities: thevah, anacex.
 - [ ] Infraspecific rank: protte (subsp. *sessiliflorum*), myrcga ("tip. *gatunensis*").
-- [ ] Morphospecies: apeihy, nects1, nects3, sapisp; uniform labels; lifeform for apeihy, nects1, nects3.
+- [ ] Morphospecies: apeihy, nects1, nects3, sapisp; uniform labels (the table keeps the database labels hybrid, fuzzy, sp.4_(tiny_leaf); email 1 calls them "hybrida", s1, s3); lifeform for apeihy, nects1, nects3.
 - [ ] Empty fields: common name (19 codes), herbarium (76 codes).
 
 ## To do: pipeline
 
+- [x] Rebuild the species tables (done 2026-10-21; previous outputs in `BACKUPS/species_tables_20261021/`).
 - [ ] Paste the spelling lines into `1_DATA_PREPARATION/1_prepare_species_tables.R` section 9c/9e once the botanists answer (appuse, ardiba, rinosy, malmsp).
-- [ ] Decide whether to switch the pipeline to the Oct 16 export (needs path changes in stage-1 scripts 0 to 2 and a relaxed same-codes check in script 1, section 2, because pterof is gone).
+- [ ] Decide whether to switch the pipeline to the Oct 16 export (needs the path changed in stage-1 scripts 1 and 2; script 1 reads only the codes and the names of apeihy, nects1 and nects3, and gives the same species table with either export, tested 2026-10-21).
 - [ ] Merge: restore the raw ExactDate on the 16 records filled by stage 2.
 - [ ] Project downstream (stage 4 and the publication folder) from run 20261014_220452.
 - [ ] Delete `COMPARE_DATASETS/bci.stem.mine/` (unused).
-- [ ] Push the local commits.
+- [ ] Commit the species-table changes of 2026-10-21 (stage 1 and stage 3; nothing is committed yet). Earlier commits are pushed.
 
 ## Fixed rules
 
