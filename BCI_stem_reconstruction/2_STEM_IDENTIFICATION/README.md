@@ -92,9 +92,15 @@ Merges completed chunk outputs into final files.
 - `run_chunk_bci.md` — run and resume commands for `1_main_cpp_chunk_bci.R`.
 - `tests/test_measurement_rejoin.R` — tests of the measurement rejoin
   (`testthat::test_file("BCI_stem_reconstruction/2_STEM_IDENTIFICATION/tests/test_measurement_rejoin.R")`).
-- `comparissons/` (not under version control) —
-  `compare_reconstruction_vs_dryad.R` and `dryad_approach_weaknesses.qmd`,
-  which compare the reconstruction with the published BCI stem tables.
+- `comparissons/` (not under version control) — comparisons with the
+  published BCI stem tables (Condit et al. 2019):
+  - `compare_reconstruction_vs_dryad.R`: stem trajectories, link by link, and
+    page-by-page PDFs per tag;
+  - `compare_records_vs_condit.R`: the final R tables record by record
+    (trees, records, dates, locations, measurements, statuses, stems), with
+    the report `records_comparison_report.html` and a CSV of every
+    difference;
+  - `dryad_approach_weaknesses.qmd`.
 
 ## Requirements
 
