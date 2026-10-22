@@ -54,6 +54,8 @@
 #   name or authority, part by part),
 #   species_table_vs_wfo.csv (names of the species table, after the review,
 #   that still differ from their WFO record, or that WFO treats as synonyms),
+#   species_synonyms_vs_wfo.csv (each synonym of the table and whether WFO
+#   places it in the same taxon; information only),
 #   prepare_species_tables_log.txt (failed checks).
 # Packages: data.table, WorldFlora, stringr, janitor, readxl.
 # =============================================================================
@@ -980,8 +982,9 @@ check(
 #                 spelling of the genus, species or variety); or
 #                 "not matched at its rank" (no record, or a record of another
 #                 rank, e.g. only the genus)
-#   author_check  "same"; "format only" (same text apart from spaces and
-#                 capital letters, e.g. "C. DC." and "C.DC."); "different"; or
+#   author_check  "same"; "format only" (the same authors written another
+#                 way: spaces, periods, capital letters, accents, e.g.
+#                 "C. DC." and "C.DC."); "different" (other authors); or
 #                 "not compared" (the WFO record has no authority)
 #   family_check  "same" or "differs"
 #   wfo_status    status of the record in WFO (Accepted, Synonym, Unchecked)
@@ -1016,12 +1019,18 @@ wfo_review[, name_check := fcase(
     default = "same"
 )]
 
-# Authority compared without spaces and capital letters for "format only"
-author_key <- function(x) tolower(gsub(" ", "", x))
+# Authority reduced to its authors: without spaces, periods, capital letters
+# and accents, so that two ways of writing the same authors are equal (the
+# rule of every authority comparison below, 8j and 9j, and of stage 3,
+# authority_key() in 3_PREPARE_R_TABLES/species_table_functions.R)
+authors_only <- function(x) {
+    x <- tolower(gsub("[[:space:].]", "", x))
+    chartr("áàâäãåéèêëíìîïóòôöõøúùûüñçý", "aaaaaaeeeeiiiioooooouuuuncy", x)
+}
 wfo_review[, author_check := fcase(
     is.na(wfo_author), "not compared",
     authority == wfo_author, "same",
-    author_key(authority) == author_key(wfo_author), "format only",
+    authors_only(authority) == authors_only(wfo_author), "format only",
     default = "different"
 )]
 
@@ -1044,11 +1053,8 @@ check(
 # capital letters, accents, e.g. "C. DC." and "C.DC.") is not a difference;
 # where the WFO record has no authority, the authority is not compared. The
 # Flora de Panamá values are those before the review of section 9. Written to
-# DATA/CHECKS/species_wfo_vs_flora_panama.csv (9j).
-authors_only <- function(x) {
-    x <- tolower(gsub("[[:space:].]", "", x))
-    chartr("áàâäãåéèêëíìîïóòôöõøúùûüñçý", "aaaaaaeeeeiiiioooooouuuuncy", x)
-}
+# DATA/CHECKS/species_wfo_vs_flora_panama.csv (9j). authors_only() is
+# defined in 8i.
 # Rank abbreviation of each WFO taxonRank ("variety" -> "var.")
 rank_abbreviations <- setNames(names(rank_words), rank_words)
 
@@ -1181,9 +1187,9 @@ print_accept_lines(spelling_suggestions)
 # Adopted spelling corrections (paste the lines here):
 
 # --- 9d. Authority: format only ----------------------------------------------
-# Same authority written with other spaces or capital letters (WFO writes
-# initials without spaces, e.g. "C.DC." for "C. DC."). Adopt the ones you want
-# written as in WFO.
+# The same authors written another way: spaces, periods, capital letters or
+# accents (WFO writes initials without spaces, e.g. "C.DC." for "C. DC.").
+# Adopt the ones you want written as in WFO.
 author_format <- wfo_review[
     author_check == "format only",
     .(mnemonic, scientific_name, column = "authority", current = authority, suggested = wfo_author)
@@ -1232,6 +1238,7 @@ spp_new[mnemonic == "koanwe", authority := "(B.L.Rob.) R.M.King & H.Rob."]
 spp_new[mnemonic == "laciag", authority := "(P.J.Bergius) Rusby"]
 spp_new[mnemonic == "lindla", authority := "C.Presl"]
 spp_new[mnemonic == "lozapi", authority := "(S.F.Blake) L.B.Sm."]
+spp_new[mnemonic == "maclti", authority := "(L.) D.Don ex G.Don"]
 spp_new[mnemonic == "micoho", authority := "Donn.Sm."]
 spp_new[mnemonic == "micoim", authority := "(Sw.) D.Don"]
 spp_new[mnemonic == "neeaam", authority := "Donn.Sm."]
@@ -1288,7 +1295,6 @@ print_accept_lines(author_different[, .(mnemonic, column, suggested = wfo)])
 spp_new[mnemonic == "anacex", authority := "Skeels"]
 spp_new[mnemonic == "ficuc2", authority := "(Liebm.) Miq."]
 spp_new[mnemonic == "heisco", authority := "Standl."]
-spp_new[mnemonic == "maclti", authority := "(L.) D.Don ex G.Don"]
 spp_new[mnemonic == "ouralu", authority := "(Kunth) Engl."]
 spp_new[mnemonic == "pse2sp", authority := "(Sw.) Griseb."]
 spp_new[mnemonic == "tab1ro", authority := "(Bertol.) DC."]
@@ -1471,6 +1477,102 @@ spp_new[
 
 # Remove the repeated name by hand, e.g.
 # spp_new[mnemonic == "xxxxxx", synonyms := NA_character_]
+
+# --- 10d. Synonyms compared with WFO (information only) -----------------------
+# Each synonym of the table (column synonyms, names separated by commas, without
+# authority) looked up in the WFO backbone by its full name. A synonym should
+# be a name of the same taxon as the code. synonym_check:
+#   "same taxon in WFO"        the synonym and the code's name lead to the same
+#                              accepted WFO record
+#   "same species in WFO"      the synonym leads to a subspecies or variety of
+#                              the species WFO accepts for the code (e.g.
+#                              Bactris augustinea -> Bactris major var. major)
+#   "another taxon in WFO"     every WFO record of the synonym leads to another
+#                              accepted name: WFO places it in another species,
+#                              or accepts it as a species of its own
+#   "not found in WFO"         no WFO record carries this name (closest WFO name
+#                              of the same genus in closest_wfo_name)
+#   "repeats the name"         the synonym is the code's own name (10c)
+#   "code not checked"         the code is a morphospecies (not checked, 8b)
+# Nothing is changed. Written to DATA/CHECKS/species_synonyms_vs_wfo.csv.
+
+# Accepted record of every WFO record (its own taxonID when accepted)
+wfo_accepted_of <- wfo_backbone[, .(
+    taxonID,
+    accepted_id = fifelse(taxonomicStatus %in% "Accepted" | acceptedNameUsageID %in% c(NA, ""), taxonID, acceptedNameUsageID)
+)]
+wfo_accepted_of[wfo_backbone, on = .(accepted_id = taxonID), `:=`(
+    accepted_name = i.scientificName,
+    accepted_author = i.scientificNameAuthorship
+)]
+
+# Accepted record of each code (from the record kept in 8h), and its species
+code_accepted <- merge(
+    wfo_review[, .(mnemonic, wfo_id)],
+    wfo_accepted_of[, .(wfo_id = taxonID, code_accepted_id = accepted_id, code_accepted_name = accepted_name)],
+    by = "wfo_id",
+    all.x = TRUE
+)
+code_accepted[, code_accepted_species := word(code_accepted_name, 1, 2)]
+
+synonyms_long <- spp_new[!is.na(synonyms), .(synonym = str_squish(unlist(strsplit(synonyms, ",")))), by = .(mnemonic, scientific_name)]
+synonyms_long <- synonyms_long[synonym != ""]
+synonym_records <- merge(
+    synonyms_long,
+    wfo_backbone[, .(synonym = scientificName, taxonID, taxonomicStatus)],
+    by = "synonym",
+    all.x = TRUE,
+    allow.cartesian = TRUE
+)
+synonym_records[wfo_accepted_of, on = "taxonID", `:=`(accepted_id = i.accepted_id, accepted_name = i.accepted_name, accepted_author = i.accepted_author)]
+synonym_records[code_accepted, on = "mnemonic", `:=`(code_accepted_id = i.code_accepted_id, code_accepted_species = i.code_accepted_species)]
+
+synonyms_vs_wfo <- synonym_records[, .(
+    wfo_records = sum(!is.na(taxonID)),
+    same_taxon = any(accepted_id == code_accepted_id, na.rm = TRUE),
+    same_species = any(word(accepted_name, 1, 2) == code_accepted_species, na.rm = TRUE),
+    checked_code = !is.na(code_accepted_id[1]),
+    wfo_status = paste(sort(unique(na.omit(taxonomicStatus))), collapse = "/"),
+    wfo_accepted_name = paste(unique(na.omit(str_squish(paste(accepted_name, fcoalesce(accepted_author, ""))))), collapse = "; ")
+), by = .(mnemonic, scientific_name, synonym)]
+synonyms_vs_wfo[, synonym_check := fcase(
+    synonym == scientific_name, "repeats the name",
+    !checked_code, "code not checked",
+    wfo_records == 0L, "not found in WFO",
+    same_taxon, "same taxon in WFO",
+    same_species, "same species in WFO",
+    default = "another taxon in WFO"
+)]
+
+# Names not found: the closest WFO name of the same genus (at most 2 letters
+# apart), e.g. another gender ending of the epithet
+not_found <- synonyms_vs_wfo[synonym_check == "not found in WFO", unique(synonym)]
+closest <- vapply(not_found, function(s) {
+    pool <- wfo_backbone[genus == word(s, 1) & taxonRank %in% "species", unique(scientificName)]
+    if (!length(pool)) {
+        return(NA_character_)
+    }
+    d <- drop(adist(s, pool))
+    if (min(d) <= 2L) pool[which.min(d)] else NA_character_
+}, character(1))
+synonyms_vs_wfo[, closest_wfo_name := unname(closest[synonym])]
+synonyms_vs_wfo[, c("same_taxon", "same_species", "checked_code") := NULL]
+setcolorder(synonyms_vs_wfo, c("mnemonic", "scientific_name", "synonym", "synonym_check"))
+setorder(synonyms_vs_wfo, mnemonic, synonym)
+check(
+    nrow(synonyms_vs_wfo) == nrow(synonyms_long) && !anyNA(synonyms_vs_wfo$synonym_check),
+    "every synonym of the table is compared with WFO once"
+)
+
+# 2026-10-21: 203 synonyms of 157 codes; the ones that are not the same taxon
+# or species in WFO are printed for review
+synonyms_vs_wfo[, .N, by = synonym_check][order(-N)]
+synonyms_vs_wfo[
+    !synonym_check %in% c("same taxon in WFO", "same species in WFO"),
+    .(mnemonic, scientific_name, synonym, synonym_check, wfo_accepted_name, closest_wfo_name)
+]
+fwrite(synonyms_vs_wfo, file.path(checks_folder, "species_synonyms_vs_wfo.csv"), bom = TRUE)
+rm(wfo_accepted_of, code_accepted, synonyms_long, synonym_records, not_found, closest)
 
 # =============================================================================
 # 11. ASSEMBLE THE SPECIES TABLE AND EXPORT
