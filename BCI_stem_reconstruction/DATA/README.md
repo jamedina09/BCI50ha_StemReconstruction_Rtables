@@ -108,6 +108,14 @@ Botanists (species table):
 - [x] **Stump records stay with the stem that broke** (`apply_terminal_to_host()`):
   - a "missing" record after a stump on its StemID moves with the stump (run 20261014_220452 left 347 on another stem, e.g. 1985 stumps recorded "missing" in 1990);
   - a whole-tree break of a multi-stem tree up to 2010 (every stem ends together, so the rule "the one stem that ended" finds none): the stump goes to the main stem of the census before, where the field wrote the break. Run 20261014_220452 left 2,639 of these stumps (7,170 records) as stems that never live; in every case the main stem ends there and can take them.
+- [x] **Sandbox test of these rules** (2026-10-22, final code):
+  - Test set: 92 of its 135 chunks run (1,656 trees). Measured stems and posterior samples are identical to the version before the field-tag rule. Whole-tree breaks go to the main stem (16 of 16). 0 field tags split, 0 stems with two field tags, 0 pins rewritten, no pin split in any posterior sample.
+  - Every tree with an affected record (1,067: all group-1 and group-2 trees and the 347 missing records):
+    - the 65 stump records between two measurements of one StemID are one stem each (59 trees);
+    - the 666 tagged 2010 stumps start their tag's stem;
+    - the 347 missing records sit on their stump's stem;
+    - 0 field tags split and 0 stems with two field tags (1,749 tags).
+  - One tree shows how a field tag and the stump rule meet (198777): a stump recorded from 1985, renumbered in 1995, tagged 1 in 2010 and measured under tag 1 in 2015. No stem ended just before 1995 that could take the 1995–2005 records, so they stay with that StemID (as in run 20261014_220452), now one stem with tag 1. Stage 4 keeps those stump censuses out of the stock.
 - [x] **Stage 4: a stump is alive but out of the stock** (user decision 2026-10-22; stage 3 and the R statuses are unchanged). An A record without a DBH whose `DFstatus` is "broken below" is a stem with no measurable DBH at 1.3 m: the three stage-4 scripts give it no DBH, do not count it as a stem, and give it no basal area or biomass. Before the stem's first measurement the stem enters the stock at that measurement (a recruit); between two measurements its basal area or biomass leaves the stock and comes back. Without this, stage 4 would fill the tagged stumps above (alive in stage 3, because alive later) with a DBH as missed measurements. To be checked on the final run's R tables.
 - **All kept settings together** (sandbox run of the final configuration):
   - links up to 2010 in trees and shrubs: 10,300 → 11,677; beyond measurement error 1.62% → 1.51%; growth above 5 mm/yr 2.63% → 2.47%;
