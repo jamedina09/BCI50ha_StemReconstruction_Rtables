@@ -54,3 +54,6 @@ bci_lines
 1ha_plots_species
 COMPARE_DATASETS
 static_bci
+# Outputs of run 20261014_220452 (Oct 13 export), kept for comparison with the final run
+BCI_stem_reconstruction/DATA/oct_13/
+BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/oct_13/
