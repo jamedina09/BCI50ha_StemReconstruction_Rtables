@@ -114,6 +114,12 @@ Merges completed chunk outputs into final files.
   the final table equals the stage-1 table (`growth_form` aside, the stage-2
   label on multiple-stem tags). Stage 3 gives every row a date in its own
   column `date`.
+- Restores the pins (`TrueStemID`) of the rows relabelled by the broken-below
+  rules R1/R2: with hard pins each is the row's database StemID, but in run
+  20261022_220659 the stage-2 renumbering turned 127 of them (37 trees) into
+  per-tree numbers (fixed since in `renumber_engine_minted_ids()`). Checks that
+  every such pin is a database StemID of its tree. The reconstructed stems do
+  not change.
 - Checks that field-tagged stems stay whole and stops with `❌ CHECK FAILED`
   otherwise: every row with a StemTag is pinned, every field tag (2010 on, by
   tag value) is one reconstructed stem, and no reconstructed stem holds two
