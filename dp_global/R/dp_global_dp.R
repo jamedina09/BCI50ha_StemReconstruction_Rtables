@@ -220,6 +220,17 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
 
     verbose <- isTRUE(verbose) || isTRUE(getOption("dp_global_biol.verbose", FALSE))
+    # Rule for broken-below records with a DBH (option dp_global.bb_dbh_rule,
+    # see bb_main_rule_active() in dp_global_main.R): "main_ends" ends the main
+    # stem of the census before at the break and matches the record like any
+    # other measurement; "r1" (default) makes it continue the stem it came
+    # from here and leaves the split to rule R1 after the engine.
+    .bb_main_rule <- identical(getOption("dp_global.bb_dbh_rule", "r1"), "main_ends")
+    # Label-free posterior (option dp_global.posterior_label_free, default
+    # FALSE): each reconstruction counted once in the marginals and posterior
+    # samples, and a label-free DP_PosteriorReconstructedProb on the rows of
+    # interchangeable tracks (see .int_tracks below).
+    .label_free_post <- isTRUE(getOption("dp_global.posterior_label_free", FALSE))
     vcat <- function(...) {
         if (!isTRUE(verbose)) {
             return(invisible(NULL))
@@ -848,11 +859,15 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # ID, so the R row and its continuation keep the matcher's ID and
             # agree with the anchor pins (see split_live_resprout_tracks()).
             # The anchor census is left to apply_broken_below_invariants() (R1).
-            out <- split_live_resprout_tracks(
-                out,
-                censuses = .pre_censuses_fb[.pre_censuses_fb < anchor_start],
-                id_floor = suppressWarnings(max(original_tree_data$TrueStemID, na.rm = TRUE))
-            )
+            # With the main-stem rule the matcher itself ends the main stem at
+            # the break and matches the record freely, so nothing is split here.
+            if (!isTRUE(.bb_main_rule)) {
+                out <- split_live_resprout_tracks(
+                    out,
+                    censuses = .pre_censuses_fb[.pre_censuses_fb < anchor_start],
+                    id_floor = suppressWarnings(max(original_tree_data$TrueStemID, na.rm = TRUE))
+                )
+            }
         }
 
         .res_fb <- finalize_out(out)
@@ -1439,6 +1454,21 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
 
     # (R-coded observations continue existing tracks — no extra track slots needed.)
+    # Main-stem rule: a break at census p (a measured broken-below / R row)
+    # ends the main stem (PrimaryStem "main") of census p - 1 and the broken
+    # record may be a new stem, so each such break may need one more track.
+    .is_main_pre <- lapply(.obs_row_idx_pre, function(idx) {
+        if (length(idx) == 0L || !("PrimaryStem" %in% names(tree_data))) {
+            return(logical(length(idx)))
+        }
+        as.character(tree_data$PrimaryStem[idx]) %in% "main"
+    })
+    .n_bb_breaks <- 0L
+    if (isTRUE(.bb_main_rule) && n_census >= 2L) {
+        for (.pb in 2:n_census) {
+            if (any(.is_resprout_pre[[.pb]]) && any(.is_main_pre[[.pb - 1L]])) .n_bb_breaks <- .n_bb_breaks + 1L
+        }
+    }
 
     slack_tracks <- suppressWarnings(as.integer(slack_tracks))
     if (!is.finite(slack_tracks) || is.na(slack_tracks) || slack_tracks < 0L) {
@@ -1461,7 +1491,7 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     }
 
     # Apply slack only when requested and when anchor_ok (if required).
-    K_target <- K_base + ifelse(slack_tracks > 0L && isTRUE(anchor_ok), slack_tracks, 0L)
+    K_target <- K_base + ifelse(slack_tracks > 0L && isTRUE(anchor_ok), slack_tracks, 0L) + .n_bb_breaks
     K <- min(K_target, max_tracks)
 
     # Report theoretical worst-case state count
@@ -1556,11 +1586,13 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     obs_dbh <- vector("list", n_census)
     obs_row_idx <- vector("list", n_census)
     is_resprout_obs <- vector("list", n_census)
+    is_main_obs <- vector("list", n_census)
     for (p in seq_len(n_census)) {
         idx <- .obs_row_idx_pre[[p]]
         obs_row_idx[[p]] <- idx
         obs_dbh[[p]] <- tree_data$DBH[idx]
         is_resprout_obs[[p]] <- .is_resprout_pre[[p]]
+        is_main_obs[[p]] <- .is_main_pre[[p]]
     }
 
     # --- Pre-compute TrueStemID pin map for non-anchor censuses -------------
@@ -1593,6 +1625,18 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             pin_tidx_at_census[[p]] <- tidx
         }
     }
+
+    # Interchangeable tracks: no stem at the anchor and no pinned measured
+    # observation. Their labels carry no identity: a reconstruction with m
+    # stems on them occurs under P(S, m) = S! / (S - m)! labelings (S = number
+    # of such tracks), all with the same cost. With the label-free posterior
+    # the sum-product (marginals, posterior samples) divides every path by
+    # that count, so each reconstruction is counted once and the posterior
+    # does not depend on the number of spare tracks; the MAP (Viterbi) is
+    # unchanged, since it compares single paths.
+    .pinned_track_idx <- unique(stats::na.omit(unlist(pin_tidx_at_census, use.names = FALSE)))
+    .int_tracks <- setdiff(.slack_track_set, .pinned_track_idx)
+    .S_int <- length(.int_tracks)
 
     # --- Pass 2 (backward): enumerate states with per-interval constraints --
     state_mats <- vector("list", n_census)
@@ -1998,8 +2042,11 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             tdbh1_mat <- track_dbh_by_state[[p + 1L]][next_assign_row_idx, , drop = FALSE] # n_next × K
             phase_tp1_mat <- do.call(rbind, phase_tp1_by_next) # n_next × K; integer
 
-            # Resprout matrix: n_next × K (zero-row means "no resprouts")
-            if (any(is_resprout_obs[[p + 1L]])) {
+            # Resprout matrix: n_next × K (zero-row means "no resprouts").
+            # With the main-stem rule a broken record is an ordinary
+            # observation (no forced continuation); the main-stem filter below
+            # ends the main stem of census p instead.
+            if (!isTRUE(.bb_main_rule) && any(is_resprout_obs[[p + 1L]])) {
                 resprout_flags_tp1 <- is_resprout_obs[[p + 1L]]
                 resp_mat <- matrix(FALSE, nrow = n_next, ncol = K)
                 for (j in seq_len(n_next)) {
@@ -2107,8 +2154,9 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
             # (it cannot be a new/empty track).
             # Only applies to R-coded LIVING obs (non-NA DBH).
             # Skipped when census p has 0 observations (all tracks already empty).
+            # Not used with the main-stem rule (main-stem filter below).
             # -----------------------------------------------------------------------
-            if (n_feasible > 0L) {
+            if (n_feasible > 0L && !isTRUE(.bb_main_rule)) {
                 .r_pos_p1 <- which(is_resprout_obs[[p + 1L]]) # R-coded LIVING obs at p+1
                 .n_obs_p <- length(obs_dbh[[p]])
                 if (length(.r_pos_p1) > 0L && .n_obs_p > 0L) {
@@ -2137,6 +2185,34 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
                         fe_phase <- fe_phase[.keep_r, , drop = FALSE]
                         n_feasible <- length(fe_from)
                     }
+                }
+            }
+
+            # -----------------------------------------------------------------------
+            # Main-stem rule (option dp_global.bb_dbh_rule = "main_ends")
+            # A measured broken-below / R row at census p+1 records the break of
+            # the tree's main stem: the track of the main-stem observation of
+            # census p (PrimaryStem "main") ends there and holds no observation
+            # at p+1. The broken record itself is an ordinary observation: it
+            # may continue another stem of census p or start a new one.
+            # -----------------------------------------------------------------------
+            if (n_feasible > 0L && isTRUE(.bb_main_rule) && any(is_resprout_obs[[p + 1L]]) && any(is_main_obs[[p]])) {
+                .n_obs_p1 <- length(obs_dbh[[p + 1L]])
+                .p_assign <- state_mats[[p]][fe_from, , drop = FALSE] # n_feasible × n_obs_p
+                .p1_tracks <- next_assign_mat[fe_to, seq_len(.n_obs_p1), drop = FALSE] # n_feasible × n_obs_p1
+                .keep_m <- rep(TRUE, n_feasible)
+                for (.mj in which(is_main_obs[[p]])) {
+                    .keep_m <- .keep_m & (rowSums(.p1_tracks == .p_assign[, .mj]) == 0L)
+                }
+                if (any(!.keep_m)) {
+                    vcat(
+                        prefix, "    Main-stem filter: removed ", sum(!.keep_m), "/", n_feasible,
+                        " transitions at C", next_cc, " (the main stem of C", cc, " ends at the break)"
+                    )
+                    fe_from <- fe_from[.keep_m]
+                    fe_to <- fe_to[.keep_m]
+                    fe_phase <- fe_phase[.keep_m, , drop = FALSE]
+                    n_feasible <- length(fe_from)
                 }
             }
 
@@ -2230,6 +2306,16 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 
                 # --- 3. Vectorized cost accumulation ---
                 .logw_all <- -.all_costs / temperature
+                # Label-free posterior: going back from the anchor, a step
+                # that puts `a` more interchangeable tracks into use while
+                # `u` are already in use (phase != 2) is divided by
+                # (S - u)! / (S - u - a)!; over a path the factors give
+                # 1 / P(S, m). Viterbi keeps the plain costs.
+                if (isTRUE(.label_free_post) && .S_int >= 2L) {
+                    .u_next <- rowSums(phase_tp1_mat[fe_to, .int_tracks, drop = FALSE] != 2L)
+                    .u_curr <- rowSums(fe_phase[, .int_tracks, drop = FALSE] != 2L)
+                    .logw_all <- .logw_all + lgamma(.S_int - .u_curr + 1) - lgamma(.S_int - .u_next + 1)
+                }
                 .cand_vit_all <- .all_costs + vit_next[fe_to]
                 .cand_log_all <- .logw_all + logB_next[fe_to]
 
@@ -2610,6 +2696,33 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         tree_data[obs_idx, (names(assign_list)) := assign_list]
     }
 
+    # Label-free posterior: on a row whose MAP track is interchangeable the
+    # marginal above is split across equivalent labels. Such a row gets the
+    # share of the posterior samples in which its stem ends at the same
+    # observation as its MAP stem (computed after the sampling below; NA
+    # without samples). Rows of anchor and pinned tracks keep the marginal
+    # (the anchor or pinned observation fixes the label).
+    .lf_rows <- NULL
+    if (isTRUE(.label_free_post) && .S_int > 0L) {
+        .lf_rows <- data.table::rbindlist(lapply(seq_len(n_census), function(p) {
+            idx <- obs_row_idx[[p]]
+            if (length(idx) == 0L) {
+                return(NULL)
+            }
+            data.table::data.table(
+                .row = idx, ObsRowID = tree_data$obs_row_id[idx], CensusID = census_range[p],
+                trk = as.integer(assign_full[[p]][[map_idx[p]]])
+            )
+        }))
+        if (nrow(.lf_rows) > 0L) .lf_rows <- .lf_rows[trk %in% .int_tracks]
+        if (nrow(.lf_rows) > 0L) {
+            .lf_rows[, t_obs := ObsRowID[which.max(CensusID)], by = trk]
+            data.table::set(tree_data, .lf_rows$.row, "DP_PosteriorReconstructedProb", NA_real_)
+        } else {
+            .lf_rows <- NULL
+        }
+    }
+
     tree_data <- add_constraint_violation(
         tree_data,
         id_col = "ReconstructedStemID",
@@ -2705,6 +2818,22 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
         samples_dt <- data.table::rbindlist(samples_list, use.names = TRUE, fill = TRUE)
         # Ensure rows are ordered for signature construction
         samples_dt <- samples_dt[order(Sample, CensusID)]
+        if (!is.null(.lf_rows) && nrow(samples_dt) > 0L) {
+            .lf_s <- samples_dt[, .(Sample, CensusID, ReconstructedStemID, ObsRowID)]
+            .lf_s[, last_obs := ObsRowID[which.max(CensusID)], by = .(Sample, ReconstructedStemID)]
+            .lf_p <- .lf_s[.lf_rows, on = "ObsRowID", nomatch = 0L][
+                , .(p_lf = sum(last_obs == t_obs) / posterior_samples),
+                by = ObsRowID
+            ]
+            data.table::set(
+                tree_data, match(.lf_p$ObsRowID, tree_data$obs_row_id),
+                "DP_PosteriorReconstructedProb", .lf_p$p_lf
+            )
+            vcat(prefix, sprintf(
+                "Label-free posterior: %d row(s) on %d interchangeable track(s) of %d; median probability %.3f",
+                nrow(.lf_p), data.table::uniqueN(.lf_rows$trk), .S_int, stats::median(.lf_p$p_lf)
+            ))
+        }
         sampling_profile$samples_dt_size_bytes <- as.numeric(object.size(samples_dt))
         sampling_profile$after_samples_time <- tic() - t_sampling_start
 
