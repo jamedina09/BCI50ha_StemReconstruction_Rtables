@@ -1219,11 +1219,13 @@ renumber_engine_minted_ids <- function(out,
 
     # Methods that write engine-minted IDs into TrueStemID. For these
     # rows TrueStemID is renumbered alongside ReconstructedStemID;
-    # rows holding real DB IDs in TrueStemID are left untouched.
+    # rows holding real DB IDs in TrueStemID are left untouched. With hard
+    # pins the broken-below rules never write TrueStemID, so their rows keep
+    # the database pin (renumbering it turned 127 pins of run 20261022_220659
+    # into per-tree numbers).
     ENGINE_MINTED_INTO_TRUESTEMID <- c(
         "provisional_dp",
-        "bb_split", "bb_split_carry",
-        "bb_post_terminator_split", "bb_post_terminator_split_carry"
+        if (!hard_pins_active()) c("bb_split", "bb_split_carry", "bb_post_terminator_split", "bb_post_terminator_split_carry")
     )
 
     # Auto-detect DP_PosteriorTop{k}ID columns if not specified
