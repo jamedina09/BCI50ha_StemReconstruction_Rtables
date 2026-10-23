@@ -329,6 +329,32 @@ match_stems_probabilistic <- function(tree_data,
         }
     }
 
+    # --- Main-stem rule (option dp_global.bb_dbh_rule = "main_ends") --------
+    # A measured broken-below / R row at census i+1 records the break of the
+    # tree's main stem: the main-stem observation of census i (PrimaryStem
+    # "main") may not continue to any observation of census i+1 (only its
+    # death cell stays open; see apply_main_end_mask()). The broken record is
+    # matched like any other observation. main_end_rows[[i]] holds the rows of
+    # census i's main stem(s) for each such pair.
+    .bb_main_rule <- identical(getOption("dp_global.bb_dbh_rule", "r1"), "main_ends")
+    main_end_rows <- vector("list", max(0L, n_census - 1L))
+    .any_main_end <- FALSE
+    if (.bb_main_rule && n_census >= 2L && "PrimaryStem" %in% names(tree_data)) {
+        .rr_main <- "\\b(R|RP|RF|RT|QR|OR)\\b"
+        for (i in seq_len(n_census - 1L)) {
+            .idx1 <- obs_data[[i + 1L]]$idx
+            .st1 <- if ("Status" %in% names(tree_data)) as.character(tree_data$Status[.idx1]) else rep(NA_character_, length(.idx1))
+            .ts1 <- if ("ListOfTSM" %in% names(tree_data)) as.character(tree_data$ListOfTSM[.idx1]) else rep(NA_character_, length(.idx1))
+            .is_r1 <- (.st1 %in% "broken below") | (!is.na(.ts1) & grepl(.rr_main, .ts1, perl = TRUE))
+            if (!any(.is_r1)) next
+            .mrows <- which(as.character(tree_data$PrimaryStem[obs_data[[i]]$idx]) %in% "main")
+            if (length(.mrows) > 0L) {
+                main_end_rows[[i]] <- .mrows
+                .any_main_end <- TRUE
+            }
+        }
+    }
+
     # --- Per-pair log-likelihood matrices (backward) -----------------------
     # For each pair (c, c+1) compute the pairwise + augmented cost matrix
     pair_data <- vector("list", n_census - 1L)
@@ -403,7 +429,7 @@ match_stems_probabilistic <- function(tree_data,
         last_pair <- n_census - 1L
         .cost_last <- pair_data[[last_pair]]$log_cost
         .fb_last <- pair_data[[last_pair]]$fallback
-        if (.any_pins || .any_track_pins) {
+        if (.any_pins || .any_track_pins || .any_main_end) {
             .mp <- pin_masked_pair(.cost_last, .fb_last, pair_data[[last_pair]], bio, function(m) {
                 if (.any_pins && !is.null(pin_info[[last_pair]])) {
                     m <- apply_pin_mask(
@@ -417,6 +443,7 @@ match_stems_probabilistic <- function(tree_data,
                         pair_data[[last_pair]]$n_curr, pair_data[[last_pair]]$n_next
                     )
                 }
+                m <- apply_main_end_mask(m, main_end_rows[[last_pair]], pair_data[[last_pair]]$n_next)
                 m
             })
             .cost_last <- .mp$cost
@@ -462,7 +489,7 @@ match_stems_probabilistic <- function(tree_data,
                 }
 
                 fb_i <- pair_data[[i]]$fallback
-                if (.any_pins || .any_track_pins) {
+                if (.any_pins || .any_track_pins || .any_main_end) {
                     .mp <- pin_masked_pair(cost_i, fb_i, pair_data[[i]], bio, function(m) {
                         if (.any_pins && !is.null(pin_info[[i]])) {
                             m <- apply_pin_mask(
@@ -476,6 +503,7 @@ match_stems_probabilistic <- function(tree_data,
                                 pair_data[[i]]$n_curr, pair_data[[i]]$n_next
                             )
                         }
+                        m <- apply_main_end_mask(m, main_end_rows[[i]], pair_data[[i]]$n_next)
                         m
                     })
                     cost_i <- .mp$cost
@@ -579,7 +607,16 @@ match_stems_probabilistic <- function(tree_data,
     # not the per-census marginal resolution above. Top-K and entropy columns
     # stay marginal; DP_PosteriorReconstructedProb = share of samples giving
     # the observation the exported ID.
-    .cons <- select_consensus_trajectory(stitched, obs_data)
+    # Option dp_global.prob_export_rule = "fewest_me": among the samples, those
+    # with the fewest links that shrink beyond measurement error come first
+    # (count_beyond_me_links()); the export stays one of the samples.
+    .n_bad <- NULL
+    if (identical(getOption("dp_global.prob_export_rule", "mea"), "fewest_me")) {
+        .n_bad <- count_beyond_me_links(stitched, obs_data, tree_data,
+            dbh_round_censuses = dbh_round_censuses, dbh_round_max = dbh_round_max, dbh_round_width = dbh_round_width
+        )
+    }
+    .cons <- select_consensus_trajectory(stitched, obs_data, n_bad = .n_bad)
     .chosen <- stitched[[.cons$index]]
     for (ci in seq_len(n_census)) {
         .n <- obs_data[[ci]]$n
@@ -1258,6 +1295,25 @@ propagate_track_pin <- function(assignment, pin_curr, next_track_pin,
         if (col <= n_next) out[r] <- next_track_pin[col]
     }
     out
+}
+
+# apply_main_end_mask: main-stem rule (option dp_global.bb_dbh_rule =
+# "main_ends"). In a census pair whose later census holds a broken-below / R
+# record with a DBH, the main-stem observation(s) of the earlier census
+# (rows main_rows) may not continue to any observation of the later census:
+# their link cells are set to -Inf, so only their death cell stays open.
+#
+# INPUTS  cost_matrix  K×K augmented log-cost matrix
+#         main_rows    rows (current-census observations) of the main stem(s);
+#                      NULL or empty for no mask
+#         n_next       number of real observations at the next census
+# RETURNS modified cost_matrix
+apply_main_end_mask <- function(cost_matrix, main_rows, n_next) {
+    if (length(main_rows) == 0L || n_next == 0L) {
+        return(cost_matrix)
+    }
+    cost_matrix[main_rows, seq_len(n_next)] <- -Inf
+    cost_matrix
 }
 
 # pin_masked_pair: one census pair's cost and fallback matrices with this
@@ -2023,13 +2079,16 @@ compute_marginals_from_samples <- function(stitched, tree_data, obs_data,
 # previous observed census, or none) is scored by how often the samples choose
 # that same predecessor; the sample with the highest total wins. Ties go to
 # the most frequent partition, then to the lowest sample index. When one
-# partition dominates the samples it is also the MEA sample.
+# partition dominates the samples it is also the MEA sample. With n_bad (one
+# count per sample, from count_beyond_me_links()) the samples with the fewest
+# links beyond measurement error are considered first.
 #
 # INPUTS   stitched  list of samples; each a list of per-census ID vectors
 #          obs_data  per-census observation data (uses $n)
+#          n_bad     optional integer vector, one value per sample
 # RETURNS  list(index = chosen sample, agreement = mean predecessor frequency
 #          of the chosen sample, part_freq = frequency of its partition)
-select_consensus_trajectory <- function(stitched, obs_data) {
+select_consensus_trajectory <- function(stitched, obs_data, n_bad = NULL) {
     n_s <- length(stitched)
     n_census <- length(obs_data)
     n_obs <- vapply(obs_data, function(x) as.integer(x$n), integer(1))
@@ -2055,12 +2114,66 @@ select_consensus_trajectory <- function(stitched, obs_data) {
         paste(match(ids, unique(ids)), collapse = ",")
     }, character(1))
     part_freq <- as.numeric(table(sig)[sig]) / n_s
-    best <- order(-round(score, 10), -part_freq, seq_len(n_s))[1L]
+    bad <- if (!is.null(n_bad) && length(n_bad) == n_s) as.numeric(n_bad) else rep(0, n_s)
+    best <- order(bad, -round(score, 10), -part_freq, seq_len(n_s))[1L]
     list(
         index = best,
         agreement = if (n_scored > 0L) score[best] / n_scored else 1,
         part_freq = part_freq[best]
     )
+}
+
+# ---- Links beyond measurement error, per sample --------------------------
+# Number of links in each sample whose recorded DBH shrinks by more than four
+# measurement-error SDs (CTFS rule: d1 <= d0 - 4 * (0.006214 * d0 + 0.9036),
+# DBH in mm, as in trim.growth): links whose earlier DBH is at least 10 mm
+# with both HOMs known and within 5% of each other; at a census whose small
+# DBH was rounded down to classes (dbh_round_censuses, below dbh_round_max) a
+# link that passes with one class width more is not counted. A link joins an
+# observation to the observation with the same ID at the previous observed
+# census (as in select_consensus_trajectory()). The recorded DBH is
+# DBH_mm_original_backup when the table has it, else DBH * 10 (engine DBH in
+# cm); HOM is the HOM column (none: no link is counted).
+#
+# INPUTS   stitched, obs_data  as for select_consensus_trajectory()
+#          tree_data           the tag's rows (obs_data$idx index them)
+#          dbh_round_censuses, dbh_round_max (cm), dbh_round_width (cm)
+# RETURNS  integer vector, one count per sample
+count_beyond_me_links <- function(stitched, obs_data, tree_data, dbh_round_censuses = integer(0),
+                                  dbh_round_max = 5.5, dbh_round_width = 0.5) {
+    n_s <- length(stitched)
+    n_census <- length(obs_data)
+    out <- integer(n_s)
+    if (n_s == 0L || n_census < 2L || !("HOM" %in% names(tree_data))) {
+        return(out)
+    }
+    d_all <- if ("DBH_mm_original_backup" %in% names(tree_data)) as.numeric(tree_data$DBH_mm_original_backup) else 10 * as.numeric(tree_data$DBH)
+    h_all <- as.numeric(tree_data$HOM)
+    dmm <- lapply(obs_data, function(o) d_all[o$idx])
+    hom <- lapply(obs_data, function(o) h_all[o$idx])
+    n_obs <- vapply(obs_data, function(o) as.integer(o$n), integer(1))
+    rnd <- vapply(obs_data, function(o) o$census_id %in% dbh_round_censuses, logical(1))
+    for (s in seq_len(n_s)) {
+        smp <- stitched[[s]]
+        cnt <- 0L
+        for (ci in 2:n_census) {
+            if (n_obs[ci] == 0L || n_obs[ci - 1L] == 0L) next
+            pred <- match(smp[[ci]][seq_len(n_obs[ci])], smp[[ci - 1L]][seq_len(n_obs[ci - 1L])], nomatch = 0L)
+            k <- which(pred > 0L)
+            if (length(k) == 0L) next
+            d0 <- dmm[[ci - 1L]][pred[k]]
+            d1 <- dmm[[ci]][k]
+            h0 <- hom[[ci - 1L]][pred[k]]
+            h1 <- hom[[ci]][k]
+            lim <- d0 - 4 * (0.006214 * d0 + 0.9036)
+            fail <- !is.na(d0) & !is.na(d1) & d0 >= 10 & !is.na(h0) & !is.na(h1) & h0 > 0 &
+                abs(h1 - h0) / h0 <= 0.05 & d1 <= lim
+            if (rnd[ci - 1L]) fail <- fail & !(d0 < 10 * dbh_round_max & d1 > lim - 10 * dbh_round_width)
+            cnt <- cnt + sum(fail)
+        }
+        out[s] <- cnt
+    }
+    out
 }
 
 # ---- Repair growth violations from marginal resolution -------------------
