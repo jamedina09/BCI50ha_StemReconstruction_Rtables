@@ -29,11 +29,38 @@ caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_c
 - `PROB_BIRTH_DEATH` (default `TRUE`, not needed on the command line): the probabilistic matcher lets every stem continue, die or be recruited in every census pair, scored by the same biological model as the DP. `--PROB_BIRTH_DEATH=FALSE` selects count-based slots, which force every stem to continue when the stem count does not change (before 2010 this gives 0.8–4.4 palm stem replacements, a death and a recruit in one tree, per 100 trees per year, against 4.6–6.9 with the 2010–2023 stem tags). The DP is not affected.
 - `RECRUIT_RATE_UNIT` (default `"tree"`, not needed on the command line): the recruitment rate of both engines is the number of new stems per established tree per year (2010–2023 data). `--RECRUIT_RATE_UNIT=slot` selects the rate per empty slot of the estimation grid (~0.08/yr for every species).
 - `COVERAGE_RULE` (default `"union"`, not needed on the command line): which species get their own parameter set. A species with enough 2010–2023 data (≥ 20 trees, ≥ 20 growth pairs) needs diameters that fill 4 equal log-DBH bins with ≥ 3 measurements each. `"union"` accepts a species whose bins are filled either from its smallest to its largest diameter or over its middle 95% of diameters, so one out-of-range value (*Beilschmiedia pendula*: a single 2 mm record) does not send a well-sampled species to a pooled set. In BCI it gives *beilpe*, *annoac*, *bactma*, *ast1st*, *hameax* and *pipeco* their own sets (5,887 trees of the engine) and removes none; the run log lists them (`✓ COVERAGE_RULE union …`). In a test against the 2010–2023 stem tags (identities hidden, parameters cross-validated by tree), 65.1% of the links of the affected trees are recovered with `union` against 60.0% with `minmax` (*Bactris major* 43.4% against 20.9%; *Beilschmiedia* 91.1% against 92.8%). `--COVERAGE_RULE=minmax` selects the rule with bins from the smallest to the largest diameter only.
+- Settings tested in the sandbox comparison of 2026-10-22 (the defaults are the values kept; not needed on the command line; each can be set back for a comparison run):
+  - `DP_ALLOW_SEGMENT_SPLIT=FALSE`: the DP does not end every stem of a tree at its first broken-below record before 2010; only the broken stem is affected.
+  - `BB_DBH_RULE="main_ends"`: a broken-below record with a DBH (before 2015, the break of the tree's main stem written on the main-stem record) ends the main stem of the census before, and is matched like any other measurement but cannot continue it. `"r1"` restores rule R1 (the record always starts a new stem).
+  - `PIN_BB_REQUIRE_OTHER_RECORD=TRUE`: a measured broken-below record is pinned to its own StemID only when that StemID has another record.
+  - `PIN_STOP_AT_GAP=TRUE`: a pin is not carried across a census in which its StemID has no record (e.g. tag 200431).
+  - `HARD_PINS=TRUE`: a pin (`TrueStemID`) holds after the engine.
+    - The broken-below rules never cut between two rows with the same pin, and never rewrite a pin.
+    - Field-tagged stems (`StemTag` from `FIELD_TAG_FIRST_CENSUS = 7`, 2010; pinned before the engine, one pin per tag) therefore stay one stem, their broken-below records without a DBH included.
+    - Exception, the stump rule: a stump, death or missing record without a DBH and without a field tag that comes before any life of its own StemID goes to the stem that broke, pinned or not; so do all records of a StemID that never lives. Up to 2010 the database stores a break under the new StemID of the resprout measured later.
+  - `PROB_EXPORT_RULE="mea"`: the probabilistic matcher exports its most representative sample. `"fewest_me"` (not adopted) exports, among the samples, one with the fewest links that shrink beyond measurement error. In the blind test against the 2010–2023 stem tags it recovers no more true links than `"mea"` (43.1% vs 43.5%; precision 41.1% in both): the shrinking links it removes are replaced by other wrong links that pass the growth filter. The samples are the same either way.
+  - `DP_POSTERIOR_LABEL_FREE=TRUE`: the DP posterior counts each reconstruction once.
+    - The problem: a DP track with no stem in 2023 and no pinned measurement is a label without identity.
+      - Without this setting, the posterior counts a reconstruction once per labeling of those tracks. The samples then lean toward stems that end before 2023, by an amount that depends on the number of spare tracks.
+      - `DP_PosteriorReconstructedProb` of a row on such a track is split across the labels: median 0.5 in run 20261014_220452 where the label-free value is 1.
+    - With this setting, those rows get the share of posterior samples in which their stem ends at the same observation as in the export.
+    - The exported reconstruction is the same either way.
+  - Blind test (diagnostics only): `--BLIND_MIN_CENSUS=7 --ANCHOR_START_CENSUS=9 --BIO_ESTIMATION_START_CENSUS=7` hides the 2010 and 2015 identities (only the 2023 pins are kept) so that the reconstructed links can be scored against the stem tags.
 - `POSTERIOR_SAMPLE_SEED`: Integer seed for reproducible sampling.
 - `MANUAL_CORES`/`MANUAL_CORES_VALUE`: Enable and set the number of parallel workers.
 - `DP_CHUNK_SIZE`: Number of tags processed per parallel chunk (match to core count for efficiency).
 - `USE_MEASUREMENT_ERROR`: Whether the DBH measurement-error model is used in the parameter estimation and in the DP growth likelihood. The script default is `TRUE`; the command above turns it off (folder name `NME`).
-- `DBH_ROUND_CENSUSES` (default `"1,2"`, not needed on the command line): censuses whose small-stem DBH (< 55 mm) was recorded in 5 mm classes, rounded down (BCI 1982 and 1985). The engines read such a DBH as a size within its class, so a 5 mm class step is not taken as an impossible growth jump that splits one stem into a death and a recruit. The run log shows `✓ DBH rounded down to 5 mm classes …` (the data are checked at run time) and the output folder name carries `NME_R12` (with the defaults above, `NME_R12_BD_LT_CU`: `BD` = birth-death matcher, `LT` = recruitment rate per tree, `CU` = coverage rule `union`). `--DBH_ROUND_CENSUSES=none` turns it off.
+- `DBH_ROUND_CENSUSES` (default `"1,2"`, not needed on the command line): censuses whose small-stem DBH (< 55 mm) was recorded in 5 mm classes, rounded down (BCI 1982 and 1985). The engines read such a DBH as a size within its class, so a 5 mm class step is not taken as an impossible growth jump that splits one stem into a death and a recruit. The run log shows `✓ DBH rounded down to 5 mm classes …` (the data are checked at run time) and the output folder name carries `NME_R12`. `--DBH_ROUND_CENSUSES=none` turns it off.
+- Output folder label: with the defaults above it is `NME_R12_BD_LT_CU_NS_MS_PO_PG_HP_LF`:
+  - `BD` = birth-death matcher;
+  - `LT` = recruitment rate per tree;
+  - `CU` = coverage rule `union`;
+  - `NS` = no whole-tree resprout split;
+  - `MS` = main-stem rule;
+  - `PO` and `PG` = the two pin rules;
+  - `HP` = hard pins;
+  - `LF` = label-free DP posterior;
+  - `FM` would mark `PROB_EXPORT_RULE="fewest_me"`.
 - `BASE_OUT_DIR`: Root directory for all output (a timestamped subdirectory is created for each run).
 
 After all chunks finish, run `2_merge_chunks_to_datatable.R` to merge per-chunk Feather files into the final dataset.

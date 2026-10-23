@@ -55,18 +55,130 @@ Botanists (species table):
 - [x] Comparison with Condit et al. (2019) on the final R tables (2026-10-21): `COMPARE_DATASETS/` rerun (results identical to 2026-10-15) and `2_STEM_IDENTIFICATION/comparissons/compare_records_vs_condit.R` (records, dates, coordinates, statuses, stems; `records_comparison_report.html`).
 - [ ] Publication folder (`data_paper_and_repo_publication/`) from run 20261014_220452.
 
-## Proposed identity fixes (from the comparison with Condit, 2026-10-21)
+## Identity fixes for the final engine run (sandbox test 2026-10-22)
 
-Details: section 7 of `2_STEM_IDENTIFICATION/comparissons/records_comparison_report.html`; candidate lists in `links_failing_growth_filter.csv` and `pins_reused_after_gap.csv` there. Each needs a sandbox engine run on the affected tags, then the full run.
+**How they were tested:**
+- Each fix is a setting of `2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R`; the default is the value kept (list in `run_chunk_bci.md`).
+- The sandbox ran the production command on 2,414 test tags: the trees each fix affects, 600 DP control trees, 120 stump-only trees and 200 matcher trees without breaks.
+- With every setting set back, the sandbox reproduces run 20261014_220452 exactly.
+- A fix was kept only when it improved its metric and left the control trees unchanged.
+- Code and documents are not committed yet.
 
-- [ ] Pins across a gap (tag 200431): Step 3b of `1_main_cpp_chunk_bci.R` copies a database StemID pin to every record of the (Tag, StemID) group. Stop it at a census in which the StemID has no record. Rechecked 2026-10-21: of the 422 StemIDs measured again after a gap, 386 have a record in the gap (dead, stem dead, broken below or missing; the database followed the stem, keep them); 36 have none, all from before 2010 to 2010+, all joined in our tables, 17 change more than 2-fold.
-- [ ] Clumps in the probabilistic matcher: `select_consensus_trajectory()` exports a noisy sample; export the lowest-cost assignment or repair it with local swaps (385 joins rejected by the growth filter, 82% in palms, mostly *Oenocarpus mapora*).
-- [x] ~~`apply_pin_track_rejoin()`: add a growth check~~ Dropped 2026-10-21: the rejoin only restores links the engine itself made (rows of one engine track), so a check would overrule the engine; the small excess (2.3% vs 1.8% rejected without rounding) comes from harder trees.
-- [ ] Whole-tree resprout split in the DP (replaces the "2010 re-tagging" item; checked 2026-10-21). Before 2010 the database gives every secondary stem a new StemID at every census and records no stem tags (all stems are tagged from 2010), so 2010 is not special. The 2005-2010 cases come from `allow_segment_split` in `match_stems_dp_global_backward_marginals_batch()`: at the first broken-below / R record with a DBH before 2010, every stem of the tree ends and every stem of the next census starts new. 15,281 multi-stem trees are split; at the split census the other stems continue 2.9% (91.5% in trees without a split); about 5,500 links are cut in trees and shrubs (3-14% of stem deaths and 1-11% of new stems per interval, 1985-2010). Fix: `allow_segment_split = FALSE`, so the DP treats the first broken-below census like the later ones and only the broken stem is split (R1), as in the matcher since 2026-09-30. Also: Step 3a pins a broken-below / R row to its own StemID even when that StemID has no other record; that pin blocks the link to the pinned 2010 stem (61 of the 121 similar-size 2005-2010 cases, e.g. tree 5096: 87 -> 94 (R) -> 98 -> 110 mm). Skip the pin in that case.
+- [x] **Whole-tree resprout split off** (`DP_ALLOW_SEGMENT_SPLIT = FALSE`). At the first break before 2010 the DP no longer ends every stem of the tree. Results, with the main-stem rule:
+  - the other stems continue 88% of the time (6.8% with the split);
+  - +531 links, with the same share shrinking beyond measurement error (1.58%);
+  - control trees unchanged.
+- [x] **Main-stem rule instead of R1** (`BB_DBH_RULE = "main_ends"`; deterministic, no size threshold).
+  - The data: up to 2010 the break is written on the main-stem record, with the DBH of the largest living stem or no DBH.
+  - The rule: the main stem of the census before ends at the break. The broken record's DBH is matched like any other measurement of the tree but cannot continue that main stem; with one stem before, it is always a new stem.
+  - Results: similar-size stems that end beside a new stem starting at the break record fell from 109 to 23; control trees unchanged.
+- [x] **Step 3a pins a broken record only when its StemID has another record** (`PIN_BB_REQUIRE_OTHER_RECORD = TRUE`).
+  - Similar-size pairs 2005–2010: 45 → 15.
+  - +235 links; beyond measurement error 1.58% → 1.51%.
+  - The links it creates are better than those it replaces (1.5% vs 2.1% beyond measurement error).
+- [x] **Step 3b does not carry a pin across a census in which its StemID has no record** (`PIN_STOP_AT_GAP = TRUE`; tag 200431).
+  - Records joined across such a gap: 57 → 32.
+  - Joins with a more than 2-fold size change: 20 → 5.
+  - Control trees unchanged.
+- [x] **Not kept: matcher export with the fewest links beyond measurement error** (`PROB_EXPORT_RULE = "fewest_me"`).
+  - It removes 86% of those links in matcher trees.
+  - In the blind test (2010 and 2015 identities hidden, 839 tags) it recovers no more true links: 43.1% vs 43.5%; precision 41.1% in both; per tree, 41 better and 53 worse.
+  - The shrinking links it removes are replaced by other wrong links that pass the growth filter.
+- [x] **DP posterior counts each reconstruction once** (`DP_POSTERIOR_LABEL_FREE = TRUE`). Found 2026-10-22 while checking the posteriors; the problem is present in production.
+  - The problem: a DP track with no stem in 2023 and no pinned measurement is a label without identity.
+    - The DP counted each reconstruction once per labeling of those tracks, so its samples leaned toward stems ending before 2023.
+    - `DP_PosteriorReconstructedProb` of a row on such a track was split across the labels: median 0.5 in production for unpinned stems ending before 2023, where the label-free value is 1.
+  - Results, export identical for every tree and column:
+    - those rows now median 1.0, equal to the share of samples that agree;
+    - DP samples hold 0.29% fewer links than the export (0.43% without the correction; 0.25% in production); trees whose samples are off by half a link or more are now balanced (4 fewer, 3 more; 23 and 2 before);
+    - with 1 vs 3 spare tracks (500 DP trees) the probabilities of stems alive in 2023 change in no row (53 without the correction), and the expected number of posterior links stays the same (2,730 vs 2,728; without the correction 2,725 vs 2,712);
+    - the posteriors of 12 of the 600 control trees change: link frequencies by at most 0.095, expected links identical.
+- [x] **Pins hold; field tags are kept** (`HARD_PINS = TRUE`, `FIELD_TAG_FIRST_CENSUS = 7`). User rules 2026-10-22: the database StemID only defines the pins; stems with a StemTag stay pinned; "a broken below with no dbh with a stemtag indicates there is a stem, just that there is no measurable dbh at 1.3".
+  - The engines never read the StemID; the driver uses it only to set the pins. It is also used for unmeasured records left without an identity: a death / stump / missing record joins the stem of the previous record with its StemID, and a stem never measured keeps its StemID.
+  - R1/R2 never cut between rows with the same pin and never rewrite a pin (run 20261014_220452 rewrote 4,724).
+  - Field tags are the StemTags from 2010, the first census that tagged every stem, counted by tag value. The one tag the database re-keyed and split (523314 stem 2: StemID 890756 in 2010–2015, 1120187 in 2023) gets one pin (driver Step 1(a')).
+  - A broken-below record without a DBH that carries a field tag stays with its tag's stem:
+    - before the tag's first measurement: 674 records (666 in 2010), which run 20261014_220452 put on the stem that broke (e.g. tree 630310: the 2010 stump with tag 1 now starts the tag-1 stem measured from 2015, and the 2005 stem ends in 2005);
+    - between two measurements: a stem measured, broken below and measured again under its tag is one stem; R2 no longer cuts it (60 stems in the whole data set, DBH after / before median 0.88).
+  - The stump rule of 2026-09-30 still holds for records without a field tag: a stump, death or missing record without a DBH that comes before any life of its StemID is the end record of the stem that broke, and a resprout measured later is a new stem.
+    - Before 2010 the database stores a break under a new StemID, the one the resprout measured later carries, and shows that StemID's later tag on all its records. Those tags are not field tags, so the 1,896 records that carry one keep the stump rule, as in run 20261014_220452.
+    - All records of a StemID that never lives also go to the stem that broke, tagged or not; that stem never carries another field tag (0 of 6,077 records).
+    - A first version that let every pin hold put 14,839 stump records on the resprout's stem, and stage 3 read 15,150 stump censuses as alive without a DBH.
+  - The merge stops with `❌ CHECK FAILED` if a field tag (2010 on, by tag value) is on two stems or a stem holds two field tags. Run 20261014_220452 fails it with 703 field tags on two stems.
+- [x] **Stump records stay with the stem that broke** (`apply_terminal_to_host()`):
+  - a "missing" record after a stump on its StemID moves with the stump (run 20261014_220452 left 347 on another stem, e.g. 1985 stumps recorded "missing" in 1990);
+  - a whole-tree break of a multi-stem tree up to 2010 (every stem ends together, so the rule "the one stem that ended" finds none): the stump goes to the main stem of the census before, where the field wrote the break. Run 20261014_220452 left 2,639 of these stumps (7,170 records) as stems that never live; in every case the main stem ends there and can take them.
+- [x] **Stage 4: a stump is alive but out of the stock** (user decision 2026-10-22; stage 3 and the R statuses are unchanged). An A record without a DBH whose `DFstatus` is "broken below" is a stem with no measurable DBH at 1.3 m: the three stage-4 scripts give it no DBH, do not count it as a stem, and give it no basal area or biomass. Before the stem's first measurement the stem enters the stock at that measurement (a recruit); between two measurements its basal area or biomass leaves the stock and comes back. Without this, stage 4 would fill the tagged stumps above (alive in stage 3, because alive later) with a DBH as missed measurements. To be checked on the final run's R tables.
+- **All kept settings together** (sandbox run of the final configuration):
+  - links up to 2010 in trees and shrubs: 10,300 → 11,677; beyond measurement error 1.62% → 1.51%; growth above 5 mm/yr 2.63% → 2.47%;
+  - stems ending beside a similar-size new stem: 122 → 40;
+  - other stems continuing at the first break: 6.8% → 81%;
+  - joins across a census without a record: 57 → 32;
+  - DP control and stump-only trees: same export;
+  - posterior checks pass; export among the sampled paths 98.6% → 99.4%;
+  - trees solved by the DP 1,802 → 1,829 (dead ends 46 → 7); run time unchanged.
+- [ ] **Residual, not changed: about 14 similar-size pairs at 2005–2010 in the whole data set.** The 46 production cases are all in the test set; 14 remain.
+  - Each is a pre-2010 StemID pin against a different 2010 StemID pin (tag 198338: 89 → 90 mm).
+  - Fixing them needs pre-2010 pins to be link constraints instead of track labels, in both engines and the post-engine helpers.
 - [ ] Probabilistic matcher before 1995: 39 new stems of 26 cm or more on trees already measured (e.g. 004934, 005286). Not caused by the DP resprout split (3 of about 60); review the cases before choosing a fix.
-- [ ] Decide: rule R1. Checked 2026-10-21: before 2010 a break is ONE broken-below record per tree, always on the main-stem record. Its DBH fits the tree's next-largest stem of the census before in 91-94% (the main stem alone 0.6-2%, a resprout 5-7%) and continues in the next census, so it is a surviving stem written on the main record. R1 makes it a new stem: about 5,400 false deaths plus new stems in trees and shrubs, 1985-2005. A stump-only record (34%) is a whole-tree break. Option: read the record as "the main stem broke" and let its DBH continue the stem it fits; a new stem only when it fits none.
 - [ ] Model (optional, needs the blind test): palm growth tail (fast palm links split), link likelihood units (links favoured about 5x, deaths under-detected), mortality of large stems, strangler 3501.
-- [ ] Before the final run: a metrics script for all of the above, a fixed test set (~5,000 tags), and a sandbox A/B (current engine vs candidate); keep only the fixes that improve it.
+- [ ] Full engine run with these settings, then the merge, stage 3 and stage 4; commit the code and documents.
+- [x] Dropped 2026-10-21: a growth check in `apply_pin_track_rejoin()` (the rejoin only restores links the engine itself made).
+
+## Validation against known identities (2026-10-22)
+
+Before 2010 there are no tags, so the fixes were tested where identities are known: the 2010, 2015 and 2023 censuses of 4,115 multiple-stem trees, rewritten so that 2010 and 2015 look like censuses before 2010. The 2,115 test trees were those whose 2010 main stem was broken in 2015 while another stem was measured.
+
+- One broken record per tree, on the main stem, carrying the DBH of the largest surviving stem (whose own record is removed).
+- No records of dead or broken secondary stems.
+- Database StemIDs renumbered at the rates the database shows before 2010: single-stem trees keep them 89–93%, main stems 8–13%, secondary stems 0–15%, broken records 64%.
+- Tags only where the database carried them back.
+
+2023 keeps its tags (the pins). Scripts in the session sandbox: `sim_build.R`, `sim_eval.R`.
+
+Links between consecutive censuses of one stem, against the true stems (recall / precision, %):
+
+| Configuration | All links | Break trees 2010→2015 | Break trees 2015→2023 | Other trees | DP trees |
+| --- | --- | --- | --- | --- | --- |
+| Database StemIDs only (Condit's identity) | 22.6 / 100 | | | | |
+| Production settings (run 20261014_220452) | 59.9 / 74.2 | 20.5 / 38.2 | 44.9 / 75.3 | 83–85 / 79–85 | 65.9 / 86.4 |
+| Final settings | **79.2 / 75.9** | **66.2 / 62.5** | **80.3 / 75.2** | same | **89.5 / 86.4** |
+| Final, rule R1 instead of the main-stem rule | 69.1 / 74.4 | 20.4 / 37.7 | 80.6 / 75.5 | same | 77.2 / 85.2 |
+| Final, whole-tree split on | 70.6 / 76.1 | 66.5 / 62.8 | 45.9 / 75.0 | same | 78.6 / 87.5 |
+| Final, Step 3a pins as before | 73.3 / 73.7 | 66.5 / 62.8 | 57.3 / 65.6 | same | 82.0 / 84.0 |
+
+Each fix carries its own part of the gain:
+- The main-stem rule (instead of R1) recovers the links at the break.
+- No whole-tree split and the Step 3a rule recover the links after the break (the split cuts every stem of the tree; a pin on a broken record's StemID that has no other record keeps the record off its tagged stem).
+
+The table also shows three things:
+
+- **The break.** The broken record's DBH is linked to its true 2010 stem in 84.5% of cases (0% with the production settings, where R1 makes it a new stem) and to its true 2023 stem in 95.4% (58.3%). No broken main stem continues into 2015 (27 with the production settings).
+- **Controls.** Trees without a break are unchanged.
+- **Posteriors.**
+  - Link probabilities in break trees (2010→2015): mean probability of the true links 0.17 → 0.61; Brier score 0.255 → 0.120.
+  - Calibration: links given 0.95–1 are true 97.5% of the time, links given 0.4–0.6 47%.
+  - `DP_PosteriorReconstructedProb` is calibrated only with the label-free correction: DP rows given 0.2–0.4 are correct 44% of the time, against 87% without it, where the label split understates certainty.
+
+Remaining limits:
+
+- The probabilistic matcher (palm clumps, stranglers) recovers 48% of true links at 45% precision.
+- In DP trees the remaining errors are mostly between stems under 2 cm.
+
+**Real data, random sample of 2,000 multiple-stem trees (trees and shrubs, before 2010; no truth, the tagged era 2010–2023 as the yardstick).**
+
+| Before 2010 | Database StemIDs (Condit) | Production engine | Final engine | Tagged era |
+| --- | --- | --- | --- | --- |
+| Stems that continue to the next census | 0% (6% in 2005–10) | 77–89% | 82–89% | 84% (2010–15) |
+| Stem deaths, %/yr | every stem ends | 3.6–5.2 | 3.0–4.0 | 3.6 |
+| New stems, %/yr (1990–2010) | every stem is new | 4.5–6.8 | 3.2–5.3 | 4.1–4.2 |
+| Similar-size end/new pairs per 1,000 stems | 77–97 | 0–4.7 | 0–2.0 | 0 |
+
+- With the database StemIDs alone, a stem of a multiple-stem tree never continues before 2010: each census every stem ends and a new one starts.
+- The final engine's stem turnover matches the tagged era.
+- Field tags in this sample (2,018, from 2010, by tag value): the production settings put 9 on two stems (tagged 2010 stumps on the stem that broke, R2 cuts) and rewrote 91 pins. The final rules for field tags (fix list above) were tested on the test set, not on this sample; the turnover figures above depend only on measured records, which those rules do not change.
+
+**Real blind test (2010 and 2015 identities hidden, 839 trees, mostly palm clumps).** The final settings give the same result as the production settings (43.5% of true links at 41.1% precision). The fixes act only on records of the pre-2010 convention, so they leave the post-2010 reconstruction unchanged.
 
 ## Fixed rules
 

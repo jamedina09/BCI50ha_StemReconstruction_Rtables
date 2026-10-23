@@ -29,11 +29,44 @@ Chunked DP driver.
   send a well-sampled species to a pooled set.
 - Pins the rows whose identity the database fixes (`TrueStemID`, Steps 1–3 in
   the script: stem tags, 2010+ records, measured break rows and the rows of
-  the same StemID); the engines resolve the other rows.
+  the same StemID); the engines resolve the other rows. A measured break row
+  is pinned only when its StemID has another record
+  (`PIN_BB_REQUIRE_OTHER_RECORD`), and a pin is not carried across a census in
+  which its StemID has no record (`PIN_STOP_AT_GAP`). The database StemID is
+  used only to set these pins; the engines never read it. Pins hold after the
+  engine (`HARD_PINS`), so every field-tagged stem stays one stem. Field tags
+  are the StemTags from 2010 (`FIELD_TAG_FIRST_CENSUS`; a tag the database
+  re-keyed gets one pin): a broken-below record without a DBH with a field tag
+  is that stem with no measurable DBH at 1.3 m, so it stays with its tag. The
+  exception keeps the stump rule for records without a field tag: a stump,
+  death or missing record without a DBH that comes before any life of its own
+  StemID (up to 2010 the database stores a break under the new StemID of the
+  resprout measured later, and shows that StemID's later tag on it) still goes
+  to the stem that broke, and so do all records of a StemID that never lives.
+  The one other use of the StemID is for unmeasured records left
+  without an identity: a death / stump / missing record joins the stem of the
+  previous record with its StemID, and a stem never measured keeps its StemID.
+- Breaks before 2015 (the BCI convention up to 2010: one broken-below record
+  per tree, on the main-stem record, with the DBH of the largest living stem
+  or no DBH): the main stem of the census before ends at the break, and the
+  broken record is matched like any other measurement but cannot continue
+  that main stem (`BB_DBH_RULE = "main_ends"`); the tree's other stems are not
+  cut at the break (`DP_ALLOW_SEGMENT_SPLIT = FALSE`). See
+  `dp_global/README.md`, *ForestGEO Code Handling*.
 - Runs `dp_global` on multi-stem tags in parallel chunks: the exact DP, or the
   probabilistic matcher for palm clumps (*Oenocarpus mapora*, *Bactris major*),
   strangler figs and trees too complex for the DP. The matcher lets every stem
-  continue, die or be recruited in every census pair (`PROB_BIRTH_DEATH`).
+  continue, die or be recruited in every census pair (`PROB_BIRTH_DEATH`), and
+  exports its most representative sample (`PROB_EXPORT_RULE = "mea"`; the
+  option `"fewest_me"`, the sample with the fewest links that shrink beyond
+  measurement error, recovered no more true links in the blind test and is
+  not used).
+- The DP posterior (marginals, posterior samples, `DP_PosteriorReconstructedProb`)
+  counts each reconstruction once. Tracks with no stem in 2023 and no pinned
+  measurement are interchangeable labels and are not counted once per labeling
+  (`DP_POSTERIOR_LABEL_FREE`; see `dp_global/README.md`, *Choosing K*).
+- A blind-test mode checks the engines against the 2010–2023 stem tags
+  (`BLIND_MIN_CENSUS`, `BIO_ESTIMATION_START_CENSUS`; diagnostics only).
 - Applies the post-engine helper chain to every chunk (pin-track rejoin,
   backfills, terminal-to-host, broken-below invariants, renumbering of each
   tag's stems to 1..N, posterior path files; see `dp_global/README.md`).
@@ -81,6 +114,12 @@ Merges completed chunk outputs into final files.
   the final table equals the stage-1 table (`growth_form` aside, the stage-2
   label on multiple-stem tags). Stage 3 gives every row a date in its own
   column `date`.
+- Checks that field-tagged stems stay whole and stops with `❌ CHECK FAILED`
+  otherwise: every row with a StemTag is pinned, every field tag (2010 on, by
+  tag value) is one reconstructed stem, and no reconstructed stem holds two
+  field tags. The table of run 20261014_220452 fails it with 703 field tags on
+  two stems (tagged 2010 stumps on the stem that broke, stems cut by rule R2,
+  one re-keyed tag).
 - Writes the final reconstructed stem table
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds` (the
   input of stage 3), the joins to `DATA/PROCESSED/measurement_rejoin_audit.csv`
