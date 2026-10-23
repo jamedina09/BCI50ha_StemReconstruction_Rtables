@@ -97,7 +97,8 @@ parse_args <- function() {
                     "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
                     "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
                     "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL",
-                    "TAG_FILTER_FILE", "DBH_ROUND_CENSUSES", "RECRUIT_RATE_UNIT", "COVERAGE_RULE"
+                    "TAG_FILTER_FILE", "DBH_ROUND_CENSUSES", "RECRUIT_RATE_UNIT", "COVERAGE_RULE",
+                    "BB_DBH_RULE", "PROB_EXPORT_RULE"
                 )
                 if (tolower(val) %in% c("true", "false")) {
                     val <- as.logical(tolower(val))
@@ -245,6 +246,84 @@ NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH <- PRUNE_BOUND_FACTOR * MAX_GROWTH_FIXED
 # 1.3 m, divided by the census interval to widen the annual bounds.
 # Set 0 to disable HOM widening.
 HOM_TOLERANCE_SCALE <- 2.0
+
+# Broken-below records. Up to 2010 a break is written on the tree's main-stem
+# record (PrimaryStem "main"): with the DBH of the largest living stem when
+# any stem was alive, as a stump otherwise; from 2015 every broken stem has
+# its own stump record (no DBH).
+# - DP_ALLOW_SEGMENT_SPLIT: TRUE solves a tag with a measured broken-below /
+#   R record before the anchor as two separate problems (every stem ends at the
+#   first such census and every stem of the next census starts new); FALSE
+#   treats that census like the later ones.
+# - BB_DBH_RULE: what a broken-below record WITH a DBH means.
+#   "r1"        rule R1: the record always starts a new stem;
+#   "main_ends" the main stem of the census before ends there; the record is
+#               matched like any other measurement but cannot continue it
+#               (with one stem before, it is always a new stem).
+# The defaults below (and those of the next two settings) were kept after the
+# sandbox comparison of 2026-10-22 (2,414 test tags; with all four set back
+# the run reproduces run 20261014_220452 exactly). At the first break before
+# 2010 the tree's other stems continue to the next census 81% of the time
+# instead of 6.8%; links up to 2010 in trees and shrubs +13%, with a smaller
+# share that shrinks beyond measurement error (1.62% -> 1.51%); stems that
+# end beside a similar-size new stem -70% (-79% where the new stem starts at
+# the break record); control trees unchanged; posterior checks pass.
+DP_ALLOW_SEGMENT_SPLIT <- FALSE
+BB_DBH_RULE <- "main_ends"
+# Pins (TrueStemID) of measured broken-below / R records (Step 3a): TRUE pins
+# only records whose database StemID has another record (a pin on a record of
+# its own carries no identity and can block the link to a pinned 2010 stem).
+PIN_BB_REQUIRE_OTHER_RECORD <- TRUE
+# Step 3b: TRUE stops the propagation of a pin at a census in which its
+# database StemID has no record (the database attached a 2010 stem to an old
+# StemID with no record in between, e.g. tag 200431).
+PIN_STOP_AT_GAP <- TRUE
+# Pins hold after the engine (rows with the same TrueStemID stay one stem;
+# TrueStemID is never rewritten): the broken-below rules (R1/R2) do not cut
+# between rows with the same pin, and apply_terminal_to_host() leaves pinned
+# records where they are. Field-tagged stems (StemTag) are pinned by Step 1(a),
+# so each stays one stem: a broken-below record without a DBH that carries a
+# field tag is that stem with no measurable DBH at 1.3 m (user rule
+# 2026-10-22), e.g. a 2010 stump whose tag is measured in 2015, or a stem
+# measured, broken below and measured again under its tag (no longer cut by R2).
+# Exceptions, so the stump rule of 2026-09-30 still holds (a stump is the end
+# record of the stem that broke; a resprout measured later is a new stem): a
+# dead / stem dead / broken-below / missing record without a DBH that comes
+# before any life of its own pin goes to the stem that broke, as without hard
+# pins, when it carries no field tag (before 2010 the database shows a
+# StemID's later tag on its earlier records; those are not field tags) or its
+# pin never lives (all its records go there together). FALSE lets R1/R2 cut
+# pins and rewrite TrueStemID (behaviour before 2026-10-22).
+HARD_PINS <- TRUE
+# Field tags: StemTags placed in the field from this census on (BCI: 7 = 2010,
+# the first census that tagged every stem).
+FIELD_TAG_FIRST_CENSUS <- 7L
+# Probabilistic matcher: the sample it exports.
+#   "mea"       the sample whose links the other samples choose most often;
+#   "fewest_me" first the sample(s) with the fewest links that shrink beyond
+#               measurement error (CTFS rule), then as "mea".
+# Blind test 2026-10-22 (2010 and 2015 identities hidden, 839 tags):
+# "fewest_me" removes 83% of the shrinking links but recovers no more true
+# links (43.1% vs 43.5%; precision 41.1% in both; per tree 41 better, 53
+# worse), so "mea" stays.
+PROB_EXPORT_RULE <- "mea"
+# DP posterior: tracks with no stem at the anchor and no pinned measurement are
+# interchangeable labels. TRUE counts each reconstruction once in the DP
+# marginals and posterior samples (not once per labeling of those tracks) and
+# gives the rows on them a label-free DP_PosteriorReconstructedProb (the share
+# of samples in which the row's stem ends at the same observation as in the
+# export). The exported reconstruction is the same either way.
+# Sandbox 2026-10-22: export identical for all 2,414 test tags; the
+# probability of those rows median 0.33 -> 1 (production: 0.5); with 1 vs 3
+# spare tracks the anchor-track probabilities no longer change (53 rows ->
+# 0) and the expected number of posterior links stays the same.
+DP_POSTERIOR_LABEL_FREE <- TRUE
+# Blind test against the tagged censuses (diagnostics only). With
+# BLIND_MIN_CENSUS set, the engine input keeps only the censuses from it on and
+# every pin before ANCHOR_START_CENSUS is removed; BIO_ESTIMATION_START_CENSUS
+# (NULL = ANCHOR_START_CENSUS) is the first census of the parameter estimation.
+BLIND_MIN_CENSUS <- NULL
+BIO_ESTIMATION_START_CENSUS <- NULL
 
 # Posterior sampling defaults (200 samples; POSTERIOR_SAMPLES = 0 disables sampling)
 # - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
@@ -432,7 +511,16 @@ CLI_REFERENCE <- list(
     PROB_N_SIGMA_ME = "PROB_N_SIGMA_ME",
     PROB_BIRTH_DEATH = "PROB_BIRTH_DEATH",
     RECRUIT_RATE_UNIT = "RECRUIT_RATE_UNIT",
-    COVERAGE_RULE = "COVERAGE_RULE"
+    COVERAGE_RULE = "COVERAGE_RULE",
+    DP_ALLOW_SEGMENT_SPLIT = "DP_ALLOW_SEGMENT_SPLIT",
+    BB_DBH_RULE = "BB_DBH_RULE",
+    PIN_BB_REQUIRE_OTHER_RECORD = "PIN_BB_REQUIRE_OTHER_RECORD",
+    PIN_STOP_AT_GAP = "PIN_STOP_AT_GAP",
+    HARD_PINS = "HARD_PINS",
+    PROB_EXPORT_RULE = "PROB_EXPORT_RULE",
+    DP_POSTERIOR_LABEL_FREE = "DP_POSTERIOR_LABEL_FREE",
+    BLIND_MIN_CENSUS = "BLIND_MIN_CENSUS",
+    BIO_ESTIMATION_START_CENSUS = "BIO_ESTIMATION_START_CENSUS"
 )
 
 # Sensitivity and realism flags are not applicable to the chunked runner
@@ -919,7 +1007,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
             use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
             prob_birth_death = isTRUE(PROB_BIRTH_DEATH),
-            pin_truestemid = isTRUE(PIN_TRUESTEMID)
+            pin_truestemid = isTRUE(PIN_TRUESTEMID),
+            allow_segment_split = isTRUE(DP_ALLOW_SEGMENT_SPLIT)
         ),
         error = function(e) {
             tag_val <- tryCatch(unique(dtg$Tag)[1], error = function(e2) NA)
@@ -958,12 +1047,15 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             out[, DP_FallbackReason := paste0("error:", substr(msg, 1, 200))]
             # R-boundary splitting, as in do_fallback(): a measured R-coded /
             # broken-below row starts a new stem; only that stem's track is split
-            # (split_live_resprout_tracks() in dp_global_dp.R).
-            out <- split_live_resprout_tracks(
-                out,
-                censuses = sort(unique(out$CensusID[out$CensusID < ANCHOR_START_CENSUS])),
-                id_floor = suppressWarnings(max(dtg$TrueStemID, na.rm = TRUE))
-            )
+            # (split_live_resprout_tracks() in dp_global_dp.R). With the
+            # main-stem rule the matcher already ends the main stem at the break.
+            if (!identical(BB_DBH_RULE, "main_ends")) {
+                out <- split_live_resprout_tracks(
+                    out,
+                    censuses = sort(unique(out$CensusID[out$CensusID < ANCHOR_START_CENSUS])),
+                    id_floor = suppressWarnings(max(dtg$TrueStemID, na.rm = TRUE))
+                )
+            }
             # Append post-anchor rows with proper labeling (mirrors finalize_out / propagate_post_anchor_given)
             if (nrow(.post_anchor_eh) > 0L) {
                 .post <- data.table::copy(.post_anchor_eh)
@@ -1214,6 +1306,37 @@ run_main_chunked <- function() {
         .msg <- sprintf("CHECK FAILED: COVERAGE_RULE must be \"union\" or \"minmax\", not \"%s\"", COVERAGE_RULE)
         cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
     }
+    if (!BB_DBH_RULE %in% c("r1", "main_ends")) {
+        .msg <- sprintf("CHECK FAILED: BB_DBH_RULE must be \"r1\" or \"main_ends\", not \"%s\"", BB_DBH_RULE)
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+    if (!PROB_EXPORT_RULE %in% c("mea", "fewest_me")) {
+        .msg <- sprintf("CHECK FAILED: PROB_EXPORT_RULE must be \"mea\" or \"fewest_me\", not \"%s\"", PROB_EXPORT_RULE)
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+    if (identical(BB_DBH_RULE, "main_ends") && !("PrimaryStem" %in% names(xraw))) {
+        .msg <- "CHECK FAILED: BB_DBH_RULE = \"main_ends\" needs the PrimaryStem column of the input"
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+    # The engines and post-engine helpers read these rules as options
+    options(
+        dp_global.bb_dbh_rule = BB_DBH_RULE, dp_global.prob_export_rule = PROB_EXPORT_RULE,
+        dp_global.posterior_label_free = isTRUE(DP_POSTERIOR_LABEL_FREE),
+        dp_global.hard_pins = isTRUE(HARD_PINS),
+        # blind test: the hidden censuses carry no field tag
+        dp_global.field_tag_first_census = if (!is.null(BLIND_MIN_CENSUS)) {
+            max(FIELD_TAG_FIRST_CENSUS, as.integer(ANCHOR_START_CENSUS))
+        } else {
+            FIELD_TAG_FIRST_CENSUS
+        }
+    )
+    .msg <- sprintf(
+        "Broken-below and pin settings: DP_ALLOW_SEGMENT_SPLIT = %s, BB_DBH_RULE = %s, PIN_BB_REQUIRE_OTHER_RECORD = %s, PIN_STOP_AT_GAP = %s, HARD_PINS = %s (field tags from census %s), PROB_EXPORT_RULE = %s, DP_POSTERIOR_LABEL_FREE = %s%s",
+        DP_ALLOW_SEGMENT_SPLIT, BB_DBH_RULE, PIN_BB_REQUIRE_OTHER_RECORD, PIN_STOP_AT_GAP, isTRUE(HARD_PINS), getOption("dp_global.field_tag_first_census"), PROB_EXPORT_RULE, isTRUE(DP_POSTERIOR_LABEL_FREE),
+        if (!is.null(BLIND_MIN_CENSUS)) sprintf(" | BLIND TEST: censuses from %s, pins only from C%s, parameters from C%s", BLIND_MIN_CENSUS, ANCHOR_START_CENSUS,
+            if (is.null(BIO_ESTIMATION_START_CENSUS)) ANCHOR_START_CENSUS else BIO_ESTIMATION_START_CENSUS) else ""
+    )
+    cat("✓", .msg, "\n"); log_msg(.msg)
 
     xraw[, Lifeform := NULL]
 
@@ -1229,8 +1352,9 @@ run_main_chunked <- function() {
     # Data for the parameter estimation: the measured rows from the anchor
     # census on, of all tags (single- and multiple-stem), with the database
     # StemID as the known identity.
+    .est_start <- if (is.null(BIO_ESTIMATION_START_CENSUS)) ANCHOR_START_CENSUS else as.integer(BIO_ESTIMATION_START_CENSUS)
     anchor_data <- xraw[
-        CensusID >= ANCHOR_START_CENSUS &
+        CensusID >= .est_start &
             !is.na(dbh_with_best_candidate_taper_corrected),
         .(
             Tag,
@@ -1263,7 +1387,7 @@ run_main_chunked <- function() {
 
     full_anchor_data <- CJ(
         Tag_TrueStemID = tag_stem_combos[, paste(Tag, TrueStemID, sep = "_")],
-        CensusID = unique(anchor_data[CensusID >= ANCHOR_START_CENSUS, CensusID]),
+        CensusID = unique(anchor_data[CensusID >= .est_start, CensusID]),
         sorted = FALSE
     )
 
@@ -1532,6 +1656,7 @@ run_main_chunked <- function() {
             sp <- sp_names[i]
             res[[sp]] <- estimate_bio_pars(
                 dt[species == sp],
+                anchor_start_census = .est_start,
                 use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
                 # Hard shrink guardrail (max_shrink)
                 # - "data": estimated from observed shrink tail (with measurement-error support)
@@ -1715,6 +1840,16 @@ run_main_chunked <- function() {
         StemID = as.integer(as.character(StemID))
     )]
 
+    # Blind test (BLIND_MIN_CENSUS set): the engines see only the censuses from
+    # BLIND_MIN_CENSUS on; the pins before ANCHOR_START_CENSUS are removed after
+    # the pin steps below.
+    if (!is.null(BLIND_MIN_CENSUS)) {
+        xraw_multi_stems <- xraw_multi_stems[CensusID >= as.integer(BLIND_MIN_CENSUS)]
+        .msg <- sprintf("BLIND TEST: engine input restricted to censuses >= %s (%d rows, %d tags)",
+            BLIND_MIN_CENSUS, nrow(xraw_multi_stems), data.table::uniqueN(xraw_multi_stems$Tag))
+        cat("✓", .msg, "\n"); log_msg(.msg)
+    }
+
     # ---- TrueStemID reconstruction ----
     #
     # TrueStemID is the ground-truth stem identity used as a hard anchor by the DP.
@@ -1769,6 +1904,21 @@ run_main_chunked <- function() {
     # ----- Step 1: certain anchors -----
     xraw_multi_stems[, TrueStemID := NA_integer_]
     xraw_multi_stems[!is.na(StemTag), TrueStemID := StemID] # (a) physical tag
+    # (a') One field tag, one pin. From FIELD_TAG_FIRST_CENSUS a field tag
+    #      (Tag, StemTag) keeps its StemID, but the database gave 2 tags a new
+    #      StemID (tag 523314 stem 2: StemID 890756 in 2010-2015, 1120187 in
+    #      2023). The later StemIDs of such a tag take its first StemID as
+    #      their pin, when the StemIDs never share a census.
+    .tag_keys <- xraw_multi_stems[
+        !is.na(StemTag) & nzchar(as.character(StemTag)) & CensusID >= FIELD_TAG_FIRST_CENSUS,
+        .(n_sid = uniqueN(StemID), first_sid = StemID[which.min(CensusID)], shared = anyDuplicated(CensusID) > 0L),
+        by = .(Tag, StemTag)
+    ][n_sid > 1L & !shared]
+    if (nrow(.tag_keys) > 0L) {
+        xraw_multi_stems[.tag_keys, on = .(Tag, StemTag), TrueStemID := fifelse(CensusID >= FIELD_TAG_FIRST_CENSUS, i.first_sid, TrueStemID)]
+        log_msg(sprintf("Step 1(a'): %d field tag(s) recorded under 2+ StemIDs take one pin each", nrow(.tag_keys)))
+    }
+    rm(.tag_keys)
     # (b) C7+ re-tagging convention: every C7+ row gets its StemID pinned
     #     EXCEPT end-of-trajectory rows with NA DBH (dead / stem dead / broken-below
     #     without a measurement). Those rows describe a death/break event, not a
@@ -1920,15 +2070,26 @@ run_main_chunked <- function() {
     #     forces ReconstructionMethod = "given" on a 1-row singleton and severs
     #     the death from its prior alive trajectory (see tag 000184 C5 dead row;
     #     tag 000378 C6 alive row that gets back-propagated to 893101 by Step 3b).
-    xraw_multi_stems[
-        is.na(TrueStemID) &
-            !is.na(DBH) &
-            (
-                (!is.na(Status) & Status == "broken below") |
-                    (!is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE))
-            ),
-        TrueStemID := StemID
-    ]
+    #
+    #     PIN_BB_REQUIRE_OTHER_RECORD = TRUE anchors only the records whose
+    #     StemID has another record in the tag: before 2010 the database gives a
+    #     broken record a new StemID, and when that StemID has no other record
+    #     the pin carries no identity but forbids linking the record to a
+    #     pinned stem of the next census (e.g. the 2010 stem it grows into;
+    #     tree 5096: 87 -> 94 (2005, broken below) -> 98 -> 110 mm).
+    if (isTRUE(PIN_BB_REQUIRE_OTHER_RECORD)) {
+        xraw_multi_stems[, .n_rec_sid := .N, by = .(Tag, StemID)]
+    } else {
+        xraw_multi_stems[, .n_rec_sid := 2L]
+    }
+    .bb_r_rows <- xraw_multi_stems[, is.na(TrueStemID) & !is.na(DBH) &
+        ((!is.na(Status) & Status == "broken below") | (!is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE)))]
+    message(sprintf(
+        "[main_cpp_chunk_bci.R] Step 3a: %d measured broken-below / R row(s) anchored to their own StemID; %d left unpinned (StemID with no other record).",
+        sum(.bb_r_rows & xraw_multi_stems$.n_rec_sid > 1L), sum(.bb_r_rows & xraw_multi_stems$.n_rec_sid <= 1L)
+    ))
+    xraw_multi_stems[.bb_r_rows & .n_rec_sid > 1L, TrueStemID := StemID]
+    xraw_multi_stems[, .n_rec_sid := NULL]
 
     # 3a.5 Same-StemID continuity for unanchored death/break trajectories.
     #
@@ -1995,30 +2156,59 @@ run_main_chunked <- function() {
     #     tagged dead row from Step 1) out of the propagation:
     #     end-of-trajectory rows must NEVER be allowed to back-propagate their
     #     StemID to earlier alive rows (see tag 000378 C6 case).
+    #
+    #     PIN_STOP_AT_GAP = TRUE propagates only within runs of consecutive
+    #     censuses of the StemID: a pin does not cross a census in which its
+    #     StemID has no record. The database sometimes attached a 2010 stem to an
+    #     old StemID with no record in between (tag 200431: StemID 544452 is a
+    #     25 mm stem in 1982 and holds the large stem's 137 mm in 2010); the
+    #     records before such a gap stay free and the engine places them.
+    #     (The rows are sorted by Tag, StemID and CensusID in Step 2a.)
+    .stop_gap <- isTRUE(PIN_STOP_AT_GAP)
     .n_before <- sum(is.na(xraw_multi_stems$TrueStemID))
     .n_conflicts <- 0L
+    .n_gap_kept <- 0L
     xraw_multi_stems[, TrueStemID := {
         .v <- TrueStemID
         if (anyNA(.v) && any(!is.na(.v))) {
             # Only consider anchors from rows that carry DBH (start-of-trajectory
             # or measured retag). Terminal-only NA-DBH anchors are excluded.
-            .anchor_mask <- !is.na(.v) & !is.na(DBH)
-            if (any(.anchor_mask)) {
-                .u <- unique(.v[.anchor_mask])
-                if (length(.u) == 1L) {
-                    .v[is.na(.v)] <- .u
-                } else {
-                    .n_conflicts <<- .n_conflicts + 1L
+            .run <- if (.stop_gap) cumsum(c(TRUE, diff(CensusID) > 1L)) else rep(1L, .N)
+            .na0 <- is.na(.v)
+            .all_anchor <- !is.na(.v) & !is.na(DBH)
+            for (.r in unique(.run)) {
+                .in <- .run == .r
+                .anchor_mask <- .in & .all_anchor
+                if (any(.anchor_mask)) {
+                    .u <- unique(.v[.anchor_mask])
+                    if (length(.u) == 1L) {
+                        .v[.in & is.na(.v)] <- .u
+                    } else {
+                        .n_conflicts <<- .n_conflicts + 1L
+                    }
                 }
+            }
+            # rows the propagation without the gap rule would have filled
+            if (.stop_gap && any(.all_anchor) && length(unique(.v[.all_anchor])) == 1L) {
+                .n_gap_kept <<- .n_gap_kept + sum(.na0 & is.na(.v))
             }
         }
         .v
     }, by = .(Tag, StemID)]
     .n_after <- sum(is.na(xraw_multi_stems$TrueStemID))
     message(sprintf(
-        "[main_cpp_chunk_bci.R] Step 3 propagation: filled %d NA rows; %d (Tag,StemID) groups had conflicting TrueStemID and were left untouched.",
-        .n_before - .n_after, .n_conflicts
+        "[main_cpp_chunk_bci.R] Step 3 propagation: filled %d NA rows; %d (Tag,StemID) groups had conflicting TrueStemID and were left untouched%s.",
+        .n_before - .n_after, .n_conflicts,
+        if (.stop_gap) sprintf("; %d row(s) left free across a census without a record of their StemID (PIN_STOP_AT_GAP)", .n_gap_kept) else ""
     ))
+
+    # Blind test: only the pins from the anchor census on are kept
+    if (!is.null(BLIND_MIN_CENSUS)) {
+        .n_blind <- xraw_multi_stems[CensusID < ANCHOR_START_CENSUS & !is.na(TrueStemID), .N]
+        xraw_multi_stems[CensusID < ANCHOR_START_CENSUS, TrueStemID := NA_integer_]
+        .msg <- sprintf("BLIND TEST: removed %d pin(s) before census %s", .n_blind, ANCHOR_START_CENSUS)
+        cat("✓", .msg, "\n"); log_msg(.msg)
+    }
 
     # Fill a missing ExactDate with the mean date of its census.
     # origin = "1970-01-01" is R's internal date origin: as.numeric() of a date
