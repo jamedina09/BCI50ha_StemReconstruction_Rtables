@@ -18,8 +18,10 @@ workspace_root <- getwd()
 # Key definitions used throughout
 #   Individual   : one unique treeID. A tree may have multiple
 #                  stems, but it is counted once as one individual.
-#   Alive stem   : Rstatus == "A". Trees without (gx, gy) are placed at the
-#                  centre of their 20 m quadrat (Sec. 3).
+#   Alive stem   : Rstatus == "A", except a stump (A without a DBH whose raw
+#                  status is "broken below": no stem at 1.3 m, Sec. 3). Trees
+#                  without (gx, gy) are placed at the centre of their 20 m
+#                  quadrat (Sec. 3).
 #   DBH          : Cushman et al. 2014 taper-corrected diameter at 1.3 m, as
 #                  in basal_area_uncertainty.R and biomass_stocks_fluxes.R
 #                  (use_taper_for_ba = FALSE uses the diameter measured at the
@@ -277,6 +279,15 @@ rec[Rstatus != "A" & !is.na(dbh), dbh := NA]
 message(sprintf("%d DBH values recorded on dead (G/D) records are not used.", n_dead_dbh))
 rm(n_dead_dbh)
 
+# A stump: an alive (A) record without a DBH whose raw status (DFstatus) is
+# "broken below". The stem is alive but has no measurable DBH at 1.3 m (a
+# broken-below record with a field tag is that stem), so in that census it is
+# not counted as a stem (nor its tree, if it has no other alive stem) and has
+# no basal area. Same rule in basal_area_uncertainty.R and
+# biomass_stocks_fluxes.R.
+rec[, stump := Rstatus == "A" & is.na(dbh) & DFstatus %in% "broken below"]
+message(sprintf("%d alive stump records (A, no DBH, broken below) are not counted as stems.", rec[stump == TRUE, .N]))
+
 # ExactDate is the raw field date (NA where there is no record). A missing
 # one is taken from `date` (days since 1960-01-01, filled in stage 3: the
 # recorded date, else the modal field date of the tree, quadrat or census).
@@ -360,13 +371,13 @@ message(sprintf(
 # biomass_stocks_fluxes.R. Only stems never measured have no diameter (basal
 # area 0); they are still counted as alive stems / trees.
 rec[, dbh_filled := FALSE]
-need_ids <- unique(rec[Rstatus == "A" & is.na(dbh), .(treeID, stemID)])
+need_ids <- unique(rec[Rstatus == "A" & is.na(dbh) & !stump, .(treeID, stemID)])
 if (nrow(need_ids) > 0L) {
     fill <- rec[need_ids, on = .(treeID, stemID), nomatch = 0L][,
         {
             t_num <- as.numeric(ExactDate)
             meas <- !is.na(dbh)
-            target <- Rstatus == "A" & is.na(dbh)
+            target <- Rstatus == "A" & is.na(dbh) & !stump
             out <- dbh
             if (any(meas) && any(target)) {
                 out[target] <- dbh_from_own_measurements(t_num[meas], dbh[meas], t_num[target])
@@ -379,9 +390,9 @@ if (nrow(need_ids) > 0L) {
     rm(fill)
 }
 message(sprintf(
-    "Alive stem-census rows without a measured DBH: %d | given a DBH from the stem's own measurements: %d | never measured (no diameter): %d",
-    rec[Rstatus == "A" & (is.na(dbh_raw)), .N], rec[dbh_filled == TRUE, .N],
-    rec[Rstatus == "A" & is.na(dbh), .N]
+    "Alive stem-census rows without a measured DBH (stumps aside): %d | given a DBH from the stem's own measurements: %d | never measured (no diameter): %d",
+    rec[Rstatus == "A" & !stump & (is.na(dbh_raw)), .N], rec[dbh_filled == TRUE, .N],
+    rec[Rstatus == "A" & !stump & is.na(dbh), .N]
 ))
 rm(need_ids)
 
@@ -405,7 +416,7 @@ bio_check(
     examples = bad_q$treeID, n_bad = nrow(bad_q)
 )
 rm(xy_rows, bad_q)
-no_xy <- rec[Rstatus == "A" & (is.na(gx) | is.na(gy)), .(trees_without_xy = uniqueN(treeID)), by = CensusID][order(CensusID)]
+no_xy <- rec[Rstatus == "A" & !stump & (is.na(gx) | is.na(gy)), .(trees_without_xy = uniqueN(treeID)), by = CensusID][order(CensusID)]
 if (nrow(no_xy) > 0L) {
     message("Alive trees without coordinates, placed at their quadrat centre (per census):")
     print(no_xy)
@@ -460,7 +471,7 @@ census_meta <- data.table(
 # treeID in the most recent census, so .N on that table always gives
 # the individual (treeID) count.
 
-rec_alive <- rec[Rstatus == "A"]
+rec_alive <- rec[Rstatus == "A" & !stump] # stump censuses: no stem at 1.3 m (Sec. 3)
 
 by_cols <- c(
     "censusID", "CensusID", "treeID",

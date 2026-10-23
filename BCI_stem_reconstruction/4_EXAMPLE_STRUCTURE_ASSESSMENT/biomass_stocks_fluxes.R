@@ -153,6 +153,17 @@ df_stem[Rstatus != "A" & !is.na(dbh), dbh := NA]
 message(sprintf("[DBH] %d DBH values recorded on dead (G/D) records are not used.", n_dead_dbh))
 rm(n_dead_dbh)
 
+# A stump: an alive (A) record without a DBH whose raw status (DFstatus) is
+# "broken below". The stem is alive but has no measurable DBH at 1.3 m (a
+# broken-below record with a field tag is that stem), so it is not in the
+# stock in that census: it gets no DBH, and the stem's life in the stock is
+# split there (`seg`, Sections 12 and 15). Before its first measurement the
+# stem enters the stock as a recruit; between two measurements its biomass
+# leaves the stock (mortality flux) and comes back (a recruit). Same rule in
+# basal_area_uncertainty.R and general_plot_information.R.
+df_stem[, stump := Rstatus == "A" & is.na(dbh) & DFstatus %in% "broken below"]
+message(sprintf("[STUMP] %d alive stump records (A, no DBH, broken below) are not in the stock.", df_stem[stump == TRUE, .N]))
+
 # ExactDate is the raw field date (NA where there is no record). Every row
 # needs a date (DBH interpolation in time, dT), so a missing one is taken from
 # `date` (days since 1960-01-01, filled in stage 3: the recorded date, else
@@ -288,14 +299,15 @@ df_stem[, dbh_cm := dbh / 10]
 # The median is applied to dbh_cm — the column every downstream AGB calculation
 # uses (dbh_cm is created in Section 6, so correcting `dbh` here would have no
 # effect) — and only to alive rows, so dead or prior rows never get a diameter.
-# Alive palm rows without a measurement also receive the species median.
+# Alive palm rows without a measurement also receive the species median
+# (stump censuses aside: no measurable DBH).
 n_palm_median_fill <- 0L
 if (use_median_palm_dbh) {
   n_palm_median_fill <- df_stem[
-    Family == "Arecaceae" & Genus != "Socratea" & Rstatus == "A" & is.na(dbh_cm), .N
+    Family == "Arecaceae" & Genus != "Socratea" & Rstatus == "A" & !stump & is.na(dbh_cm), .N
   ]
   df_stem[
-    Family == "Arecaceae" & Genus != "Socratea" & Rstatus == "A",
+    Family == "Arecaceae" & Genus != "Socratea" & Rstatus == "A" & !stump,
     dbh_cm := median(dbh_cm, na.rm = TRUE), .(Latin)
   ]
 }
@@ -359,8 +371,8 @@ interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_int
   if (!"dbh_raw" %in% names(dt)) {
     dt[, dbh_raw := get(var_to_interpolate)]
   }
-  fill_one <- function(x, status, t_num) {
-    target <- !is.na(status) & status == "A" & is.na(x)
+  fill_one <- function(x, status, t_num, skip) {
+    target <- !is.na(status) & status == "A" & is.na(x) & !skip
     measured <- !is.na(x)
     if (!any(target) || !any(measured)) {
       return(x)
@@ -387,9 +399,13 @@ interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_int
   }
   # Rows must be in census order within each stem ("mean" and "locf").
   data.table::setorder(dt, treeID, stemID, CensusID)
-  dt[, (var_to_interpolate) := fill_one(get(var_to_interpolate), Rstatus, as.numeric(ExactDate)),
+  # stump censuses (column `stump`) are not filled: no measurable DBH
+  skip_col <- if ("stump" %in% names(dt)) dt$stump else rep(FALSE, nrow(dt))
+  dt[, .skip := skip_col]
+  dt[, (var_to_interpolate) := fill_one(get(var_to_interpolate), Rstatus, as.numeric(ExactDate), .skip),
     by = .(treeID, stemID)
   ]
+  dt[, .skip := NULL]
   invisible(dt)
 }
 
@@ -403,7 +419,7 @@ bio_check(
 # Count alive stems that are missing taper-corrected DBH before interpolation.
 # dbh_cm is NA whenever dbh (raw) is NA, so the counts are equivalent, but we
 # count dbh_cm explicitly for clarity since that is the column being filled.
-n_to_fill <- df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_cm), .N]
+n_to_fill <- df_stem[!is.na(Rstatus) & Rstatus == "A" & !stump & is.na(dbh_cm), .N]
 message(sprintf(
   "[INTERP] %d stem-census rows are Rstatus=A & dbh_cm=NA. Filling with method='%s'.",
   n_to_fill, dbh_interp_method
@@ -420,19 +436,24 @@ message(sprintf(
 rm(n_to_fill, n_filled, n_palm_median_fill)
 
 # Every alive row of a stem that was ever measured now has a DBH: an alive
-# stem stays in the stock until it is dead.
+# stem stays in the stock until it is dead, stump censuses aside.
 measured_stems <- unique(df_stem[!is.na(dbh_raw), .(treeID, stemID)])
-no_dbh <- df_stem[Rstatus == "A" & is.na(dbh_cm)][measured_stems, on = .(treeID, stemID), nomatch = 0L]
+no_dbh <- df_stem[Rstatus == "A" & !stump & is.na(dbh_cm)][measured_stems, on = .(treeID, stemID), nomatch = 0L]
 bio_check(
   nrow(no_dbh) == 0L,
-  "Every alive (A) row of a measured stem has a DBH (alive stems stay in the stock)",
+  "Every alive (A) row of a measured stem has a DBH (alive stems stay in the stock), stump censuses aside",
   examples = no_dbh[, paste(treeID, stemID, sep = "_")], n_bad = nrow(no_dbh)
 )
 rm(measured_stems, no_dbh)
+bio_check(
+  df_stem[stump == TRUE & !is.na(dbh_cm), .N] == 0L,
+  "No stump census (A, no DBH, broken below) gets a DBH",
+  n_bad = df_stem[stump == TRUE & !is.na(dbh_cm), .N]
+)
 
 # Diagnostic: stems that are alive but still have NA dbh_cm after interpolation.
 # These were never measured.
-inc <- unique(df_stem[!is.na(Rstatus) & Rstatus == "A" & is.na(dbh_cm), .(treeID, stemID)])
+inc <- unique(df_stem[!is.na(Rstatus) & Rstatus == "A" & !stump & is.na(dbh_cm), .(treeID, stemID)])
 if (nrow(inc) > 0L) {
   message(sprintf("[INTERP] %d stems remain with NA dbh_cm after interpolation.", nrow(inc)))
 }
@@ -647,8 +668,11 @@ df_stem[, prev_agb_t := shift(agb_t), .(treeID, stemID)]
 # 12d. Recruit detection: first row per stem where the stem is alive (Rstatus=A,
 #      valid dbh) AND there is no PRIOR alive observation. Recruits at CensusID 1
 #      are excluded (they are start-of-monitoring, not new recruits).
+#      A stump census (Section 2) splits the stem's life in the stock into
+#      segments (`seg`): the first measurement after a stump is a recruit.
+df_stem[, seg := cumsum(stump), .(treeID, stemID)]
 df_stem[, n_alive_prior := cumsum(!is.na(dbh_cm) & Rstatus == "A") -
-  (!is.na(dbh_cm) & Rstatus == "A"), .(treeID, stemID)]
+  (!is.na(dbh_cm) & Rstatus == "A"), .(treeID, stemID, seg)]
 df_stem[, is_recruit := !is.na(dbh_cm) & Rstatus == "A" &
   n_alive_prior == 0L & CensusID >= 2L]
 
@@ -751,15 +775,17 @@ df_stem[, c("tot_rawp_t") := NULL]
 
 # Identify each stem's last census with a valid taper-corrected alive DBH.
 # Using dbh_cm for consistency: dbh_cm is the corrected and interpolated
-# value that feeds all downstream AGB calculations.
+# value that feeds all downstream AGB calculations. Per segment (Section 12d):
+# a stem whose next census is a stump leaves the stock there.
 df_stem[
   !is.na(dbh_cm) & Rstatus == "A",
   last_census_alive := max(CensusID),
-  .(treeID, stemID)
+  .(treeID, stemID, seg)
 ]
 
 # Status of the NEXT census (per stem)
 df_stem[, next_Rstatus := shift(Rstatus, type = "lead"), .(treeID, stemID)]
+df_stem[, next_stump := shift(stump, type = "lead", fill = FALSE), .(treeID, stemID)]
 df_stem[, next_date := shift(ExactDate, type = "lead"), .(treeID, stemID)]
 df_stem[, dT_mort := as.numeric(difftime(next_date, ExactDate, units = "days")) / 365.25]
 
@@ -769,16 +795,18 @@ data.table::setorder(df_stem, treeID, stemID, CensusID)
 # disappears after its last alive census (rare in well-curated data). A stem
 # that is A (alive) is never counted as dead: alive rows whose measurement was
 # missed carry a DBH from Section 8, so they are part of last_census_alive.
+# A stump census in the next census takes the stem out of the stock: its
+# biomass leaves as a mortality flux (the stem is not dead; Rstatus stays A).
 max_census <- df_stem[, max(CensusID, na.rm = TRUE)]
 df_stem[, dies_next := CensusID == last_census_alive &
   last_census_alive < max_census &
-  (next_Rstatus %in% c("D", "G") | is.na(next_Rstatus))]
+  (next_Rstatus %in% c("D", "G") | is.na(next_Rstatus) | next_stump)]
 rm(max_census)
 bio_check(
-  df_stem[CensusID == last_census_alive & next_Rstatus == "A", .N] == 0L,
-  "No stem leaves the stock while it is alive (A) in the next census",
-  examples = df_stem[CensusID == last_census_alive & next_Rstatus == "A", paste(treeID, stemID, sep = "_")],
-  n_bad = df_stem[CensusID == last_census_alive & next_Rstatus == "A", .N]
+  df_stem[CensusID == last_census_alive & next_Rstatus == "A" & !next_stump, .N] == 0L,
+  "No stem leaves the stock while it is alive (A) in the next census, stump censuses aside",
+  examples = df_stem[CensusID == last_census_alive & next_Rstatus == "A" & !next_stump, paste(treeID, stemID, sep = "_")],
+  n_bad = df_stem[CensusID == last_census_alive & next_Rstatus == "A" & !next_stump, .N]
 )
 
 # Apply mortality flux at the last alive census whose next census is dead.
