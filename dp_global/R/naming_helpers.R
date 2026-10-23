@@ -21,8 +21,10 @@ encode_num <- function(x) {
 # MAX_GROWTH_HARD_SOURCE, MAX_GROWTH_FIXED, MAX_SHRINK_HARD_SOURCE,
 # MAX_SHRINK_FIXED, K_GROWTH_SOURCE, K_GROWTH_FIXED, K_SHRINK_SOURCE and
 # K_SHRINK_FIXED, and, when they exist, BATCH_TS, CONFIG_NAME,
-# DBH_ROUND_CENSUSES_INT, PROB_BIRTH_DEATH, RECRUIT_RATE_UNIT and
-# COVERAGE_RULE.
+# DBH_ROUND_CENSUSES_INT, PROB_BIRTH_DEATH, RECRUIT_RATE_UNIT,
+# COVERAGE_RULE, DP_ALLOW_SEGMENT_SPLIT, BB_DBH_RULE,
+# PIN_BB_REQUIRE_OTHER_RECORD, PIN_STOP_AT_GAP, PROB_EXPORT_RULE and
+# DP_POSTERIOR_LABEL_FREE.
 # Returns one string:
 #   <timestamp>_<config>_<tags>_<DP mode>_<ME label>_<g>_<s>_<kg>_<ks>_rcpp
 # e.g. 20261005_232052_unknown_allT_DP_MB_NME_R12_BD_LT_CU_g5_sm0p5_kg0_ks0_rcpp
@@ -73,6 +75,18 @@ build_out_dir_name <- function() {
         me_part <- paste0(me_part, "_LT")
     }
     if (exists("COVERAGE_RULE") && identical(COVERAGE_RULE, "union")) me_part <- paste0(me_part, "_CU")
+    # Identity settings of 2026-10-22 (BCI): "NS" = no whole-tree resprout
+    # split in the DP, "MS" = main-stem rule for broken records, "PO" / "PG" =
+    # pin rules (a broken record only with another record of its StemID / no
+    # pin across a census without a record), "FM" = matcher export with the
+    # fewest links beyond measurement error, "LF" = label-free DP posterior
+    if (exists("DP_ALLOW_SEGMENT_SPLIT") && isFALSE(DP_ALLOW_SEGMENT_SPLIT)) me_part <- paste0(me_part, "_NS")
+    if (exists("BB_DBH_RULE") && identical(BB_DBH_RULE, "main_ends")) me_part <- paste0(me_part, "_MS")
+    if (exists("PIN_BB_REQUIRE_OTHER_RECORD") && isTRUE(PIN_BB_REQUIRE_OTHER_RECORD)) me_part <- paste0(me_part, "_PO")
+    if (exists("PIN_STOP_AT_GAP") && isTRUE(PIN_STOP_AT_GAP)) me_part <- paste0(me_part, "_PG")
+    if (exists("HARD_PINS") && isTRUE(HARD_PINS)) me_part <- paste0(me_part, "_HP")
+    if (exists("PROB_EXPORT_RULE") && identical(PROB_EXPORT_RULE, "fewest_me")) me_part <- paste0(me_part, "_FM")
+    if (exists("DP_POSTERIOR_LABEL_FREE") && isTRUE(DP_POSTERIOR_LABEL_FREE)) me_part <- paste0(me_part, "_LF")
 
     max_growth_hard_ <- switch(MAX_GROWTH_HARD_SOURCE,
         "fixed" = paste0("g", encode_num(MAX_GROWTH_FIXED)),
