@@ -50,7 +50,7 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Run subfolder to merge, selected by name: home_dir can hold several runs.
 # Update it for each new run; it must be the same run as in
 # 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R.
-run_code <- "20261014_220452_unknown_allT_DP_MB_NME_R12_BD_LT_CU_g5_sm0p5_kg0_ks0_rcpp"
+run_code <- "20261022_220659_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_HP_LF_g5_sm0p5_kg0_ks0_rcpp"
 if (!file.exists(file.path(home_dir, run_code, "run_finished.txt"))) {
     run_msg <- sprintf("CHECK FAILED: run folder %s not found in %s, or the run did not finish (no run_finished.txt)", run_code, home_dir)
     cat("❌", run_msg, "\n")
@@ -558,6 +558,31 @@ mr_check(
     examples = final_vs_raw[result == "Different", column]
 )
 rm(stage1_cols, final_vs_raw)
+
+# Pins of the rows the broken-below rules R1/R2 labelled. With hard pins these
+# rules never write TrueStemID, so the pin is the database StemID of the row;
+# in run 20261022_220659 the stage-2 renumbering of engine IDs
+# (renumber_engine_minted_ids(), fixed since) still turned 127 of them into
+# per-tree numbers. Such a pin (not a StemID of its tree) takes back the row's
+# own StemID: every other pin of that run is the row's own StemID, the two
+# field tags the database re-keyed aside (Step 1(a')).
+bb_methods <- c("bb_split", "bb_split_carry", "bb_post_terminator_split", "bb_post_terminator_split_carry")
+tree_sids <- unique(complete_dataset_final[!is.na(StemID), .(Tag = as.character(Tag), sid = as.integer(as.character(StemID)))])
+pin_rows <- complete_dataset_final[, which(ReconstructionMethod %in% bb_methods & !is.na(TrueStemID))]
+pin_chk <- complete_dataset_final[pin_rows, .(row = pin_rows, Tag = as.character(Tag), pin = as.integer(TrueStemID), sid = as.integer(as.character(StemID)))]
+pin_chk[tree_sids, on = .(Tag, pin = sid), is_sid := TRUE]
+pin_fix <- pin_chk[is.na(is_sid) & !is.na(sid)]
+if (nrow(pin_fix) > 0L) {
+    complete_dataset_final[pin_fix$row, TrueStemID := pin_fix$sid]
+}
+cat(sprintf("Pins of R1/R2 rows restored to their StemID: %d row(s) in %d tree(s)\n", nrow(pin_fix), uniqueN(pin_fix$Tag)))
+pin_chk2 <- complete_dataset_final[pin_rows, .(Tag = as.character(Tag), pin = as.integer(TrueStemID))][tree_sids, on = .(Tag, pin = sid), nomatch = 0L]
+mr_check(
+    nrow(pin_chk2) == length(pin_rows),
+    "Every pin of a row labelled by R1/R2 is a database StemID of its tree",
+    n_bad = length(pin_rows) - nrow(pin_chk2)
+)
+rm(bb_methods, tree_sids, pin_rows, pin_chk, pin_fix, pin_chk2)
 
 # Field-tagged stems stay whole (multiple-stem tags; the database StemID is
 # used only to set the pins). Every row with a StemTag is pinned (TrueStemID).
