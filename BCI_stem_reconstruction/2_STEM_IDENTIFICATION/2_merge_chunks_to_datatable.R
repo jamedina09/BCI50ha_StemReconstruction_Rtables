@@ -559,6 +559,40 @@ mr_check(
 )
 rm(stage1_cols, final_vs_raw)
 
+# Field-tagged stems stay whole (multiple-stem tags; the database StemID is
+# used only to set the pins). Every row with a StemTag is pinned (TrueStemID).
+# Field tags are the StemTags of the 2010 census on (census 7, the first that
+# tagged every stem; before it the database shows a StemID's later tag on its
+# earlier records). A field tag is the tag value (Tag, StemTag), so a tag the
+# database gave a new StemID still counts as one: every field tag is one
+# reconstructed stem, and no reconstructed stem holds two field tags. A field
+# tag with two records in one census (e.g. a duplicated measurement) cannot be
+# one stem; it is counted in the message, not as a failure.
+tagged <- complete_dataset_final[
+    !is.na(StemTag) & nzchar(as.character(StemTag)) & single_stem_tags == FALSE,
+    .(Tag = as.character(Tag), StemTag = as.character(StemTag), CensusID, TrueStemID, ReconstructedStemID)
+]
+mr_check(
+    tagged[, all(!is.na(TrueStemID))],
+    "Every row with a StemTag is pinned (TrueStemID)",
+    examples = tagged[is.na(TrueStemID), unique(Tag)], n_bad = tagged[is.na(TrueStemID), .N]
+)
+field <- tagged[CensusID >= 7L & !is.na(ReconstructedStemID)]
+dup_tag <- field[, .N, by = .(Tag, StemTag, CensusID)][N > 1L, unique(paste(Tag, StemTag))]
+split_tagged <- field[!(paste(Tag, StemTag) %in% dup_tag), .(n_ids = uniqueN(ReconstructedStemID)), by = .(Tag, StemTag)][n_ids > 1L]
+mr_check(
+    nrow(split_tagged) == 0L,
+    sprintf("Every field tag (2010 on) is one reconstructed stem (%d tag(s) with two records in one census not counted)", length(dup_tag)),
+    examples = split_tagged$Tag, n_bad = nrow(split_tagged)
+)
+merged_tagged <- field[, .(n_tag = uniqueN(StemTag)), by = .(Tag, ReconstructedStemID)][n_tag > 1L]
+mr_check(
+    nrow(merged_tagged) == 0L,
+    "No reconstructed stem holds two field tags (2010 on)",
+    examples = merged_tagged$Tag, n_bad = nrow(merged_tagged)
+)
+rm(tagged, field, dup_tag, split_tagged, merged_tagged)
+
 # Output directory for the final complete dataset (relative to the working
 # directory, i.e. the project root).
 post_dir <- path.expand(
