@@ -124,6 +124,98 @@ ReferenceStemID <- ConstraintViolationFlag <- NULL
 DP_MaxStatesPerCensus <- DP_MaxStatesCensusID <- DP_KUsed <- NULL
 species <- NULL
 
+## ---- 6b) Broken-below records with a DBH: which rule ----------------------
+# Up to 2010 a break is written on the tree's main-stem record (PrimaryStem
+# "main"): with a DBH when any stem of the tree was alive (the largest living
+# stem), as a stump otherwise. Option dp_global.bb_dbh_rule says what such a
+# record with a DBH means for the identities:
+#   "r1"        (default) rule R1: the record always starts a new stem;
+#   "main_ends" the main stem of the tag's previous measured census ends
+#               there, and the record is matched like any other measurement
+#               but cannot continue that main stem (the engines enforce it;
+#               apply_broken_below_invariants() only checks it).
+# The drivers set the option from BB_DBH_RULE.
+# Hard pins (option dp_global.hard_pins, default FALSE): a pin (TrueStemID, the
+# database identity set before the engine) holds after the engine. The
+# broken-below rules never cut between rows with the same pin and never
+# rewrite a pin, and apply_terminal_to_host() moves only unpinned records.
+# Field-tagged stems (StemTag) are pinned, so each stays one stem.
+# Exceptions (pin_prelife_rows()), so the stump rule of 2026-09-30 still holds
+# (a stump is the end record of the stem that broke): an unmeasured dead /
+# stem dead / broken-below / missing record that comes before any evidence of
+# life of its own pin is not bound by the pin when
+#   - its pin never lives (the records go to the stem that broke together), or
+#   - it carries no field tag (field_tag_rows(): a StemTag from the census of
+#     option dp_global.field_tag_first_census on; BCI: 7 = 2010).
+# Up to 2010 the BCI database stores a break under a NEW StemID, the one the
+# resprout measured later carries, and shows that StemID's later StemTag on
+# all its records. A field-tagged record of a stem measured later is that
+# stem's record (a stem with no measurable DBH at 1.3 m) and keeps its pin.
+hard_pins_active <- function() {
+    isTRUE(getOption("dp_global.hard_pins", FALSE))
+}
+
+# field_tag_rows(): TRUE at rows that carry a field tag: a StemTag in a census
+# from option dp_global.field_tag_first_census on (default Inf: none).
+field_tag_rows <- function(out) {
+    first <- getOption("dp_global.field_tag_first_census", Inf)
+    if (!("StemTag" %in% names(out)) || !is.finite(first)) {
+        return(logical(nrow(out)))
+    }
+    st <- as.character(out$StemTag)
+    !is.na(st) & nzchar(st) & st != "NA" & as.integer(out$CensusID) >= first
+}
+
+# pin_prelife_rows(): TRUE at an unmeasured dead / stem dead / broken-below /
+# missing row whose pin (TrueStemID) has no evidence of life (DBH or raw
+# "alive") in the tag at or before the row's census, except a row with a
+# field tag (`field_tag`) whose pin lives later. All inputs are vectors
+# aligned to the rows; `field_tag` NULL means no row has one.
+pin_prelife_rows <- function(tag, pin, cen, dbh, status, field_tag = NULL) {
+    st <- as.character(status)
+    alive_ev <- !is.na(dbh) | (!is.na(st) & st == "alive")
+    pl <- data.table::data.table(tag = as.character(tag), pin = as.integer(pin), cen = as.integer(cen))
+    live <- alive_ev & !is.na(pl$pin)
+    p1 <- if (any(live)) {
+        pl[live, .(p1 = min(cen)), by = .(tag, pin)][pl, on = .(tag, pin), p1]
+    } else {
+        rep(NA_integer_, nrow(pl))
+    }
+    pre <- is.na(dbh) & !is.na(pl$pin) & !is.na(st) & st %in% c("dead", "stem dead", "broken below", "missing") &
+        (is.na(p1) | pl$cen < p1)
+    if (!is.null(field_tag)) pre <- pre & !(field_tag %in% TRUE & !is.na(p1))
+    pre
+}
+
+bb_main_rule_active <- function() {
+    identical(getOption("dp_global.bb_dbh_rule", "r1"), "main_ends")
+}
+
+# bb_main_violation(): TRUE at a broken-below row with a DBH whose previous
+# measured row on its trajectory is the main stem (PrimaryStem "main") of the
+# tag's previous measured census. All inputs are vectors aligned to the rows:
+# tag, trajectory label, census, measured (DBH present), bb (broken below with
+# a DBH) and main (PrimaryStem == "main"). Rows without a trajectory label are
+# never flagged.
+bb_main_violation <- function(tag, traj, cen, meas, bb, main) {
+    n <- length(tag)
+    flag <- logical(n)
+    if (n == 0L || !any(bb & meas, na.rm = TRUE)) {
+        return(flag)
+    }
+    dt <- data.table::data.table(.i = seq_len(n), tag = as.character(tag), traj = traj, cen = as.integer(cen),
+        meas = meas %in% TRUE, bb = bb %in% TRUE, main = main %in% TRUE)
+    mc <- unique(dt[meas == TRUE, .(tag, cen)])
+    data.table::setorder(mc, tag, cen)
+    mc[, prev_cen := data.table::shift(cen), by = tag]
+    m <- dt[meas == TRUE & !is.na(traj)]
+    m[mc, on = .(tag, cen), tag_prev_cen := i.prev_cen]
+    data.table::setorder(m, tag, traj, cen)
+    m[, `:=`(p_main = data.table::shift(main), p_cen = data.table::shift(cen)), by = .(tag, traj)]
+    flag[m[bb & p_main %in% TRUE & !is.na(p_cen) & !is.na(tag_prev_cen) & p_cen == tag_prev_cen, .i]] <- TRUE
+    flag
+}
+
 ## ---- 7) Shared post-engine helper: carried_terminal backfill -----------
 # Backfill orphan end-of-trajectory rows whose engine output is NA.
 #
@@ -341,6 +433,13 @@ apply_pin_track_rejoin <- function(out, verbose = TRUE) {
         bl <- split(bar$cen, bar$tag)
         m[tag %in% names(bl), nb := findInterval(cen - 0.5, sort(bl[[tag[1L]]])), by = tag]
     }
+    # With the main-stem rule a broken-below row with a DBH starts a new stem
+    # only where it would continue the main stem of the census before (the
+    # engines do not let it), so only such rows cut a track.
+    if (bb_main_rule_active() && "PrimaryStem" %in% names(out)) {
+        .main <- as.character(out$PrimaryStem) %in% "main"
+        m[, bb := bb_main_violation(tag, pre, cen, rep(TRUE, .N), bb, .main[.row])]
+    }
     data.table::setorder(m, tag, pre, cen)
     m[, seg := cumsum(bb) + nb, by = .(tag, pre)]
     mixed <- m[, .N, by = .(tag, pre, cen)][N > 1L, unique(paste(tag, pre))]
@@ -413,8 +512,17 @@ apply_pin_track_rejoin <- function(out, verbose = TRUE) {
 #   (b) otherwise the one stem that ended just before: the only identity of
 #       the tag whose last evidence of life is in census c1 - 1 (c1 = the
 #       group's first record), when exactly one unresolved group starts at c1;
-#   (c) otherwise the records stay where they are (a never-alive stem).
-# A target must have no row in any census of the group (no collision).
+#   (c) otherwise, when the group's first record is the tree's main record
+#       (PrimaryStem "main"), the main stem of census c1 - 1: the identity of
+#       the one measured main record of that census, if its last evidence of
+#       life is in c1 - 1. Up to 2010 the BCI field writes a break on the main
+#       stem's record, so when several stems end just before (the whole tree
+#       broke) the stump is the main stem's end record;
+#   (d) otherwise the records stay where they are (a never-alive stem).
+# A target must have no row in any census of the group (no collision). A
+# "missing" record (no DBH) of the same StemID that follows the group's first
+# record is part of the group and moves with it (e.g. a 1985 stump recorded
+# "missing" in 1990); a group of "missing" records alone is never moved.
 # Only unmeasured rows move, so measured trajectories, DBH and statuses are
 # unchanged, and each record keeps its own Status (DFstatus downstream).
 # Moved rows get ReconstructionMethod = "terminal_to_host"; under (a)
@@ -450,9 +558,18 @@ apply_terminal_to_host <- function(out, verbose = TRUE) {
     cen <- as.integer(out$CensusID)
     tg <- as.character(out$Tag)
     sts <- as.character(out$Status)
+    is_main <- if ("PrimaryStem" %in% names(out)) as.character(out$PrimaryStem) %in% "main" else logical(nrow(out))
     alive_ev <- !is.na(out$DBH) | (!is.na(sts) & sts == "alive")
-    is_term <- is.na(out$DBH) & !is.na(rid) & !is.na(sts) & sts %in% c("dead", "stem dead", "broken below")
-    if (!any(is_term)) {
+    is_term <- is.na(out$DBH) & !is.na(rid) & !is.na(sts) & sts %in% c("dead", "stem dead", "broken below", "missing")
+    # Hard pins: a pinned record stays with its pin, unless it comes before
+    # any life of that pin and carries no field tag, or its pin never lives
+    # (pin_prelife_rows(): a break record stored under the resprout's new
+    # StemID, which is the end record of the stem that broke).
+    if (hard_pins_active() && "TrueStemID" %in% names(out)) {
+        is_term <- is_term & (is.na(out$TrueStemID) |
+            pin_prelife_rows(tg, out$TrueStemID, cen, out$DBH, sts, field_tag_rows(out)))
+    }
+    if (!any(is_term & sts != "missing")) {
         return(out)
     }
 
@@ -470,18 +587,23 @@ apply_terminal_to_host <- function(out, verbose = TRUE) {
     cand <- data.table::data.table(
         .row = which(is_term), tag = tg[is_term], host = rid[is_term], cen = cen[is_term],
         src = if (is.null(src_col)) NA_character_ else as.character(out[[src_col]][is_term]),
-        pre = if (has_pre) as.integer(out$ReconstructedStemID_PreSweep[is_term]) else NA_integer_
+        pre = if (has_pre) as.integer(out$ReconstructedStemID_PreSweep[is_term]) else NA_integer_,
+        main = is_main[is_term], miss = sts[is_term] == "missing"
     )
     cand <- span[cand, on = .(tag, host)]
     cand <- cand[is.na(h_first) | cen < h_first]
+    data.table::setnames(cand, "host", "rid")
+    # "missing" records only follow a dead / stem dead / broken-below record of their group
+    cand[, c0 := suppressWarnings(min(cen[!miss])), by = .(tag, rid, src)]
+    cand <- cand[is.finite(c0) & (!miss | cen > c0)]
     if (nrow(cand) == 0L) {
         return(out)
     }
-    data.table::setnames(cand, "host", "rid")
     cand[, grp := .GRP, by = .(tag, rid, src)]
     G <- cand[, .(
         tag = tag[1L], rid = rid[1L], c1 = min(cen), cens = list(sort(unique(cen))),
-        pre = if (all(!is.na(pre)) && data.table::uniqueN(pre) == 1L) pre[1L] else NA_integer_
+        pre = if (all(!is.na(pre)) && data.table::uniqueN(pre) == 1L) pre[1L] else NA_integer_,
+        main1 = any(main[cen == min(cen)])
     ), by = grp]
 
     # Rows already present per (tag, identity, census), plus claims made here.
@@ -543,6 +665,25 @@ apply_terminal_to_host <- function(out, verbose = TRUE) {
         }
     }
 
+    # (c) the main stem of the census before, when the group starts on the
+    # tree's main record (the whole tree broke, so several stems end then)
+    un <- G[is.na(target) & main1 == TRUE]
+    if (nrow(un) > 0L) {
+        mrec <- data.table::data.table(tag = tg, host = rid, cen = cen)[!is.na(out$DBH) & is_main & !is.na(rid)]
+        mrec <- mrec[, .(n_main = .N, host = host[1L]), by = .(tag, cen)][n_main == 1L]
+        cc <- mrec[un[, .(grp, tag, cen = c1 - 1L, rid)], on = .(tag, cen), nomatch = 0L][host != rid]
+        cc <- span[cc, on = .(tag, host), nomatch = 0L][h_last == cen]
+        for (k in seq_len(nrow(cc))) {
+            gi <- match(cc$grp[k], G$grp)
+            cs <- G$cens[[gi]]
+            if (!collides(G$tag[gi], cc$host[k], cs)) {
+                target[gi] <- cc$host[k]
+                rule[gi] <- "c"
+                claimed <- c(claimed, paste(G$tag[gi], cc$host[k], cs, sep = "\r"))
+            }
+        }
+    }
+
     moved <- data.table::data.table(grp = G$grp, target = target, rule = rule)[!is.na(target)]
     if (nrow(moved) > 0L) {
         rows <- cand[moved, on = "grp"]
@@ -556,10 +697,11 @@ apply_terminal_to_host <- function(out, verbose = TRUE) {
     }
     if (isTRUE(verbose)) {
         message(sprintf(
-            "[apply_terminal_to_host] %d group(s) / %d row(s): engine choice %d / %d, only ending stem %d / %d, left as never-alive %d / %d.",
+            "[apply_terminal_to_host] %d group(s) / %d row(s): engine choice %d / %d, only ending stem %d / %d, main stem before %d / %d, left as never-alive %d / %d.",
             nrow(G), nrow(cand),
             sum(rule %in% "a"), cand[grp %in% moved[rule == "a", grp], .N],
             sum(rule %in% "b"), cand[grp %in% moved[rule == "b", grp], .N],
+            sum(rule %in% "c"), cand[grp %in% moved[rule == "c", grp], .N],
             sum(is.na(rule)), cand[!grp %in% moved$grp, .N]
         ))
     }
@@ -586,6 +728,13 @@ apply_terminal_to_host <- function(out, verbose = TRUE) {
 #       stem-dead corpse rows, e.g. labelled by
 #       `apply_carried_terminal_backfill`) keep their ID (LOCF on terminator
 #       is allowed).
+#
+#   With the main-stem rule (option dp_global.bb_dbh_rule = "main_ends",
+#   bb_main_rule_active()) R1 is a check: only a broken-below row with a DBH
+#   that continues the main stem (PrimaryStem "main") of the tag's previous
+#   measured census starts a new identity, carried forward until the next such
+#   row. The engines do not produce these links, so the check normally finds
+#   none. R2 is unchanged.
 #
 # Why the trajectory (and not StemTag) is the group: StemTags only exist from
 # the 2010 census on (C7+). A StemTag group would hold a stem's pre-2010 rows
@@ -641,9 +790,93 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
     # order (the setorderv above). Rows without an identity are not grouped.
     groups <- out[!is.na(ReconstructedStemID), .(.idxs = list(.I)), by = .(Tag, ReconstructedStemID)]
 
+    # Main-stem rule (option dp_global.bb_dbh_rule = "main_ends", see
+    # bb_main_rule_active()): R1 only checks that a broken-below row with a DBH
+    # does not continue the main stem of the tag's previous measured census;
+    # such a row (the engines do not produce it) starts a new identity as
+    # below. Without a PrimaryStem column no row is flagged.
+    main_rule <- bb_main_rule_active()
+    viol <- if (main_rule && "PrimaryStem" %in% names(out)) {
+        bb_main_violation(out$Tag, rid, out$CensusID, !is.na(dbh),
+            !is.na(sts) & sts == "broken below" & !is.na(dbh), as.character(out$PrimaryStem) %in% "main")
+    } else {
+        logical(nrow(out))
+    }
+
     n_r1 <- 0L
     n_r2 <- 0L
     n_pin_override <- 0L
+    hard <- hard_pins_active()
+    n_pin_kept <- 0L
+    # Rows before any life of their pin (pin_prelife_rows()) do not hold a
+    # stem together: R2 still cuts a resprout from such a stump record.
+    prelife <- if (hard && has_true) {
+        pin_prelife_rows(out$Tag, trueid, out$CensusID, dbh, sts, field_tag_rows(out))
+    } else {
+        logical(nrow(out))
+    }
+
+    # Rows (indices into ix) that a split at position `a` moves: the row and
+    # the rows after it that carry the same ID, up to the next break that
+    # starts a stem of its own.
+    moved_at <- function(ix, a, n_g) {
+        old <- rid[ix[a]]
+        mv <- integer(0)
+        for (b in a:n_g) {
+            j <- ix[b]
+            if (is.na(rid[j]) || rid[j] != old) break
+            if (b > a && !is.na(sts[j]) && sts[j] == "broken below" && !is.na(dbh[j]) && (!main_rule || viol[j])) break
+            mv <- c(mv, b)
+        }
+        mv
+    }
+    # Hard pins: "skip" when rows of one pin would end up on both sides of
+    # the cut (rows before any life of their pin aside); "swap" when the moved
+    # rows hold the current ID as their pin (the rest of the stem takes the
+    # new ID, so the pinned rows keep theirs and no pin is rewritten); "split"
+    # otherwise.
+    split_mode <- function(ix, mv) {
+        if (!hard) {
+            return("split")
+        }
+        old <- rid[ix[mv[1L]]]
+        rest <- ix[setdiff(seq_along(ix), mv)]
+        rest <- rest[!is.na(rid[rest]) & rid[rest] == old]
+        pm <- trueid[ix[mv]]
+        pm <- pm[!is.na(pm)]
+        pr <- trueid[rest[!prelife[rest]]]
+        pr <- pr[!is.na(pr)]
+        if (length(pm) == 0L) {
+            return("split")
+        }
+        if (any(pm %in% pr)) {
+            return("skip")
+        }
+        if (old %in% pm) {
+            return("swap")
+        }
+        "split"
+    }
+    apply_split <- function(ix, mv, mode, lab_first, lab_carry) {
+        old <- rid[ix[mv[1L]]]
+        new <- next_id
+        next_id <<- next_id + 1L
+        if (mode == "swap") {
+            rest <- ix[setdiff(seq_along(ix), mv)]
+            rest <- rest[!is.na(rid[rest]) & rid[rest] == old]
+            rid[rest] <<- new
+        } else {
+            for (b in mv) {
+                j <- ix[b]
+                rid[j] <<- new
+                if (!is.na(trueid[j]) && trueid[j] == old) {
+                    trueid[j] <<- new
+                    n_pin_override <<- n_pin_override + 1L
+                }
+            }
+        }
+        mth[ix[mv]] <<- c(lab_first, rep(lab_carry, length(mv) - 1L))
+    }
 
     for (g in seq_len(nrow(groups))) {
         ix <- groups$.idxs[[g]]
@@ -655,26 +888,22 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
             i <- ix[a]
             if (is.na(sts[i]) || sts[i] != "broken below" || is.na(dbh[i])) next
             if (a == 1L) next
+            if (main_rule && !viol[i]) next
             prior <- rid[ix[seq_len(a - 1L)]]
             prior <- prior[!is.na(prior)]
             if (length(prior) == 0L || is.na(rid[i]) || !(rid[i] %in% prior)) next
-            # Pin override: the BCI drivers pin BB+DBH rows to their own StemID
-            # on the assumption that they start a new trajectory.  When the
-            # row still has earlier rows on its trajectory, the pin is
-            # overridden and TrueStemID is updated to keep the two columns
-            # consistent.
-            if (!is.na(trueid[i])) n_pin_override <- n_pin_override + 1L
-            old_id <- rid[i]
-            new_id <- next_id
-            next_id <- next_id + 1L
-            for (b in a:n_g) {
-                j <- ix[b]
-                if (is.na(rid[j]) || rid[j] != old_id) break
-                if (b > a && !is.na(sts[j]) && sts[j] == "broken below" && !is.na(dbh[j])) break
-                rid[j] <- new_id
-                if (!is.na(trueid[j]) && trueid[j] == old_id) trueid[j] <- new_id
-                mth[j] <- if (b == a) "bb_split" else "bb_split_carry"
+            # Pin override (without hard pins): the BCI drivers pin BB+DBH
+            # rows to their own StemID on the assumption that they start a new
+            # trajectory. When the row still has earlier rows on its
+            # trajectory, the pin is overridden and TrueStemID is updated to
+            # keep the two columns consistent.
+            mv <- moved_at(ix, a, n_g)
+            mode <- split_mode(ix, mv)
+            if (mode == "skip") {
+                n_pin_kept <- n_pin_kept + 1L
+                next
             }
+            apply_split(ix, mv, mode, "bb_split", "bb_split_carry")
             n_r1 <- n_r1 + 1L
         }
 
@@ -689,18 +918,13 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
                 j <- ix[b]
                 if (is.na(rid[j]) || rid[j] != term_id || is.na(dbh[j])) next
                 # alive (non-NA DBH) row reusing terminator id — split
-                if (!is.na(trueid[j])) n_pin_override <- n_pin_override + 1L
-                old2 <- rid[j]
-                new2 <- next_id
-                next_id <- next_id + 1L
-                for (k_ in b:n_g) {
-                    k <- ix[k_]
-                    if (is.na(rid[k]) || rid[k] != old2) break
-                    if (k_ > b && !is.na(sts[k]) && sts[k] == "broken below" && !is.na(dbh[k])) break
-                    rid[k] <- new2
-                    if (!is.na(trueid[k]) && trueid[k] == old2) trueid[k] <- new2
-                    mth[k] <- if (k_ == b) "bb_post_terminator_split" else "bb_post_terminator_split_carry"
+                mv <- moved_at(ix, b, n_g)
+                mode <- split_mode(ix, mv)
+                if (mode == "skip") {
+                    n_pin_kept <- n_pin_kept + 1L
+                    break
                 }
+                apply_split(ix, mv, mode, "bb_post_terminator_split", "bb_post_terminator_split_carry")
                 n_r2 <- n_r2 + 1L
                 break
             }
@@ -712,8 +936,9 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
     if (has_true) out[, TrueStemID := trueid]
     if (isTRUE(verbose)) {
         message(sprintf(
-            "[apply_broken_below_invariants] R1 splits: %d, R2 splits: %d, pin overrides: %d.",
-            n_r1, n_r2, n_pin_override
+            "[apply_broken_below_invariants] R1 splits: %d, R2 splits: %d, pin overrides: %d%s.",
+            n_r1, n_r2, n_pin_override,
+            if (hard) sprintf(", splits skipped to keep a pin whole: %d", n_pin_kept) else ""
         ))
     }
     out
@@ -770,7 +995,8 @@ apply_pins_to_samples <- function(samples_dt, tree_data) {
     )
     meta <- unique(data.table::data.table(
         ObsRowID = td$obs_row_id, pin = pin_all,
-        bb = !is.na(td$DBH) & !is.na(sts) & sts == "broken below"
+        bb = !is.na(td$DBH) & !is.na(sts) & sts == "broken below",
+        main = if ("PrimaryStem" %in% names(td)) as.character(td$PrimaryStem) %in% "main" else FALSE
     )[!is.na(ObsRowID)], by = "ObsRowID")
     if (!any(!is.na(meta$pin))) {
         return(samples_dt)
@@ -791,9 +1017,16 @@ apply_pins_to_samples <- function(samples_dt, tree_data) {
     s[, dup := !is.na(pin) & (duplicated(data.table::data.table(Sample, c, pin)) | duplicated(data.table::data.table(Sample, c, pin), fromLast = TRUE))]
     s[, holds := !is.na(pin) & !dup]
     s[, new := fifelse(holds, paste0("P", pin), paste0("S", lab))]
-    # 2. rejoin: segments of each sampled track (cut at broken-below + DBH rows and after barriers)
+    # 2. rejoin: segments of each sampled track (cut at broken-below + DBH rows and after barriers;
+    #    with the main-stem rule only at such rows that would continue the main stem of the
+    #    census before, as in apply_pin_track_rejoin())
     data.table::setorder(s, Sample, lab, c)
     s[, nb := if (length(bar) > 0L) findInterval(c - 0.5, bar) else 0L]
+    if (bb_main_rule_active() && "PrimaryStem" %in% names(td)) {
+        s[is.na(main), main := FALSE]
+        s[, bb := bb_main_violation(Sample, lab, c, rep(TRUE, .N), bb, main)]
+        data.table::setorder(s, Sample, lab, c)
+    }
     s[, seg := cumsum(bb) + nb, by = .(Sample, lab)]
     sg <- s[, .(P = {
         p <- unique(pin[!is.na(pin)])
@@ -877,7 +1110,10 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
         return(samples_dt)
     }
 
-    meta <- as.data.table(tree_data)[, c("obs_row_id", "Status", "DBH", series_col), with = FALSE]
+    # PrimaryStem (when present) lets the per-sample R1 follow the main-stem rule
+    # (bb_main_rule_active()) exactly as the exported table does.
+    .meta_cols <- c("obs_row_id", "Status", "DBH", series_col, if ("PrimaryStem" %in% names(tree_data)) "PrimaryStem")
+    meta <- as.data.table(tree_data)[, unique(.meta_cols), with = FALSE]
     data.table::setnames(meta, "obs_row_id", "ObsRowID")
 
     tag_local <- if ("Tag" %in% names(samples_dt)) samples_dt$Tag[1L] else NA_integer_
