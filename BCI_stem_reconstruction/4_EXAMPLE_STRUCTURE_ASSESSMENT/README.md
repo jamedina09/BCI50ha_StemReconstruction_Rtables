@@ -30,7 +30,17 @@ In the R tables:
   it from `date` (days since 1960-01-01, filled in stage 3 for every row), so every
   stem-census row has a date;
 - `dbh` is exported as recorded, so a dead (`G`/`D`) record can carry a DBH; each script
-  ignores it, because stocks, fluxes and summaries use alive (`A`) rows only.
+  ignores it, because stocks, fluxes and summaries use alive (`A`) rows only;
+- an alive (`A`) record without a DBH whose raw status (`DFstatus`) is "broken below" is a
+  **stump**: the stem is alive but has no measurable DBH at 1.3 m (a broken-below record with
+  a field tag is that stem). All three scripts keep it out of the stock in that census: it gets
+  no DBH, is not counted as a stem, and adds no basal area or biomass.
+  - Before the stem's first measurement, the stem enters the stock at that measurement (a
+    recruit).
+  - Between two measurements, its basal area or biomass leaves the stock and comes back (a
+    loss, then a gain); its `Rstatus` stays `A`, so it is not a death.
+  - Other alive records without a DBH are missed measurements and keep a DBH from the stem's
+    own measurements.
 
 ## Scripts
 
@@ -50,7 +60,8 @@ Key processing steps:
 - Apply optional strangler-fig removal and palm DBH correction.
 - Convert DBH from mm to cm and apply Cushman et al. 2014 taper correction to estimate
   DBH at 1.3 m (`dbh_t`).
-- Interpolate missing DBH for alive stems using `linear` (alternatives: `locf`, or `mean`).
+- Interpolate missing DBH for alive stems using `linear` (alternatives: `locf`, or `mean`);
+  stump censuses get none.
 - Compute AGB with Chave et al. 2014 allometry plus Martinez-Cano et al. 2019 height model,
   with Goodman et al. 2013 palm-specific allometry.
 - Correct 1985 small-stem DBH rounding bias using a Census 3 reference.
@@ -163,7 +174,7 @@ Purpose:
 Key processing steps:
 
 - Load the stage-3 R tables and the species table; count an individual as one `treeID` and
-  an alive stem as `Rstatus == "A"`.
+  an alive stem as `Rstatus == "A"`, except a stump census.
 - Use the Cushman et al. 2014 taper-corrected DBH (`use_taper_for_ba`), give alive stems whose
   DBH was missed a DBH from their own measurements (the rule of the other two scripts), and
   place trees without coordinates at the centre of their quadrat.
