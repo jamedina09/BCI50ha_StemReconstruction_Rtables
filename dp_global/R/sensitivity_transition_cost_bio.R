@@ -10,6 +10,7 @@
 #   terms dominate.
 #
 # Usage (typical)
+#   library(data.table)
 #   source("dp_global/R/dp_global_bio.R")
 #   source("dp_global/R/sensitivity_transition_cost_bio.R")
 #
@@ -963,27 +964,33 @@ transition_thresholds <- function(track_dbh_t, track_dbh_tp1, interval_years, ba
 ############################################################
 ### Optional demo (opt-in)
 ############################################################
-# Set option and source this file to run a quick demo on a simulated CSV.
+# Set the option and source this file, from the project root, to run a quick
+# demo on the simulated data of the generic drivers:
+#   library(data.table)
+#   source("dp_global/R/dp_global_bio.R")
 #   options(dp_global_biol.run_sensitivity_example = TRUE)
 #   source("dp_global/R/sensitivity_transition_cost_bio.R")
-# The demo reads ../data_simulation/data/simulation_legacy_backup/
-# simulated_data_two_species.csv (relative to the working directory) and
-# writes ./transition_cost_sensitivity_demo.pdf. That input file is not in
-# the repository, and the demo passes `interval_years` to estimate_bio_pars(),
-# which has no such argument.
+# The demo reads data_simulation/data/simulated_data_1.csv, estimates one
+# parameter set from the censuses from 7 on (where the simulated stems carry a
+# TrueStemID), sweeps sigma0, recruit_lambda and max_shrink in three scenarios
+# and writes ./transition_cost_sensitivity_demo.pdf.
 
 if (isTRUE(getOption("dp_global_biol.run_sensitivity_example", FALSE))) {
     # Ensure we have the model functions
     if (!exists("estimate_bio_pars", mode = "function")) {
         stop("estimate_bio_pars() not found. Source dp_global_bio.R first.")
     }
+    library(data.table)
 
-    input_file <- "../data_simulation/data/simulation_legacy_backup/simulated_data_two_species.csv"
+    input_file <- file.path("data_simulation", "data", "simulated_data_1.csv")
+    if (!file.exists(input_file)) {
+        stop("Demo input not found: ", input_file, " (run from the project root).")
+    }
     xraw <- data.table::fread(input_file)
     xraw[, species := "all"]
 
-    interval_years <- 5
-    bio <- estimate_bio_pars(xraw, interval_years = interval_years, mortality_start = c(log(0.01), 0.03))
+    interval_years <- 5 # interval of the demo scenarios
+    bio <- estimate_bio_pars(xraw, anchor_start_census = 7L, mortality_start = c(log(0.01), 0.03))
     base <- bio_pars_to_transition_args(bio)
 
     sc <- make_demo_scenarios(base, interval_years = interval_years)
