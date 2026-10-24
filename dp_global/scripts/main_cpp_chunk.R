@@ -258,9 +258,8 @@ message("[dp_global main_cpp_chunk.R] base_out_dir (raw): ", base_out_dir)
 base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
 message("[dp_global main_cpp_chunk.R] base_out_dir (normalized): ", base_out_dir)
 
-# Optional: explicitly set a subdirectory name for outputs.
-# If NULL, an automatic name based on timestamp + key config flags is used.
-# OUT_DIR_NAME <- NULL
+# The output folder is named by build_out_dir_name() (timestamp + key
+# settings) unless OUT_DIR_OVERRIDE is set.
 # CONFIG_NAME can be set by an external orchestrator to identify the
 # experimental configuration; default to NULL so override parsing treats it as
 # a valid, known variable rather than an unknown override.
@@ -279,14 +278,6 @@ WRITE_DP_FEATHER <- FALSE
 WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- TRUE
 # Set to FALSE when input data have no TrueStemID reference lines to plot.
 DP_PDF_INCLUDE_REFERENCE <- TRUE
-
-# Per-tag PDF plotting control is part of the full runner but not used in
-# the chunked DP runner. Leave commented to avoid confusion.
-# if (!isTRUE(RUN_ALL_TAGS)) {
-#     PLOT_PDF_ONE_TAG_ONLY <- TRUE
-# } else {
-#     PLOT_PDF_ONE_TAG_ONLY <- FALSE
-# }
 
 # Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
 PROJECT_ROOT <- here::here()
@@ -352,10 +343,8 @@ CLI_REFERENCE <- list(
     PIN_TRUESTEMID = "PIN_TRUESTEMID"
 )
 
-# Sensitivity and realism flags are not applicable to the chunked runner
-# (they require a fully assembled out object). Kept as comments for reference.
-# SENSITIVITY_MODE <- "none"
-# RUN_REALISM_REPORT <- FALSE
+# The chunked runner has no sensitivity sweeps or realism report: both need
+# the full result in memory (use main_cpp.R).
 
 ############################################################
 ### 4.1) Help & override application
@@ -492,10 +481,6 @@ if (!file.exists(INPUT_FILE)) {
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
 ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
-# Not used by chunked runner; leave commented out to avoid confusion
-# RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
-# WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
-# MAKE_ALL_SWEEPS_PDF <- SENSITIVITY_MODE == "run+write+pdf"
 
 # Final output directory for this run (created at runtime in run_main_chunked()).
 # OUT_DIR_OVERRIDE takes precedence: set it to resume into an existing output
@@ -915,7 +900,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 log_msg(sprintf("[audit] script-level sweep overrode %d engine-assigned ReconstructedStemID value(s) for tag=%s (rows flagged via SweepAuditOverride=TRUE)", sum(.override_local), tag_label), "WARN")
             }
 
-            # ---- Fix 2: duplicate-aware pinning -------------------------
+            # ---- Duplicate-aware pinning --------------------------------
             # Per-row decision: tentatively pin Recon := TrueStemID, but
             # only commit if doing so does NOT create a duplicate
             # ReconstructedStemID at the same (Tag, CensusID) given the
@@ -926,14 +911,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             # via SweepRollbackToPreSweep=TRUE, and leave the row's
             # ReconstructionMethod untouched. SweepAuditOverride above
             # already records the disagreement; the rollback flag
-            # records the chosen resolution.
-            #
-            # Rows are processed in stable index order so the outcome is
-            # deterministic. Tag 258411 C6 is the canonical case: a
-            # retag-campaign reuse of OriginalStemID 995110 would force
-            # two rows at (Tag=258411, CensusID=6) onto Recon=995110;
-            # the engine had already given the second row a fresh ID
-            # (995113), which is kept.
+            # records the chosen resolution. Rows are processed in stable
+            # index order, so the outcome is deterministic.
             if (!("SweepRollbackToPreSweep" %in% names(out))) {
                 out[, SweepRollbackToPreSweep := FALSE]
             } else {
@@ -1051,7 +1030,7 @@ run_main_chunked <- function() {
     xrun <- data.table::copy(xraw)
 
     # 5.1b Step 3a.5 — same-OriginalStemID continuity for unanchored
-    # death/break trajectories (Fix 1; mirrors main_cpp_bci.R Step 3a.5).
+    # death/break trajectories (as main_cpp_bci.R Step 3a.5).
     #
     # No-op unless the input already exposes a `TrueStemID` column (BCI
     # preprocessing in main_cpp_bci.R builds it via Steps 1–3; simulated
@@ -1404,7 +1383,6 @@ run_main_chunked <- function() {
             log_msg("Finished run")
         },
         error = function(e) {
-            # message("[dp_global main_cpp_chunk.R] Warning writing run_finished marker: ", conditionMessage(e))
             log_msg(sprintf("Warning writing run_finished marker: %s", conditionMessage(e)), "WARN")
         }
     )
@@ -1550,7 +1528,7 @@ if (sys.nframe() == 0L) {
 #
 #   Rscript dp_global/scripts/main_cpp_chunk.R \
 #     --INPUT_FILE=data/my_stems.csv \
-#     --OUT_DIR_OVERRIDE=dp_global/output/20260329_220720_unknown_T0_DP_MB_ME_g5_sm0p5_kg0_ks0_rcpp \
+#     --OUT_DIR_OVERRIDE=dp_global/output/<run_dir> \
 #     --DP_CHUNK_RESUME=TRUE \
 #     --MANUAL_CORES=TRUE \
 #     --MANUAL_CORES_VALUE=8
@@ -1566,60 +1544,13 @@ if (sys.nframe() == 0L) {
 #   source("dp_global/scripts/main_cpp_chunk.R")   # defines helpers only
 #   merge_chunk_rds_to_csv("dp_global/output/<run_dir>")
 #
+# MORE EXAMPLES
+#   DP with posterior samples on 16 cores:
+#   Rscript dp_global/scripts/main_cpp_chunk.R \
+#     --DP_MAX_STATES=40000 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=16 \
+#     --POSTERIOR_SAMPLES=250 --USE_MEASUREMENT_ERROR=FALSE
+#   A small DP_MAX_STATES (e.g. 2) sends the tags above it to the
+#   probabilistic matcher; --PROB_SPECIES=sp2 sends one species there.
+#
 # HELP
 #   Rscript dp_global/scripts/main_cpp_chunk.R --help
-
-## Example command lines for testing or running with different settings:
-## GREEDY PROBABILISTIC
-# Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=2 \
-# --MANUAL_CORES=TRUE \
-# --MANUAL_CORES_VALUE=16 \
-# --WRITE_DP_FEATHER=FALSE \
-# --WRITE_DP_PDF=TRUE \
-# --POSTERIOR_SAMPLES=250 \
-# --USE_MEASUREMENT_ERROR=FALSE
-
-## DP
-# Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=40000 \
-# --MANUAL_CORES=TRUE \
-# --MANUAL_CORES_VALUE=16 \
-# --WRITE_DP_FEATHER=FALSE \
-# --WRITE_DP_PDF=TRUE \
-# --POSTERIOR_SAMPLES=250 \
-# --USE_MEASUREMENT_ERROR=FALSE
-
-## DP CONTINUATION
-# Rscript dp_global/scripts/main_cpp_chunk.R \
-#     --OUT_DIR_OVERRIDE=dp_global/output/<run_dir> \
-#     --DP_CHUNK_RESUME=TRUE \
-#     --MANUAL_CORES=TRUE \
-#     --MANUAL_CORES_VALUE=16 \
-#     --WRITE_DP_FEATHER=FALSE \
-#     --WRITE_DP_PDF=TRUE \
-#     --POSTERIOR_SAMPLES=250 \
-# --USE_MEASUREMENT_ERROR=FALSE
-
-## for probabilistic to certain species
-#     --PROB_SPECIES=sp2
-
-# Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=10000 \
-# --MANUAL_CORES=TRUE \
-# --MANUAL_CORES_VALUE=16 \
-# --WRITE_DP_FEATHER=FALSE \
-# --WRITE_DP_PDF=TRUE \
-# --POSTERIOR_SAMPLES=250 \
-# --USE_MEASUREMENT_ERROR=FALSE \
-# --PRUNE_BOUND_FACTOR=5
-
-# Rscript dp_global/scripts/main_cpp_chunk.R \
-# --DP_MAX_STATES=2 \
-# --MANUAL_CORES=TRUE \
-# --MANUAL_CORES_VALUE=16 \
-# --WRITE_DP_FEATHER=FALSE \
-# --WRITE_DP_PDF=TRUE \
-# --POSTERIOR_SAMPLES=250 \
-# --USE_MEASUREMENT_ERROR=FALSE \
-# --PRUNE_BOUND_FACTOR=5

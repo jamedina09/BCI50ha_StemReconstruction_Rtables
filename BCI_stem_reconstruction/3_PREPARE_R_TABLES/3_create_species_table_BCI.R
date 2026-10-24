@@ -10,7 +10,8 @@
 # Flora de Panamá list, the baseline of the stage-1 names.
 #
 # Run from the project root, after 2_create_R_tables_BCI.R (it reads the R
-# tables), line by line or with source().
+# tables), line by line or with source(). The counts and codes quoted in the
+# comments are those of the current inputs.
 #
 # Last public release, the reference of the notes:
 #   Condit R, Pérez R, Aguilar S, Lao S, Foster R, Hubbell S (2019) Complete
@@ -224,7 +225,7 @@ bio_check(
 bio_check(!anyDuplicated(trees_new$tag), "one tree per tag in the R tables", examples = trees_new[duplicated(tag), tag])
 trees_new[, treeID_int := suppressWarnings(as.integer(treeID))]
 bio_check(!anyNA(trees_new$treeID_int), "every treeID of the R tables is a whole number (to match Condit's)")
-nrow(trees_new) # 460,211 trees (2026-10-15)
+nrow(trees_new) # 460,211 trees
 
 # --- 2b. Species table of stage 1 ----------------------------------------------
 # Object bci.spptable, one row per code of the plot except uniden, all text.
@@ -251,7 +252,7 @@ bio_check(
   spp_stage1[, all(clean_text(Genus) != "" & clean_text(SpeciesName) != "")],
   "every code of the stage-1 species table has a genus and an epithet"
 )
-nrow(spp_stage1) # 327 codes (2026-10-15)
+nrow(spp_stage1) # 327 codes
 
 # --- 2c. Condit's species table -----------------------------------------------
 # It lists the species of all of Condit's Panama plots (1,412 codes), so the
@@ -314,13 +315,13 @@ bio_check(
   "each code of the stage-1 species table appears at most once in the Flora de Panamá list",
   examples = flora[duplicated(sp), sp]
 )
-nrow(flora) # 324 of the 327 codes (2026-10-17)
+nrow(flora) # 324 of the 327 codes
 
 # ========================================================================
 # SECTION 3: CODES OF THE R TABLES
 # ========================================================================
 codes_rtables <- sort(unique(trees_new$sp))
-length(codes_rtables) # 328 (2026-10-15)
+length(codes_rtables) # 328
 
 # The stage-1 table holds exactly the codes of the plot, except uniden
 codes_without_row <- setdiff(codes_rtables, c(spp_stage1$Mnemonic, UNIDEN_CODE))
@@ -338,11 +339,11 @@ bio_check(
 
 # The codes of the species table
 codes_table <- if (INCLUDE_UNIDEN) codes_rtables else setdiff(codes_rtables, UNIDEN_CODE)
-length(codes_table) # 328 with uniden (2026-10-15)
+length(codes_table) # 328 with uniden
 
 # Codes against Condit's release: used by his plot data and not by the R
 # tables (their trees now have other codes or left the database), and the
-# reverse. 2026-10-15: gone ingaun, pterof, tremsp; new cupasc, ingave, pse2sp.
+# reverse (gone: ingaun, pterof, tremsp; new: cupasc, ingave, pse2sp).
 codes_gone <- setdiff(codes_condit, codes_rtables)
 codes_new <- setdiff(codes_rtables, codes_condit)
 cat("Codes of Condit et al. (2019) no longer used:", show_codes(codes_gone), "\n")
@@ -386,7 +387,7 @@ bio_check(
 )
 rm(tags_both)
 
-# 2026-10-15: 423,610 trees in both releases; 7 of Condit's no longer in the
+# 423,610 trees in both releases; 7 of Condit's no longer in the
 # database (hassfl, alsebl, rinosy 2, calolo, protco, picrla); 36,601 recruited
 # after his release (first measured in 2022-23)
 trees[in_condit & in_new, .N]
@@ -397,9 +398,9 @@ trees[!in_condit & in_new, .N]
 changed <- trees[in_condit & in_new & sp_condit != sp_new]
 pairs <- changed[, .N, by = .(sp_condit, sp_new)]
 setorder(pairs, -N, sp_condit, sp_new)
-nrow(changed) # 302 trees (2026-10-15)
-nrow(pairs) # 111 pairs (2026-10-15)
-# 2026-10-15: tremsp -> tremmi 84, ingaun -> uniden 47, swars1 -> swars2 26,
+nrow(changed) # 302 trees
+nrow(pairs) # 111 pairs
+# tremsp -> tremmi 84, ingaun -> uniden 47, swars1 -> swars2 26,
 # swars2 -> swars1 10, pterof -> pterro 9 (by 2_prepare_viewfulltable.R), the
 # other pairs 1-4 trees re-identified one by one
 pairs[N > 4L]
@@ -470,7 +471,7 @@ bio_check(
   "the codes whose genus, epithet or infraspecific name changed are those whose full name changed"
 )
 
-# 2026-10-15: 49 codes: epithet 29, genus 6, genus and epithet 6, epithet
+# 49 codes: epithet 29, genus 6, genus and epithet 6, epithet
 # spelling 3 (appuse, ardiba, rinosy), infraspecific name 2 (myrcga, protte),
 # epithet gender 1 (tremmi), genus and epithet gender 1 (cappfr),
 # morphospecies label 1 (sapisp)
@@ -491,7 +492,7 @@ spp[names_cmp[!is.na(NameChange)], `:=`(NameCondit2019 = i.latin_old, NameChange
 
 # --- 6a. Trees of the codes no longer used ---------------------------------------
 # A code no longer used has no row, so its trees are described in the notes
-# of the codes that hold them now, with their number. 2026-10-15: tremsp ->
+# of the codes that hold them now, with their number: tremsp ->
 # tremmi (84), ingaun -> uniden (47), pterof -> pterro (9), each with all the
 # trees of the old code.
 absorbed <- pairs[sp_condit %in% codes_gone]
@@ -503,7 +504,7 @@ absorbed[, .(sp_condit, name_old, sp_new, N, n_total)]
 
 # Codes no longer used whose trees all left the database, or went to a code
 # without a row (uniden when INCLUDE_UNIDEN = FALSE), have no note: they are
-# only in the files of the changes of code (none on 2026-10-15)
+# only in the files of the changes of code (none with the current inputs)
 codes_gone_unplaced <- c(setdiff(codes_gone, absorbed$sp_condit), absorbed[!sp_new %in% spp$sp, sp_condit])
 if (length(codes_gone_unplaced)) {
   note(paste("codes no longer used without a note in the species table:", show_codes(unique(codes_gone_unplaced))))
@@ -607,7 +608,7 @@ bio_check(
 )
 
 # One row per change of code (former code -> code now) with its number of
-# trees, the largest changes first. 2026-10-15: 111 changes, 302 trees.
+# trees, the largest changes first (111 changes, 302 trees).
 species_code_changes_summary <- species_code_changes[, .(trees = .N), by = .(spCondit2019, LatinCondit2019, sp, Latin)]
 setorder(species_code_changes_summary, -trees, spCondit2019, sp)
 bio_check(
@@ -686,7 +687,7 @@ bio_check(
   "every code not listed has the genus, epithet, infraspecific name and authors of the Flora de Panamá list"
 )
 
-# 2026-10-21: 10 codes, all by the authority (anacex, ficuc2, heisco, ouralu,
+# 10 codes, all by the authority (anacex, ficuc2, heisco, ouralu,
 # pse2sp, tab1ro, thevah, tri2tu, tropra, zantpr: the WFO authorities adopted
 # in stage 1, section 9e); genus, epithet and infraspecific name are those of
 # the Flora de Panamá list for every code. The same 10 codes are in the

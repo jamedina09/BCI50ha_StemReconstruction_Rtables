@@ -1959,7 +1959,6 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
     # would error with "wrong sign in 'by' argument". Skip the loop when anchor_pos == 1.
     if (anchor_pos > 1L) {
         for (p in seq.int(anchor_pos - 1L, 1L, by = -1L)) {
-            # p <- 5L #position in census_range (for testing only)
             cc <- census_range[p]
             next_cc <- census_range[p + 1L]
             mat_cc <- state_mats[[p]]
@@ -3066,8 +3065,10 @@ match_stems_dp_global_backward_marginals_batch <- function(tree_data,
 # OR) or Status "broken below" starts a new stem, and the stem that broke ends
 # at the census before it (the rule of apply_broken_below_invariants() R1).
 # Only that stem's track is split; the tree's other stems keep the matcher's
-# links, as they do in the posterior samples. (The DP instead splits the whole
-# tree at its first resprout census, in its export and in its samples.)
+# links, as they do in the posterior samples. (The DP's resprout segment split,
+# when allow_segment_split = TRUE, instead splits the whole tree at its first
+# resprout census, in its export and in its samples.) With the main-stem rule
+# do_fallback() does not call this function.
 #
 # The rows BEFORE the R census get the new ID, as in the DP resprout segment
 # split and the NA-R barrier, so the R row and its continuation keep the

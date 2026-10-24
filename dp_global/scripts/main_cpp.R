@@ -245,9 +245,8 @@ message("[dp_global main_cpp.R] base_out_dir (raw): ", base_out_dir)
 base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
 message("[dp_global main_cpp.R] base_out_dir (normalized): ", base_out_dir)
 
-# Optional: explicitly set a subdirectory name for outputs.
-# If NULL, an automatic name based on timestamp + key config flags is used.
-# OUT_DIR_NAME <- NULL
+# The output folder is named by build_out_dir_name() (timestamp + key
+# settings) unless OUT_DIR_OVERRIDE is set.
 # CONFIG_NAME can be set by an external orchestrator to identify the
 # experimental configuration; default to NULL so override parsing treats it as
 # a valid, known variable rather than an unknown override.
@@ -908,7 +907,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
                 log_msg(sprintf("[audit] script-level sweep overrode %d engine-assigned ReconstructedStemID value(s) for tag=%s (rows flagged via SweepAuditOverride=TRUE)", sum(.override_local), tag_label), "WARN")
             }
 
-            # ---- Fix 2: duplicate-aware pinning -------------------------
+            # ---- Duplicate-aware pinning --------------------------------
             # Per-row decision: tentatively pin Recon := TrueStemID, but
             # only commit if doing so does NOT create a duplicate
             # ReconstructedStemID at the same (Tag, CensusID) given the
@@ -919,14 +918,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks) {
             # SweepRollbackToPreSweep=TRUE, and leave its
             # ReconstructionMethod untouched. SweepAuditOverride above
             # already records the disagreement; the rollback flag
-            # records the chosen resolution.
-            #
-            # Rows are processed in stable index order so the outcome is
-            # deterministic. Tag 258411 C6 is the canonical case: a
-            # retag-campaign reuse of OriginalStemID 995110 would force
-            # two rows at (Tag=258411, CensusID=6) onto Recon=995110;
-            # the engine had already given the second row a fresh ID
-            # (995113), which is kept.
+            # records the chosen resolution. Rows are processed in stable
+            # index order, so the outcome is deterministic.
             if (!("SweepRollbackToPreSweep" %in% names(out))) {
                 out[, SweepRollbackToPreSweep := FALSE]
             } else {
@@ -1323,7 +1316,7 @@ run_main <- function() {
         sp0 <- if (length(sp0) > 0L) sp0[[1L]] else FORCED_SPECIES_LABEL
 
         base_args0 <- bio_pars_to_transition_args(bio_pars[[sp0]])
-        #* TODO: Define interval_years per row if needed
+        # the realism report uses one interval (5 years) for every census pair
         rep0 <- realism_report_from_reconstruction(out, interval_years = 5, base_args = base_args0)
 
         # Add out_dir to realism outputs
@@ -1356,13 +1349,12 @@ run_main <- function() {
         sp_sens <- if (length(sp_sens) > 0L) sp_sens[[1L]] else FORCED_SPECIES_LABEL
 
         base <- bio_pars_to_transition_args(bio_pars[[sp_sens]])
-        #* TODO: Define interval_years per row if needed
+        # the sensitivity scenarios and sweeps use one interval (5 years)
         sc <- make_demo_scenarios(base, interval_years = 5)
         param_grids <- default_param_grids(base, n = 200)
 
         all_sweeps <- build_all_sweeps(
             scenarios = sc,
-            #* TODO: Define interval_years per row if needed
             interval_years = 5,
             base_args = base,
             grids = param_grids,
@@ -1382,11 +1374,6 @@ run_main <- function() {
         # Update all_sweeps with modified components
         all_sweeps$dts <- dts
         all_sweeps$all <- dt_all
-
-        # example_key <- "growth_ok__sigma1"
-        # if (example_key %in% names(dts)) {
-        #     print(plot_sweep_components(dts[[example_key]]), yscale = "delta")
-        # }
 
         if (isTRUE(WRITE_OUTPUTS)) {
             sweeps_rds <- file.path(out_dir, "simulated_all_transition_cost_sweeps_rcpp.rds")
@@ -1477,8 +1464,7 @@ if (sys.nframe() == 0L && isTRUE(RUN_K_SWEEP_DEMO)) {
                 "large tree growth", "moderate growth", "moderate shrink"
             )
         ),
-        #* TODO: Define interval_years per row if needed
-        interval_years = 5,
+        interval_years = 5, # one interval (5 years) for every scenario
         bio = bio_pars[[sp0]],
         temperature = 1L,
         which_k = "auto",
@@ -1570,7 +1556,9 @@ if (exists("res") && !is.null(res) && !is.null(res$bio_pars)) {
 #
 # HELP
 #   Rscript dp_global/scripts/main_cpp.R --help
-
+#
+# EXAMPLE — tag 20 of the simulated data; a small DP_MAX_STATES sends a tag
+# above it to the probabilistic matcher
 # Rscript dp_global/scripts/main_cpp.R \
 #     --INPUT_FILE=data_simulation/data/simulated_data_1.csv \
 #     --RUN_ALL_TAGS=FALSE \

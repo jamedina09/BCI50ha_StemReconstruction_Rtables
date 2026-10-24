@@ -107,7 +107,7 @@ test_that("birth-death mode: a dying palm is not continued by the new stem; stab
   expect_true(all(r$stable))
 })
 
-test_that("legacy mode: with stable stem counts the dying stem is forced to continue", {
+test_that("count-based slots (birth_death = FALSE): with stable stem counts the dying stem is forced to continue", {
   r <- run_clump(FALSE)
   expect_equal(r$dying, r$recruit)
   expect_true(all(r$stable))

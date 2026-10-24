@@ -24,10 +24,11 @@ encode_num <- function(x) {
 # DBH_ROUND_CENSUSES_INT, PROB_BIRTH_DEATH, RECRUIT_RATE_UNIT,
 # COVERAGE_RULE, DP_ALLOW_SEGMENT_SPLIT, BB_DBH_RULE,
 # PIN_BB_REQUIRE_OTHER_RECORD, PIN_STOP_AT_GAP, PIN_STOP_AT_FAST_LINK,
-# PROB_EXPORT_RULE and DP_POSTERIOR_LABEL_FREE.
+# HARD_PINS, PROB_EXPORT_RULE and DP_POSTERIOR_LABEL_FREE.
 # Returns one string:
 #   <timestamp>_<config>_<tags>_<DP mode>_<ME label>_<g>_<s>_<kg>_<ks>_rcpp
-# e.g. 20261005_232052_unknown_allT_DP_MB_NME_R12_BD_LT_CU_g5_sm0p5_kg0_ks0_rcpp
+# e.g. (BCI driver defaults, YYYYmmdd_HHMMSS time stamp)
+#   YYYYmmdd_HHMMSS_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_PF_HP_LF_g5_sm0p5_kg0_ks0_rcpp
 #   tags    : allT (all tags) or T<WHICH_TAG>
 #   DP mode : NO_DP (none), DP_S (map), DP_M (marginals), DP_MB
 #             (marginals+bins), DP_U (other)
@@ -75,11 +76,11 @@ build_out_dir_name <- function() {
         me_part <- paste0(me_part, "_LT")
     }
     if (exists("COVERAGE_RULE") && identical(COVERAGE_RULE, "union")) me_part <- paste0(me_part, "_CU")
-    # Identity settings of 2026-10-22 (BCI): "NS" = no whole-tree resprout
-    # split in the DP, "MS" = main-stem rule for broken records, "PO" / "PG" =
-    # pin rules (a broken record only with another record of its StemID / no
-    # pin across a census without a record), "PF" = no pin on the records
-    # before a fast database StemID link (PIN_STOP_AT_FAST_LINK, 2026-10-24),
+    # Identity settings of the BCI driver: "NS" = no whole-tree resprout split
+    # in the DP, "MS" = main-stem rule for broken records, "PO" / "PG" / "PF" =
+    # pin rules of Steps 3a / 3b / 3c (a broken record pinned only with another
+    # record of its StemID / no pin across a census without a record / no pin
+    # on the records before a fast database StemID link), "HP" = hard pins,
     # "FM" = matcher export with the fewest links beyond measurement error,
     # "LF" = label-free DP posterior
     if (exists("DP_ALLOW_SEGMENT_SPLIT") && isFALSE(DP_ALLOW_SEGMENT_SPLIT)) me_part <- paste0(me_part, "_NS")

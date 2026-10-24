@@ -260,14 +260,9 @@ HOM_TOLERANCE_SCALE <- 2.0
 #   "main_ends" the main stem of the census before ends there; the record is
 #               matched like any other measurement but cannot continue it
 #               (with one stem before, it is always a new stem).
-# The defaults below (and those of the next two settings) were kept after the
-# sandbox comparison of 2026-10-22 (2,414 test tags; with all four set back
-# the run reproduces run 20261014_220452 exactly). At the first break before
-# 2010 the tree's other stems continue to the next census 81% of the time
-# instead of 6.8%; links up to 2010 in trees and shrubs +13%, with a smaller
-# share that shrinks beyond measurement error (1.62% -> 1.51%); stems that
-# end beside a similar-size new stem -70% (-79% where the new stem starts at
-# the break record); control trees unchanged; posterior checks pass.
+# With the defaults (FALSE, "main_ends") the tree's other stems can continue
+# through a break before 2010, and the measured record can continue one of
+# them; only the main stem that broke ends there.
 DP_ALLOW_SEGMENT_SPLIT <- FALSE
 BB_DBH_RULE <- "main_ends"
 # Pins (TrueStemID) of measured broken-below / R records (Step 3a): TRUE pins
@@ -286,26 +281,25 @@ PIN_STOP_AT_GAP <- TRUE
 # The database attached the StemID of a small 2005 record to a 2010 stem that
 # continues another 2005 record, which then ended in 2005 (tag 170028: the
 # 2010 stem of 29 mm carries the StemID of a 10 mm 2005 record; the main stem
-# measured 29 mm in 2005). The engine places the freed records. Sandbox
-# 2026-10-24: 616 links, all 2005 -> 2010; the 2010 stem continues a fitting
-# 2005 record in 616 trees, no fast link left, other trees unchanged.
+# measured 29 mm in 2005). The engine places the freed records. Each fast link
+# and the record that fits it are written to pin_stop_at_fast_link.csv in the
+# run folder.
 PIN_STOP_AT_FAST_LINK <- TRUE
 # Pins hold after the engine (rows with the same TrueStemID stay one stem;
 # TrueStemID is never rewritten): the broken-below rules (R1/R2) do not cut
 # between rows with the same pin, and apply_terminal_to_host() leaves pinned
 # records where they are. Field-tagged stems (StemTag) are pinned by Step 1(a),
 # so each stays one stem: a broken-below record without a DBH that carries a
-# field tag is that stem with no measurable DBH at 1.3 m (user rule
-# 2026-10-22), e.g. a 2010 stump whose tag is measured in 2015, or a stem
-# measured, broken below and measured again under its tag (no longer cut by R2).
-# Exceptions, so the stump rule of 2026-09-30 still holds (a stump is the end
-# record of the stem that broke; a resprout measured later is a new stem): a
-# dead / stem dead / broken-below / missing record without a DBH that comes
-# before any life of its own pin goes to the stem that broke, as without hard
-# pins, when it carries no field tag (before 2010 the database shows a
-# StemID's later tag on its earlier records; those are not field tags) or its
-# pin never lives (all its records go there together). FALSE lets R1/R2 cut
-# pins and rewrite TrueStemID (behaviour before 2026-10-22).
+# field tag is that stem with no measurable DBH at 1.3 m, e.g. a 2010 stump
+# whose tag is measured in 2015, or a stem measured, broken below and measured
+# again under its tag.
+# Exceptions, so that a stump stays the end record of the stem that broke (a
+# resprout measured later is a new stem): a dead / stem dead / broken-below /
+# missing record without a DBH that comes before any life of its own pin goes
+# to the stem that broke, as without hard pins, when it carries no field tag
+# (before 2010 the database shows a StemID's later tag on its earlier records;
+# those are not field tags) or its pin never lives (all its records go there
+# together). FALSE lets R1/R2 cut pins and rewrite TrueStemID.
 HARD_PINS <- TRUE
 # Field tags: StemTags placed in the field from this census on (BCI: 7 = 2010,
 # the first census that tagged every stem).
@@ -314,21 +308,17 @@ FIELD_TAG_FIRST_CENSUS <- 7L
 #   "mea"       the sample whose links the other samples choose most often;
 #   "fewest_me" first the sample(s) with the fewest links that shrink beyond
 #               measurement error (CTFS rule), then as "mea".
-# Blind test 2026-10-22 (2010 and 2015 identities hidden, 839 tags):
-# "fewest_me" removes 83% of the shrinking links but recovers no more true
-# links (43.1% vs 43.5%; precision 41.1% in both; per tree 41 better, 53
-# worse), so "mea" stays.
+# In a blind test against the tagged censuses (2010 and 2015 identities
+# hidden) "fewest_me" removes most shrinking links but recovers no more true
+# links than "mea".
 PROB_EXPORT_RULE <- "mea"
 # DP posterior: tracks with no stem at the anchor and no pinned measurement are
 # interchangeable labels. TRUE counts each reconstruction once in the DP
 # marginals and posterior samples (not once per labeling of those tracks) and
 # gives the rows on them a label-free DP_PosteriorReconstructedProb (the share
 # of samples in which the row's stem ends at the same observation as in the
-# export). The exported reconstruction is the same either way.
-# Sandbox 2026-10-22: export identical for all 2,414 test tags; the
-# probability of those rows median 0.33 -> 1 (production: 0.5); with 1 vs 3
-# spare tracks the anchor-track probabilities no longer change (53 rows ->
-# 0) and the expected number of posterior links stays the same.
+# export). The exported reconstruction is the same either way. With TRUE the
+# probabilities no longer depend on the number of spare tracks.
 DP_POSTERIOR_LABEL_FREE <- TRUE
 # Blind test against the tagged censuses (diagnostics only). With
 # BLIND_MIN_CENSUS set, the engine input keeps only the censuses from it on and
@@ -436,9 +426,8 @@ message("[dp_global main_cpp_chunk_bci.R] base_out_dir (raw): ", base_out_dir)
 base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
 message("[dp_global main_cpp_chunk_bci.R] base_out_dir (normalized): ", base_out_dir)
 
-# Optional: explicitly set a subdirectory name for outputs.
-# If NULL, an automatic name based on timestamp + key config flags is used.
-# OUT_DIR_NAME <- NULL
+# The output folder is named by build_out_dir_name() (timestamp + key
+# settings) unless OUT_DIR_OVERRIDE is set.
 # CONFIG_NAME can be set by an external orchestrator to identify the
 # experimental configuration; default to NULL so override parsing treats it as
 # a valid, known variable rather than an unknown override.
@@ -536,10 +525,8 @@ CLI_REFERENCE <- list(
     BIO_ESTIMATION_START_CENSUS = "BIO_ESTIMATION_START_CENSUS"
 )
 
-# Sensitivity and realism flags are not applicable to the chunked runner
-# (they require a fully assembled out object). Kept as comments for reference.
-# SENSITIVITY_MODE <- "none"
-# RUN_REALISM_REPORT <- FALSE
+# The chunked runner has no sensitivity sweeps or realism report: both need
+# the full result in memory.
 
 ############################################################
 ### 4.1) Help & override application
@@ -704,10 +691,6 @@ if (!file.exists(INPUT_FILE)) {
 # Derive booleans from modes
 RUN_DP <- DP_MODE != "none"
 ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
-# Not used by chunked runner; leave commented out to avoid confusion
-# RUN_SENSITIVITY <- SENSITIVITY_MODE != "none"
-# WRITE_OUTPUTS <- SENSITIVITY_MODE %in% c("run+write", "run+write+pdf")
-# MAKE_ALL_SWEEPS_PDF <- SENSITIVITY_MODE == "run+write+pdf"
 
 # Final output directory for this run (created at runtime in run_main_chunked()).
 # OUT_DIR_OVERRIDE takes precedence: set it to resume into an existing output
@@ -795,7 +778,8 @@ DP_CSV_FILE <- out_path("dp_csv")
 DP_RDS_FILE <- out_path("dp_rds")
 DP_FEATHER_FILE <- out_path("dp_feather")
 DP_PDF_FILE <- out_path("dp_pdf")
-# Note: chunk-level per-file outputs (per-chunk RDS/Feather/PDF) still use chunk-specific names; these top-level globals point to the combined run-level names.
+# The per-chunk outputs carry chunk-specific names; these globals are the
+# run-level names.
 
 # If posterior sampling is requested, provide the DP with the run's base out_dir.
 # The DP itself will create the 'posteriors/' subdirectory (avoids double-nesting).
@@ -1135,7 +1119,7 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
                 log_msg(sprintf("[audit] script-level sweep overrode %d engine-assigned ReconstructedStemID value(s) for tag=%s (rows flagged via SweepAuditOverride=TRUE)", sum(.override_local), tag_label), "WARN")
             }
 
-            # ---- Fix 2: duplicate-aware pinning -------------------------
+            # ---- Duplicate-aware pinning --------------------------------
             # Per-row decision: tentatively pin Recon := TrueStemID, but
             # only commit if doing so does NOT create a duplicate
             # ReconstructedStemID at the same (Tag, CensusID) given the
@@ -1146,14 +1130,8 @@ run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
             # via SweepRollbackToPreSweep=TRUE, and leave the row's
             # ReconstructionMethod untouched. SweepAuditOverride above
             # already records the disagreement; the rollback flag
-            # records the chosen resolution.
-            #
-            # Rows are processed in stable index order so the outcome is
-            # deterministic. Tag 258411 C6 is the canonical case: a
-            # retag-campaign reuse of OriginalStemID 995110 would force
-            # two rows at (Tag=258411, CensusID=6) onto Recon=995110;
-            # the engine had already given the second row a fresh ID
-            # (995113), which is kept.
+            # records the chosen resolution. Rows are processed in stable
+            # index order, so the outcome is deterministic.
             if (!("SweepRollbackToPreSweep" %in% names(out))) {
                 out[, SweepRollbackToPreSweep := FALSE]
             } else {
@@ -1267,7 +1245,7 @@ run_main_chunked <- function() {
         log_msg(paste("Ensured posterior samples path:", file.path(POSTERIOR_SAMPLES_PATH, "posteriors")))
     }
 
-    # 5.1 Load data
+    # Load data
     cat("[dp_global main_cpp_chunk_bci.R] Loading input data from: ", INPUT_FILE, "\n")
     xraw <- as.data.table(readRDS(INPUT_FILE))
 
@@ -1443,34 +1421,6 @@ run_main_chunked <- function() {
     ]
 
     setorder(full_anchor_data, Tag, TrueStemID, CensusID)
-
-    # # ---- Check all tags x censusid are complete ----
-    # # Compute expected vs actual counts per Tag and identify any gaps (tags with missing censuses)
-    # # using the taper-corrected table. Add missing Tag × CensusID rows below if needed.
-    # xraw_unique <- unique(full_anchor_data[, .(Tag, CensusID)])
-    # # Get the range per tag
-    # tag_ranges <- xraw_unique[, .(min_c = min(CensusID), max_c = max(CensusID)), by = Tag]
-    # # Add expected count (how many censuses should exist)
-    # tag_ranges[, expected_count := max_c - min_c + 1L]
-    # # Get actual count per tag
-    # actual_counts <- xraw_unique[, .(actual_count = .N), by = Tag]
-    # # Merge and compare
-    # tag_check <- tag_ranges[actual_counts, on = "Tag"]
-    # tag_check[, complete := actual_count == expected_count]
-    # # Summary
-    # tag_check[, .N, by = complete]
-
-    # # See tags with missing censuses
-    # missing_tags <- tag_check[complete == FALSE]
-    # missing_tags[, gap := expected_count - actual_count]
-
-    # # Summary stats
-    # cat("Total tags:", nrow(tag_check), "\n")
-    # cat("Complete tags:", tag_check[complete == TRUE, .N], "\n")
-    # cat("Tags with gaps:", tag_check[complete == FALSE, .N], "\n")
-    # if (nrow(missing_tags) > 0) {
-    #   cat("Total missing observations:", sum(missing_tags$gap), "\n")
-    # }
 
     ## ---- Select species with sufficient repeated DBH -------------------------
     to_do <- copy(full_anchor_data)
@@ -1796,19 +1746,16 @@ run_main_chunked <- function() {
         )
     ]
 
-    # unique(xraw[is.na(species)]$growth_form)
     xraw[
         growth_form %in% c("fern"),
         species := "all_palm_fern"
     ]
 
-    # unique(xraw[is.na(species)]$growth_form)
     xraw[
         growth_form == "strangler",
         species := "all_strangler"
     ]
 
-    # unique(xraw[is.na(species)]$growth_form)
     xraw[
         is.na(growth_form),
         species := "all_tree"
@@ -1875,6 +1822,9 @@ run_main_chunked <- function() {
     #
     #   (a) StemTag: any row where the field crew physically tagged the stem.
     #       The StemID is unambiguous at any census, including pre-C7.
+    #
+    #   (a') A field tag recorded under 2+ StemIDs that never share a census
+    #       takes one pin: its first StemID.
     #
     #   (b) CensusID >= 7 (year 2010 onward): from C7 the BCI database assigned
     #       StemIDs via a systematic re-tagging campaign. Every C7+ row
@@ -2007,7 +1957,7 @@ run_main_chunked <- function() {
     ]
 
     # 2c. Bidirectional fill of remaining post-last-DBH NA gaps within each group.
-    #     LOCF: carry a 2b anchor (or Step-1 anchor) forward to later terminal rows.
+    #     LOCF: carry a Step-1 anchor forward to later terminal rows.
     #     NOCB: carry a later C7+ anchor backward to earlier terminal rows that had
     #           no explicit terminal status code.
     #     The row filter (CensusID > .last_dbh_census) guarantees pre-last-DBH rows
@@ -2291,7 +2241,6 @@ run_main_chunked <- function() {
     ][, mean_date_census := NULL]
 
     xraw_multi_stems <- ensure_species_column(xraw_multi_stems)
-    # print(inspectdf::inspect_na(xraw), n = 60)
 
     xrun <- data.table::copy(xraw_multi_stems)
 
@@ -2335,8 +2284,6 @@ run_main_chunked <- function() {
         if (nrow(xrun) == 0L) stop("After applying TAG_FILTER_FILE, xrun is empty.")
     }
 
-    # unique(xrun[Mnemonic != species, .(Mnemonic, species)])
-
     # ------------------------------------------------------------------
     # free memory: the remaining objects are only needed to build xrun/
     # bio_pars, which we now have; drop the big tables before the DP work
@@ -2377,8 +2324,7 @@ run_main_chunked <- function() {
     # Add called parameters (command-line overrides)
     params$CALLED_PARAMETERS <- overrides
 
-    # Add tag values and unique tags/species in data
-    # params$UNIQUE_TAGS <- if (exists("xrun")) unique(xrun$Tag) else NA
+    # Parameter sets in use
     params$UNIQUE_SPECIES <- if (exists("xrun")) unique(xrun$species) else NA
     # Record the exact command line used to invoke this run
     # This is critical for full reproducibility
@@ -2418,7 +2364,7 @@ run_main_chunked <- function() {
     params_file <- file.path(out_dir, "run_parameters_full.txt")
     writeLines(params_lines, con = params_file)
 
-    # 5.3 Attach Bio_* columns (DP reads parameters from columns)
+    # Attach Bio_* columns (the engines read the parameters from columns)
     xrun <- attach_bio_columns(xrun, bio_pars)
 
     # `species` held the parameter set; keep it under an explicit name and let
@@ -2426,7 +2372,7 @@ run_main_chunked <- function() {
     setnames(xrun, "species", "parameter_set_for_species")
     xrun[, Species := Mnemonic]
 
-    # 5.4 DP meta settings
+    # DP track cap
     dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)
     dp_max_tracks_local <- as.integer(dp_max_tracks_local)
 
@@ -2514,26 +2460,27 @@ run_main_chunked <- function() {
                     # ---- Post-engine helper chain (all helpers in dp_global/R/dp_global_main.R) ----
                     # 1. Posterior bins: adds DP_PosteriorBin column.
                     out_chunk <- maybe_add_posterior_bins(out_chunk)
-                    # 1b. Pin the track, not just the row: unpinned measurements the engine
-                    #     linked to pinned rows, left on another ID by the TrueStemID sweep,
-                    #     rejoin the track's single pin (no crossing of broken-below + DBH rows
-                    #     or NA-R barriers; no collisions). Pinned rows never move.
+                    # 2. Pin the track, not just the row: unpinned measurements the engine
+                    #    linked to pinned rows, left on another ID by the TrueStemID sweep,
+                    #    rejoin the track's single pin (no crossing of broken-below + DBH rows
+                    #    or NA-R barriers; no collisions). Pinned rows never move.
                     out_chunk <- apply_pin_track_rejoin(out_chunk, verbose = FALSE)
-                    # 2. Carried-terminal backfill: LOCF of ReconstructedStemID onto
+                    # 3. Carried-terminal backfill: LOCF of ReconstructedStemID onto
                     #    NA-DBH terminal rows (dead/stem dead/broken below/missing).
                     out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
-                    # 3. Orphan-stem backfill: fills NA-DBH, NA-TrueStemID rows from StemID.
+                    # 4. Orphan-stem backfill: fills NA-DBH, NA-TrueStemID rows from StemID.
                     out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
-                    # 3b. Terminal records back to their stem: an unmeasured dead / stem dead /
-                    #     broken-below record that precedes the first life of its identity goes to
-                    #     the stem that ended just before (the engine's pre-sweep choice, else the
-                    #     only stem ending then); otherwise it stays (never-alive stem).
+                    # 5. Terminal records back to their stem: an unmeasured dead / stem dead /
+                    #    broken-below record that precedes the first life of its identity goes to
+                    #    the stem that ended just before (the engine's pre-sweep choice, else the
+                    #    only stem ending then, else the main stem of the census before);
+                    #    otherwise it stays (never-alive stem).
                     out_chunk <- apply_terminal_to_host(out_chunk, verbose = FALSE)
-                    # 4. Broken-below invariants (R1: a measured broken-below row starts a new
+                    # 6. Broken-below invariants (R1: a measured broken-below row starts a new
                     #    stem; R2: a measurement after a stump starts a new stem).
                     #    May mint new ReconstructedStemIDs tagged bb_split / bb_post_terminator_split.
                     out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
-                    # 5. Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
+                    # 7. Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
                     #    ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
                     #    then by original ID, so no ID is negative or zero.
                     #    Must run after apply_broken_below_invariants(); returns a mapping table.
@@ -2544,7 +2491,7 @@ run_main_chunked <- function() {
                         verbose = FALSE
                     )
                     out_chunk <- .renum$out
-                    # 6. Finalize posterior path files: translates staged per-sample
+                    # 8. Finalize posterior path files: translates staged per-sample
                     #    ReconstructedStemIDs via the mapping, applies the pins and the
                     #    broken-below invariants per sample, writes
                     #    posteriors/tag_*_paths.<ext>, and removes staging files.
@@ -2624,7 +2571,6 @@ run_main_chunked <- function() {
             log_msg("Finished run")
         },
         error = function(e) {
-            # message("[dp_global main_cpp_chunk.R] Warning writing run_finished marker: ", conditionMessage(e))
             log_msg(sprintf("Warning writing run_finished marker: %s", conditionMessage(e)), "WARN")
         }
     )

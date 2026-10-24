@@ -359,9 +359,6 @@ message(sprintf(
     if (use_taper_for_ba) "taper-corrected (1.3 m)" else "measured (POM)"
 ))
 
-# with(rec[CensusID == 9], plot(dbh_raw, dbh))
-# abline(a = 0, b = 1, col = "red")
-
 # ---- Alive stems without a measured DBH -------------------------------
 # Rstatus "A" without a DBH means the stem was alive but its measurement was
 # missed in the field. It stays in the stand with a DBH from its own

@@ -185,12 +185,11 @@ df_stem[is.na(ExactDate), ExactDate := as.Date(date, origin = "1960-01-01")]
 # [EDGE CASE] Species whose entire family has no WSG receive the global mean.
 # [NOTE] Palms use the Goodman et al. 2013 allometry, which ignores WSG.
 
-# Download wood density data from Wright & Muller-Landau 2026 Dryad
-# url: "https://datadryad.org/dataset/doi:10.5061/dryad.5qfttdzn3"
+# Wood density of Wright & Muller-Landau 2026 (Dryad,
+# https://datadryad.org/dataset/doi:10.5061/dryad.5qfttdzn3), stored in wd/
 bci_wd <- fread(file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "wd", "doi_10_5061_dryad_5qfttdzn3__v20260403", "WD_species.txt"))
 bci_wd <- bci_wd[, .(sp = tolower(sp6), wsg = wd100.mean)][!is.na(wsg)]
 
-# bci.spptable <- fread(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.csv"))
 load(file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", "bci.spptable.rdata"))
 bci.spptable <- as.data.table(bci.spptable)
 bci.spptable <- unique(bci.spptable[, .(Family, sp, Genus, Species = SpeciesName, Latin)])
@@ -280,9 +279,6 @@ df_stem[, hom := ifelse(is.na(hom), 1.3, hom)]
 df_stem[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
 df_stem[, dbh_raw := dbh]
 df_stem[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
-
-# with(df_stem[CensusID == 9], plot(dbh_raw, dbh))
-# abline(a = 0, b = 1, col = "red")
 
 # ============================================================
 # Section 6 — DBH unit conversion: mm to cm

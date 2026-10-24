@@ -172,8 +172,6 @@ match_stems_optimal_backward <- function(tree_data, min_growth, max_growth, anch
         setorder(dt_mean, CensusID)
 
         dt_wide <- dcast(dt_mean, 1 ~ CensusID, value.var = "MeanDate")
-        ## compute interval between t0 and t1
-        # interval_val <- (as.numeric(dt_wide[[as.character(t1)]]) - as.numeric(dt_wide[[as.character(t0)]])) / 365.25
         return(dt_wide)
     }
 

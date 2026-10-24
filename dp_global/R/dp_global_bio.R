@@ -224,7 +224,6 @@ estimate_bio_pars <- function(
     }
 
     x_dt[, Tag := as.character(Tag)]
-    # x_dt[, OriginalStemID := as.character(OriginalStemID)]
     x_dt[, TrueStemID := as.character(TrueStemID)]
     x_dt[, CensusID := as.integer(CensusID)]
     x_dt[, DBH := as.numeric(DBH)]
@@ -1104,7 +1103,6 @@ estimate_bio_pars <- function(
             enforce_recruit_max = enforce_recruit_max
         ),
         interval = list(
-            # inferred_interval_years = interval_years,
             per_pair_intervals = T_all,
             pairs_candidate_count = as.integer(pairs_candidate_count),
             pairs_filled_with_scalar_count = as.integer(pairs_filled_with_scalar_count),

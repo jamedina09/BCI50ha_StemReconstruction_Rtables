@@ -36,15 +36,14 @@
 #
 # The size change is the one a moved POM gives
 #   5. A smaller DBH: the taper-corrected ratio d1 / d0 is at least ratio_min
-#      (BCI: the joined POM drops reach 0.42; the candidates below 0.4 are
-#      broken trunks, 0.13-0.33, and one strangler-fig stem at an unchanged
-#      HOM, 0.39), and s0 was >= min_dbh_mm.
+#      (default 0.4: in BCI the candidates below it are broken trunks, not
+#      moved POMs), and s0 was >= min_dbh_mm (default 100 mm).
 #   6. A larger DBH (growth above the bound) only when the recorded HOM
 #      changed between the two measurements and the recorded DBH grew inside
 #      the bounds: the taper correction at the new height, not the trunk,
 #      broke the bound. A move up the trunk that was not recorded gives a
 #      smaller DBH, never a larger one. The taper-corrected ratio stays at or
-#      below ratio_max (BCI: the two joined rises are 1.47 and 1.48).
+#      below ratio_max (default 1.5).
 #   7. Across a census without a measurement, the recorded HOM rose and the
 #      DBH is smaller: sizes alone cannot tell a moved POM from a trunk that
 #      was only missed in one census, and a missed census is not a moved POM.
@@ -69,8 +68,8 @@
 #      identities are what is being repaired. A census without HOM records is
 #      not a sign on its own (BCI 1982: every HOM is 1.3 m): a drop from 1982
 #      in a tree with no other sign cannot be told from a recording error or a
-#      shrinking trunk (in three of the six BCI cases the 1990 DBH rises back
-#      towards the 1982 value).
+#      shrinking trunk (such a DBH often rises back towards the 1982 value in
+#      1990).
 #
 # One identity
 #   9. The two stems carry at most one distinct TrueStemID pin.
@@ -86,10 +85,10 @@
 #      when no pair is clearly best (two similar forks after one trunk, two
 #      similar trunks before one stem), nothing is joined.
 #
-# Not joined, by design (BCI: 005827, a species with buttresses but a trunk
-# measured from 1990 to 2015 with no B code): recording errors and trunks missed in one census in
-# trees without a sign of a moved POM, and any split inside the growth
-# bounds. The database StemIDs are not used: before the anchor they are the
+# Not joined, by design: recording errors and trunks missed in one census in
+# trees without a sign of a moved POM (e.g. BCI tag 005827, a species with
+# buttresses but a trunk measured from 1990 to 2015 with no B code), and any
+# split inside the growth bounds. The database StemIDs are not used: before the anchor they are the
 # identity the reconstruction replaces, and pins are used only to keep two
 # pinned stems apart. Relabelled rows keep every column except
 # ReconstructedStemID (they take the id of the stem carrying the pin, else of

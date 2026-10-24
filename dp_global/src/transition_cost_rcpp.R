@@ -78,7 +78,6 @@ transition_cost_tracks_bio_batch_rcpp <- function(
   round_max_dbh = 5.5,
   round_width = 0.5
 ) {
-    # cat("C++ version called\n")
     if (is.list(track_dbh_tp1)) {
         mat_tp1 <- do.call(rbind, track_dbh_tp1)
     } else {

@@ -58,7 +58,7 @@ test_that("SD rising with size: the linear fit is kept unchanged", {
   expect_equal(b$growth$sigma1, unname(raw[2]), tolerance = 1e-8)
 })
 
-test_that("recruitment rate: new stems per established tree per year, and the legacy per-slot rate", {
+test_that("recruitment rate: new stems per established tree per year, and the per-slot rate", {
   x <- stems(10, function(d) 0.05, seed = 3)               # 10 established trees, one stem each, censuses 7-9
   new_in_tree <- rbindlist(lapply(1:4, function(i) data.table(Tag = sprintf("T%04d", i), TrueStemID = 100L + i, CensusID = 8:9, DBH = c(1.5, 1.6), ExactDate = census_date(8:9), species = "x")))
   new_trees <- rbindlist(lapply(1:3, function(i) data.table(Tag = sprintf("N%04d", i), TrueStemID = 200L + i, CensusID = 8:9, DBH = c(1.4, 1.5), ExactDate = census_date(8:9), species = "x")))

@@ -660,7 +660,7 @@ match_stems_probabilistic <- function(tree_data,
             .msg <- paste0(
                 prefix, "WARNING: ", .n_violations,
                 " residual growth violation(s) in marginal trajectory ",
-                "(post-marginal repair DISABLED — posteriors preserved)"
+                "(reported only; the posteriors are not changed)"
             )
             vcat(.msg)
             message(.msg)

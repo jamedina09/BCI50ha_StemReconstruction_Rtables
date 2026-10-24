@@ -141,7 +141,7 @@ flor_pan <- as.data.table(readxl::read_xlsx(flora_panama_oct_9_2026))
 # database gives them. The database names (Family, Genus, SpeciesName) are not
 # up to date: they are used only for the codes that no list names (section 3).
 # Census 9 (2020, partial), which 2_prepare_viewfulltable.R removes, adds no
-# code (checked 2026-10-21).
+# code.
 db_names <- unique(fread(
     ViewFullTable_new,
     sep = "\t",
@@ -1414,8 +1414,8 @@ table_vs_wfo[wfo_status %in% "Accepted", wfo_accepted_name := NA_character_]
 setcolorder(table_vs_wfo, c("mnemonic", "differing_parts", "wfo_status"))
 table_vs_wfo <- table_vs_wfo[!is.na(differing_parts) | differs(wfo_status, "Accepted")]
 
-# Names of the species table that differ from WFO (2026-10-21: none by any
-# part; 4 names are synonyms in WFO: guargr, laetth, swars1, swars2)
+# Names of the species table that differ from WFO (with the current inputs:
+# none by any part; 4 names are synonyms in WFO: guargr, laetth, swars1, swars2)
 table_vs_wfo[, .N, by = .(differing_parts, wfo_status)]
 table_vs_wfo[, .(mnemonic, differing_parts, wfo_status, table_name, wfo_name, wfo_accepted_name)]
 
@@ -1564,7 +1564,7 @@ check(
     "every synonym of the table is compared with WFO once"
 )
 
-# 2026-10-21: 203 synonyms of 157 codes; the ones that are not the same taxon
+# With the current inputs: 203 synonyms of 157 codes; the ones that are not the same taxon
 # or species in WFO are printed for review
 synonyms_vs_wfo[, .N, by = synonym_check][order(-N)]
 synonyms_vs_wfo[

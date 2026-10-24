@@ -171,7 +171,7 @@ compare_columns <- function(dt1, dt2) {
 # 5. LOAD RAW INPUT AND PREPARE MULTI-STEM SUBSET FOR VALIDATION
 # =============================================================================
 
-# The table produced by stage 1 (1_DATA_PREPARATION/1_prepare_viewfulltable.R.R);
+# The table produced by stage 1 (1_DATA_PREPARATION/2_prepare_viewfulltable.R);
 # it contains both single-stem and multi-stem records and is the reference for
 # all validation steps below. Its Lifeform (Spanish labels of the species list)
 # is renamed growth_form here, the name the stage-2 output uses for its own
@@ -455,9 +455,8 @@ complete_dataset_final[is.na(ReconstructionMethod)]
 
 chk_skipped_full_na <- unique(complete_dataset_final[is.na(ReconstructionMethod)]$Tag)
 print(complete_dataset_final[Tag %in% chk_skipped_full_na, .(Tag, CensusID, ReconstructedStemID, StemID, DBH, ReconstructionMethod, ListOfTSM)][order(Tag, CensusID)], nrows = 200)
-# In the current run these are placeholder rows of stage 1 (a census in
-# which the tag has no record: no StemID, no Status). They are passed on to
-# stage 3 as they are.
+# Expected: placeholder rows of stage 1 (a census in which the tag has no
+# record: no StemID, no Status). They are passed on to stage 3 as they are.
 
 # =============================================================================
 # MEASUREMENT-DISCONTINUITY REJOIN
@@ -533,8 +532,7 @@ mr_check(
     "Stage 2 changed no recorded ExactDate (it only filled missing ones)",
     examples = dates_changed$Tag, n_bad = nrow(dates_changed)
 )
-# Dates filled by stage 2, set back to NA (run 20261014_220452: 16 records in
-# 5 trees, 1 alive and 15 "missing")
+# Dates filled by stage 2, printed for review and set back to NA
 dates_filled <- date_cmp[is.na(ExactDate_raw) & !is.na(ExactDate)]
 dates_filled[order(Tag, CensusID)]
 complete_dataset_final[raw_dates, ExactDate := i.ExactDate_raw, on = "RowID"]
@@ -559,12 +557,11 @@ mr_check(
 rm(stage1_cols, final_vs_raw)
 
 # Pins of the rows the broken-below rules R1/R2 labelled. With hard pins these
-# rules never write TrueStemID, so the pin is the database StemID of the row;
-# in run 20261022_220659 the stage-2 renumbering of engine IDs
-# (renumber_engine_minted_ids(), fixed since) still turned 127 of them into
-# per-tree numbers. Such a pin (not a StemID of its tree) takes back the row's
-# own StemID: every other pin of that run is the row's own StemID, the two
-# field tags the database re-keyed aside (Step 1(a')).
+# rules never write TrueStemID, so each such pin must be a database StemID of
+# its tree. A pin that is not (a per-tree number) takes back the row's own
+# StemID (before the field tags every pin is the row's own StemID; from 2010
+# a re-keyed field tag keeps its first StemID, Step 1(a')), and the check
+# below confirms that every pin is a StemID of its tree.
 bb_methods <- c("bb_split", "bb_split_carry", "bb_post_terminator_split", "bb_post_terminator_split_carry")
 tree_sids <- unique(complete_dataset_final[!is.na(StemID), .(Tag = as.character(Tag), sid = as.integer(as.character(StemID)))])
 pin_rows <- complete_dataset_final[, which(ReconstructionMethod %in% bb_methods & !is.na(TrueStemID))]

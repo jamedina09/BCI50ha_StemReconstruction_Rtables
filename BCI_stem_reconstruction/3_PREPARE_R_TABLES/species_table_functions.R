@@ -56,9 +56,9 @@ latin_stem <- function(x) sub("(erum|iae|era|rum|ii|ae|us|um|is|er|ra|a|e|i)$", 
 #                               most max_letters letters otherwise (seibertii
 #                               -> siebertii)
 #   "epithet"                   the same genus, another epithet
-# Letters = edit distance (adist). On 2026-10-15 the nearest different
-# epithets of the same genus are 4 letters apart (crocata -> trigonata), so 2
-# separates them. A change of the infraspecific name together with the genus
+# Letters = edit distance (adist). In the BCI species list the nearest
+# different epithets of the same genus are 4 letters apart (crocata ->
+# trigonata), so 2 separates them. A change of the infraspecific name together with the genus
 # or the epithet is labelled by the genus or the epithet. The labels describe
 # the change only; they do not say which spelling is correct.
 name_change_kind <- function(genus_old, epithet_old, infra_old,

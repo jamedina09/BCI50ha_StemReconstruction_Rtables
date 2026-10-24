@@ -146,7 +146,7 @@ check(
   "same records (DBHID) as the previous export"
 )
 # Same row order as the previous export (information: TRUE means the steps
-# below see the rows in the same order as in the previous runs)
+# below see the rows in the order of the previous export)
 identical(ViewFullTable$DBHID, old_dbhid)
 rm(old_dbhid)
 
@@ -168,8 +168,6 @@ ViewFullTable[Mnemonic == "pterof"]
 ViewFullTable[Mnemonic == "pterof", Mnemonic := "pterro"]
 # Check
 ViewFullTable[Mnemonic == "pterof"]
-
-# length(unique(ViewFullTable$Mnemonic))
 
 # Rename CensusID to CensusID_raw to preserve original labels, then assign
 # standardized sequential CensusID values below.
@@ -845,18 +843,6 @@ valid_DBH[, error_score := fifelse(is.na(d_prev) & is.na(d_next), NA_real_, pmax
 # Step 5: Remove intermediate columns
 # --
 valid_DBH[, c("log_DBH", "d_prev", "d_next", "d_span") := NULL]
-# --
-# Step 6: Stem-level summary (see 7.2)
-# --
-# stem_summary <- valid_DBH[
-#   , .(
-#     stem_has_any_error = any(entry_error_any, na.rm = TRUE),
-#     stem_max_error_score = max(error_score, na.rm = TRUE)
-#   ),
-#   by = .(Tag, StemTag, TreeID, StemID)
-# ]
-# stem_summary[is.infinite(stem_max_error_score), stem_max_error_score := NA_real_]
-
 # ---- 7.2 Stem-level summary & scoring ----
 # Summarize error flags by stem for review and downstream processing.
 row_counts <- valid_DBH[, .N, by = .(Tag, StemTag, TreeID, StemID)]
@@ -973,9 +959,6 @@ if (nrow(missing_tags) > 0) {
 # DBH at 1.3 m (`dbh_with_best_candidate_taper_corrected`).
 # Inputs: `dbh_with_best_candidate` (mm) and `HOM_for_taper_correction` (m).
 ViewFullTable_measurement_error_indication[, HOM_for_taper_correction := HOM]
-
-# # Load taper utilities (provides `apply_taper_correction()` and `taper()`)
-# source(here("BCI_stem_reconstruction", "1_DATA_PREPARATION", "HELPER_FUNCTIONS", "taper_correction.R"))
 
 # Inspect HOM_for_taper_correction values
 range(ViewFullTable_measurement_error_indication$HOM_for_taper_correction, na.rm = TRUE)

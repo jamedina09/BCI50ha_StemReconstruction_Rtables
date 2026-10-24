@@ -3,9 +3,13 @@
 ###
 ### Loads data_simulation/sample_data_BCI/multistem_tags.rds (BCI
 ### multi-stem tags, with the Bio_* parameter columns already
-### attached), rebuilds TrueStemID with the BCI pinning steps and
+### attached), rebuilds TrueStemID with BCI pinning Steps 1-3b and
 ### runs the DP and the post-engine helpers for a single tag. No
-### biological parameters are estimated here.
+### biological parameters are estimated here. The production driver
+### (BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R)
+### has further pin rules: re-keyed field tags (1a'), the other-record
+### condition of Step 3a, the gap and fast-link stops (3b, 3c) and
+### hard pins.
 ###
 ### Run from project root:
 ###   Rscript dp_global/scripts/main_cpp_bci.R
@@ -101,7 +105,6 @@ for (.nm in names(overrides)) {
 }
 
 # Recompute derived values after overrides
-# WHICH_TAG         <- as.integer(WHICH_TAG)
 RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
 if (!is.null(overrides$RECRUIT_MAX_FIXED)) RECRUIT_MAX_FIXED <- as.numeric(overrides$RECRUIT_MAX_FIXED)
 
@@ -255,7 +258,7 @@ xraw[
 ]
 
 # 2c. Bidirectional fill of remaining post-last-DBH NA gaps within each group.
-#     LOCF: carry a 2b anchor (or Step-1 anchor) forward to later terminal rows.
+#     LOCF: carry a Step-1 anchor forward to later terminal rows.
 #     NOCB: carry a later C7+ anchor backward to earlier terminal rows that had
 #           no explicit terminal status code.
 #     The row filter (CensusID > .last_dbh_census) guarantees pre-last-DBH rows
@@ -473,9 +476,7 @@ ensure_dir(out_dir)
 writeLines(as.character(Sys.time()), file.path(out_dir, "run_started.txt"))
 message("[main_cpp_bci.R] Running DP for Tag ", WHICH_TAG, "...")
 
-# names(dtg) # sanity check: ensure dtg has columns and is not empty
-
-dtg <- xrun_tag[Tag == WHICH_TAG]
+dtg <-xrun_tag[Tag == WHICH_TAG]
 out <- run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local)
 
 # ----------------------------------------------------------------

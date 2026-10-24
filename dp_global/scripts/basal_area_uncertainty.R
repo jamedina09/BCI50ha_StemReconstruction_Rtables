@@ -1195,4 +1195,5 @@ if (nrow(tag_change) > 0L && "Growth_sd" %in% names(tag_change)) {
 
 cat("\nDone.\n")
 
-# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/20260601_203802_BCI_tag115203_T115203_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp"
+# Example:
+# Rscript dp_global/scripts/basal_area_uncertainty.R --RUN_DIR="dp_global/output/<run_dir>"

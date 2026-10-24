@@ -112,11 +112,9 @@ rm(list = ls())
 library(data.table)
 # References 1: https://arelbundock.com/posts/dt_tb_df/index.html
 # References 2: https://rdatatable.gitlab.io/data.table/
-# library(ggplot2)
 
 getDTthreads() # Show number of threads data.table will use
 # To change, use setDTthreads(<n>) where <n> is number of threads
-# setDTthreads(1)
 
 # ========================================================================
 # USER CONFIGURATION - MODIFY THESE PARAMETERS
@@ -247,27 +245,6 @@ make_invalid_transitions <- function(valid_trans, codes = status_codes) {
 #   "hom"                           — height of measurement (m above ground where DBH taken)
 #   "DFstatus"                      — ForestGEO column name for the raw field status
 #   "Rstatus"                       — script-computed corrected status (from "new_status")
-
-# # Columns to retain from ViewFullTable (original DB column names)
-# ViewFullTable_columns_to_keep <- c(
-#   "TreeID", "StemID", "Tag", "StemTag", "Mnemonic", # stem / tree identifiers
-#   "QuadratName", "PX", "PY", # spatial location in plot (meters)
-#   "DBHID", "CensusID", "DBH", "HOM", # measurement record
-#   "ExactDate", "Status", "ListOfTSM", # raw field status + measurement codes
-#   "Date", "new_status", # date + script-computed corrected status
-#   "obs_row_id" # DP reconstruction metadata
-# )
-
-# # Standardized ForestGEO R-table column names (must match ViewFullTable_columns_to_keep
-# # one-to-one: same length and same order)
-# new_names_columns_to_keep <- c(
-#   "treeID", "stemID", "tag", "StemTag", "sp", # sp = species mnemonic
-#   "quadrat", "gx", "gy", # gx/gy = plot coordinates in meters
-#   "MeasureID", "CensusID", "dbh", "hom", # hom = height of measurement
-#   "ExactDate", "DFstatus", "codes", # DFstatus = raw field status (legacy name)
-#   "date", "Rstatus", # date + script-computed corrected status
-#   "StemPaths" # DP reconstruction metadata
-# )
 
 # Columns to retain from ViewFullTable (original DB column names)
 ViewFullTable_columns_to_keep <- c(
@@ -402,10 +379,6 @@ ViewFullTable <- copy(ViewFullTable_RAW)
 #   dropped at the start of Section 3.
 ViewFullTable[, Raw_StemID := StemID] # preserve original DB StemID
 
-# unique(ViewFullTable$StemID)
-# unique(ViewFullTable$Raw_StemID)
-# unique(ViewFullTable$ReconstructedStemID)
-
 setkey(ViewFullTable, Tag)
 
 ## DIAGNOSTIC: Verify Tag <-> TreeID 1:1 mapping
@@ -415,7 +388,6 @@ ViewFullTable[, .(n_treeid = uniqueN(TreeID)), by = Tag][order(-n_treeid)]
 ViewFullTable[is.na(Tag)]
 ViewFullTable[is.na(TreeID)]
 
-# sort(table(ViewFullTable$ReconstructedStemID))
 ViewFullTable[, StemID := paste(TreeID, ReconstructedStemID, sep = "_")] # new stable StemID
 
 # ── DIAGNOSTIC: Report "TreeID_NA" StemIDs ───────────────────────────────────────
@@ -1370,16 +1342,12 @@ compute_tree_for_row <- function(stem_strings) {
     cbind,
     lapply(stem_strings, function(s) strsplit(as.character(s), "")[[1]])
   )
-  # NOTE: tree_exists_check() is intentionally DISABLED here.
-  # When enabled it returns NA for any tree with P + D/G and no future A.
-  # Under the contract those are simply dead trees holding P stems that are
-  # never alive, so tree_state() codes them D, which is correct.
-  # The strict variant is kept as compute_tree_for_row_checking() below
-  # and is exercised by the optional RUN_TREE_EXISTS_DIAGNOSTIC block in
-  # Section 10.3 to quantify how many trees would be flagged.
-  # if (!tree_exists_check(mat)) {
-  #   return(NA_character_) # return NA if tree invalid
-  # }
+  # tree_exists_check() is not applied here: it would return NA for any tree
+  # with P + D/G and no later A. Under the contract those are dead trees
+  # holding P stems that are never alive, and tree_state() codes them D.
+  # The strict variant, compute_tree_for_row_checking() below, is used by the
+  # optional RUN_TREE_EXISTS_DIAGNOSTIC block in Section 10.3 to count how
+  # many trees it would flag.
   # Compute tree sequence
   tree_state(mat)
 }

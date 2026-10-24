@@ -32,8 +32,8 @@ test_that("exactly max_states feasible assignments are all returned; one more gi
   mat <- enumerate_states_constrained(4L, 3L, allowed, max_states = n_feasible)
   expect_equal(nrow(mat), n_feasible)
   expect_equal(as_keys(mat), brute_force(4L, 3L, allowed))
-  # the defect fixed here: the first max_states assignments used to be
-  # returned as if they were all of them
+  # one assignment more than max_states: NULL, not the first max_states
+  # assignments
   expect_null(enumerate_states_constrained(4L, 3L, allowed, max_states = n_feasible - 1L))
 })
 

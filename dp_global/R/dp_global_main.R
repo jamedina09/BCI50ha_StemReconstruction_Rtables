@@ -140,8 +140,8 @@ species <- NULL
 # broken-below rules never cut between rows with the same pin and never
 # rewrite a pin, and apply_terminal_to_host() moves only unpinned records.
 # Field-tagged stems (StemTag) are pinned, so each stays one stem.
-# Exceptions (pin_prelife_rows()), so the stump rule of 2026-09-30 still holds
-# (a stump is the end record of the stem that broke): an unmeasured dead /
+# Exceptions (pin_prelife_rows()), so that a stump stays the end record of the
+# stem that broke: an unmeasured dead /
 # stem dead / broken-below / missing record that comes before any evidence of
 # life of its own pin is not bound by the pin when
 #   - its pin never lives (the records go to the stem that broke together), or
@@ -383,8 +383,9 @@ apply_orphan_stem_backfill <- function(out, verbose = TRUE) {
 #     census of T (no collision).
 # Keys that hold two measurements in one census are not engine tracks and
 # are skipped. Pinned rows never move, so ReconstructedStemID == TrueStemID
-# still holds; tracks with two pin values or a pin that is not held (Fix-2
-# rollback) are left as they are; the links restored are the engine's own.
+# still holds; tracks with two pin values or a pin that is not held (the
+# sweep's duplicate rollback) are left as they are; the links restored are the
+# engine's own.
 # Moved rows get ReconstructionMethod = "pin_track"; TrueStemID is unchanged.
 # Runs first in the post-engine chain, after the sweeps, so the backfills,
 # apply_terminal_to_host() and the broken-below invariants see whole stems.
@@ -736,23 +737,23 @@ apply_terminal_to_host <- function(out, verbose = TRUE) {
 #   row. The engines do not produce these links, so the check normally finds
 #   none. R2 is unchanged.
 #
-# Why the trajectory (and not StemTag) is the group: StemTags only exist from
-# the 2010 census on (C7+). A StemTag group would hold a stem's pre-2010 rows
-# (StemTag NA) and its 2010+ rows (StemTag set) apart, so a break measured in
-# 2010 would never be compared with the trunk it continues (e.g. tag 082883:
-# a 155 mm trunk and its 30 mm resprout), and in the all-NA pre-2010 group
-# the rows of different stems would interleave, so a split could stop
-# carrying forward early (e.g. tag 053376).
+# The group is the reconstructed trajectory, not the StemTag: StemTags exist
+# only from the 2010 census (C7) on, so a StemTag group would keep a stem's
+# pre-2010 rows apart from its later rows and never compare a 2010 break with
+# the trunk it continues (e.g. tag 082883: a 155 mm trunk and its 30 mm
+# resprout).
 #
-# A pin (non-NA TrueStemID) does not protect a row from R1 or R2. The BCI
-# drivers pin every BB+DBH row to its own StemID (Step 3a) on the assumption
-# that it begins a new trajectory; when its reconstructed trajectory still
-# holds earlier rows (e.g. earlier records under the same StemID), the pass
-# mints the new ID all the same and also rewrites TrueStemID on the rows whose
-# TrueStemID equals the replaced ID.  Each such override is counted and
-# reported.  The
-# pass is deterministic and idempotent: running it twice on the same input
-# yields the same output as one run.
+# Without hard pins a pin (non-NA TrueStemID) does not protect a row from R1
+# or R2: driver Step 3a can pin a measured broken-below row to its own
+# StemID, and when the row's trajectory still holds earlier rows the pass
+# mints the new ID all the same and rewrites TrueStemID on the moved rows
+# whose TrueStemID equals the replaced ID (counted as pin overrides). With
+# hard pins (option dp_global.hard_pins) a cut between two rows with the same
+# pin is skipped, and when the moved rows hold the current ID as their pin
+# the rest of the stem takes the new ID instead (split_mode()), so no pin is
+# rewritten; rows before any life of their pin (pin_prelife_rows()) do not
+# hold a stem together. The pass is deterministic and idempotent: running it
+# twice on the same input yields the same output as one run.
 #
 # This function operates only on the MAP-level table.  The posterior samples
 # get the same operator per sample in apply_bb_invariants_to_samples(), which
@@ -892,11 +893,9 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
             prior <- rid[ix[seq_len(a - 1L)]]
             prior <- prior[!is.na(prior)]
             if (length(prior) == 0L || is.na(rid[i]) || !(rid[i] %in% prior)) next
-            # Pin override (without hard pins): the BCI drivers pin BB+DBH
-            # rows to their own StemID on the assumption that they start a new
-            # trajectory. When the row still has earlier rows on its
-            # trajectory, the pin is overridden and TrueStemID is updated to
-            # keep the two columns consistent.
+            # Without hard pins the split overrides a pin of the moved rows
+            # and updates TrueStemID to keep the two columns consistent; with
+            # hard pins split_mode() skips or swaps the cut instead.
             mv <- moved_at(ix, a, n_g)
             mode <- split_mode(ix, mv)
             if (mode == "skip") {
@@ -949,7 +948,8 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
 #
 # Per-sample version of the TrueStemID pin treatment the exported table gets
 # after the engine: the pin sweep (pinned rows take their pin; a pin that would
-# put two rows on one ID in a census is rolled back, as Fix 2 does) followed by
+# put two rows on one ID in a census is rolled back, as the drivers' sweep
+# does) followed by
 # apply_pin_track_rejoin() (the rest of a sampled track joins its single pin).
 # Engines that do not honour every pin while sampling (the DP with a
 # provisional anchor, the pre segment of a resprout split, pins joining a
@@ -959,9 +959,10 @@ apply_broken_below_invariants <- function(out, verbose = TRUE) {
 # the identity uncertainty lies, keep their per-sample variation.
 #
 # Pins are database identities. A row is pinned when TrueStemID is non-NA; its
-# pin is TrueStemID, except on rows whose TrueStemID was rewritten by the
-# broken-below pass or the renumbering (engine-minted methods), where it is the
-# row's own StemID (every database pin is the row's own StemID).
+# pin is TrueStemID, except on rows of the engine-minted methods (provisional
+# anchors and the broken-below splits, whose TrueStemID the broken-below pass
+# or the renumbering can rewrite without hard pins), where it is the row's own
+# StemID (a database pin is the row's own StemID, a re-keyed field tag aside).
 #
 # Rejoin, per sample: each sampled track is cut into segments at every
 # broken-below row with a DBH and after every NA-R barrier census; when a
@@ -1166,8 +1167,8 @@ apply_bb_invariants_to_samples <- function(samples_dt, tree_data, verbose = TRUE
 #      (always; in the last two, engine labels that are no longer a final ID
 #      get their own numbers after .N, so they never read as another stem),
 #      and TrueStemID ONLY on rows whose ReconstructionMethod
-#      %in% ENGINE_MINTED_INTO_TRUESTEMID (provisional_dp, bb_split,
-#      bb_split_carry, bb_post_terminator_split,
+#      %in% ENGINE_MINTED_INTO_TRUESTEMID (provisional_dp, and without hard
+#      pins bb_split, bb_split_carry, bb_post_terminator_split and
 #      bb_post_terminator_split_carry — those rows hold engine-minted
 #      values in TrueStemID and must follow the rename; rows holding
 #      real DB IDs in TrueStemID are left untouched as ground truth).
@@ -1221,8 +1222,7 @@ renumber_engine_minted_ids <- function(out,
     # rows TrueStemID is renumbered alongside ReconstructedStemID;
     # rows holding real DB IDs in TrueStemID are left untouched. With hard
     # pins the broken-below rules never write TrueStemID, so their rows keep
-    # the database pin (renumbering it turned 127 pins of run 20261022_220659
-    # into per-tree numbers).
+    # the database pin and are not renumbered.
     ENGINE_MINTED_INTO_TRUESTEMID <- c(
         "provisional_dp",
         if (!hard_pins_active()) c("bb_split", "bb_split_carry", "bb_post_terminator_split", "bb_post_terminator_split_carry")

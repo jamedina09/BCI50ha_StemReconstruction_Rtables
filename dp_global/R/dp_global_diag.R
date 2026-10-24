@@ -41,18 +41,15 @@ add_constraint_violation <- function(x, id_col = "ReconstructedStemID", min_grow
         return(x)
     }
     for (sid in ids) {
-        # sid <- ids[1] # for testing
         ii <- which(x[[id_col]] == sid & !is.na(x$DBH))
         if (length(ii) < 2L) next
         ii <- ii[order(x$CensusID[ii])]
         for (k in seq_len(length(ii) - 1L)) {
-            # k <- 1L  # for testing
             i0 <- ii[k]
             i1 <- ii[k + 1L]
             if (x$CensusID[i1] != x$CensusID[i0] + 1L) next
             pair_T <- (as.numeric(pair_interval[[as.character(x$CensusID[i1])]]) - as.numeric(pair_interval[[as.character(x$CensusID[i0])]])) / 365.25
-            # pair_T <- get_pair_interval(x$CensusID[i0], x$CensusID[i1])
-            g <- (x$DBH[i1] - x$DBH[i0]) / pair_T
+            g <-(x$DBH[i1] - x$DBH[i0]) / pair_T
             cond <- isTRUE((g < min_growth) | (g > max_growth))
             if (cond || isTRUE(x$ConstraintViolation[i0])) {
                 x$ConstraintViolation[i0] <- TRUE
@@ -264,9 +261,6 @@ if ("Species" %in% names(out) && !("species" %in% names(out))) {
     common_theme <- ggplot2::theme_minimal(base_size = 12) +
         ggplot2::theme(
             plot.margin = ggplot2::margin(10, 10, 10, 10),
-            # legend to bottom and horizontal
-            # legend.position = "bottom"#,
-            # legend.direction = "horizontal"
         )
 
     # Shape scales
@@ -296,7 +290,6 @@ if ("Species" %in% names(out) && !("species" %in% names(out))) {
     keys <- data.table::data.table(Tag = sort(unique(out$Tag)))
 
     for (ii in seq_len(nrow(keys))) {
-        # ii <- 1
         tag <- keys$Tag[[ii]]
         species_code <- unique(out[Tag == tag]$species)
         # Rows of the current Tag.
