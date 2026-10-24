@@ -117,7 +117,7 @@ another record, no pin across a census gap, Step 3c, hard pins, field tags).
 3. Splits each change between censuses into growth of surviving stems, loss by
    mortality and gain by recruitment, which do, for the exported
    reconstruction and for every posterior path. The posterior summaries weight
-   each path by its `path_prob`.
+   each path by its share of the tag's samples, `path_count / sum(path_count)`.
 
 ## Settings
 

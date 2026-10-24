@@ -32,7 +32,9 @@
 ###   posteriors/tag_<Tag>_posterior_samples_*_paths.csv — posterior paths.
 ###     Only CSV path files are read; a run made with another
 ###     POSTERIOR_SAMPLES_FORMAT gets the MAP outputs only.
-###   Paths are weighted by their path_prob.
+###   Each path is weighted by its share of the tag's posterior samples,
+###   path_count / sum(path_count) (path_weight). The path_prob column of the
+###   path files is not used: for the DP it counts each sample's probability twice.
 ###
 ### Packages: data.table, ggplot2, patchwork, scales (here, when installed,
 ### resolves a relative RUN_DIR).
@@ -254,7 +256,7 @@ weighted_quantile <- function(vals, w, prob) {
 
 post_change_list <- list()
 all_path_decomp_list <- list()
-all_paths_by_tag <- list() # tag -> data.table(path_idx, path_prob, obs_row_id, StemID, CensusID, DBH, BA)
+all_paths_by_tag <- list() # tag -> data.table(path_idx, path_weight, obs_row_id, StemID, CensusID, DBH, BA)
 
 for (tg_str in names(post_tag_map)) {
     tg <- tryCatch(as.integer(tg_str), warning = function(w) tg_str)
@@ -281,10 +283,13 @@ for (tg_str in names(post_tag_map)) {
         tg_str, n_paths, length(censuses)
     ))
 
+    # Posterior weight of each path: its share of the tag's samples
+    post[, path_weight := path_count / sum(path_count)]
+
     # Parse all paths into one table
     all_paths <- rbindlist(lapply(seq_len(n_paths), function(i) {
         dt <- parse_recon(post$recon[i])
-        dt[, `:=`(path_idx = i, path_prob = post$path_prob[i])]
+        dt[, `:=`(path_idx = i, path_weight = post$path_weight[i])]
         dt
     }))
     all_paths <- merge(all_paths, obs_lookup, by = "obs_row_id", all.x = TRUE)
@@ -297,7 +302,7 @@ for (tg_str in names(post_tag_map)) {
         pdata <- all_paths[path_idx == ip]
         stem_dt <- pdata[, .(StemID, CensusID, BA)]
         decomp <- decompose_ba_change(stem_dt, census_pairs)
-        decomp[, `:=`(path_idx = ip, path_prob = pdata$path_prob[1])]
+        decomp[, `:=`(path_idx = ip, path_weight = pdata$path_weight[1])]
         path_decomp_list[[ip]] <- decomp
     }
 
@@ -313,7 +318,7 @@ for (tg_str in names(post_tag_map)) {
     # Weighted summary across paths
     post_summary <- path_decomp[,
         {
-            w <- path_prob / sum(path_prob)
+            w <- path_weight / sum(path_weight)
             list(
                 Growth_mean = sum(w * Growth_BA),
                 Growth_sd = sqrt(sum(w * (Growth_BA - sum(w * Growth_BA))^2)),
@@ -708,25 +713,25 @@ if (length(all_path_decomp_list) > 0L) {
     par(mfrow = c(2, 2), mar = c(4.5, 4.5, 3.5, 1), mgp = c(2.5, 0.7, 0))
 
     draw_density_panel(
-        all_pd$Growth_BA, all_pd$path_prob,
+        all_pd$Growth_BA, all_pd$path_weight,
         COL_G, COL_G,
         "Growth -- All Intervals Pooled",
         expression("BA Growth (m"^2 * ")")
     )
     draw_density_panel(
-        all_pd$Loss_BA, all_pd$path_prob,
+        all_pd$Loss_BA, all_pd$path_weight,
         COL_L, COL_L,
         "Loss -- All Intervals Pooled",
         expression("BA Loss (m"^2 * ")")
     )
     draw_density_panel(
-        all_pd$Gain_BA, all_pd$path_prob,
+        all_pd$Gain_BA, all_pd$path_weight,
         COL_R, COL_R,
         "Gain -- All Intervals Pooled",
         expression("BA Gain (m"^2 * ")")
     )
     draw_density_panel(
-        all_pd$DeltaBA_total, all_pd$path_prob,
+        all_pd$DeltaBA_total, all_pd$path_weight,
         COL_T, COL_T,
         "Total Delta BA -- All Intervals Pooled",
         expression(Delta * "BA (m"^2 * ")")
@@ -753,25 +758,25 @@ if (length(all_path_decomp_list) > 0L) {
         par(mfrow = c(2, 2), mar = c(4.5, 4.5, 3.5, 1), mgp = c(2.5, 0.7, 0))
 
         draw_density_panel(
-            sub$Growth_BA, sub$path_prob,
+            sub$Growth_BA, sub$path_weight,
             COL_G, COL_G,
             paste0("Growth -- ", int_label),
             expression("BA Growth (m"^2 * ")")
         )
         draw_density_panel(
-            sub$Loss_BA, sub$path_prob,
+            sub$Loss_BA, sub$path_weight,
             COL_L, COL_L,
             paste0("Loss -- ", int_label),
             expression("BA Loss (m"^2 * ")")
         )
         draw_density_panel(
-            sub$Gain_BA, sub$path_prob,
+            sub$Gain_BA, sub$path_weight,
             COL_R, COL_R,
             paste0("Gain -- ", int_label),
             expression("BA Gain (m"^2 * ")")
         )
         draw_density_panel(
-            sub$DeltaBA_total, sub$path_prob,
+            sub$DeltaBA_total, sub$path_weight,
             COL_T, COL_T,
             paste0("Delta BA -- ", int_label),
             expression(Delta * "BA (m"^2 * ")")
@@ -783,7 +788,7 @@ if (length(all_path_decomp_list) > 0L) {
 # Top-left  : MAP reconstructed stem trajectory (DBH ~ census, coloured by
 #             ReconstructedStemID).
 # Other 8   : independent samples of posterior path assignments,
-#             sampled with probability proportional to path_prob.
+#             sampled with probability proportional to path_weight.
 # Helps visualise the *identity* uncertainty that drives the BA
 # decomposition uncertainty quantified below.
 
@@ -847,10 +852,10 @@ for (tg_str in names(post_tag_map)) {
     )
     stem_levels <- as.character(all_ids)
 
-    # Pick 8 posterior paths weighted by path_prob (without replacement
+    # Pick 8 posterior paths weighted by path_weight (without replacement
     # if possible).
-    path_summary <- unique(ap[, .(path_idx, path_prob)])
-    setorder(path_summary, -path_prob)
+    path_summary <- unique(ap[, .(path_idx, path_weight)])
+    setorder(path_summary, -path_weight)
     n_avail <- nrow(path_summary)
     n_pick <- min(8L, n_avail)
     pick_idx <- if (n_avail <= n_pick) {
@@ -862,7 +867,7 @@ for (tg_str in names(post_tag_map)) {
         sampled <- sample(
             rest$path_idx,
             size = n_pick - 1L,
-            prob = rest$path_prob, replace = FALSE
+            prob = rest$path_weight, replace = FALSE
         )
         c(top1, sampled)
     }
@@ -877,11 +882,11 @@ for (tg_str in names(post_tag_map)) {
     sample_panels <- lapply(seq_along(pick_idx), function(i) {
         ip <- pick_idx[i]
         ap_i <- ap[path_idx == ip]
-        pp <- ap_i$path_prob[1]
+        pp <- ap_i$path_weight[1]
         build_traj_panel(
             tag_rec, ap_i[, .(obs_row_id, StemID)],
             title_str = sprintf("Posterior sample %d", i),
-            subtitle_str = sprintf("path_idx = %d  -  path_prob = %.3f", ip, pp),
+            subtitle_str = sprintf("path_idx = %d  -  path weight = %.3f", ip, pp),
             stem_levels = stem_levels, stem_palette = pal
         )
     })
@@ -898,7 +903,7 @@ for (tg_str in names(post_tag_map)) {
         plot_annotation(
             title = sprintf("Tag %s -- Stem-identity trajectories", tg_str),
             subtitle = sprintf(
-                "MAP path (top-left) vs %d posterior samples drawn with prob proportional to path_prob",
+                "MAP path (top-left) vs %d posterior paths drawn with probability proportional to their weight",
                 length(pick_idx)
             ),
             caption = paste0(
@@ -949,10 +954,10 @@ for (tg_str in names(post_tag_map)) {
     # ----- Panel A: per-stem BA trajectories under each posterior path ----
     pa_dat <- ap[!is.na(BA),
         .(BA_stem = sum(BA)),
-        by = .(path_idx, path_prob, CensusID, StemID)
+        by = .(path_idx, path_weight, CensusID, StemID)
     ]
     pa_dat[, line_id := paste(path_idx, StemID, sep = "_")]
-    pa_dat[, weight := path_prob / max(path_prob)]
+    pa_dat[, weight := path_weight / max(path_weight)]
 
     # MAP per-stem trajectory for highlight
     map_stem_traj <- tag_rec[!is.na(DBH) & !is.na(ReconstructedStemID),
@@ -978,13 +983,13 @@ for (tg_str in names(post_tag_map)) {
         ) +
         scale_alpha_continuous(
             range = c(0.05, 0.6),
-            name = "path_prob (rescaled)"
+            name = "path weight (rescaled)"
         ) +
         scale_x_continuous(breaks = sort(unique(pa_dat$CensusID))) +
         scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
         labs(
             title = "A. Per-stem BA trajectories",
-            subtitle = "Blue: posterior paths (alpha = path_prob).  Black: MAP per-stem path.",
+            subtitle = "Blue: posterior paths (alpha = path weight).  Black: MAP per-stem path.",
             x = "Census", y = expression("Per-stem BA (m"^2 * ")")
         ) +
         theme_prop()
@@ -1016,7 +1021,7 @@ for (tg_str in names(post_tag_map)) {
         long <- melt(pd,
             id.vars = c(
                 "Tag", "CensusID_from", "CensusID_to",
-                "path_idx", "path_prob"
+                "path_idx", "path_weight"
             ),
             measure.vars = c("Growth_BA", "Loss_BA", "Gain_BA"),
             variable.name = "Component", value.name = "BA"
@@ -1039,7 +1044,7 @@ for (tg_str in names(post_tag_map)) {
         )]
 
         # Weighted mean per component x interval
-        wmean_dt <- long[, .(wmean = sum(BA * path_prob) / sum(path_prob)),
+        wmean_dt <- long[, .(wmean = sum(BA * path_weight) / sum(path_weight)),
             by = .(Component, Interval)
         ]
 
@@ -1050,11 +1055,11 @@ for (tg_str in names(post_tag_map)) {
         )
 
         pC <- ggplot(long, aes(x = Interval, y = BA, fill = Component)) +
-            geom_violin(aes(weight = path_prob),
+            geom_violin(aes(weight = path_weight),
                 scale = "width", width = 0.8, alpha = 0.55,
                 colour = NA, trim = TRUE
             ) +
-            geom_jitter(aes(size = path_prob),
+            geom_jitter(aes(size = path_weight),
                 width = 0.08, height = 0,
                 alpha = 0.35, colour = "grey25"
             ) +
@@ -1070,13 +1075,13 @@ for (tg_str in names(post_tag_map)) {
             scale_fill_manual(values = comp_cols, guide = "none") +
             scale_size_continuous(
                 range = c(0.4, 2),
-                name = "path_prob"
+                name = "path weight"
             ) +
             scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
             labs(
                 title = "C. Posterior distributions of BA-change decomposition",
                 subtitle = paste(
-                    "Violins weighted by path_prob.  Jittered points: one",
+                    "Violins weighted by path weight.  Jittered points: one",
                     "per posterior path.  White diamond: posterior mean."
                 ),
                 x = "Census interval",
@@ -1104,7 +1109,7 @@ for (tg_str in names(post_tag_map)) {
             ),
             caption = paste0(
                 "A: each blue line = one stem under one posterior path; ",
-                "alpha proportional to path_prob.  Black overlay = MAP ",
+                "alpha proportional to path weight.  Black overlay = MAP ",
                 "per-stem trajectory.\n",
                 "B: tag-level total BA, identical for every posterior path.\n",
                 "C: posterior distribution of each BA-change component per ",
