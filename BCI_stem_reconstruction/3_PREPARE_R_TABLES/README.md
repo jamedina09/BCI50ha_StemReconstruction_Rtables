@@ -66,8 +66,12 @@ not read the posterior file, which is used by
 - `dbh` is exported exactly as recorded: no DBH is removed or imputed. A `G`
   or `D` cell carries a DBH only when it was recorded on a `dead` / `stem dead`
   record of a stem never alive later (listed in
-  `CHECKS/dbh_on_dead_records.csv`); a `P` cell never has one; an `A` without
-  DBH is a missed measurement.
+  `CHECKS/field_records_to_review_bci.csv`, reason `dbh_on_dead_record`); a
+  `P` cell never has one. An `A` without DBH is a missed measurement, or a
+  stump: a `broken below` record without DBH of a stem that lives later (e.g.
+  a field-tagged stump measured in a later census), alive with no measurable
+  DBH at 1.3 m. Stage 4 interpolates the DBH of a missed measurement and keeps
+  a stump out of the stock.
 
 ## Other exported columns
 
@@ -76,12 +80,12 @@ not read the posterior file, which is used by
   in order of first appearance; in a tree changed by the measurement rejoin of
   the stage-2 merge, the joined stem keeps one of its two numbers, so the
   tree skips one number per join. Internally the script keys stems on
-  `TreeID_ReconstructedStemID`; a stem without a DP identity (records with no
-  status and no DBH) gets `stemID` NA.
+  `TreeID_ReconstructedStemID`; every exported stem has a `stemID` (rows
+  without a stem identity are dropped, see above).
 - `ExactDate`: the field date exactly as recorded (`NA` where there is no
   record); never imputed, like `dbh` and `DFstatus`.
 - `date`: the ForestGEO R-table date, in days since 1960-01-01 (the unit of
-  the ForestGEO database's `Date` field and of Condit's tables;
+  the ForestGEO database's `Date` field;
   `as.Date(date, origin = "1960-01-01")` gives the calendar date). Every row
   has one:
   1. the recorded date (`ExactDate`) where there is one;
@@ -92,11 +96,9 @@ not read the posterior file, which is used by
 
   Only recorded dates vote, and ties go to the earliest date. The most common
   date (the mode) is used rather than a mean or median because it is always a
-  day on which the field crew was recording. Condit's Dryad tables fill `date`
-  with the mean recorded date of the quadrat instead: the two agree within
-  about a day in 1985–2015, but in 1982 the records of one quadrat span months,
-  so the tree's own date is closer. Census intervals (growth, recruitment,
-  mortality) are computed from `date`.
+  day on which the field crew was recording, and the tree's own date comes
+  first because the records of one quadrat can span months (1982). Census
+  intervals (growth, recruitment, mortality) are computed from `date`.
 - `gx`, `gy`, `quadrat`: one location per tree, the same for every stem and
   census. Each census casts one vote, the most common (`PX`, `PY`) pair among
   the tree's stems in that census (ties go to the smallest x, then y); the
@@ -203,9 +205,8 @@ testthat::test_file("BCI_stem_reconstruction/3_PREPARE_R_TABLES/tests/test_speci
 
 ## Requirements
 
-R packages: `data.table`, `arrow` and `inspectdf`; `igraph` (transition
-diagram in `2_create_R_tables_BCI.R`); `digest` and `readxl` (`3_create_species_table_BCI.R`);
-`testthat` and `parallel` for the tests.
+R packages: `data.table`, `arrow` and `inspectdf`; `digest` and `readxl`
+(`3_create_species_table_BCI.R`); `testthat` and `parallel` for the tests.
 
 ## Outputs
 
@@ -222,13 +223,41 @@ diagram in `2_create_R_tables_BCI.R`); `digest` and `readxl` (`3_create_species_
 - `BCI_stem_reconstruction/DATA/RTABLES/bci.species_code_changes.rdata` and
   `.csv`: the trees whose species code changed since Condit et al. (2019)
 - `BCI_stem_reconstruction/DATA/POSTERIORS/posterior_sampled_paths.rds`
-- QC exports in `BCI_stem_reconstruction/DATA/CHECKS/`, among them
-  `dbh_on_dead_records.csv`, `location_conflicts.csv`,
-  `subset_stems_never_alive.csv`, `subset_stems_never_recorded.csv` and
-  `duplicate_measurements.csv` (likely duplicates: two stems of one tree
-  measured on the same date at heights at least 0.5 m apart, taper-corrected
-  DBHs within 20 %; the trunk measured at the old and the new height when its
-  point of measurement was raised), `species_changes_from_flora_panama_bci.csv`
+- Checks in `BCI_stem_reconstruction/DATA/CHECKS/`. `2_create_R_tables_BCI.R`
+  writes four files:
+  - `check_bci.txt`: every check of the script (✓ passed; ❌ failed, where the
+    script stopped) and the summary tables (raw records alive because of
+    their DBH, status codes, the biology assessment of every version of the
+    histories, the evidence behind each stem death, status × DBH by census
+    with stumps apart from missed measurements) and, at the end, the number
+    of cases in each review list. Read it first.
+  - `status_patterns_bci.csv`: one row per encounter history: `raw_history`
+    (the raw codes, one per census: `A` evidence of life, `D` dead record,
+    `N` no record), `dbh_recorded` (1 where a DBH was recorded),
+    `Rstatus_history`, `tree_history`, the number of stems and one example
+    stem (`example_treeID`, `example_stemID`).
+  - `field_records_to_review_bci.csv`: raw records that need a look, for the
+    data manager. One row per case: `reason`, `treeID`, `tag`, `stemID` (NA
+    for a whole tree), `census`, `dbh`, `DFstatus`, `Rstatus` and `details`.
+    Reasons: `dead_record_of_stem_alive_later` (a dead / stem dead record of
+    a stem recorded alive later, exported `A`), `dbh_on_dead_record`,
+    `stem_dead_but_tree_dead` (raw "stem dead" while no stem of the tree is
+    alive then or later), `duplicate_measurement` (two stems of one tree
+    measured on the same date at heights at least 0.5 m apart, taper-corrected
+    DBHs within 20 %: the trunk measured at the old and the new height when
+    its point of measurement was raised), `two_dates_in_census`,
+    `location_spread_over_1m`, `no_coordinates` and
+    `quadrat_differs_from_coordinates`.
+  - `reconstruction_to_review_bci.csv`: stems whose reconstruction needs a
+    look, same columns. Reasons: `identity_break_candidate` (one stem dies and
+    one new stem of similar size appears in the same tree and census),
+    `new_stem_50mm_or_more` (ingrowth or a new tree first measured at 50 mm or
+    more), `stem_never_alive`, `stem_never_recorded` and
+    `stump_of_stem_alive_later` (exported `A` without DBH; out of the stock in
+    stage 4).
+
+  `3_create_species_table_BCI.R` writes `species_changes_from_flora_panama_bci.csv`
   (the codes whose name or authority differs from the Flora de Panamá list,
   for the botanists) and `check_species_table_bci.txt` (failed checks and
-  notes of `3_create_species_table_BCI.R`)
+  notes). The stage-1 species script writes the WFO comparison lists
+  (`species_*wfo*.csv`, `species_table_vs_wfo.csv`).

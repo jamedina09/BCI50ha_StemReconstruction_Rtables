@@ -454,10 +454,10 @@ test_that("real data: dbh is exported exactly as recorded", {
     "  DBH on dead / stem dead records: %d, all kept | on G/D (never alive later): %d | on A (false death): %d\n",
     nrow(dead_dbh), dead_dbh[Rstatus != "A", .N], dead_dbh[Rstatus == "A", .N]
   ))
-  chk <- file.path(dirname(rtables_dir), "CHECKS", "dbh_on_dead_records.csv")
+  chk <- file.path(dirname(rtables_dir), "CHECKS", "field_records_to_review_bci.csv")
   if (file.exists(chk)) {
-    listed <- fread(chk)
-    expect_setequal(paste(listed$StemID, listed$census), paste(on_dead$StemID, on_dead$census))
+    listed <- fread(chk, colClasses = list(character = c("treeID", "tag")))[reason == "dbh_on_dead_record"]
+    expect_setequal(paste(listed$treeID, listed$stemID, listed$census, sep = "_"), paste(on_dead$StemID, on_dead$census, sep = "_"))
   }
 })
 
