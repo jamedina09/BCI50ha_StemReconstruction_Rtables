@@ -34,6 +34,16 @@ caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_c
   - `BB_DBH_RULE="main_ends"`: a broken-below record with a DBH (before 2015, the break of the tree's main stem written on the main-stem record) ends the main stem of the census before, and is matched like any other measurement but cannot continue it. `"r1"` restores rule R1 (the record always starts a new stem).
   - `PIN_BB_REQUIRE_OTHER_RECORD=TRUE`: a measured broken-below record is pinned to its own StemID only when that StemID has another record.
   - `PIN_STOP_AT_GAP=TRUE`: a pin is not carried across a census in which its StemID has no record (e.g. tag 200431).
+  - `PIN_STOP_AT_FAST_LINK=TRUE` (Step 3c, added 2026-10-24): a database StemID link made before the field tags can be contradicted by the measurements. Its growth is above the species' 99.9% quantile of tagged growth, while another record of the tree in the earlier census grows into the later record within the 99% quantile. That other record is unpinned, and its StemID has no measured record in the later census. The records of the StemID up to that census then lose their pin, and the engine places them.
+    - The database had given the StemID of a small 2005 record to a 2010 stem that continues another 2005 record, which then ended in 2005. Example, tag 170028: the 29 mm stem of 2010 carries the StemID of a 10 mm 2005 record; the main stem measured 29 mm in 2005.
+    - The run log reports the count (`✓ Step 3c PIN_STOP_AT_FAST_LINK: …`), and the links are listed in `pin_stop_at_fast_link.csv` in the run folder.
+    - Sandbox of 2026-10-24 (1,494 trees; the unchanged code reproduces run 20261022_220659 in every column and posterior sample):
+      - 616 links in 616 trees, all 2005 → 2010. In 616 of 616 trees the 2010 stem now continues a 2005 record that fits, and no link above the 99.9% quantile is left.
+      - Median 2005 → 2010 growth on these links goes from 6.8 to 0.6 mm/yr.
+      - Basal-area loss and gain from 2005 to 2010 in these trees fall from 5.35 / 5.67 m² to 0.30 / 0.63 m² (whole plot).
+      - The posterior samples agree in every tree. The 829 other trees, near misses and random controls, are identical.
+      - In 7 trees the change moves a break to 2000 → 2005, because a pre-2010 pin of the 2000 stem cannot join the 2010 pin.
+      - An alternative tested only against the 99.9% quantile (665 links) also freed 8 ambiguous trees, which then got a new 2010 stem; hence the 99% test.
   - `HARD_PINS=TRUE`: a pin (`TrueStemID`) holds after the engine.
     - The broken-below rules never cut between two rows with the same pin, and never rewrite a pin.
     - Field-tagged stems (`StemTag` from `FIELD_TAG_FIRST_CENSUS = 7`, 2010; pinned before the engine, one pin per tag) therefore stay one stem, their broken-below records without a DBH included.
@@ -51,13 +61,14 @@ caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_c
 - `DP_CHUNK_SIZE`: Number of tags processed per parallel chunk (match to core count for efficiency).
 - `USE_MEASUREMENT_ERROR`: Whether the DBH measurement-error model is used in the parameter estimation and in the DP growth likelihood. The script default is `TRUE`; the command above turns it off (folder name `NME`).
 - `DBH_ROUND_CENSUSES` (default `"1,2"`, not needed on the command line): censuses whose small-stem DBH (< 55 mm) was recorded in 5 mm classes, rounded down (BCI 1982 and 1985). The engines read such a DBH as a size within its class, so a 5 mm class step is not taken as an impossible growth jump that splits one stem into a death and a recruit. The run log shows `✓ DBH rounded down to 5 mm classes …` (the data are checked at run time) and the output folder name carries `NME_R12`. `--DBH_ROUND_CENSUSES=none` turns it off.
-- Output folder label: with the defaults above it is `NME_R12_BD_LT_CU_NS_MS_PO_PG_HP_LF`:
+- Output folder label: with the defaults above it is `NME_R12_BD_LT_CU_NS_MS_PO_PG_PF_HP_LF` (run 20261022_220659, before `PIN_STOP_AT_FAST_LINK`, has no `PF`):
   - `BD` = birth-death matcher;
   - `LT` = recruitment rate per tree;
   - `CU` = coverage rule `union`;
   - `NS` = no whole-tree resprout split;
   - `MS` = main-stem rule;
-  - `PO` and `PG` = the two pin rules;
+  - `PO` and `PG` = the two pin rules of 2026-10-22;
+  - `PF` = no pin on the records before a fast database StemID link (`PIN_STOP_AT_FAST_LINK`);
   - `HP` = hard pins;
   - `LF` = label-free DP posterior;
   - `FM` would mark `PROB_EXPORT_RULE="fewest_me"`.

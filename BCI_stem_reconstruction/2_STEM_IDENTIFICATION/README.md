@@ -32,7 +32,13 @@ Chunked DP driver.
   the same StemID); the engines resolve the other rows. A measured break row
   is pinned only when its StemID has another record
   (`PIN_BB_REQUIRE_OTHER_RECORD`), and a pin is not carried across a census in
-  which its StemID has no record (`PIN_STOP_AT_GAP`). The database StemID is
+  which its StemID has no record (`PIN_STOP_AT_GAP`). Some StemID links made
+  before 2010 are contradicted by the measurements: the link grows faster than
+  99.9% of the species' tagged links, while another record of the tree, free
+  and ending there, grows into the later record within 99% of them. The records
+  before such a link lose their pin (`PIN_STOP_AT_FAST_LINK`, Step 3c: 616
+  links, all 2005 → 2010, where the database gave the StemID of a small 2005
+  record to the 2010 stem; see `run_chunk_bci.md`). The database StemID is
   used only to set these pins; the engines never read it. Pins hold after the
   engine (`HARD_PINS`), so every field-tagged stem stays one stem. Field tags
   are the StemTags from 2010 (`FIELD_TAG_FIRST_CENSUS`; a tag the database
@@ -121,11 +127,12 @@ Merges completed chunk outputs into final files.
   every such pin is a database StemID of its tree. The reconstructed stems do
   not change.
 - Checks that field-tagged stems stay whole and stops with `❌ CHECK FAILED`
-  otherwise: every row with a StemTag is pinned, every field tag (2010 on, by
-  tag value) is one reconstructed stem, and no reconstructed stem holds two
-  field tags. The table of run 20261014_220452 fails it with 703 field tags on
-  two stems (tagged 2010 stumps on the stem that broke, stems cut by rule R2,
-  one re-keyed tag).
+  otherwise: every row with a field tag (2010 on) is pinned, every field tag
+  (2010 on, by tag value) is one reconstructed stem, and no reconstructed stem
+  holds two field tags. The table of run 20261014_220452 fails it with 703
+  field tags on two stems (tagged 2010 stumps on the stem that broke, stems cut
+  by rule R2, one re-keyed tag). Rows before 2010 whose copied StemTag lost its
+  pin in Step 3c are counted in the log (93 in the 2026-10-24 sandbox).
 - Writes the final reconstructed stem table
   `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds` (the
   input of stage 3), the joins to `DATA/PROCESSED/measurement_rejoin_audit.csv`
