@@ -14,6 +14,10 @@
 
 # Output directories and generated data
 dp_global/output/
+# dp_global bundle: built by dp_global/R/dpglobal_bundle/package_bundle.sh
+dp_global/R/dpglobal_bundle/dist/
+dp_global/R/dpglobal_bundle/dpglobal_bundle.RData
+dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds
 
 data_simulation/sample_data_BCI/general_data/
 # BCI_stem_reconstruction/DATA/

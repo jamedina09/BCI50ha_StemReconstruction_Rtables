@@ -7,9 +7,12 @@ Packages the `dp_global` engine into one archive, to run it on another machine.
 | File | What it does |
 | --- | --- |
 | `package_bundle.sh` | Builds `dist/dpglobal_bundle_full_<timestamp>.tar.gz` and its SHA256 checksum |
-| `dpglobal_bundle_loader.R` | Writes `dpglobal_bundle.RData` (the engine's R objects, sourced) and `dpglobal_bundle_manifest.rds` (the R packages each file needs) |
+| `dpglobal_bundle_loader.R` | Writes `dpglobal_bundle.RData` (the engine's R objects, sourced) and `dpglobal_bundle_manifest.rds` (the R packages each file needs), next to it |
 | `verify_bundle.R` | Checks that the modules load and the core functions exist |
 | `dist/` | Archives built by `package_bundle.sh`. An archive holds the code of the day it was built: rebuild before deploying |
+
+`dist/`, `dpglobal_bundle.RData` and `dpglobal_bundle_manifest.rds` are build
+products and are not tracked by git (`.gitignore`).
 
 ## How to run
 
