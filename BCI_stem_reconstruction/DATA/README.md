@@ -1,21 +1,20 @@
 # DATA: status and pending tasks
 
-Last updated 2026-10-23. Run in use: `20261022_220659_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_HP_LF_g5_sm0p5_kg0_ks0_rcpp`
-(the final engine run; checks in *Final run 20261022_220659* below). The outputs of the previous run, `20261014_220452`
-(Oct 13 export), are kept for comparison in the `oct_13/` folders.
+Last updated 2026-10-24. Every output of stages 1–4 (run `20261022_220659_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_HP_LF_g5_sm0p5_kg0_ks0_rcpp`,
+checks in *Final run 20261022_220659* below, and the `oct_13/` copies of run `20261014_220452`) was archived on 2026-10-24 in
+`BACKUPS/before_final_run_20261024/`. Stages 1–4 are rebuilt from the inputs with the final engine run (with `PIN_STOP_AT_FAST_LINK`).
 
 ## Folders
 
 | Folder | Content |
 |---|---|
-| `RAW/` | database exports (`oct_13_2026`, `oct_16_2026`), species sources (`sp_tables/`), Condit et al. (2019) |
-| `SPP_TABLE/` | stage-1 species table, Condit's table, comparison helper |
-| `PROCESSED/` | stage-1 stem table, engine input |
-| `<run folder>/` | stage-2 engine output and merge |
+| `RAW/` | inputs: database exports (`oct_13_2026`, `oct_16_2026`), species sources (`sp_tables/`), Condit et al. (2019) |
+| `SPP_TABLE/` | stage-1 species table (output); `condit/bci.spptable.rdata` (Condit's table, input) and the outputs of the comparison helper `compare_species_condit_and_new_release.R` |
+| `PROCESSED/` | stage-1 stem table (engine input); stage-2 final table and rejoin files |
+| `<run folder>/` | stage-2 merged engine output (the engine run folders are in `/Users/medinaja/outputs_bci_stem_identification/`) |
 | `POSTERIORS/`, `RTABLES/` | stage-3 posterior preparation and R tables |
-| `CHECKS/` | checks. R tables (stage 3): `check_bci.txt` (every check and the summaries: read it first), `status_patterns_bci.csv`, `field_records_to_review_bci.csv` and `reconstruction_to_review_bci.csv` (one row per case, column `reason`). Species: `check_species_table_bci.txt`, `species_changes_from_flora_panama_bci.csv` (stage 3) and the WFO lists of stage 1. `revision_oct16/` holds the Oct 16 review lists |
-| `oct_13/` | outputs of run 20261014_220452 (`PROCESSED/`, `POSTERIORS/`, `RTABLES/`, `CHECKS/`), copied 2026-10-23 before the final run's merge; not under version control (also `4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/oct_13/` and `COMPARE_DATASETS/oct_13/`) |
-| `BACKUPS/` | the run of 2026-10-05 and its side files (zip archives); species-table outputs archived before the rebuild (`species_tables_20261021/`) |
+| `CHECKS/` | checks. R tables (stage 3): `check_bci.txt` (every check and the summaries: read it first), `status_patterns_bci.csv`, `field_records_to_review_bci.csv` and `reconstruction_to_review_bci.csv` (one row per case, column `reason`). Species: `check_species_table_bci.txt`, `species_changes_from_flora_panama_bci.csv` (stage 3) and the WFO lists of stage 1 |
+| `BACKUPS/` | archives: `before_final_run_20261024/` (every stage 1–4 output of run 20261022_220659, the `oct_13/` copies of run 20261014_220452 and earlier comparison outputs; original paths, `README.txt`, md5 manifest); the run of 2026-10-05 and its side files (zip archives); species-table outputs archived before the rebuild (`species_tables_20261021/`) |
 
 ## Known issues (reported, not waited for)
 
