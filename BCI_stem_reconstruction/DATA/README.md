@@ -56,7 +56,7 @@ Botanists (species table):
 - [x] `COMPARE_DATASETS/bci.stem.mine/` is gone.
 - [x] Commit and push the species-table changes (2026-10-21: ad6eeca..23bac81) and the date fix (6be0bed).
 - [x] Comparison with Condit et al. (2019) on the final R tables (2026-10-21): `COMPARE_DATASETS/` rerun (results identical to 2026-10-15) and `2_STEM_IDENTIFICATION/comparissons/compare_records_vs_condit.R` (records, dates, coordinates, statuses, stems; `records_comparison_report.html`).
-- [ ] Publication folder (`data_paper_and_repo_publication/`) from run 20261022_220659.
+- [x] Publication folder (`data_paper_and_repo_publication/`, not under version control) from run 20261022_220659 (2026-10-24): `RTABLES/` (the 9 census tables, the species table and the two files of the changes of code, `.rdata`) and `RTABLES.zip`, `sample_figures/` (the stage-4 figures), `ViewFiles_bci_allcensuses/ViewFullTable_bci.zip` (the Oct 13 export the pipeline read). The previous version (tables of 2026-07-09, export of 2026-09-28) is in `previous_version_20260909.zip`.
 
 ## Identity fixes for the final engine run (sandbox test 2026-10-22)
 
