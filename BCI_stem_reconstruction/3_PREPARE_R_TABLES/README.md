@@ -214,7 +214,15 @@ R packages: `data.table`, `arrow` and `inspectdf`; `digest` and `readxl`
   one table per census with the columns `CensusID`, `treeID`, `stemID`, `tag`,
   `StemTag`, `sp`, `quadrat`, `gx`, `gy`, `dbh` (mm), `hom` (m), `ExactDate`,
   `date`, `codes`, `DFstatus`, `Rstatus` and `StemPaths` (the row key of the
-  posterior paths); every table lists the same stems in the same order
+  posterior paths). Every table lists the same stems in the same order, sorted
+  by `treeID` and then `stemID`, both as numbers (tree 20 before tree 100,
+  stem 2 before stem 10). Column types: `treeID`, `tag`, `StemTag`, `sp`,
+  `quadrat`, `codes`, `DFstatus` and `Rstatus` are text (`tag` and `quadrat`
+  keep their leading zeros and signs, e.g. `000006`, `-05599`, `0001`; read
+  the `.csv` with these columns as text); `stemID` and `StemPaths` are
+  integers; `CensusID`, `gx`, `gy`, `dbh`, `hom` and `date` are numbers;
+  `ExactDate` is a date. The script checks the order and the types of every
+  table before it writes it.
 - `BCI_stem_reconstruction/DATA/RTABLES/bci.spptable.rdata` (object
   `bci.spptable`, a data.frame) and `bci.spptable.csv`: the species table
 - `BCI_stem_reconstruction/DATA/RTABLES/bci.species_code_changes_summary.rdata`

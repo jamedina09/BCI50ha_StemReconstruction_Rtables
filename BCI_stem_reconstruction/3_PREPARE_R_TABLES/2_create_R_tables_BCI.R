@@ -170,6 +170,14 @@ print_to_log <- function(message, log_file, new_message = TRUE) {
   cat(message, file = log_file, append = TRUE, sep = "\n")
 }
 
+# A table as text lines for the log, printed at a fixed width so that the log
+# does not depend on the width of the console
+log_table <- function(x) {
+  op <- options(width = 250L)
+  on.exit(options(op))
+  capture.output(print(x))
+}
+
 print_to_log(c(
   sprintf("check_%s.txt: checks and summaries of 2_create_R_tables_BCI.R, run %s", site, format(Sys.time(), "%Y-%m-%d %H:%M")),
   "Every check is listed (✓ passed, ❌ failed: the script stopped there). The review lists are",
@@ -647,10 +655,10 @@ lapply(ViewFullTable_split, dim)
 
 print_to_log(c(
   "Rows per census: recorded, and after standardization (every stem in every census):",
-  capture.output(print(data.table(
+  log_table(data.table(
     census = seq_along(ViewFullTable_split), rows_recorded = rows_recorded,
     rows_standardized = vapply(ViewFullTable_split, nrow, integer(1))
-  )))
+  ))
 ), log_file, new_message = TRUE)
 rm(rows_recorded)
 
@@ -755,9 +763,9 @@ print(dbh_alive_tab)
 cat("🔧 Dead records with a DBH (dead records; the DBH is kept; the stem is A there only if alive later):\n")
 print(dead_dbh_tab)
 print_to_log("Records alive because of their DBH (by raw status):", log_file, new_message = TRUE)
-print_to_log(capture.output(print(dbh_alive_tab)), log_file, new_message = FALSE)
+print_to_log(log_table(dbh_alive_tab), log_file, new_message = FALSE)
 print_to_log("Dead records with a DBH (dead records; the DBH is kept; the stem is A there only if alive later):", log_file, new_message = TRUE)
-print_to_log(capture.output(print(dead_dbh_tab)), log_file, new_message = FALSE)
+print_to_log(log_table(dead_dbh_tab), log_file, new_message = FALSE)
 cat(sprintf("🔧 'broken below' without DBH coded as dead: %d records\n", DT_Status[Status %in% "broken below" & is.na(DBH), .N]))
 
 DT_Status[, code := rstatus_raw_code(Status, DBH)]
@@ -818,7 +826,7 @@ dcast(original_status_codes_summary,
 
 print_to_log("Status codes to correct:", log_file, new_message = TRUE)
 print_to_log(
-  capture.output(
+  log_table(
     dcast(original_status_codes_summary,
       formula = status_code ~ census,
       value.var = "nobs"
@@ -1934,7 +1942,7 @@ death_evidence <- dcast(
 cat("\n📋 Evidence behind each stem death (raw status in the death census):\n")
 print(death_evidence)
 print_to_log("Evidence behind each stem death (raw status in the death census):", log_file, new_message = TRUE)
-print_to_log(capture.output(print(death_evidence)), log_file, new_message = FALSE)
+print_to_log(log_table(death_evidence), log_file, new_message = FALSE)
 
 ## Trees alive but unregistered (count only) ####
 # Tree × census cells where the tree has dead stems (G) but no living stem
@@ -2023,7 +2031,8 @@ cat(sprintf("  Raw 'stem dead' exported as D (tree dead): %d cells\n", nrow(sd_D
 # from a duplicate, and 1982 has no HOM records, so neither is listed. One row
 # per pair, on the stem measured lower.
 dup_obs <- ViewFullTable[!is.na(DBH) & DBH >= 100 & !is.na(ExactDate), .(
-  TreeID, Tag, census = CensusID, ExactDate, StemID, Raw_StemID, DBH,
+  TreeID, Tag,
+  census = CensusID, ExactDate, StemID, Raw_StemID, DBH,
   HOM = fcoalesce(as.numeric(HOM), 1.3), tc = dbh_with_best_candidate_taper_corrected
 )]
 dup_span <- ViewFullTable[!is.na(DBH), .(first_census = min(CensusID), last_census = max(CensusID)), by = StemID]
@@ -2180,11 +2189,11 @@ print_to_log(c(
     "Status x DBH of the exported tables (%d stems x %d censuses = %d cells), all censuses:",
     nrow(corrected_new_status_matrix), n_cens, nrow(cells_dt)
   ),
-  capture.output(print(summary_overall)),
+  log_table(summary_overall),
   paste0("  ", stump_txt),
   "  G / D with DBH: recorded on a dead record and kept (reason dbh_on_dead_record); P with DBH must be 0",
   "Per census:",
-  capture.output(print(summary_wide))
+  log_table(summary_wide)
 ), log_file, new_message = TRUE)
 cat("\nStatus × DBH overall summary:\n")
 print(summary_overall)
@@ -2210,10 +2219,11 @@ rm(
 # ========================================================================
 # Write Rstatus into each census table, assign one location per tree, fill
 # the date column, rename and subset each table to the ForestGEO R-table
-# format, then save each census as both a .Rdata object and a .csv file. dbh,
-# DFstatus and ExactDate are exported exactly as recorded; stemID is the
-# reconstructed stem number within its tree. At the end, write the two review
-# lists (Sections 12-14) and their counts to the log.
+# format, sort the rows by treeID and stemID (as numbers), then save each
+# census as both a .Rdata object and a .csv file. dbh, DFstatus and ExactDate
+# are exported exactly as recorded; stemID is the reconstructed stem number
+# within its tree. At the end, write the two review lists (Sections 12-14)
+# and their counts to the log.
 
 # Rows of every census table are in unique_StemID order (checked in
 # Section 3), so the status and DBH matrices align column by column.
@@ -2473,7 +2483,8 @@ for (i in seq_along(ViewFullTable_split)) {
 
 dates_long <- rbindlist(lapply(seq_along(ViewFullTable_split), function(i) {
   ViewFullTable_split[[i]][, .(
-    StemID, census = i, ExactDate, recorded = recorded_dates[[i]],
+    StemID,
+    census = i, ExactDate, recorded = recorded_dates[[i]],
     date = Date, raw_date = raw_date_field[[i]]
   )]
 }))
@@ -2557,14 +2568,43 @@ field_review[["two_dates_in_census"]] <- review_rows(
 )
 rm(rd)
 
+# ---- Row order and column types ---------------------------------------------
+# Rows are sorted by treeID, then by the stem number within the tree, both
+# compared as numbers: as text, tree "100" would come before tree "20" and
+# stem 10 before stem 2. Sorting changes no column: treeID stays text (as in
+# the stage-2 table), and tag, StemTag and quadrat stay text because their
+# leading zeros and signs are part of the code (tags "000006", "-05599",
+# quadrat "0001").
+bio_check(
+  all(grepl("^[0-9]+$", unique_StemID$TreeID)),
+  "Every TreeID is a whole number written in digits (it sorts as a number without loss)",
+  examples = unique_StemID$TreeID[!grepl("^[0-9]+$", unique_StemID$TreeID)]
+)
+bio_check(
+  all(grepl("_[0-9]+$", unique_StemID$StemID)),
+  "Every internal stem key ends in its stem number (TreeID_<number>)",
+  examples = unique_StemID$StemID[!grepl("_[0-9]+$", unique_StemID$StemID)]
+)
+export_types <- c(
+  CensusID = "numeric", treeID = "character", stemID = "integer", tag = "character", StemTag = "character",
+  sp = "character", quadrat = "character", gx = "numeric", gy = "numeric", dbh = "numeric", hom = "numeric",
+  ExactDate = "Date", date = "numeric", codes = "character", DFstatus = "character", Rstatus = "character",
+  StemPaths = "integer"
+)
+bio_check(
+  identical(names(export_types), new_names_columns_to_keep),
+  "The export types list every exported column, in export order"
+)
+
 export_stem_order <- vector("list", length(ViewFullTable_split))
 for (census in seq_along(ViewFullTable_split)) {
   cat(sprintf("  Processing census %d...\n", census))
   # Extract current census data and ensure it's a data.table
   X <- as.data.table(ViewFullTable_split[[census]])
-  # # NOTE: SPLIT TREEID
-  # X[, TreeID := stringr::str_split_fixed(TreeID, "_", 2)[, 1]]
-  setorder(X, Tag, StemID, CensusID)
+  # Sort by treeID and stem number as numbers (see above)
+  X[, `:=`(.tree_num = as.numeric(TreeID), .stem_num = as.numeric(sub(".*_", "", StemID)))]
+  setorder(X, .tree_num, .stem_num)
+  X[, c(".tree_num", ".stem_num") := NULL]
   # Validate that every required column is present BEFORE subsetting,
   # so a missing column produces a clear error rather than a cryptic
   # data.table failure deep inside the export loop.
@@ -2613,6 +2653,17 @@ for (census in seq_along(ViewFullTable_split)) {
     n_bad = sum(duplicated(X[, .(treeID, stemID)]))
   )
   rm(rs_part, bad_key)
+  bio_check(
+    identical(order(as.numeric(X$treeID), X$stemID), seq_len(nrow(X))),
+    sprintf("Census %d: rows are sorted by treeID, then stemID (as numbers)", census)
+  )
+  col_types <- vapply(X, function(v) class(v)[1L], "")
+  bio_check(
+    identical(names(col_types), names(export_types)) && all(col_types == export_types),
+    sprintf("Census %d: every column has its type (IDs and codes text where they carry leading zeros, measurements numeric)", census),
+    examples = names(col_types)[col_types != export_types[names(col_types)]]
+  )
+  rm(col_types)
   # Write the CSV, then convert to data.frame: many ForestGEO R functions
   # expect a data.frame, not a data.table
   fwrite(X, file = file.path(OUTPUT_folder, sprintf("%s.stem%d.csv", site, census)))
@@ -2636,7 +2687,7 @@ bio_check(
   all(vapply(export_stem_order, identical, logical(1), export_stem_order[[1]])),
   "All exported census tables list the same stems in the same order"
 )
-rm(export_stem_order)
+rm(export_stem_order, export_types)
 
 cat(sprintf("\n✓✓ All %d census tables exported successfully\n\n", length(ViewFullTable_split)))
 
