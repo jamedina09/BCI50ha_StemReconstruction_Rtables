@@ -278,6 +278,18 @@ PIN_BB_REQUIRE_OTHER_RECORD <- TRUE
 # database StemID has no record (the database attached a 2010 stem to an old
 # StemID with no record in between, e.g. tag 200431).
 PIN_STOP_AT_GAP <- TRUE
+# Step 3c: TRUE removes the pin from the records of a database StemID before
+# a link of that StemID, made before the field tags, that grows faster than
+# 99.9% of the tagged links of the species when another record of the tree in
+# the earlier census (unpinned, its StemID without a measured record in the
+# later census) grows into the later record within 99% of the tagged links.
+# The database attached the StemID of a small 2005 record to a 2010 stem that
+# continues another 2005 record, which then ended in 2005 (tag 170028: the
+# 2010 stem of 29 mm carries the StemID of a 10 mm 2005 record; the main stem
+# measured 29 mm in 2005). The engine places the freed records. Sandbox
+# 2026-10-24: 616 links, all 2005 -> 2010; the 2010 stem continues a fitting
+# 2005 record in 616 trees, no fast link left, other trees unchanged.
+PIN_STOP_AT_FAST_LINK <- TRUE
 # Pins hold after the engine (rows with the same TrueStemID stay one stem;
 # TrueStemID is never rewritten): the broken-below rules (R1/R2) do not cut
 # between rows with the same pin, and apply_terminal_to_host() leaves pinned
@@ -516,6 +528,7 @@ CLI_REFERENCE <- list(
     BB_DBH_RULE = "BB_DBH_RULE",
     PIN_BB_REQUIRE_OTHER_RECORD = "PIN_BB_REQUIRE_OTHER_RECORD",
     PIN_STOP_AT_GAP = "PIN_STOP_AT_GAP",
+    PIN_STOP_AT_FAST_LINK = "PIN_STOP_AT_FAST_LINK",
     HARD_PINS = "HARD_PINS",
     PROB_EXPORT_RULE = "PROB_EXPORT_RULE",
     DP_POSTERIOR_LABEL_FREE = "DP_POSTERIOR_LABEL_FREE",
@@ -1331,8 +1344,8 @@ run_main_chunked <- function() {
         }
     )
     .msg <- sprintf(
-        "Broken-below and pin settings: DP_ALLOW_SEGMENT_SPLIT = %s, BB_DBH_RULE = %s, PIN_BB_REQUIRE_OTHER_RECORD = %s, PIN_STOP_AT_GAP = %s, HARD_PINS = %s (field tags from census %s), PROB_EXPORT_RULE = %s, DP_POSTERIOR_LABEL_FREE = %s%s",
-        DP_ALLOW_SEGMENT_SPLIT, BB_DBH_RULE, PIN_BB_REQUIRE_OTHER_RECORD, PIN_STOP_AT_GAP, isTRUE(HARD_PINS), getOption("dp_global.field_tag_first_census"), PROB_EXPORT_RULE, isTRUE(DP_POSTERIOR_LABEL_FREE),
+        "Broken-below and pin settings: DP_ALLOW_SEGMENT_SPLIT = %s, BB_DBH_RULE = %s, PIN_BB_REQUIRE_OTHER_RECORD = %s, PIN_STOP_AT_GAP = %s, PIN_STOP_AT_FAST_LINK = %s, HARD_PINS = %s (field tags from census %s), PROB_EXPORT_RULE = %s, DP_POSTERIOR_LABEL_FREE = %s%s",
+        DP_ALLOW_SEGMENT_SPLIT, BB_DBH_RULE, PIN_BB_REQUIRE_OTHER_RECORD, PIN_STOP_AT_GAP, isTRUE(PIN_STOP_AT_FAST_LINK), isTRUE(HARD_PINS), getOption("dp_global.field_tag_first_census"), PROB_EXPORT_RULE, isTRUE(DP_POSTERIOR_LABEL_FREE),
         if (!is.null(BLIND_MIN_CENSUS)) sprintf(" | BLIND TEST: censuses from %s, pins only from C%s, parameters from C%s", BLIND_MIN_CENSUS, ANCHOR_START_CENSUS,
             if (is.null(BIO_ESTIMATION_START_CENSUS)) ANCHOR_START_CENSUS else BIO_ESTIMATION_START_CENSUS) else ""
     )
@@ -2042,6 +2055,10 @@ run_main_chunked <- function() {
     #         • any orphan NA rows in a group that has a measured anchor
     #       Groups whose measured rows hold several distinct TrueStemIDs are
     #       left alone and counted in the message.
+    #
+    #   3c. UNPIN the records of a StemID before a link of the StemID made
+    #       before the field tags that the measurements contradict
+    #       (PIN_STOP_AT_FAST_LINK).
 
     # 3a. Direct anchor of START-OF-NEW-TRAJECTORY rows ONLY.
     #     Conditions:
@@ -2201,6 +2218,52 @@ run_main_chunked <- function() {
         .n_before - .n_after, .n_conflicts,
         if (.stop_gap) sprintf("; %d row(s) left free across a census without a record of their StemID (PIN_STOP_AT_GAP)", .n_gap_kept) else ""
     ))
+
+    # 3c. PIN_STOP_AT_FAST_LINK: a link of a database StemID made before the
+    #     field tags (consecutive censuses, measured records) is contradicted by
+    #     the measurements when its growth is above the 99.9% quantile of the
+    #     tagged growth of the species (bio_pars max_growth_data_value) and
+    #     another record of the tree in the earlier census fits the later
+    #     record: unpinned, its StemID without a measured record in the later
+    #     census, growth within [max_shrink, the 99% quantile]
+    #     (max_growth_soft_value; an alternative between the two quantiles
+    #     is no clear predecessor, and the engine then often starts a new
+    #     stem in the later census). The records
+    #     of the StemID up to the earlier census lose their pin (before the
+    #     field tags every pin is the row's own StemID: a pin propagated by
+    #     Step 3b or a StemTag the database copied back from a later record),
+    #     so the pin no longer forces the link and the engine places them.
+    #     Growth uses the taper-corrected DBH (cm); a missing date takes the
+    #     mean date of its census.
+    if (isTRUE(PIN_STOP_AT_FAST_LINK)) {
+        .q_hi <- vapply(bio_pars, function(p) as.numeric(p$growth$max_growth_data_value)[1L], numeric(1))
+        .q_99 <- vapply(bio_pars, function(p) as.numeric(p$growth$max_growth_soft_value)[1L], numeric(1))
+        .q_lo <- vapply(bio_pars, function(p) as.numeric(p$shrinkage$max_shrink)[1L], numeric(1))
+        .m <- xraw_multi_stems[, .(Tag, StemID, CensusID, DBH, set = as.character(species), pin = TrueStemID, .t = as.numeric(ExactDate))][!is.na(DBH)]
+        .m[, .t := fifelse(is.na(.t), mean(.t, na.rm = TRUE), .t), by = CensusID]
+        # links the pins force: both records carry the same pin
+        .lk <- .m[CensusID < FIELD_TAG_FIRST_CENSUS & !is.na(pin), .(Tag, StemID, c1 = CensusID, p1 = pin, d1 = DBH, t1 = .t, hi = .q_hi[set], q99 = .q_99[set], lo = .q_lo[set])][
+            .m[!is.na(pin), .(Tag, StemID, c1 = CensusID - 1L, p2 = pin, d2 = DBH, t2 = .t)], on = .(Tag, StemID, c1), nomatch = NULL][p1 == p2]
+        .lk <- .lk[(d2 - d1) / ((t2 - t1) / 365.25) > hi]
+        # other records of the census: unpinned, StemID without a measured record in the next census
+        .ends <- .m[is.na(pin)][!.m[, .(Tag, StemID, CensusID = CensusID - 1L)], on = .(Tag, StemID, CensusID)]
+        .alt <- .ends[, .(Tag, c1 = CensusID, alt_sid = StemID, d0 = DBH, t0 = .t)][.lk, on = .(Tag, c1), nomatch = NULL, allow.cartesian = TRUE][alt_sid != StemID]
+        .alt[, g0 := (d2 - d0) / ((t2 - t0) / 365.25)]
+        .cut <- unique(.alt[g0 >= lo & g0 <= q99, .(Tag, StemID, c1)])
+        .n_fast_links <- nrow(.cut)
+        data.table::fwrite(.alt[g0 >= lo & g0 <= q99][, `:=`(g = (d2 - d1) / ((t2 - t1) / 365.25))], file.path(out_dir, "pin_stop_at_fast_link.csv"))
+        .cut <- .cut[, .(c1 = max(c1)), by = .(Tag, StemID)]
+        .free <- xraw_multi_stems[.cut, on = .(Tag, StemID), nomatch = NULL, which = TRUE]
+        .free <- .free[xraw_multi_stems$CensusID[.free] <= .cut[xraw_multi_stems[.free], on = .(Tag, StemID), c1]]
+        .n_fast_rows <- sum(!is.na(xraw_multi_stems$TrueStemID[.free]))
+        xraw_multi_stems[.free, TrueStemID := NA_integer_]
+        .msg <- sprintf(
+            "Step 3c PIN_STOP_AT_FAST_LINK: %d database StemID link(s) before census %d grow faster than 99.9%% of the tagged links of the species while another record of the tree fits the later record (%d tree(s)); %d record(s) before them unpinned",
+            .n_fast_links, FIELD_TAG_FIRST_CENSUS, uniqueN(.cut$Tag), .n_fast_rows
+        )
+        cat("✓", .msg, "\n"); log_msg(.msg)
+        rm(.q_hi, .q_lo, .m, .lk, .ends, .alt, .cut, .free)
+    }
 
     # Blind test: only the pins from the anchor census on are kept
     if (!is.null(BLIND_MIN_CENSUS)) {
