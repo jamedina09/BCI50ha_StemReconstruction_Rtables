@@ -1845,15 +1845,11 @@ run_main_chunked <- function() {
     #   2a. Identify the boundary: the last census with a non-NA DBH per
     #       (Tag, StemID). Rows strictly after this are the terminal
     #       phase. Stems that never recorded a DBH get NA and are excluded
-    #       from all propagation by the guards in 2b and 2c.
+    #       from the propagation by the guard in 2b. (Measured break /
+    #       resprout rows are anchored by Step 3a: no row after a stem's
+    #       last DBH has a DBH.)
     #
-    #   2b. Anchor measured break / resprout rows of the terminal phase to
-    #       their own StemID. The filter asks for a row after the
-    #       stem's last DBH that itself has a DBH, which no row can be, so this
-    #       step anchors nothing; measured break / resprout rows are anchored
-    #       by Step 3a.
-    #
-    #   2c. BIDIRECTIONAL FILL of the terminal-phase rows that are still NA.
+    #   2b. BIDIRECTIONAL FILL of the terminal-phase rows that are still NA.
     #       Within the terminal phase of a group, LOCF carries an anchor
     #       forward and NOCB carries a later anchor backward (anchors there
     #       come from Step 1: a StemTag row, or a C7+ row that Step 1(b) did not
@@ -1910,7 +1906,7 @@ run_main_chunked <- function() {
 
     # 2a. Last census with a non-NA DBH per (Tag, StemID).
     #     CensusID > .last_dbh_census defines the terminal phase for that stem.
-    #     setorder ensures rows are sorted before the LOCF/NOCB fill in 2c.
+    #     setorder ensures rows are sorted before the LOCF/NOCB fill in 2b.
     # Find where “life ends”
     setorder(xraw_multi_stems, Tag, StemID, CensusID)
     .last_dbh <- xraw_multi_stems[
@@ -1920,43 +1916,7 @@ run_main_chunked <- function() {
     ]
     xraw_multi_stems[.last_dbh, on = .(Tag, StemID), .last_dbh_census := i.last_dbh_census]
 
-    # 2b. Anchor ONLY "start-of-new-trajectory" terminal-event rows to their own
-    #     StemID. Conditions:
-    #       • is.na(TrueStemID)            — not already anchored by Step 1
-    #       • !is.na(.last_dbh_census)     — stem has a DBH history (was ever measured)
-    #       • CensusID > .last_dbh_census  — strictly in the terminal phase
-    #       • !is.na(DBH)                  — row carries a measurement (start of a
-    #                                        new trajectory, e.g. broken-below + DBH)
-    #       • terminal-event marker present:
-    #           – Status == "broken below", OR
-    #           – R-family resprout code in ListOfTSM
-    #
-    #     Rationale (numbers computed in dead_pattern.qmd and
-    #     broken_below_pattern.qmd, data_simulation/sample_data_BCI/general_data/):
-    #       - dead / stem-dead / broken-below + NA DBH are END-OF-TRAJECTORY rows.
-    #         99.8% of dead+NA-DBH rows have a prior record at the same
-    #         (Tag, StemID). Pinning them to StemID here would
-    #         force the engine to treat them as 1-row singletons and sever them
-    #         from the actual prior trajectory, so the engine matches them.
-    #       - broken-below WITH DBH is a START-OF-NEW-TRAJECTORY row (98.8% have no
-    #         prior history at the same StemID) and is the kind of row
-    #         this step is meant to anchor.
-    #     NOTE: `CensusID > .last_dbh_census` and `!is.na(DBH)` cannot both hold
-    #     for a row of the group, so the filter below selects no row. Step 3a
-    #     anchors the measured break / resprout rows.
-    xraw_multi_stems[
-        is.na(TrueStemID) &
-            !is.na(.last_dbh_census) &
-            CensusID > .last_dbh_census &
-            !is.na(DBH) &
-            (
-                (!is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE)) |
-                    (!is.na(Status) & Status == "broken below")
-            ),
-        TrueStemID := StemID
-    ]
-
-    # 2c. Bidirectional fill of remaining post-last-DBH NA gaps within each group.
+    # 2b. Bidirectional fill of remaining post-last-DBH NA gaps within each group.
     #     LOCF: carry a Step-1 anchor forward to later terminal rows.
     #     NOCB: carry a later C7+ anchor backward to earlier terminal rows that had
     #           no explicit terminal status code.
@@ -1968,7 +1928,7 @@ run_main_chunked <- function() {
         by = .(Tag, StemID)
     ]
 
-    # 2d. Remove temporary column.
+    # 2c. Remove temporary column.
     xraw_multi_stems[, .last_dbh_census := NULL]
 
     # -----------------------------------------------------------------------
@@ -2118,7 +2078,7 @@ run_main_chunked <- function() {
 
     # 3b. Propagate within (Tag, StemID) when a group has a unique anchor
     #     that comes from a DBH-bearing row (i.e. a real start-of-trajectory or
-    #     C7+ retag anchor). Steps 2b and 3a create no anchor on a terminal-event
+    #     C7+ retag anchor). Step 3a creates no anchor on a terminal-event
     #     row without a DBH; the guard here also keeps any such anchor (e.g. a
     #     tagged dead row from Step 1) out of the propagation:
     #     end-of-trajectory rows must NEVER be allowed to back-propagate their
