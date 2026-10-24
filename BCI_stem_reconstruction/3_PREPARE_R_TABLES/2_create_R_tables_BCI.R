@@ -12,10 +12,18 @@
 #
 # Outputs:
 #   - BCI_stem_reconstruction/DATA/RTABLES/[site].stem[n].Rdata (and [site].stem[n].csv)
-#   - BCI_stem_reconstruction/DATA/CHECKS/ diagnostic CSV / text files and the log check_[site].txt
-#   (the species table is built from these tables by 3_create_species_table_BCI.R)
+#     (the species table is built from these tables by 3_create_species_table_BCI.R)
+#   - BCI_stem_reconstruction/DATA/CHECKS/, four files:
+#       check_[site].txt                    every check (✓ / ❌) and the summary
+#                                           tables, in run order: read this first
+#       status_patterns_[site].csv          how the raw records become Rstatus:
+#                                           one row per encounter history
+#       field_records_to_review_[site].csv  raw records that need a look (data
+#                                           manager): one row per case, `reason`
+#       reconstruction_to_review_[site].csv stems whose reconstruction needs a
+#                                           look: one row per case, `reason`
 #
-# Packages: data.table, inspectdf, igraph (transition diagram).
+# Packages: data.table, inspectdf.
 #
 # Main pipeline:
 #    1. Setup and load input data                          (Sections 1–2)
@@ -27,9 +35,9 @@
 #    7. Assert no D/G is stranded between two A's            (Section 9)
 #    8. Derive tree-level histories; apply tree-aware D/G    (Section 10)
 #    9. Assess biology across all history versions          (Section 11)
-#   10. Data-quality diagnostics; status × DBH audit         (Sections 12–13)
-#   11. One location per tree; record dates; export per-census R tables
-#       (Section 14)
+#   10. Status patterns and review lists; status × DBH audit (Sections 12–13)
+#   11. One location per tree; record dates; export per-census R tables;
+#       write the review lists (Section 14)
 # The status and DBH rules live in rstatus_functions.R (same folder), which
 # tests/test_Rstatus.R also uses.
 ################################################################################
@@ -47,7 +55,7 @@
 # BIOLOGICAL CONTRACT (checked with bio_check() before export)
 #   Stem identity  : taken from the DP reconstruction (stage 2) and never
 #                    changed here. Suspected identity breaks are only reported
-#                    (CHECKS/dp_identity_break_candidates.csv).
+#                    (CHECKS/reconstruction_to_review_[site].csv).
 #   Evidence of life: a raw "alive" record, or a DBH on a "broken below",
 #                    "missing" or status-less record.
 #   Dead record    : "dead" / "stem dead" (with or without DBH) and "broken
@@ -58,6 +66,10 @@
 #   A (alive)      : from a stem's first record to its last evidence of life.
 #                    Missed censuses and false deaths in between are A:
 #                    alive later => never dead.
+#   Stump          : an A without DBH whose DFstatus is "broken below": the
+#                    stem lives later (e.g. a field-tagged stump measured in a
+#                    later census), so it is alive, with no measurable DBH at
+#                    1.3 m. Stage 4 keeps stump censuses out of the stock.
 #   Dead (G or D)  : after the last evidence of life, from the first census
 #                    without one; a stem never alive is dead from its first
 #                    record.
@@ -69,8 +81,9 @@
 #   D (dead tree)  : dead stem and no stem of the tree is A at j or later.
 #                    D is absorbing: nothing in the tree lives after.
 #   DBH            : exported as recorded on every record, A, G or D (G/D
-#                    cells with a DBH: CHECKS/dbh_on_dead_records.csv); a P
-#                    cell never has one; never imputed.
+#                    cells with a DBH: reason dbh_on_dead_record in
+#                    CHECKS/field_records_to_review_[site].csv); a P cell
+#                    never has one; never imputed.
 #   ExactDate      : the field date exactly as recorded (NA where there is no
 #                    record); never imputed, like dbh and DFstatus.
 #   date           : days since 1960-01-01 (the ForestGEO convention) on every
@@ -157,11 +170,18 @@ print_to_log <- function(message, log_file, new_message = TRUE) {
   cat(message, file = log_file, append = TRUE, sep = "\n")
 }
 
+print_to_log(c(
+  sprintf("check_%s.txt: checks and summaries of 2_create_R_tables_BCI.R, run %s", site, format(Sys.time(), "%Y-%m-%d %H:%M")),
+  "Every check is listed (✓ passed, ❌ failed: the script stopped there). The review lists are",
+  sprintf("field_records_to_review_%s.csv and reconstruction_to_review_%s.csv (counts by reason at the end).", site, site)
+), log_file, new_message = FALSE)
+
 # ── Hard check that stays visible in interactive (line-by-line) runs ────────
 # When this script is run line by line in the R console, a bare stop() is
 # easy to miss. On failure bio_check() prints a ❌ line (count + examples),
 # raises an immediate warning, writes the same text to the log file, and only
-# then stops. On success it prints a ✓ line.
+# then stops. On success it prints a ✓ line and writes it to the log, so the
+# log lists every check.
 #   ok       : TRUE when the check passes (NA counts as failure)
 #   msg      : the requirement being checked, phrased as the expected state
 #   examples : optional IDs of offending stems/trees (first 10 are shown)
@@ -169,6 +189,7 @@ print_to_log <- function(message, log_file, new_message = TRUE) {
 bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
   if (isTRUE(all(ok))) {
     cat("✓", msg, "\n")
+    print_to_log(paste("✓", msg), log_file, new_message = FALSE)
     return(invisible(TRUE))
   }
   n_txt <- if (!is.null(n_bad)) sprintf(" [%d case(s)]", n_bad) else ""
@@ -278,75 +299,7 @@ bio_check(
 # ========================================================================
 # SECTION 2: LOAD INPUT DATA
 # ========================================================================
-# Load the reconstructed census table, coerce key types, and write
-# diagnostic reports for raw value distributions.
-
-################################################################################
-# HELPER FUNCTION: show_levels
-################################################################################
-# PURPOSE:
-#   Display unique values in categorical columns for data validation
-#
-# PARAMETERS:
-#   df         - Data frame or data.table to examine
-#   n_to_print - Maximum unique values to display (default: 10; Inf = all)
-#   output     - Output format: "print" (console) or "df" (data frame)
-#
-# RETURNS:
-#   - If output="print": Prints formatted text showing unique values
-#   - If output="df": Returns data frame with levels as rows
-#
-# EXAMPLE:
-#   show_levels(ViewFullTable, n_to_print = Inf, output = "print")
-################################################################################
-show_levels <- function(df, n_to_print = 10, output = "print") {
-  cat_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
-  if (length(cat_cols) == 0) {
-    if (output == "print") {
-      cat("No character or factor columns found.\n")
-      return(invisible(NULL))
-    } else {
-      return(data.frame())
-    }
-  }
-  uniques_list <- lapply(cat_cols, function(col) {
-    vals <- if (is.factor(df[[col]])) {
-      levels(df[[col]])
-    } else {
-      unique(df[[col]])
-    }
-    vals <- vals[!is.na(vals)]
-    if (!is.infinite(n_to_print)) {
-      vals <- head(vals, n_to_print)
-    }
-    vals
-  })
-  names(uniques_list) <- cat_cols
-  if (output == "print") {
-    for (col in cat_cols) {
-      vals <- uniques_list[[col]]
-      total_vals <- length(if (is.factor(df[[col]])) levels(df[[col]]) else unique(na.omit(df[[col]])))
-      cat(paste0(
-        "Levels of ", col,
-        " (showing ",
-        ifelse(is.infinite(n_to_print), "all", paste0(length(vals), " of ", total_vals)),
-        "): ",
-        paste(vals, collapse = ", "),
-        if (!is.infinite(n_to_print) && total_vals > n_to_print) " ..." else "",
-        "\n\n\n"
-      ))
-    }
-    return(invisible(NULL))
-  } else if (output == "df") {
-    max_len <- max(sapply(uniques_list, length))
-    padded_list <- lapply(uniques_list, function(vals) {
-      c(vals, rep(NA, max_len - length(vals)))
-    })
-    return(as.data.frame(padded_list, stringsAsFactors = FALSE))
-  } else {
-    stop("Invalid output option. Use 'print' or 'df'.")
-  }
-}
+# Load the reconstructed census table and coerce key types.
 
 # ========================================================================
 # LOAD RECONSTRUCTED CENSUS DATA (RDS FROM STAGE 2)
@@ -445,7 +398,6 @@ ViewFullTable[, Raw_StemID := StemID] # preserve original DB StemID
 # unique(ViewFullTable$Raw_StemID)
 # unique(ViewFullTable$ReconstructedStemID)
 
-setkey(ViewFullTable, TreeID)
 setkey(ViewFullTable, Tag)
 
 ## DIAGNOSTIC: Verify Tag <-> TreeID 1:1 mapping
@@ -543,15 +495,6 @@ if (nrow(missing_StemIDs) > 0) {
 cat("Checking Status vs ListOfTSM combinations:\n")
 table(ViewFullTable[, c("ListOfTSM", "Status")], useNA = "ifany")
 
-# Export unique values for QA/QC
-# show_levels(ViewFullTable, n_to_print = Inf, output = "print")
-fwrite(show_levels(ViewFullTable, n_to_print = Inf, output = "df"),
-  file = file.path(CHECK_folder, paste0("ViewFullTable_levels_", site, ".csv")),
-  sep = ",",
-  na = "",
-  row.names = FALSE
-)
-
 # ========================================================================
 # SECTION 3: STANDARDIZE DATA FORMAT ACROSS CENSUSES
 # ========================================================================
@@ -593,8 +536,7 @@ fixed_columns <- c(
   "QuadratName", "QuadratID", # "PX", "PY", # "QX", "QY",
   "TreeID",
   "Tag",
-  "StemID" # ,
-  # "StemTag" # why exclusing stemtag? stemtag was NA in earlier censuses, so those will be marked as duplicated
+  "StemID" # StemTag is not fixed: before 2010 the database has no stem tags
 )
 
 # Convert to data.table if not already (defensive coding)
@@ -614,15 +556,6 @@ bio_check(
   "Master stem list has one row per StemID (fixed attributes constant across censuses)",
   examples = duplicated_stems$StemID,
   n_bad = uniqueN(duplicated_stems$StemID)
-)
-
-# Show all unique values
-# show_levels(unique_StemID, n_to_print = Inf, output = "print")
-fwrite(show_levels(unique_StemID, n_to_print = Inf, output = "df"),
-  file = file.path(CHECK_folder, paste0("unique_StemID_levels_", site, ".csv")),
-  sep = ",",
-  na = "",
-  row.names = FALSE
 )
 
 ## Check date information per census ####
@@ -656,15 +589,7 @@ cat("Reordered by CensusID (after decimal).\n")
 # Show current dimensions - should be DIFFERENT across censuses
 cat("\n📊 Current census dimensions (BEFORE standardization):\n")
 lapply(ViewFullTable_split_unbalanced, dim)
-
-print_to_log("Current census dimensions (nrows + columns) BEFORE standardization:", log_file, new_message = TRUE)
-print_to_log(
-  capture.output(
-    lapply(ViewFullTable_split_unbalanced, dim)
-  ),
-  log_file,
-  new_message = FALSE
-)
+rows_recorded <- vapply(ViewFullTable_split_unbalanced, nrow, integer(1))
 
 ## Standardize each census to have ALL stems in the SAME order ####
 # This is the CORE operation of Section 3
@@ -688,16 +613,6 @@ ViewFullTable_split <- lapply(ViewFullTable_split_unbalanced, function(X) {
     ),
     examples = dup_ids,
     n_bad = length(dup_ids)
-  )
-  print_to_log(
-    sprintf(
-      "Census %s: %d StemID(s) appear more than once — match() will silently keep only the first row. Duplicates: %s",
-      paste(unique(na.omit(X$CensusID)), collapse = "/"),
-      length(dup_ids),
-      paste(head(dup_ids, 10), collapse = ", ")
-    ),
-    log_file,
-    new_message = TRUE
   )
   # REORDER + FILL MISSING: match() returns indices or NA for missing stems
   # This aligns X's stems to match unique_StemID's order
@@ -730,14 +645,14 @@ ViewFullTable_split <- lapply(ViewFullTable_split_unbalanced, function(X) {
 cat("\n📊 Census dimensions (AFTER standardization):\n")
 lapply(ViewFullTable_split, dim)
 
-print_to_log("Census dimensions (nrows + columns) AFTER standardization:", log_file, new_message = TRUE)
-print_to_log(
-  capture.output(
-    lapply(ViewFullTable_split, dim)
-  ),
-  log_file,
-  new_message = FALSE
-)
+print_to_log(c(
+  "Rows per census: recorded, and after standardization (every stem in every census):",
+  capture.output(print(data.table(
+    census = seq_along(ViewFullTable_split), rows_recorded = rows_recorded,
+    rows_standardized = vapply(ViewFullTable_split, nrow, integer(1))
+  )))
+), log_file, new_message = TRUE)
+rm(rows_recorded)
 
 # Show first few rows of each census for visual inspection
 cat("\n📋 First few rows of each census:\n")
@@ -759,52 +674,8 @@ lapply(ViewFullTable_split, head, 4)
 
 # Explore NAs
 lapply(ViewFullTable_split, inspectdf::inspect_na)
-
-## VERIFY: check fixed columns are IDENTICAL across all censuses ####
-# The fixed attributes should be the same for each stem in every census
-# If not, there's a data quality issue
-# Compare all pairs of censuses: Are fixed columns identical?
-# combn() generates all pairs, then checks if fixed columns match
-all_equal <- all(
-  combn(seq_along(ViewFullTable_split), 2, simplify = TRUE, FUN = function(i) {
-    identical(
-      ViewFullTable_split[[i[1]]][, ..fixed_columns],
-      ViewFullTable_split[[i[2]]][, ..fixed_columns]
-    )
-  })
-)
-
-# Report results
-if (all_equal) {
-  cat("✓ All fixed columns are IDENTICAL across censuses (standardization successful!)\n\n")
-} else {
-  cat("⚠ WARNING: Fixed columns differ between censuses. Investigating...\n\n")
-}
-
-# If differences found, show details
-diffs <- combn(ViewFullTable_split, 2, simplify = FALSE, FUN = function(pair) {
-  a <- pair[[1]][, ..fixed_columns]
-  b <- pair[[2]][, ..fixed_columns]
-  if (!identical(a, b)) {
-    list(
-      census1 = names(pair[1]),
-      census2 = names(pair[2]),
-      diff = a[apply(a != b, 1, any), , drop = FALSE] # Rows that differ
-    )
-  } else {
-    NULL
-  }
-})
-
-# Remove NULL entries (pairs with no differences)
-diffs <- Filter(Negate(is.null), diffs)
-
-if (length(diffs) > 0) {
-  cat("Differences between censuses:\n")
-  print(diffs)
-} else {
-  cat("No differences found in fixed columns\n")
-}
+# (The fixed columns are copied from the master stem list into every census
+# above, so they are the same in every census.)
 
 # ========================================================================
 # SECTION 4: STATUS CODE TRANSFORMATION
@@ -834,10 +705,10 @@ bio_check(
 #   A  "alive" (with or without DBH), and "broken below" / "missing" / no
 #      status WITH a DBH (measured, so alive).
 #   D  "dead" and "stem dead" (with or without DBH), and "broken below"
-#      without DBH. In the exported BCI tables, 35 of 119,729 broken-below
-#      records without DBH belong to a stem that is alive later. A D followed
-#      later by an A is a false death: the lifespan rule (Section 8) turns it
-#      into A; when the tree lives on through other stems, Section 10 turns a
+#      without DBH. A D followed later by an A is a false death: the
+#      lifespan rule (Section 8) turns it into A (a broken-below record then
+#      becomes a stump: alive, no measurable DBH; counted in the log, Section
+#      13); when the tree lives on through other stems, Section 10 turns a
 #      real death into G.
 #   N  "missing" or no status without DBH, and no row (no record).
 # A DBH on a "dead" / "stem dead" record stays on a D here. If the stem is
@@ -997,14 +868,6 @@ tbl_sorted_before_propagation[, `:=`(
   rowid = .I
 )]
 
-## Export final encounter history patterns before propagation ####
-fwrite(tbl_sorted_before_propagation,
-  file = file.path(CHECK_folder, paste0("encounter_history_patterns_before_propagation_", site, ".csv")),
-  sep = ",",
-  na = "",
-  row.names = FALSE
-)
-
 # ========================================================================
 # SECTION 5: VALIDATE ENCOUNTER HISTORIES
 # ========================================================================
@@ -1071,7 +934,7 @@ check_histories <- function(histories, allowed_codes, invalid_transitions, nchar
     }
     # ---- Rule 3: First census logic ----
     if (length(chars) >= 1 && chars[1] %in% c("D", "G")) {
-      history_issues <- c(history_issues, "Starts with D or G (cannot start dead or gone)")
+      history_issues <- c(history_issues, "Starts with D or G (dead in the first census)")
     }
     # ---- Rule 4: Invalid direct transitions ----
     if (length(chars) >= 2) {
@@ -1133,20 +996,8 @@ if (nrow(issues) == 0) {
   data.frame(sort(unique(issues$Issue)))
 }
 
-print_to_log("Detected issues in encounter histories:", log_file, new_message = TRUE)
-print_to_log(
-  capture.output(
-    if (nrow(issues) == 0) {
-      cat("No issues detected in any histories.\n")
-    } else {
-      cat("Detected issues:\n")
-      issues <- unique(issues)
-      data.frame(sort(unique(issues$Issue)))
-    }
-  ),
-  log_file,
-  new_message = FALSE
-)
+# (The counts of these raw transitions are in the biology assessment of the
+# log, Section 11.)
 
 # ========================================================================
 # SECTION 6: STATUS PROPAGATION RULES
@@ -1192,14 +1043,6 @@ tbl_sorted_after_propagation[, `:=`(
   Freq = NULL,
   rowid = .I
 )]
-
-## Export final encounter history patterns after propagation ####
-fwrite(tbl_sorted_after_propagation,
-  file = file.path(CHECK_folder, paste0("encounter_history_patterns_after_propagation_", site, ".csv")),
-  sep = ",",
-  na = "",
-  row.names = FALSE
-)
 
 ## COMPARE BEFORE AND AFTER PROPAGATION
 # Per stem: which raw history became which propagated history.
@@ -1296,7 +1139,8 @@ rm(first_rec_dead, has_A, p_after_record)
 # fix_resurrections() is therefore called with dbh_aware = FALSE (backfill
 # all). Its DBH-aware mode, which turns an A without DBH that follows a D/G
 # into D/G, is not used: it would contradict the contract.
-# Every case is audited in log_resurrections.txt.
+# The dead records of stems alive later are listed in
+# field_records_to_review_[site].csv (Section 12).
 
 # ------------------------------------------------------------------------
 # Apply the correction
@@ -1312,7 +1156,7 @@ RES_fix <- fix_resurrections(
   dbh_matrix = DBHs,
   stem_ids   = unique_StemID$StemID,
   dbh_aware  = FALSE, # lifespan rule: backfill every D/G followed by an A
-  log_file   = file.path(CHECK_folder, "log_resurrections.txt"),
+  log_file   = NULL, # the cases go to the review list (Section 12)
   verbose    = TRUE
 )
 new_status <- RES_fix$status_vec
@@ -1349,14 +1193,6 @@ tbl_sorted_correction_after_propagation[, `:=`(
   rowid = .I
 )]
 
-## Export encounter history patterns after the lifespan rule ####
-fwrite(tbl_sorted_correction_after_propagation,
-  file = file.path(CHECK_folder, paste0("encounter_history_patterns_correction_after_propagation_", site, ".csv")),
-  sep = ",",
-  na = "",
-  row.names = FALSE
-)
-
 ###############################################################
 # VALIDATION: stem histories after Sections 7-9
 # -------------------------------------------------------------
@@ -1378,48 +1214,6 @@ bio_check(
   examples = unique(issues$History),
   n_bad = length(unique(issues$History))
 )
-
-# -----------------------------
-# Diagram of allowed stem transitions
-# -----------------------------
-
-library(igraph)
-
-# Edges from the legal / illegal stem transitions of the biological contract
-valid_edges <- unlist(strsplit(valid_stem_trans, ""))
-invalid_edges <- unlist(make_invalid_transitions(valid_stem_trans))
-
-# Create graph
-g_valid <- make_graph(edges = valid_edges, directed = TRUE)
-g_invalid <- make_graph(edges = invalid_edges, directed = TRUE)
-
-# Plot settings
-png(
-  filename = file.path(CHECK_folder, paste0("stem_transition_diagrams_", site, ".png")),
-  width = 12,
-  height = 6,
-  units = "in",
-  res = 100
-)
-par(mfrow = c(1, 2)) # side-by-side plots
-plot(
-  g_valid,
-  vertex.size = 40,
-  vertex.label.cex = 1.5,
-  vertex.color = "green",
-  edge.arrow.size = 0.8,
-  main = "Allowed Stem Transitions (A, D, G, P)"
-)
-
-plot(
-  g_invalid,
-  vertex.size = 40,
-  vertex.label.cex = 1.5,
-  vertex.color = "red",
-  edge.arrow.size = 0.8,
-  main = "Not-allowed Stem Transitions (A, D, G, P)"
-)
-dev.off()
 
 # ========================================================================
 # SECTION 10: TREE-LEVEL STATUS CALCULATION AND D/G CORRECTION
@@ -1851,61 +1645,6 @@ bio_check(
   n_bad = length(i5_bad)
 )
 
-# ========================================================================
-# 10.6  CHECK STEMS WITH SAME TERMINAL CODE AT FIRST AND LAST CENSUS
-# ========================================================================
-# Identify stems whose corrected history begins and ends with the same
-# terminal code (G or D). These stems are terminal throughout the full
-# observation window; their first-census raw metadata is exported for review.
-first_code <- corrected_new_status_matrix[, 1]
-last_code <- corrected_new_status_matrix[, n_cens]
-same_first_last_G <- first_code == "G" & last_code == "G"
-same_first_last_D <- first_code == "D" & last_code == "D"
-same_first_last <- same_first_last_G | same_first_last_D
-
-cat(sprintf(
-  "✓ Section 10.6 check: %d stems start and end with the same terminal code.\n",
-  sum(same_first_last)
-))
-cat(sprintf(
-  "   all-G first/last: %d, all-D first/last: %d\n",
-  sum(same_first_last_G), sum(same_first_last_D)
-))
-
-if (sum(same_first_last) > 0L) {
-  first_census_dt <- ViewFullTable_split[[1]][
-    , .(StemID, TreeID,
-      raw_first_status = Status, raw_first_dbh = DBH,
-      raw_first_ListOfTSM = ListOfTSM, raw_first_HOM = HOM
-    )
-  ]
-  idx_first <- match(unique_StemID$StemID, first_census_dt$StemID)
-
-  same_first_last_dt <- data.table(
-    TreeID = unique_StemID$TreeID,
-    StemID = unique_StemID$StemID,
-    first_code = first_code,
-    last_code = last_code,
-    raw_first_status = first_census_dt$raw_first_status[idx_first],
-    raw_first_dbh = first_census_dt$raw_first_dbh[idx_first],
-    raw_first_ListOfTSM = first_census_dt$raw_first_ListOfTSM[idx_first],
-    raw_first_HOM = first_census_dt$raw_first_HOM[idx_first],
-    original_status = original_status,
-    corrected_history = corrected_new_status
-  )[same_first_last]
-
-  fwrite(same_first_last_dt,
-    file.path(CHECK_folder, "section11_7_first_last_terminal_status.csv"),
-    sep = ",",
-    na = "",
-    row.names = FALSE
-  )
-  cat(sprintf(
-    "   details written to: %s\n",
-    file.path(CHECK_folder, "section11_7_first_last_terminal_status.csv")
-  ))
-}
-
 rm(
   stem_info_dt, AP_in, AP_out, single_stem_row, TreeID_vec,
   is_A_num, has_A, is_D_num, has_D, col_idx, tree_first_rec_mat, is_rec_num,
@@ -1973,7 +1712,7 @@ versions <- list(
   list(label = "1. original_status      (raw, pre-propagation)", vec = original_status, trans = valid_stem_trans, enforce = FALSE),
   list(label = "2. new_status           (after Sections 7-9)", vec = new_status, trans = valid_stem_trans, enforce = TRUE),
   list(label = "3. corrected_new_status (after Section 10.5 tree-aware D/G)", vec = corrected_new_status, trans = valid_stem_trans, enforce = TRUE),
-  list(label = "4. tree_histories       (tree-level)", vec = as.vector(tree_histories), trans = valid_tree_trans, enforce = TRUE)
+  list(label = "4. tree_histories       (tree-level, one per stem)", vec = as.vector(tree_histories), trans = valid_tree_trans, enforce = TRUE)
 )
 
 # Tree × census composition of the exported stem codes (reused in Section 12).
@@ -1985,71 +1724,35 @@ tree_cens <- data.table(
 n_unregistered <- tree_cens[nG > 0L & nA == 0L, .N]
 n_tree_zombie_cells <- tree_cens[nD > 0L & (nA > 0L | nG > 0L), .N]
 
-biology_log <- file.path(CHECK_folder, "biology_assessment.txt")
-con <- file(biology_log, open = "w")
-writeLines(c(
-  paste0("# biology_assessment.txt  - generated ", format(Sys.time())),
-  paste0("# legal stem transitions: ", paste(valid_stem_trans, collapse = " ")),
-  paste0("# legal tree transitions: ", paste(valid_tree_trans, collapse = " ")),
-  "# illegal: every other 2-letter substring (e.g. DG, DA, GA, AP)",
-  "# G = stem dead, tree alive now or later; D = tree dead (absorbing)",
-  ""
-), con)
-
+# The assessment goes to the log (check_[site].txt).
+fmt_counts <- function(tab) {
+  if (length(tab) == 0L) "none" else paste(sprintf("%s %d", names(tab), as.integer(tab)), collapse = ", ")
+}
+bio_lines <- c(
+  "Biology assessment (transitions between consecutive censuses in each version of the histories):",
+  paste0("  legal stem transitions: ", paste(valid_stem_trans, collapse = " "), " | legal tree transitions: ", paste(valid_tree_trans, collapse = " ")),
+  "  G = stem dead, tree alive then or later; D = tree dead (absorbing)"
+)
 for (v in versions) {
   rep_v <- assess_biology(v$vec, v$label, v$trans)
-  writeLines(c(
-    strrep("-", 72),
-    rep_v$label,
-    sprintf("  n_stems              : %d", rep_v$n_stems),
-    sprintf("  n_rows_with_illegal  : %d", rep_v$n_bad_rows),
+  bio_lines <- c(
+    bio_lines,
     sprintf(
-      "  n_rows_with_A[DG]+A  : %d  (D/G stranded between two A)",
-      rep_v$n_stranded
+      "  %s: %d histories | with an illegal transition: %d | with D/G between two A: %d",
+      trimws(rep_v$label), rep_v$n_stems, rep_v$n_bad_rows, rep_v$n_stranded
     ),
-    "  illegal transition counts:"
-  ), con)
-  if (length(rep_v$illegal_tab) > 0L) {
-    for (k in seq_along(rep_v$illegal_tab)) {
-      writeLines(sprintf(
-        "      %s : %d",
-        names(rep_v$illegal_tab)[k],
-        rep_v$illegal_tab[k]
-      ), con)
-    }
-  } else {
-    writeLines("      (none)", con)
-  }
-  writeLines("  legal transition counts:", con)
-  for (k in seq_along(rep_v$legal_tab)) {
-    writeLines(sprintf(
-      "      %s : %d",
-      names(rep_v$legal_tab)[k],
-      rep_v$legal_tab[k]
-    ), con)
-  }
-  writeLines("", con)
+    sprintf("      illegal: %s", fmt_counts(rep_v$illegal_tab)),
+    sprintf("      legal  : %s", fmt_counts(rep_v$legal_tab))
+  )
 }
-
-writeLines(c(
-  strrep("-", 72),
-  "TREE-LEVEL (exported stem codes, tree x census cells)",
-  sprintf("  tree-census cells with D next to an A or G stem (zombie, must be 0): %d", n_tree_zombie_cells),
-  sprintf("  tree-census cells with G stems but no A stem (unregistered survival;"),
-  sprintf("    a stem of the tree is alive in a later census)                   : %d", n_unregistered),
-  "",
-  strrep("=", 72),
-  "EXPECTED RESULTS",
-  "  1. original_status   : MAY contain any illegal transitions (raw).",
-  "  2. new_status        : 0 illegal rows (no DA/GA, no P after a record, no A[DG]+A).",
-  "  3. corrected_new_st. : 0 illegal rows; GD valid, DG illegal (tree-aware D/G, Section 10.5).",
-  "  4. tree_histories    : 0 illegal rows under the tree transitions (no tree D->A).",
-  "  Tree-level zombie cells: 0.",
-  ""
-), con)
-close(con)
-
-cat(sprintf("\n📄 Biology assessment written to: %s\n", biology_log))
+bio_lines <- c(
+  bio_lines,
+  sprintf("  tree-census cells with a D stem next to an A or G stem (must be 0): %d", n_tree_zombie_cells),
+  sprintf("  tree-census cells with G stems and no A stem (tree alive but unregistered: a stem lives later): %d", n_unregistered),
+  "  Expected: version 1 (raw) may hold illegal transitions; versions 2-4 hold none."
+)
+print_to_log(bio_lines, log_file, new_message = TRUE)
+rm(bio_lines, fmt_counts)
 
 # Print the most important lines to stdout so the user sees pass/fail
 # without opening the file, then enforce the contract.
@@ -2075,171 +1778,129 @@ cat(sprintf("   tree-census cells with unregistered survival (accepted): %d\n", 
 rm(versions)
 
 # ========================================================================
-# SECTION 12: DATA QUALITY REPORTS AND DIAGNOSTICS
+# SECTION 12: STATUS PATTERNS AND REVIEW LISTS
 # ========================================================================
-# Export CSV diagnostics that document key edge cases and status changes.
-# Covers resurrection patterns, never-alive stems, gone-then-alive stems,
-# and a summary of how raw statuses were transformed through the pipeline.
+# status_patterns_[site].csv: one row per encounter history (raw codes, DBH
+# recorded or not, exported Rstatus, tree status) with its number of stems
+# and one example stem.
+# Two review lists, one row per case, written at the end of Section 14:
+#   field_records_to_review_[site].csv   raw records that need a look (for the
+#                                        data manager)
+#   reconstruction_to_review_[site].csv  stems whose reconstruction needs a
+#                                        look (stem identity, stage 2)
+# Columns: reason, treeID, tag, stemID (the exported stem number; NA for a
+# tree-level case), census, dbh, DFstatus and Rstatus (of that stem in that
+# census) and details. Nothing is changed here; the counts per reason are at
+# the end of the log.
 
-cat("\n📋 Creating diagnostic reports...\n")
+cat("\n📋 Status patterns and review lists...\n")
 
-## DIAGNOSTIC 1: Export resurrected stems ####
-# Stems whose RAW history has a dead record followed by an alive record
-# (D→A). The lifespan rule (Section 8) backfilled them to A; the raw DBH,
-# Status and ListOfTSM per census are exported for QA/QC of the field data.
-
-# Build wide DBH/Status/ListOfTSM via rbindlist + dcast:
-DT_long <- rbindlist(
-  lapply(seq_along(ViewFullTable_split), function(i) {
-    ViewFullTable_split[[i]][, .(TreeID, StemID, DBH, Status, ListOfTSM, census = i)]
-  }),
-  use.names = TRUE, fill = TRUE
-)
-
-DBH_wide <- dcast(DT_long,
-  formula = TreeID + StemID ~ census,
-  value.var = "DBH"
-)
-
-Status_wide <- dcast(DT_long,
-  formula = TreeID + StemID ~ census,
-  value.var = "Status"
-)
-
-TSM_wide <- dcast(DT_long,
-  formula = TreeID + StemID ~ census,
-  value.var = "ListOfTSM"
-)
-
-problem_dt <- DBH_wide[Status_wide, on = .(TreeID, StemID)][TSM_wide, on = .(TreeID, StemID)]
-
-# Find reordering indices: match master stem order (unique_StemID) to current rows
-idx <- match(
-  unique_StemID$StemID, # desired order (from master list)
-  problem_dt$StemID
-) # current StemID order in wide table
-
-# Reorder rows to align with unique_StemID
-problem_dt <- problem_dt[idx] # subset/reorder using idx
-problem_dt[, `:=`(
-  original_status = original_status,
-  new_status = new_status,
-  corrected_new_status = corrected_new_status,
-  tree_histories = tree_histories
-)]
-
-problem_df <- problem_dt
-
-# Filter to only resurrected stems
-problem.ID <- unique_StemID$StemID[grepl("DA", original_status)]
-problem_df <- problem_df[StemID %in% problem.ID, ]
-
-# Create descriptive column names (DBH_1, DBH_2, Status_1, Status_2, etc.)
-names(problem_df)[-c(1, 2, ncol(problem_df) - 3, ncol(problem_df) - 2, ncol(problem_df) - 1, ncol(problem_df))] <-
-  paste(rep(c("DBH", "Status", "ListOfTSM"), each = length(ViewFullTable_split)), seq_along(ViewFullTable_split), sep = "_")
-
-# Export to CSV for review
-fwrite(problem_df, file = file.path(CHECK_folder, "stem_status_resurected.csv"))
-cat("  ✓ Saved: stem_status_resurected.csv\n")
-
-## DIAGNOSTIC 2: Export status transformation summary ####
-# Create a summary table showing all unique status transformation patterns
-# Useful for QA/QC and understanding what the script changed
-
-# Combine all status versions into unique rows
-X_dt <- data.table(original_status, new_status, corrected_new_status, tree_histories)
-# tree_histories (a one-column matrix) arrives as column V1: name it
-setnames(X_dt, c("original_status", "new_status", "corrected_new_status", "V1"), c("original_status", "new_status", "corrected_new_status", "tree_histories"))
-
-# check <- X_dt[, count := .N, by = .(tree_histories)]
-# setorder(check, tree_histories)
-# head(check, 100)
-
-X <- unique(X_dt)
-setorder(X, original_status)
-fwrite(X, file = file.path(CHECK_folder, "status_changed.csv"))
-cat("  ✓ Saved: status_changed.csv\n")
-
-## DIAGNOSTIC 3: Stems never alive and stems never recorded ####
-# (a) Never alive: recorded only as dead (e.g. a broken-below record without
-#     DBH, then dead). P until their first record, then G or D; they never
-#     keep a tree alive. Could indicate stems that died before being
-#     measured, or data quality issues.
-# (b) Never recorded: P in every census. Their only rows are "missing"
-#     records without DBH. Kept in the R tables as all-P stems and listed
-#     here. (Empty placeholder rows without a stem identity were dropped in
-#     Section 3, so they no longer appear here as "TreeID_NA" stems.)
-problem.ID <- unique_StemID$StemID[
-  !grepl("A", corrected_new_status, fixed = TRUE) & grepl("[GD]", corrected_new_status)
+# ---- Status patterns ---------------------------------------------------------
+# raw_history: A evidence of life, D dead record, N no record (Section 4);
+# dbh_recorded: 1 where a DBH was recorded in that census.
+dbh_recorded <- do.call(paste0, lapply(seq_len(ncol(DBHs)), function(j) as.integer(!is.na(DBHs[, j]))))
+status_patterns <- data.table(
+  raw_history = original_status,
+  dbh_recorded = dbh_recorded,
+  Rstatus_history = corrected_new_status,
+  tree_history = as.vector(tree_histories),
+  treeID = unique_StemID$TreeID,
+  stemID = as.integer(sub(".*_", "", unique_StemID$StemID))
+)[, .(n_stems = .N, example_treeID = treeID[1L], example_stemID = stemID[1L]),
+  by = .(raw_history, dbh_recorded, Rstatus_history, tree_history)
 ]
-cat(sprintf("  Stems never alive (recorded only as dead; G/D from the first record): %d\n", length(problem.ID)))
-fwrite(as.data.table(ViewFullTable)[StemID %in% problem.ID],
-  file = file.path(CHECK_folder, "subset_stems_never_alive.csv")
+setorder(status_patterns, -n_stems, raw_history)
+fwrite(status_patterns, file.path(CHECK_folder, paste0("status_patterns_", site, ".csv")))
+cat(sprintf("  ✓ Saved: status_patterns_%s.csv (%d patterns)\n", site, nrow(status_patterns)))
+rm(dbh_recorded, status_patterns)
+
+# ---- Helpers for the review lists ---------------------------------------------
+# Raw Status per stem x census, rows in master stem order (as DBHs).
+Status_mat <- do.call(cbind, lapply(ViewFullTable_split, function(x) as.character(x$Status)))
+bio_check(
+  identical(dim(Status_mat), dim(corrected_new_status_matrix)),
+  "Raw Status matrix has one row per master stem and one column per census"
 )
-cat("  ✓ Saved: subset_stems_never_alive.csv\n")
+is_status <- function(x) !is.na(Status_mat) & Status_mat == x
+# Column of a CensusID in the census tables
+census_index <- function(census_id) {
+  match(as.numeric(census_id), vapply(ViewFullTable_split, function(x) as.numeric(x$CensusID[1L]), numeric(1)))
+}
+stem_number <- function(stem_key) sub(".*_", "", stem_key)
+# Rows of a review list: stems (keys "TreeID_<stem number>", with the census
+# of each case) or, with `tree`, whole trees. NULL when there is no case.
+review_rows <- function(reason, stem_key = NULL, census = NA_integer_, details = "", tree = NULL) {
+  n <- if (is.null(tree)) length(stem_key) else length(tree)
+  if (n == 0L) {
+    return(NULL)
+  }
+  census <- rep_len(as.integer(census), n)
+  if (is.null(tree)) {
+    i <- match(stem_key, unique_StemID$StemID)
+    ij <- cbind(i, fcoalesce(census, 1L))
+    has_c <- !is.na(census)
+    data.table(
+      reason = reason, treeID = unique_StemID$TreeID[i], tag = unique_StemID$Tag[i],
+      stemID = as.integer(stem_number(stem_key)), census = census,
+      dbh = fifelse(has_c, as.numeric(DBHs[ij]), NA_real_),
+      DFstatus = fifelse(has_c, Status_mat[ij], NA_character_),
+      Rstatus = fifelse(has_c, corrected_new_status_matrix[ij], NA_character_),
+      details = rep_len(details, n)
+    )
+  } else {
+    data.table(
+      reason = reason, treeID = tree, tag = unique_StemID$Tag[match(tree, unique_StemID$TreeID)],
+      stemID = NA_integer_, census = census,
+      dbh = NA_real_, DFstatus = NA_character_, Rstatus = NA_character_,
+      details = rep_len(details, n)
+    )
+  }
+}
+field_review <- list() # raw records (data manager)
+recon_review <- list() # stem reconstruction
 
-problem.ID <- unique_StemID$StemID[grepl("^P+$", corrected_new_status)]
-cat(sprintf("  Stems never recorded (P in every census): %d\n", length(problem.ID)))
-fwrite(as.data.table(ViewFullTable)[StemID %in% problem.ID],
-  file = file.path(CHECK_folder, "subset_stems_never_recorded.csv")
+# ---- Dead records and stumps of stems alive later ------------------------------
+# A "dead" / "stem dead" record of a stem recorded alive later is a false
+# death: the lifespan rule (Section 8) exports it as A. A "broken below"
+# record without DBH of a stem alive later is a stump: A, with no measurable
+# DBH at 1.3 m (stage 4 keeps it out of the stock); it is A because stage 2
+# put it on a stem that lives later (e.g. a field-tagged stump).
+false_dead <- which((is_status("dead") | is_status("stem dead")) & corrected_new_status_matrix == "A", arr.ind = TRUE)
+field_review[["dead_record_of_stem_alive_later"]] <- review_rows(
+  "dead_record_of_stem_alive_later", unique_StemID$StemID[false_dead[, 1]], false_dead[, 2],
+  paste("raw codes", original_status[false_dead[, 1]])
 )
-cat("  ✓ Saved: subset_stems_never_recorded.csv\n")
-
-## DIAGNOSTIC 4: Export unique status transformation examples ####
-# Create a reference file showing ONE EXAMPLE of each unique status transformation pattern
-# Includes count of how many stems followed each pattern
-# Very useful for understanding and documenting the status cleaning logic
-
-cat("\n📊 Creating status transformation reference file...\n")
-
-# Keep only one row per unique combination of status transformations
-# This creates a reference showing each possible transformation pattern
-problem_df <- problem_dt[!duplicated(problem_dt[, c("original_status", "new_status", "corrected_new_status")]), ]
-
-# Create descriptive column names
-names(problem_df)[-c(1, 2, ncol(problem_df) - 3, ncol(problem_df) - 2, ncol(problem_df) - 1, ncol(problem_df))] <-
-  paste(rep(c("DBH", "Status", "ListOfTSM"), each = length(ViewFullTable_split)), seq_along(ViewFullTable_split), sep = "_")
-
-# Add column showing how many stems have each status pattern
-# This gives context about which patterns are common vs rare
-
-DT_counts <- data.table(original_status, new_status)[
-  , .N,
-  by = .(original_status, new_status, corrected_new_status)
-]
-
-problem_df <- merge(problem_df[, tree_histories := NULL], DT_counts,
-  by = c("original_status", "new_status", "corrected_new_status"),
-  all.x = TRUE
+stumps <- which(is_status("broken below") & is.na(DBHs) & corrected_new_status_matrix == "A", arr.ind = TRUE)
+recon_review[["stump_of_stem_alive_later"]] <- review_rows(
+  "stump_of_stem_alive_later", unique_StemID$StemID[stumps[, 1]], stumps[, 2],
+  paste("raw codes", original_status[stumps[, 1]])
 )
-setnames(problem_df, "N", "number_of_cases")
+cat(sprintf(
+  "  Dead records of stems alive later: %d | stumps of stems alive later: %d\n",
+  nrow(false_dead), nrow(stumps)
+))
 
-fwrite(problem_df, file = file.path(CHECK_folder, paste0(site, "_examples_of_what_happens_for_status.csv")))
-cat(sprintf("  ✓ Saved: %s_examples_of_what_happens_for_status.csv\n", site))
-
-## DIAGNOSTIC 5: Export all combinations of DBH presence and status histories
-
-problem_df <- problem_dt
-# Create descriptive column names (DBH_1, DBH_2, Status_1, Status_2, etc.)
-names(problem_df)[-c(1, 2, ncol(problem_df) - 3, ncol(problem_df) - 2, ncol(problem_df) - 1, ncol(problem_df))] <-
-  paste(rep(c("DBH", "Status", "ListOfTSM"), each = length(ViewFullTable_split)), seq_along(ViewFullTable_split), sep = "_")
-
-# dbh<k> = 1 if a DBH was measured in census k, else 0 (every census)
-dbh_cols <- paste0("DBH_", seq_along(ViewFullTable_split))
-dbh_flag_cols <- paste0("dbh", seq_along(ViewFullTable_split))
-problem_df[, (dbh_flag_cols) := lapply(.SD, function(x) as.integer(!is.na(x))), .SDcols = dbh_cols]
-
-write.csv(
-  unique(problem_df[, c(dbh_flag_cols, "original_status", "new_status", "corrected_new_status", "tree_histories"), with = FALSE]),
-  file = file.path(CHECK_folder, paste0(site, "_all_combinations_of_dbh_and_status.csv")),
-  row.names = FALSE
+# ---- Stems never alive and stems never recorded --------------------------------
+# Never alive: recorded only as dead (e.g. a broken-below record without DBH,
+# then dead); P until the first record, then G or D; they never keep a tree
+# alive. Never recorded: P in every census (only "missing" records without
+# DBH). One row per stem, at its first record.
+never_alive <- which(!grepl("A", corrected_new_status, fixed = TRUE) & grepl("[GD]", corrected_new_status))
+recon_review[["stem_never_alive"]] <- review_rows(
+  "stem_never_alive", unique_StemID$StemID[never_alive], as.integer(regexpr("[GD]", corrected_new_status[never_alive])),
+  paste("raw codes", original_status[never_alive])
 )
+never_recorded <- which(grepl("^P+$", corrected_new_status))
+recon_review[["stem_never_recorded"]] <- review_rows(
+  "stem_never_recorded", unique_StemID$StemID[never_recorded], NA_integer_,
+  paste("raw codes", original_status[never_recorded])
+)
+cat(sprintf("  Stems never alive: %d | never recorded (P in every census): %d\n", length(never_alive), length(never_recorded)))
 
 # ------------------------------------------------------------------------
-# Long stem × census table of exported codes + raw evidence, used by
-# Diagnostics 6-10. Raw Status in ViewFullTable_split is the field record
-# (NA = no row in that census); rows are in unique_StemID order, so they
-# align with corrected_new_status_matrix.
+# Long stem × census table of exported codes and raw evidence (deaths and
+# new stems). Raw Status in ViewFullTable_split is the field record (NA = no
+# row in that census); rows are in unique_StemID order.
 # ------------------------------------------------------------------------
 diag_long <- rbindlist(lapply(seq_along(ViewFullTable_split), function(i) {
   ViewFullTable_split[[i]][, .(
@@ -2260,7 +1921,7 @@ diag_long[, `:=`(
 ), by = StemID]
 diag_long[, n_stems_in_tree := uniqueN(StemID), by = TreeID]
 
-## DIAGNOSTIC 6: Evidence behind each stem death, per census ####
+## Evidence behind each stem death, per census (to the log) ####
 # First dead cell (G or D) after A, cross-tabulated with the raw field
 # status of that census. "<no record>" = the death is inferred from the
 # absence of any row (older censuses did not record dead secondary stems).
@@ -2275,106 +1936,92 @@ print(death_evidence)
 print_to_log("Evidence behind each stem death (raw status in the death census):", log_file, new_message = TRUE)
 print_to_log(capture.output(print(death_evidence)), log_file, new_message = FALSE)
 
-## DIAGNOSTIC 7: Trees alive but unregistered ####
+## Trees alive but unregistered (count only) ####
 # Tree × census cells where the tree has dead stems (G) but no living stem
 # (A): a stem of the tree is recorded alive in a LATER census, so by the
-# contract the tree was alive but not registered. Accepted biology, listed
-# for review with the tree's total number of unregistered censuses.
-unregistered_dt <- tree_cens[nG > 0L & nA == 0L, .(TreeID, census, nG, nD, nP)]
-unregistered_dt[, n_unregistered_censuses := .N, by = TreeID]
-fwrite(unregistered_dt, file.path(CHECK_folder, "trees_unregistered_survival.csv"))
-cat(sprintf(
-  "  Trees alive but unregistered: %d tree-census cells in %d trees\n",
-  nrow(unregistered_dt), uniqueN(unregistered_dt$TreeID)
-))
-cat("  ✓ Saved: trees_unregistered_survival.csv\n")
+# contract the tree was alive but not registered. Accepted biology.
+unreg_txt <- sprintf(
+  "Trees alive but unregistered (G stems, no A stem; a stem lives later): %d tree-census cells in %d trees",
+  tree_cens[nG > 0L & nA == 0L, .N], tree_cens[nG > 0L & nA == 0L, uniqueN(TreeID)]
+)
+cat(" ", unreg_txt, "\n")
+print_to_log(unreg_txt, log_file, new_message = TRUE)
 
-## DIAGNOSTIC 8: Candidate DP stem-identity breaks (report only) ####
-# Same tree and census: exactly one stem dies and exactly one new stem
-# recruits at a similar size (recruit >= 20 mm, 0.8-1.5 x the dead stem's
-# last DBH). If both are the same physical stem, the tables hold a fake
-# death + fake recruitment. Stem identity belongs to the DP (stage 2), so
-# nothing is changed here.
-#   kind = same_DB_StemID      : the raw DB StemID of the recruit equals the
-#                                dead stem's last DB StemID (DP split one
-#                                DB stem) — strong evidence of an artefact
-#   kind = different_DB_StemID : the DB also has two stems (resprout after
-#                                breakage, or renumbering) — ambiguous
+## New stems: identity-break candidates and new stems of 50 mm or more ####
+# New stem = P -> A. On a tree recorded in an earlier census it is ingrowth,
+# otherwise a new tree (recruitment).
+tree_first <- tree_cens[nA + nG + nD > 0L, .(tree_first = min(census)), by = TreeID]
+new_stems <- tree_first[diag_long[Rstatus == "A" & prev_Rstatus == "P"], on = "TreeID"]
+new_stems[, kind := fifelse(census > tree_first, "ingrowth (tree recorded before)", "new tree (recruitment)")]
+# Candidate identity breaks: same tree and census, exactly one stem dies and
+# exactly one new stem appears at a similar size (new stem >= 20 mm, 0.8-1.5 x
+# the dead stem's last DBH). If both are the same physical stem, the tables
+# hold a false death plus a false new stem. "same database StemID": the
+# database kept one StemID across the two (strong evidence of a split);
+# "different": the database also has two stems (resprout after breakage, or
+# renumbering).
 deaths_1 <- deaths_dt[, .(
   n_deaths = .N,
   dead_StemID = StemID[1L],
   dead_last_DBH = prev_DBH[1L],
-  dead_raw_status = raw_status[1L],
   dead_last_Raw_StemID = prev_Raw_StemID[1L]
 ), by = .(TreeID, census)]
-recruits_dt <- diag_long[Rstatus == "A" & prev_Rstatus == "P"]
-recruits_1 <- recruits_dt[, .(
-  n_recruits = .N,
-  recruit_StemID = StemID[1L],
-  recruit_DBH = DBH[1L],
-  recruit_Raw_StemID = Raw_StemID[1L],
-  recruit_method = ReconstructionMethod[1L],
-  recruit_posterior_prob = DP_PosteriorReconstructedProb[1L]
+new_1 <- new_stems[, .(
+  n_new = .N,
+  new_StemID = StemID[1L],
+  new_DBH = DBH[1L],
+  new_Raw_StemID = Raw_StemID[1L],
+  new_method = ReconstructionMethod[1L],
+  new_posterior_prob = DP_PosteriorReconstructedProb[1L]
 ), by = .(TreeID, census)]
-id_breaks <- merge(deaths_1, recruits_1, by = c("TreeID", "census"))[
-  n_deaths == 1L & n_recruits == 1L
-]
-id_breaks[, size_ratio := recruit_DBH / dead_last_DBH]
-id_breaks <- id_breaks[recruit_DBH >= 20 & size_ratio >= 0.8 & size_ratio <= 1.5]
-id_breaks[, kind := fifelse(
-  !is.na(recruit_Raw_StemID) & !is.na(dead_last_Raw_StemID) &
-    recruit_Raw_StemID == dead_last_Raw_StemID,
-  "same_DB_StemID", "different_DB_StemID"
-)]
-setorder(id_breaks, kind, TreeID, census)
-fwrite(id_breaks, file.path(CHECK_folder, "dp_identity_break_candidates.csv"))
+id_breaks <- merge(deaths_1, new_1, by = c("TreeID", "census"))[n_deaths == 1L & n_new == 1L]
+id_breaks[, size_ratio := new_DBH / dead_last_DBH]
+id_breaks <- id_breaks[new_DBH >= 20 & size_ratio >= 0.8 & size_ratio <= 1.5]
+id_breaks[, same_db := !is.na(new_Raw_StemID) & !is.na(dead_last_Raw_StemID) & new_Raw_StemID == dead_last_Raw_StemID]
+recon_review[["identity_break_candidate"]] <- review_rows(
+  "identity_break_candidate", id_breaks$new_StemID, id_breaks$census,
+  sprintf(
+    "new stem the size of stem %s, dead in this census (last DBH %s mm, ratio %.2f, %s database StemID); method %s, posterior %.2f",
+    stem_number(id_breaks$dead_StemID), id_breaks$dead_last_DBH, id_breaks$size_ratio,
+    fifelse(id_breaks$same_db, "same", "different"), id_breaks$new_method, id_breaks$new_posterior_prob
+  )
+)
+# New stems of 50 mm or more at their first measurement (a new stem should be
+# close to the 10 mm threshold): often identity breaks or resprouts.
+large_new <- new_stems[DBH >= 50]
+recon_review[["new_stem_50mm_or_more"]] <- review_rows(
+  "new_stem_50mm_or_more", large_new$StemID, large_new$census,
+  sprintf(
+    "%s; first DBH %s mm; tree with %d stems; method %s, posterior %.2f",
+    large_new$kind, large_new$DBH, large_new$n_stems_in_tree, large_new$ReconstructionMethod, large_new$DP_PosteriorReconstructedProb
+  )
+)
 cat(sprintf(
-  "  Candidate DP identity breaks: %d (same DB StemID: %d, different DB StemID: %d)\n",
-  nrow(id_breaks), id_breaks[kind == "same_DB_StemID", .N], id_breaks[kind == "different_DB_StemID", .N]
+  "  Candidate identity breaks: %d (same database StemID: %d) | new stems >= 50 mm: %d (>= 100 mm: %d)\n",
+  nrow(id_breaks), id_breaks[same_db == TRUE, .N], nrow(large_new), large_new[DBH >= 100, .N]
 ))
-cat("  ✓ Saved: dp_identity_break_candidates.csv\n")
 
-## DIAGNOSTIC 9: Implausibly large recruits (report only) ####
-# A stem entering the population (P -> A) should be close to the 10 mm
-# threshold. Recruits >= 50 mm at their first measurement are listed for
-# review (often identity breaks or resprouts after breakage).
-large_recruits <- recruits_dt[DBH >= 50, .(
-  TreeID, StemID, census, DBH, raw_status, n_stems_in_tree,
-  ReconstructionMethod, DP_PosteriorReconstructedProb
-)]
-setorder(large_recruits, -DBH)
-fwrite(large_recruits, file.path(CHECK_folder, "recruits_large_dbh.csv"))
-cat(sprintf(
-  "  Recruits with first DBH >= 50 mm: %d (>= 100 mm: %d)\n",
-  nrow(large_recruits), large_recruits[DBH >= 100, .N]
-))
-cat("  ✓ Saved: recruits_large_dbh.csv\n")
-
-## DIAGNOSTIC 10: Raw "stem dead" exported as D (report only) ####
+## Raw "stem dead" exported as D ####
 # "stem dead" implies the tree was still alive, but no other stem of the
 # tree is alive in this or any later census, so the tree is exported as
-# dead. Listed as a field-code conflict.
-stem_dead_D <- diag_long[raw_status == "stem dead" & Rstatus == "D", .(
-  TreeID, StemID, census, n_stems_in_tree
-)]
-fwrite(stem_dead_D, file.path(CHECK_folder, "stem_dead_exported_D.csv"))
-cat(sprintf("  Raw 'stem dead' exported as D (tree dead): %d cells\n", nrow(stem_dead_D)))
-cat("  ✓ Saved: stem_dead_exported_D.csv\n")
+# dead (a field-code conflict).
+n_in_tree <- unique_StemID[, .N, by = TreeID][unique_StemID, on = "TreeID", N]
+sd_D <- which(is_status("stem dead") & corrected_new_status_matrix == "D", arr.ind = TRUE)
+field_review[["stem_dead_but_tree_dead"]] <- review_rows(
+  "stem_dead_but_tree_dead", unique_StemID$StemID[sd_D[, 1]], sd_D[, 2],
+  sprintf("raw 'stem dead', but no stem of the tree is alive then or later; tree with %d stems", n_in_tree[sd_D[, 1]])
+)
+cat(sprintf("  Raw 'stem dead' exported as D (tree dead): %d cells\n", nrow(sd_D)))
 
-## DIAGNOSTIC 11: Likely duplicate measurements (report only) ####
+## Likely duplicate measurements ####
 # When the point of measurement (POM) of a trunk was raised, the crew could
 # measure the trunk at the old and at the new height in the same census, and
 # the database kept the two records as two stems. Signature: two stems of one
 # tree, both >= 10 cm, measured on the same date of one census at heights of
 # measurement at least 0.5 m apart, with taper-corrected DBHs within 20 % of
 # each other. Two similar stems measured at the same height cannot be told
-# from a duplicate, and 1982 has no HOM records, so neither is listed.
-#   one_series_starts_or_ends_here : one of the two stems is first or last
-#     measured in this census (the old-height series stops, or the new one
-#     starts): the clearest duplicates
-#   impossible_recruit : one of the two stems starts here at >= 26 cm in a tree
-#     measured before (the duplicate is what the rejoin could not join)
-# Nothing is changed here.
+# from a duplicate, and 1982 has no HOM records, so neither is listed. One row
+# per pair, on the stem measured lower.
 dup_obs <- ViewFullTable[!is.na(DBH) & DBH >= 100 & !is.na(ExactDate), .(
   TreeID, Tag, census = CensusID, ExactDate, StemID, Raw_StemID, DBH,
   HOM = fcoalesce(as.numeric(HOM), 1.3), tc = dbh_with_best_candidate_taper_corrected
@@ -2385,29 +2032,33 @@ dup <- dup_obs[dup_obs, on = .(TreeID, census, ExactDate), allow.cartesian = TRU
   i.HOM - HOM >= 0.5 & pmin(tc, i.tc) / pmax(tc, i.tc) >= 0.8
 ]
 dup <- dup[, .(
-  TreeID, Tag, census, ExactDate,
-  StemID_low = StemID, Raw_StemID_low = Raw_StemID, DBH_low = DBH, HOM_low = HOM,
-  StemID_high = i.StemID, Raw_StemID_high = i.Raw_StemID, DBH_high = i.DBH, HOM_high = i.HOM,
-  dbh_ratio = round(pmin(tc, i.tc) / pmax(tc, i.tc), 3)
+  TreeID, census,
+  StemID_low = StemID, HOM_low = HOM,
+  StemID_high = i.StemID, DBH_high = i.DBH, HOM_high = i.HOM,
+  DBH_low = DBH, dbh_ratio = round(pmin(tc, i.tc) / pmax(tc, i.tc), 3)
 )]
 dup <- dup_span[, .(StemID_low = StemID, first_low = first_census, last_low = last_census)][dup, on = "StemID_low"]
 dup <- dup_span[, .(StemID_high = StemID, first_high = first_census, last_high = last_census)][dup, on = "StemID_high"]
 dup <- dup_tree_first[dup, on = "TreeID"]
 dup[, one_series_starts_or_ends_here := (first_low == census) != (first_high == census) | (last_low == census) != (last_high == census)]
-dup[, impossible_recruit := census > tree_first & ((first_low == census & DBH_low >= 260) | (first_high == census & DBH_high >= 260))]
-dup[, tree_first := NULL]
-setcolorder(dup, c("TreeID", "Tag", "census", "ExactDate"))
-setorder(dup, census, TreeID)
-fwrite(dup, file.path(CHECK_folder, "duplicate_measurements.csv"))
+dup[, impossible_new_stem := census > tree_first & ((first_low == census & DBH_low >= 260) | (first_high == census & DBH_high >= 260))]
+field_review[["duplicate_measurement"]] <- review_rows(
+  "duplicate_measurement", dup$StemID_low, census_index(dup$census),
+  sprintf(
+    "same date as stem %s (HOM %.2f m, DBH %s mm); this stem HOM %.2f m; taper-corrected DBH ratio %.2f%s%s",
+    stem_number(dup$StemID_high), dup$HOM_high, dup$DBH_high, dup$HOM_low, dup$dbh_ratio,
+    fifelse(dup$one_series_starts_or_ends_here, "; one of the two series starts or ends here", ""),
+    fifelse(dup$impossible_new_stem, "; one of the two would be a new stem >= 260 mm on a tree measured before", "")
+  )
+)
 cat(sprintf(
-  "  Likely duplicate measurements (same tree, census and date; HOM >= 0.5 m apart; DBH within 20%%): %d pairs in %d trees | one series starts or ends there: %d | with an impossible recruit: %d\n",
-  nrow(dup), uniqueN(dup$TreeID), dup[one_series_starts_or_ends_here == TRUE, .N], dup[impossible_recruit == TRUE, .N]
+  "  Likely duplicate measurements: %d pairs in %d trees\n",
+  nrow(dup), uniqueN(dup$TreeID)
 ))
-cat("  ✓ Saved: duplicate_measurements.csv\n")
 
 rm(
-  diag_long, deaths_dt, death_evidence, unregistered_dt, deaths_1,
-  recruits_dt, recruits_1, id_breaks, large_recruits, stem_dead_D,
+  false_dead, stumps, never_alive, never_recorded, diag_long, deaths_dt, death_evidence, unreg_txt,
+  tree_first, new_stems, deaths_1, new_1, id_breaks, large_new, n_in_tree, sd_D,
   dup_obs, dup_span, dup_tree_first, dup
 )
 
@@ -2416,8 +2067,9 @@ rm(
 # ========================================================================
 # Audit the final corrected_new_status_matrix before export: verify that
 # no illegal transitions remain and that A/P cells are preserved; list the
-# DBHs recorded on dead (G/D) records; summarise status codes by whether a
-# DBH measurement exists. The exported dbh is the raw DBH (DBHs), unchanged.
+# DBHs recorded on dead (G/D) records (field review list); summarise status
+# codes by whether a DBH was recorded (log). The exported dbh is the raw DBH
+# (DBHs), unchanged.
 
 bio_check(
   is.matrix(corrected_new_status_matrix) &&
@@ -2435,7 +2087,7 @@ final_pairs <- substring(
 illegal <- setdiff(unique(final_pairs), valid_stem_trans)
 bio_check(
   length(illegal) == 0L,
-  "Final stem histories contain only legal stem transitions (see biology_assessment.txt)",
+  "Final stem histories contain only legal stem transitions (counts in the biology assessment of the log)",
   examples = illegal,
   n_bad = length(illegal)
 )
@@ -2460,10 +2112,10 @@ bio_check(
 rm(final_pairs, illegal, stranded, AP_in, AP_out)
 
 # ---- DBH: exported exactly as recorded --------------------------------------
-# No DBH is removed or imputed (as in the Dryad tables). A DBH sits on a G/D
-# cell only when it was recorded on a "dead" /
-# "stem dead" record of a stem that is never alive later; those records are
-# listed in CHECKS/dbh_on_dead_records.csv. The DBH of a false-death record
+# No DBH is removed or imputed: the exported dbh is the field record. A DBH
+# sits on a G/D cell only when it was recorded on a "dead" / "stem dead"
+# record of a stem that is never alive later; those records go to the field
+# review list (reason dbh_on_dead_record). The DBH of a false-death record
 # (stem alive later) sits on an A cell. A P cell has no record, so no DBH.
 dd_idx <- which((corrected_new_status_matrix == "G" | corrected_new_status_matrix == "D") & !is.na(DBHs), arr.ind = TRUE)
 dbh_dead_dt <- data.table(
@@ -2479,14 +2131,16 @@ dbh_dead_dt[, `:=`(
   original_status = original_status[row],
   corrected_history = corrected_new_status[row]
 )]
-fwrite(dbh_dead_dt[, -"row"], file.path(CHECK_folder, "dbh_on_dead_records.csv"))
+field_review[["dbh_on_dead_record"]] <- review_rows(
+  "dbh_on_dead_record", dbh_dead_dt$StemID, dbh_dead_dt$census,
+  paste0("codes ", fcoalesce(dbh_dead_dt$codes, ""), " | raw codes ", dbh_dead_dt$original_status)
+)
 dead_dbh_cells <- DT_Status[!is.na(DBH) & Status %in% c("dead", "stem dead"), .(row = match(StemID, unique_StemID$StemID), census)]
 dead_dbh_R <- corrected_new_status_matrix[cbind(dead_dbh_cells$row, dead_dbh_cells$census)]
 cat(sprintf(
   "🔎 DBH on dead / stem dead records: %d, all kept | on G/D (stem never alive later): %d | on A (false death, stem alive later): %d\n",
   nrow(dead_dbh_cells), sum(dead_dbh_R != "A"), sum(dead_dbh_R == "A")
 ))
-cat("  ✓ Saved: dbh_on_dead_records.csv\n")
 bio_check(
   nrow(dbh_dead_dt) == sum(dead_dbh_R != "A") && all(dbh_dead_dt$raw_status %in% c("dead", "stem dead")),
   "A DBH sits on a G/D cell only on a dead / stem dead record of a stem never alive later",
@@ -2500,146 +2154,41 @@ bio_check(
 )
 rm(dd_idx, dead_dbh_cells, dead_dbh_R)
 
-# ---- (c) status × DBH × census summary -----------------------------------
+# ---- (c) status × DBH × census summary (to the log) ---------------------
+# An A without DBH is a missed measurement (stage 4 interpolates its DBH) or
+# a stump (DFstatus "broken below": stage 4 keeps it out of the stock).
 n_cens <- ncol(corrected_new_status_matrix)
-
-# Long-format cell-level table (one row per stem×census).
 cells_dt <- data.table(
   status  = as.vector(corrected_new_status_matrix),
   has_DBH = !is.na(as.vector(DBHs)), # exported dbh (raw)
   census  = rep(seq_len(n_cens), each = nrow(corrected_new_status_matrix))
 )
-
-# Per-census × status × has_DBH counts.
-summary_long <- cells_dt[
-  , .(n_cells = .N),
-  by = .(census, status, has_DBH)
-][order(census, status, has_DBH)]
-
-# Overall (all censuses pooled).
-summary_overall <- cells_dt[
-  , .(n_cells = .N),
-  by = .(status, has_DBH)
-][order(status, has_DBH)]
+summary_long <- cells_dt[, .(n_cells = .N), by = .(census, status, has_DBH)][order(census, status, has_DBH)]
+summary_overall <- cells_dt[, .(n_cells = .N), by = .(status, has_DBH)][order(status, has_DBH)]
 summary_overall[, pct := round(100 * n_cells / sum(n_cells), 3)]
-
-# Wide pivot for compact viewing: rows = status, cols = (has_DBH, census).
-summary_wide <- dcast(
-  summary_long,
-  status + has_DBH ~ census,
-  value.var = "n_cells",
-  fill = 0L
+summary_wide <- dcast(summary_long, status + has_DBH ~ census, value.var = "n_cells", fill = 0L)
+n_P_with_DBH <- summary_overall[status == "P" & has_DBH == TRUE, sum(n_cells)]
+n_A_no_DBH <- summary_overall[status == "A" & has_DBH == FALSE, sum(n_cells)]
+n_other <- summary_overall[!(status %in% c("A", "D", "G", "P")), sum(n_cells)]
+n_stump <- sum(is_status("broken below") & is.na(DBHs) & corrected_new_status_matrix == "A")
+stump_txt <- sprintf(
+  "A without DBH: %d = %d stumps (DFstatus 'broken below'; stage 4 keeps them out of the stock) + %d missed measurements (stage 4 interpolates their DBH)",
+  n_A_no_DBH, n_stump, n_A_no_DBH - n_stump
 )
-
-# Save CSVs.
-fwrite(summary_long,
-  file = file.path(CHECK_folder, "status_x_dbh_summary_long.csv")
-)
-fwrite(summary_overall,
-  file = file.path(CHECK_folder, "status_x_dbh_summary_overall.csv")
-)
-fwrite(summary_wide,
-  file = file.path(CHECK_folder, "status_x_dbh_summary_wide.csv")
-)
-
-# Human-readable plain-text version.
-txt_path <- file.path(CHECK_folder, "status_x_dbh_summary.txt")
-con <- file(txt_path, open = "w")
-writeLines(c(
-  paste0("# status_x_dbh_summary.txt - generated ", format(Sys.time())),
-  "# canonical post-pipeline summary of corrected_new_status_matrix",
+print_to_log(c(
   sprintf(
-    "# total cells = %d stems × %d censuses = %d",
-    nrow(corrected_new_status_matrix), n_cens,
-    nrow(corrected_new_status_matrix) * n_cens
+    "Status x DBH of the exported tables (%d stems x %d censuses = %d cells), all censuses:",
+    nrow(corrected_new_status_matrix), n_cens, nrow(cells_dt)
   ),
-  "",
-  "## OVERALL (all censuses pooled)",
-  "## status  has_DBH       n_cells       pct"
-), con)
-for (i in seq_len(nrow(summary_overall))) {
-  writeLines(sprintf(
-    "   %-6s %-5s %12d  %8.3f%%",
-    summary_overall$status[i],
-    as.character(summary_overall$has_DBH[i]),
-    summary_overall$n_cells[i],
-    summary_overall$pct[i]
-  ), con)
-}
-writeLines(c(
-  "",
-  "## EXPECTATIONS (red flags if violated)",
-  "   - status = 'P' & has_DBH = TRUE   should be 0  (P means not yet recruited)",
-  "   - status = 'A' & has_DBH = FALSE  is OK but downstream MUST interpolate DBH",
-  "   - status = 'D' & has_DBH = TRUE   OK: DBH recorded on a dead record, kept (dbh_on_dead_records.csv)",
-  "   - status = 'G' & has_DBH = TRUE   OK: DBH recorded on a dead record, kept (dbh_on_dead_records.csv)",
-  "",
-  "## PER-CENSUS (wide pivot)"
-), con)
-write.table(summary_wide, con,
-  sep = "\t", quote = FALSE,
-  row.names = FALSE, col.names = TRUE
-)
-
-# Red-flag summary block.
-n_P_with_DBH <- summary_overall[
-  status == "P" & has_DBH == TRUE,
-  sum(n_cells)
-]
-n_A_no_DBH <- summary_overall[
-  status == "A" & has_DBH == FALSE,
-  sum(n_cells)
-]
-n_D_with_DBH <- summary_overall[
-  status == "D" & has_DBH == TRUE,
-  sum(n_cells)
-]
-n_G_with_DBH <- summary_overall[
-  status == "G" & has_DBH == TRUE,
-  sum(n_cells)
-]
-n_other <- summary_overall[
-  !(status %in% c("A", "D", "G", "P")),
-  sum(n_cells)
-]
-
-writeLines(c(
-  "",
-  "## RED-FLAG COUNTS",
-  sprintf(
-    "   P with DBH (must be 0)            : %d",
-    if (length(n_P_with_DBH)) n_P_with_DBH else 0L
-  ),
-  sprintf(
-    "   A without DBH (interpolate)       : %d",
-    if (length(n_A_no_DBH)) n_A_no_DBH else 0L
-  ),
-  sprintf(
-    "   D with DBH (kept as recorded)     : %d",
-    if (length(n_D_with_DBH)) n_D_with_DBH else 0L
-  ),
-  sprintf(
-    "   G with DBH (kept as recorded)     : %d",
-    if (length(n_G_with_DBH)) n_G_with_DBH else 0L
-  ),
-  sprintf(
-    "   cells with status not in {A,D,G,P}: %d",
-    if (length(n_other)) n_other else 0L
-  )
-), con)
-close(con)
-
-cat(sprintf(
-  "\n📄 status x DBH summary written to:\n  %s\n  %s\n  %s\n  %s\n",
-  txt_path,
-  file.path(CHECK_folder, "status_x_dbh_summary_long.csv"),
-  file.path(CHECK_folder, "status_x_dbh_summary_overall.csv"),
-  file.path(CHECK_folder, "status_x_dbh_summary_wide.csv")
-))
-
-# Echo the headline numbers to the console.
+  capture.output(print(summary_overall)),
+  paste0("  ", stump_txt),
+  "  G / D with DBH: recorded on a dead record and kept (reason dbh_on_dead_record); P with DBH must be 0",
+  "Per census:",
+  capture.output(print(summary_wide))
+), log_file, new_message = TRUE)
 cat("\nStatus × DBH overall summary:\n")
 print(summary_overall)
+cat(" ", stump_txt, "\n")
 bio_check(
   sum(n_P_with_DBH) == 0L,
   "No P cell carries a DBH in the exported dbh",
@@ -2652,9 +2201,8 @@ bio_check(
 )
 
 rm(
-  cells_dt, summary_long, summary_wide,
-  n_P_with_DBH, n_A_no_DBH, n_D_with_DBH, n_G_with_DBH, n_other,
-  con, txt_path
+  cells_dt, summary_long, summary_overall, summary_wide,
+  n_P_with_DBH, n_A_no_DBH, n_other, n_stump, stump_txt
 )
 
 # ========================================================================
@@ -2664,7 +2212,8 @@ rm(
 # the date column, rename and subset each table to the ForestGEO R-table
 # format, then save each census as both a .Rdata object and a .csv file. dbh,
 # DFstatus and ExactDate are exported exactly as recorded; stemID is the
-# reconstructed stem number within its tree.
+# reconstructed stem number within its tree. At the end, write the two review
+# lists (Sections 12-14) and their counts to the log.
 
 # Rows of every census table are in unique_StemID order (checked in
 # Section 3), so the status and DBH matrices align column by column.
@@ -2697,7 +2246,7 @@ for (census in seq_along(ViewFullTable_split)) {
 #       with the modal raw quadrat as fallback for trees without coordinates;
 #   (e) trees whose raw pairs spread more than conflict_threshold_m, trees
 #       with no coordinates, and raw quadrats that disagree with the pair
-#       are returned for review.
+#       go to the field review list.
 # PX and PY are always chosen TOGETHER, so the pair was actually recorded.
 # ========================================================================
 # Arguments: split_list (list of census tables in the same row order) and the
@@ -2794,10 +2343,27 @@ impute_tree_location <- function(split_list,
 cat("🗺️  Assigning one location per tree (modal PX/PY pair across censuses)...\n")
 location_fix <- impute_tree_location(ViewFullTable_split)
 ViewFullTable_split <- location_fix$split_list
-fwrite(location_fix$conflicts, file.path(CHECK_folder, "location_conflicts.csv"))
-fwrite(data.table(TreeID = location_fix$missing_trees), file.path(CHECK_folder, "location_missing.csv"))
-fwrite(location_fix$quadrat_mismatch, file.path(CHECK_folder, "location_quadrat_mismatch.csv"))
-cat("  ✓ Saved: location_conflicts.csv, location_missing.csv, location_quadrat_mismatch.csv\n")
+lc <- location_fix$conflicts
+field_review[["location_spread_over_1m"]] <- review_rows(
+  "location_spread_over_1m",
+  tree = lc$TreeID,
+  details = sprintf(
+    "%d different (gx, gy) pairs, %.1f m apart; position used: %.1f, %.1f (the pair most censuses agree on)",
+    lc$n_distinct_pairs, lc$spread_m, lc$x_ref, lc$y_ref
+  )
+)
+field_review[["no_coordinates"]] <- review_rows(
+  "no_coordinates",
+  tree = location_fix$missing_trees,
+  details = "no (gx, gy) in any census; quadrat as recorded"
+)
+qm <- location_fix$quadrat_mismatch
+field_review[["quadrat_differs_from_coordinates"]] <- review_rows(
+  "quadrat_differs_from_coordinates",
+  tree = qm$TreeID,
+  details = sprintf("recorded quadrat %s; quadrat of the coordinates %s (used)", qm$raw_quadrat, qm$quadrat_ref)
+)
+rm(lc, qm)
 
 # A tree has one location: one (PX, PY, QuadratName) across all its stems
 # and censuses (trees without coordinates keep NA PX/PY and one quadrat).
@@ -2828,11 +2394,9 @@ cat("✓ Location assignment complete.\n\n")
 #   (2) the same quadrat, same census: crews census a quadrat within days
 #   (3) the whole census             : last resort (e.g. trees without a quadrat)
 # The mode (not the median or mean) is always a day on which the field crew
-# was recording. Votes come only from recorded dates, and ties go to the
-# earliest tied date so every run gives the same answer. (Condit's Dryad
-# tables fill `date` with the mean recorded date of the quadrat: the two agree
-# within about a day in 1985-2015, while in 1982 one quadrat's records span
-# months, so the tree's own date is closer.)
+# was recording, and the tree's own date comes first because the records of
+# one quadrat can span months (1982). Votes come only from recorded dates,
+# and ties go to the earliest tied date so every run gives the same answer.
 # ========================================================================
 
 # Modal date of a vector; ties → earliest date.
@@ -2985,7 +2549,13 @@ check_dates[, c("n_dates") :=
 by = .(CensusID, TreeID)
 ]
 
-fwrite(unique(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)]), file.path(CHECK_folder, "repeated_dates.csv"))
+rd <- unique(check_dates[n_dates > 1L, .(TreeID, CensusID, n_dates)])
+field_review[["two_dates_in_census"]] <- review_rows(
+  "two_dates_in_census",
+  tree = rd$TreeID, census = census_index(rd$CensusID),
+  details = sprintf("%d different field dates on the stems of this tree", rd$n_dates)
+)
+rm(rd)
 
 export_stem_order <- vector("list", length(ViewFullTable_split))
 for (census in seq_along(ViewFullTable_split)) {
@@ -3069,3 +2639,34 @@ bio_check(
 rm(export_stem_order)
 
 cat(sprintf("\n✓✓ All %d census tables exported successfully\n\n", length(ViewFullTable_split)))
+
+# ========================================================================
+# REVIEW LISTS (built in Sections 12-14)
+# ========================================================================
+# One row per case; `reason` says what to look at (README of this folder).
+# Nothing in them changes the R tables.
+empty_review <- review_rows("none", tree = "none")[0L]
+field_review_dt <- rbindlist(c(list(empty_review), field_review), use.names = TRUE)
+recon_review_dt <- rbindlist(c(list(empty_review), recon_review), use.names = TRUE)
+setorder(field_review_dt, reason, treeID, stemID, census)
+setorder(recon_review_dt, reason, treeID, stemID, census)
+fwrite(field_review_dt, file.path(CHECK_folder, paste0("field_records_to_review_", site, ".csv")))
+fwrite(recon_review_dt, file.path(CHECK_folder, paste0("reconstruction_to_review_", site, ".csv")))
+review_counts <- function(x) {
+  if (nrow(x) == 0L) {
+    return("  (no case)")
+  }
+  x[, .(cases = .N, trees = uniqueN(treeID)), keyby = reason][, sprintf("  %-34s %8d cases in %7d trees", reason, cases, trees)]
+}
+n_checks <- sum(startsWith(readLines(log_file, encoding = "UTF-8"), "✓"))
+review_txt <- c(
+  sprintf("field_records_to_review_%s.csv (raw records that need a look, for the data manager):", site),
+  review_counts(field_review_dt),
+  sprintf("reconstruction_to_review_%s.csv (stems whose reconstruction needs a look):", site),
+  review_counts(recon_review_dt),
+  "",
+  sprintf("All %d checks passed; %d R tables exported.", n_checks, length(ViewFullTable_split))
+)
+print_to_log(review_txt, log_file, new_message = TRUE)
+cat(paste(review_txt, collapse = "\n"), "\n")
+rm(empty_review, review_counts, review_txt, n_checks)
