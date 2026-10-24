@@ -584,7 +584,7 @@ mr_check(
 rm(bb_methods, tree_sids, pin_rows, pin_chk, pin_fix, pin_chk2)
 
 # Field-tagged stems stay whole (multiple-stem tags; the database StemID is
-# used only to set the pins). Every row with a StemTag is pinned (TrueStemID).
+# used only to set the pins). Every row with a field tag is pinned (TrueStemID).
 # Field tags are the StemTags of the 2010 census on (census 7, the first that
 # tagged every stem; before it the database shows a StemID's later tag on its
 # earlier records). A field tag is the tag value (Tag, StemTag), so a tag the
@@ -597,10 +597,14 @@ tagged <- complete_dataset_final[
     .(Tag = as.character(Tag), StemTag = as.character(StemTag), CensusID, TrueStemID, ReconstructedStemID)
 ]
 mr_check(
-    tagged[, all(!is.na(TrueStemID))],
-    "Every row with a StemTag is pinned (TrueStemID)",
-    examples = tagged[is.na(TrueStemID), unique(Tag)], n_bad = tagged[is.na(TrueStemID), .N]
+    tagged[CensusID >= 7L, all(!is.na(TrueStemID))],
+    "Every row with a field tag (2010 on) is pinned (TrueStemID)",
+    examples = tagged[CensusID >= 7L & is.na(TrueStemID), unique(Tag)], n_bad = tagged[CensusID >= 7L & is.na(TrueStemID), .N]
 )
+# Before 2010 a StemTag is the database's copy of the StemID's later tag:
+# Step 3c (PIN_STOP_AT_FAST_LINK) unpins such a record when the database link
+# to the 2010 stem is contradicted by the measurements.
+cat(sprintf("Rows before 2010 with a StemTag copied by the database and no pin (Step 3c): %d\n", tagged[CensusID < 7L & is.na(TrueStemID), .N]))
 field <- tagged[CensusID >= 7L & !is.na(ReconstructedStemID)]
 dup_tag <- field[, .N, by = .(Tag, StemTag, CensusID)][N > 1L, unique(paste(Tag, StemTag))]
 split_tagged <- field[!(paste(Tag, StemTag) %in% dup_tag), .(n_ids = uniqueN(ReconstructedStemID)), by = .(Tag, StemTag)][n_ids > 1L]
