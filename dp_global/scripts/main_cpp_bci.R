@@ -65,7 +65,7 @@ ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
 POSTERIOR_SAMPLES <- 0L # disable posteriors; set >0 to enable
 POSTERIOR_SAMPLES_FORMAT <- "csv"
 POSTERIOR_SAMPLES_PATH <- NULL
-POSTERIOR_SAMPLE_SEED <- NULL
+POSTERIOR_SAMPLE_SEED <- 123L # seed of the matcher's draws (and of posterior sampling): reproducible runs
 RUN_ALL_TAGS <- FALSE
 WRITE_DP_CSV <- TRUE
 WRITE_DP_RDS <- TRUE
