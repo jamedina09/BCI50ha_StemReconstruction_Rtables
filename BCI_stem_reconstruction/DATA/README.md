@@ -13,7 +13,7 @@ Last updated 2026-10-23. Run in use: `20261022_220659_unknown_allT_DP_MB_NME_R12
 | `PROCESSED/` | stage-1 stem table, engine input |
 | `<run folder>/` | stage-2 engine output and merge |
 | `POSTERIORS/`, `RTABLES/` | stage-3 posterior preparation and R tables |
-| `CHECKS/` | check files; `revision_oct16/` holds the Oct 16 review lists |
+| `CHECKS/` | checks. R tables (stage 3): `check_bci.txt` (every check and the summaries: read it first), `status_patterns_bci.csv`, `field_records_to_review_bci.csv` and `reconstruction_to_review_bci.csv` (one row per case, column `reason`). Species: `check_species_table_bci.txt`, `species_changes_from_flora_panama_bci.csv` (stage 3) and the WFO lists of stage 1. `revision_oct16/` holds the Oct 16 review lists |
 | `oct_13/` | outputs of run 20261014_220452 (`PROCESSED/`, `POSTERIORS/`, `RTABLES/`, `CHECKS/`), copied 2026-10-23 before the final run's merge; not under version control (also `4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/oct_13/` and `COMPARE_DATASETS/oct_13/`) |
 | `BACKUPS/` | the run of 2026-10-05 and its side files (zip archives); species-table outputs archived before the rebuild (`species_tables_20261021/`) |
 
