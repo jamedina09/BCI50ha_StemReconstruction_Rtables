@@ -35,6 +35,10 @@
 ###   Each path is weighted by its share of the tag's posterior samples,
 ###   path_count / sum(path_count) (path_weight). The path_prob column of the
 ###   path files is not used: for the DP it counts each sample's probability twice.
+###   The paths hold the observations up to the anchor; the observations
+###   after it (and before the paths' first census) are spliced into every
+###   path with the links of the exported reconstruction, so every census
+###   pair is decomposed from one consistent set of stems.
 ###
 ### Packages: data.table, ggplot2, patchwork, scales (here, when installed,
 ### resolves a relative RUN_DIR).
@@ -257,6 +261,8 @@ weighted_quantile <- function(vals, w, prob) {
 post_change_list <- list()
 all_path_decomp_list <- list()
 all_paths_by_tag <- list() # tag -> data.table(path_idx, path_weight, obs_row_id, StemID, CensusID, DBH, BA)
+n_spliced_obs <- 0L # observations outside the path window, spliced into every path
+n_fallback_tags <- 0L # tags whose paths were replaced by the exported reconstruction
 
 for (tg_str in names(post_tag_map)) {
     tg <- tryCatch(as.integer(tg_str), warning = function(w) tg_str)
@@ -295,6 +301,51 @@ for (tg_str in names(post_tag_map)) {
     all_paths <- merge(all_paths, obs_lookup, by = "obs_row_id", all.x = TRUE)
     all_paths[, BA := ba_m2(DBH)]
     all_paths <- all_paths[!is.na(BA)]
+
+    # The paths hold the measured observations up to the anchor only. An
+    # observation outside the census window of the paths (after the anchor,
+    # or before the first census in the paths) joins the path stem that holds
+    # its exported stem-mate at the nearest window edge: the last in-path
+    # observation of the same exported stem for later censuses, the first
+    # one for earlier censuses. An exported stem without in-path observations
+    # keeps its own stem (label above every path label). When a measured
+    # observation inside the window is missing from the paths, the tag's
+    # paths are replaced by the exported reconstruction.
+    meas <- tag_rec[!is.na(DBH) & !is.na(ReconstructedStemID),
+        .(obs_row_id, CensusID, DBH, xstem = ReconstructedStemID)
+    ]
+    in_path <- meas$obs_row_id %in% all_paths$obs_row_id
+    if (any(!in_path) && any(in_path)) {
+        w_min <- min(meas$CensusID[in_path])
+        w_max <- max(meas$CensusID[in_path])
+        outside <- meas[!in_path]
+        if (any(outside$CensusID >= w_min & outside$CensusID <= w_max)) {
+            n_fallback_tags <- n_fallback_tags + 1L
+            all_paths <- rbindlist(lapply(seq_len(n_paths), function(i) {
+                meas[, .(obs_row_id, StemID = as.integer(xstem), path_idx = i,
+                    path_weight = post$path_weight[i], CensusID, DBH, BA = ba_m2(DBH))]
+            }))
+        } else {
+            edge <- meas[in_path, .(
+                first_in = obs_row_id[which.min(CensusID)],
+                last_in = obs_row_id[which.max(CensusID)]
+            ), by = xstem]
+            outside <- edge[outside, on = "xstem"]
+            outside[, edge_obs := fifelse(CensusID > w_max, last_in, first_in)]
+            spliced <- all_paths[, .(path_idx, path_weight, edge_obs = obs_row_id, StemID)][
+                outside[!is.na(edge_obs), .(obs_row_id, edge_obs, CensusID, DBH)],
+                on = "edge_obs", allow.cartesian = TRUE, nomatch = 0L
+            ][, edge_obs := NULL]
+            label_base <- max(all_paths$StemID, na.rm = TRUE)
+            own <- CJ(path_idx = seq_len(n_paths), obs_row_id = outside[is.na(edge_obs), obs_row_id])
+            own <- outside[, .(obs_row_id, CensusID, DBH, xstem)][own, on = "obs_row_id"]
+            own[, `:=`(StemID = as.integer(label_base + xstem), path_weight = post$path_weight[path_idx])]
+            own[, xstem := NULL]
+            all_paths <- rbindlist(list(all_paths, spliced, own), use.names = TRUE, fill = TRUE)
+            all_paths[is.na(BA), BA := ba_m2(DBH)]
+            n_spliced_obs <- n_spliced_obs + nrow(outside)
+        }
+    }
 
     # Decompose per path (vectorised over census pairs)
     path_decomp_list <- vector("list", n_paths)
@@ -344,6 +395,10 @@ for (tg_str in names(post_tag_map)) {
 
     post_change_list[[length(post_change_list) + 1L]] <- post_summary
 }
+cat(sprintf(
+    "[BA] Observations outside the path window spliced into the paths: %d; tags whose paths were replaced by the exported reconstruction: %d\n",
+    n_spliced_obs, n_fallback_tags
+))
 
 # ---- 6. Merge MAP + posterior and write CSVs ----------------------------
 

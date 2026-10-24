@@ -1916,8 +1916,16 @@ It reads `stem_reconstruction_dp_global_rcpp.csv` and the CSV path files of
 the run (`POSTERIOR_SAMPLES_FORMAT = "csv"`, the drivers' default; without
 them only the MAP columns are produced). Each path is weighted by its share of
 the tag's samples, `path_count / sum(path_count)`. DBH is in cm. The path
-files hold the observations up to the anchor only, so the posterior summaries
-of census pairs after the anchor are not meaningful (their MAP columns are).
+files hold the observations up to the anchor only. An observation outside the
+census window of the paths (after the anchor, or before the paths' first
+census) joins, in every path, the path stem that holds its exported stem-mate
+at the nearest window edge (the last in-path observation of the same exported
+stem for later censuses, the first for earlier ones); an exported stem without
+in-path observations keeps its own stem. Every census pair is thus decomposed
+from one consistent set of stems, and the weighted total change
+(`DeltaBA_check`) equals `DeltaBA_total`. When a measured observation inside
+the window is missing from the paths, the tag's paths are replaced by the
+exported reconstruction. The script reports both counts.
 
 | File | Content |
 | --- | --- |

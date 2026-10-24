@@ -116,8 +116,14 @@ another record, no pin across a census gap, Step 3c, hard pins, field tags).
    π/4 × (DBH/100)² in m², which does not depend on stem identity.
 3. Splits each change between censuses into growth of surviving stems, loss by
    mortality and gain by recruitment, which do, for the exported
-   reconstruction and for every posterior path. The posterior summaries weight
-   each path by its share of the tag's samples, `path_count / sum(path_count)`.
+   reconstruction and for every posterior path. The paths hold the
+   observations up to the anchor; the observations after it (and before the
+   paths' first census) are spliced into every path on the path stem of their
+   exported stem-mate at the window edge, so every census pair is decomposed
+   from one consistent set of stems (a tag with a measured observation missing
+   inside the window uses the exported reconstruction).
+4. Summarises the posterior per tag and census pair, weighting each path by
+   its share of the tag's samples, `path_count / sum(path_count)`.
 
 ## Settings
 
@@ -154,8 +160,9 @@ another record, no pin across a census gap, Step 3c, hard pins, field tags).
 
 `main_cpp_bci.R` sets `WHICH_TAG = "080297"`, `FORCE_ONE_SPECIES_PARAMETERS =
 FALSE`, `MAX_GROWTH_FIXED = 5`, `DP_MAX_STATES = 1039`,
-`PRUNE_BOUND_FACTOR = 5`, `USE_MEASUREMENT_ERROR = FALSE` and
-`POSTERIOR_SAMPLES = 0`.
+`PRUNE_BOUND_FACTOR = 5`, `USE_MEASUREMENT_ERROR = FALSE`,
+`POSTERIOR_SAMPLES = 0` and `POSTERIOR_SAMPLE_SEED = 123` (the seed of the
+matcher's draws, so runs are reproducible).
 
 ## Requirements
 
