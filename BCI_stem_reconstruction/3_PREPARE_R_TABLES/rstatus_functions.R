@@ -10,6 +10,9 @@
 #                        A or D -> D                                (Section 6)
 #   fix_resurrections()  alive later => never dead                  (Section 8)
 #   rstatus_tree_dg()    dead stem -> G (tree alive) or D (tree dead) (Section 10)
+#   tree_state()         status of one tree from its stems, census by
+#                        census: an independent check of rstatus_tree_dg()
+#                        (Section 10.3, check I4)
 #
 # Rules:
 #   Evidence of life : an "alive" record (with or without DBH), or a DBH on a
@@ -247,6 +250,54 @@ rstatus_tree_dg <- function(status_matrix, tree_id) {
   out[dead & tree_alive] <- "G"
   out[dead & !tree_alive] <- "D"
   out
+}
+
+# --------
+# Function: tree_state - Compute tree-level status from stem matrix
+# --------
+# stem_states: character matrix, rows = censuses, columns = stems of one tree.
+# Returns the tree history as one string (one character per census).
+# KEY DECISION POINTS:
+#   1. If ANY stem is "A" → tree is "A"
+#   2. If all stems are "P" → tree is "P"
+#   3. If mix of P and D/G:
+#      - Check future censuses for any "A"
+#      - If future A exists → tree is "A" (alive but unregistered: a stem
+#        of the tree is recorded alive later)
+#      - If no future A → tree is "D" (no stem of the tree lives again;
+#        P stems here are recorded later only as dead, or never)
+#   4. If only D/G (no P, no A) → tree is "D"
+# This per-tree loop is an independent implementation of the contract; it is
+# compared cell by cell with the vectorized Section 10.5 result (check I4),
+# and with the tree rule for every tree of 1-4 stems in tests/test_Rstatus.R.
+# ---------------------------------------------------------------------
+tree_state <- function(stem_states) {
+  n_censuses <- nrow(stem_states)
+  tree_seq <- character(n_censuses)
+  for (t in 1:n_censuses) {
+    row <- stem_states[t, ]
+    if ("A" %in% row) {
+      # Any alive stem → tree alive
+      tree_seq[t] <- "A"
+    } else if (all(row == "P")) {
+      # All stems unobserved → tree unobserved
+      tree_seq[t] <- "P"
+    } else if (any(row == "P") && any(row %in% c("D", "G"))) {
+      # P + D/G combination → tree exists only if future A exists
+      if (t < n_censuses && any(stem_states[(t + 1):n_censuses, ] == "A")) {
+        tree_seq[t] <- "A" # tree exists due to future alive stem
+      } else {
+        tree_seq[t] <- "D" # no future alive → tree dead
+      }
+    } else if (any(row %in% c("D", "G"))) {
+      # Only dead/gone → tree dead
+      tree_seq[t] <- "D"
+    } else {
+      # Fallback → treat as P
+      tree_seq[t] <- "P"
+    }
+  }
+  paste0(tree_seq, collapse = "")
 }
 
 # All steps for one table of stems (used by tests/test_Rstatus.R).

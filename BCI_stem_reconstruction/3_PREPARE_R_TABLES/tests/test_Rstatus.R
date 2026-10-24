@@ -7,12 +7,16 @@
 #   1. Hand-written fixtures, one per rule and correction case
 #   2. Exhaustive raw inputs: rstatus_functions.R (what the script runs) gives
 #      exactly the Rstatus and dbh of the reference implementation
-#      (reference_rstatus.R), and every invariant holds
+#      (reference_rstatus.R), and every invariant holds; every stem history
+#      of 9 censuses in every tree context equals the contract written from
+#      scratch
 #   3. Rstatus outputs: validity of every P/A/G/D sequence, soundness and
-#      reachability
+#      reachability; tree_state() equals the tree rule in every tree of 1-4
+#      stems
 #   4. Real data: the exported R tables equal the rules and satisfy every
-#      invariant (Rstatus, dbh, DFstatus, ExactDate, date, location, stemID);
-#      offending stem / tree IDs are printed
+#      invariant (Rstatus, dbh, DFstatus, ExactDate, date, location, stemID,
+#      row order, column types, raw state x Rstatus); offending stem / tree
+#      IDs are printed
 #
 # Options (environment variables):
 #   RSTATUS_TEST_LEVEL   "full" (default; about 10 min on 16 cores) or "quick" (a few min)
@@ -277,6 +281,71 @@ test_that("class representatives, larger trees: rules == reference, invariants h
   }
 })
 
+# Every stem history in every tree context. Rstatus depends only on the
+# stem's raw codes (A evidence of life, D dead record, N no record; the 12 raw
+# states map onto them) and on the last census in which any stem of its tree
+# is A. All 3^n code sequences (n = 9, the BCI censuses; 7 at level quick),
+# each with every such census (0 = none; a second stem, alive in that census
+# only, sets it), cover every raw history of a stem in a tree of any size.
+# They are compared with the rules written from scratch: P before the first
+# record, A from it to the last evidence of life, dead after it (a stem never
+# alive: from its first record); dead is G while the tree has an A then or
+# later, D after.
+test_that("the 12 raw states map to the codes of the contract", {
+  expect_identical(
+    rstatus_raw_code(raw_states$Status, ifelse(raw_states$dbh, 50, NA_real_)),
+    c("A", "A", "A", "D", "D", "D", "D", "D", "A", "N", "A", "N")
+  )
+})
+
+test_that("every stem history (3^n code sequences) in every tree context: rules == contract", {
+  t0 <- Sys.time()
+  n <- if (level == "full") 9L else 7L
+  codes <- as.matrix(do.call(CJ, rep(list(c("A", "D", "N")), n)))
+  dimnames(codes) <- NULL
+  grid <- CJ(i = seq_len(nrow(codes)), L = 0:n)
+  m <- nrow(grid)
+  S <- codes[grid$i, , drop = FALSE]
+  status <- matrix(NA_character_, 2L * m, n)
+  dbh <- matrix(NA_real_, 2L * m, n)
+  status[seq_len(m), ] <- c(A = "alive", D = "dead", N = NA_character_)[S]
+  dbh[seq_len(m), ] <- ifelse(S == "A", 50, NA_real_)
+  hl <- which(grid$L > 0L) # the second stem: alive in census L only
+  status[cbind(m + hl, grid$L[hl])] <- "alive"
+  dbh[cbind(m + hl, grid$L[hl])] <- 50
+  R <- compute_rstatus(status, dbh, c(seq_len(m), seq_len(m)))$Rstatus[seq_len(m), , drop = FALSE]
+  # the contract, written from scratch
+  col <- matrix(seq_len(n), m, n, byrow = TRUE)
+  rec <- S != "N"
+  life <- S == "A"
+  first_rec <- ifelse(rowSums(rec) > 0L, max.col(rec * 1L, ties.method = "first"), n + 1L)
+  last_life <- ifelse(rowSums(life) > 0L, max.col(life * 1L, ties.method = "last"), 0L)
+  tree_last_A <- pmax(grid$L, last_life)
+  ref <- matrix("P", m, n)
+  ref[col >= first_rec & col <= last_life] <- "A"
+  dead <- col >= first_rec & col > last_life
+  ref[dead & col <= tree_last_A] <- "G"
+  ref[dead & col > tree_last_A] <- "D"
+  bad <- which(rowSums(R != ref) > 0L)
+  expect(length(bad) == 0L, sprintf(
+    "%d of %d cases differ from the contract, e.g. raw %s (tree alive to census %d): %s, contract %s",
+    length(bad), m, paste(S[bad[1]], collapse = ""), grid$L[bad[1]], paste(R[bad[1], ], collapse = ""), paste(ref[bad[1], ], collapse = "")
+  ))
+  # only legal stem transitions, never D/G between two A
+  s <- do.call(paste0, lapply(seq_len(n), function(j) R[, j]))
+  pairs <- unique(unlist(lapply(seq_len(n - 1L), function(k) substr(s, k, k + 1L))))
+  expect_true(all(pairs %in% c("PP", "PA", "PG", "PD", "AA", "AG", "AD", "GG", "GD", "DD")))
+  expect_false(any(grepl("A[GD]+A", s)))
+  # what each raw code can become: evidence of life is always A
+  expect_true(all(R[S == "A"] == "A"))
+  expect_true(all(R[S == "D"] %in% c("A", "G", "D")))
+  expect_true(all(R[S == "N"] %in% c("P", "A", "G", "D")))
+  cat(sprintf(
+    "  %s stem histories of %d censuses x %d tree contexts = %s cases, all equal to the contract (%.0f s)\n",
+    format(nrow(codes), big.mark = ","), n, n + 1L, format(m, big.mark = ","), as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  ))
+})
+
 # ========================================================================
 # 3. RSTATUS OUTPUTS: VALIDITY, SOUNDNESS, REACHABILITY
 # ========================================================================
@@ -355,6 +424,55 @@ test_that("soundness and reachability: every produced combination is valid, ever
   }
 })
 
+# tree_state() (the script's check I4) against the tree rule. After the
+# lifespan rule every stem history is P..P A..A D..D (55 histories over 9
+# censuses). The status of a tree in a census depends only on which codes its
+# stems hold then and whether some stem is A later, and three stems produce
+# every such case, so trees of 1-4 stems (1-3 at level quick) cover trees of
+# any size. Tree rule: P before the tree's first record, A from it to the
+# last census with an A, D after.
+test_that("tree_state() equals the tree rule in every tree of 1-4 stems (9 censuses)", {
+  t0 <- Sys.time()
+  n <- 9L
+  hist <- unlist(lapply(0:n, function(a) lapply(0:(n - a), function(b) paste0(strrep("P", a), strrep("A", b), strrep("D", n - a - b)))))
+  expect_length(hist, as.integer(choose(n + 2, 2)))
+  H <- do.call(rbind, strsplit(hist, ""))
+  k <- length(hist)
+  max_stems <- if (level == "full") 4L else 3L
+  trees <- rbindlist(lapply(seq_len(max_stems), function(S) {
+    g <- do.call(CJ, rep(list(seq_len(k)), S))
+    keep <- Reduce(`&`, lapply(seq_len(S - 1L), function(j) g[[j]] <= g[[j + 1L]]), init = rep(TRUE, nrow(g)))
+    g <- g[keep]
+    setnames(g, paste0("s", seq_len(S)))
+    g
+  }), fill = TRUE)
+  TM <- as.matrix(trees)
+  rule <- function(idx) {
+    M <- H[idx, , drop = FALSE]
+    first <- min(c(which(colSums(M != "P") > 0L), n + 1L))
+    last <- max(c(which(colSums(M == "A") > 0L), 0L))
+    out <- rep("P", n)
+    out[seq_len(n) >= first & seq_len(n) <= last] <- "A"
+    out[seq_len(n) >= first & seq_len(n) > last] <- "D"
+    paste(out, collapse = "")
+  }
+  n_bad <- 0L
+  first_bad <- NULL
+  for (r in seq_len(nrow(TM))) {
+    idx <- TM[r, ]
+    idx <- idx[!is.na(idx)]
+    if (tree_state(t(H[idx, , drop = FALSE])) != rule(idx)) {
+      n_bad <- n_bad + 1L
+      if (is.null(first_bad)) first_bad <- paste(hist[idx], collapse = " | ")
+    }
+  }
+  expect(n_bad == 0L, sprintf("tree_state() differs from the tree rule in %d trees, e.g. %s", n_bad, first_bad))
+  cat(sprintf(
+    "  tree_state(): %s trees of 1-%d stems from %d stem histories, all equal to the tree rule (%.0f s)\n",
+    format(nrow(TM), big.mark = ","), max_stems, k, as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  ))
+})
+
 # ========================================================================
 # 4. REAL DATA: THE EXPORTED R TABLES
 # ========================================================================
@@ -371,7 +489,7 @@ if (real_ok) {
   placeholders <- raw[is.na(ReconstructedStemID)]
   raw <- raw[!is.na(ReconstructedStemID)]
   raw <- raw[, .(
-    TreeID = as.character(TreeID),
+    TreeID = as.character(TreeID), Tag = as.character(Tag),
     StemID = paste(as.character(TreeID), as.character(as.numeric(as.character(ReconstructedStemID))), sep = "_"),
     census = as.integer(as.character(CensusID)), Status = as.character(Status), DBH = as.numeric(DBH),
     ExactDate = as.Date(ExactDate), PX = as.numeric(PX), PY = as.numeric(PY)
@@ -386,7 +504,7 @@ if (real_ok) {
     e <- new.env()
     load(files[i], envir = e)
     as.data.table(get(ls(e)[1], envir = e))[, .(
-      StemID = paste(treeID, stemID, sep = "_"), stemID, TreeID = treeID, census = i, Rstatus, dbh, DFstatus,
+      StemID = paste(treeID, stemID, sep = "_"), stemID, TreeID = treeID, tag, census = i, Rstatus, dbh, DFstatus,
       ExactDate, date, gx, gy, quadrat, order = .I
     )]
   }))
@@ -536,4 +654,45 @@ test_that("real data: DFstatus is exactly the raw Status (never modified)", {
   y <- rt[, .(StemID, census, DFstatus)][cells[, .(StemID, census, Status)], on = .(StemID, census)]
   bad <- y[!same_chr(as.character(DFstatus), Status), unique(StemID)]
   expect(length(bad) == 0L, sprintf("DFstatus differs from the raw Status for %d stems, e.g. %s", length(bad), show_ids(bad)))
+})
+
+test_that("real data: rows sorted by treeID and stemID as numbers; every column keeps its type", {
+  skip_if_not(real_ok, "no R tables / stage-2 file found")
+  types <- c(
+    CensusID = "numeric", treeID = "character", stemID = "integer", tag = "character", StemTag = "character",
+    sp = "character", quadrat = "character", gx = "numeric", gy = "numeric", dbh = "numeric", hom = "numeric",
+    ExactDate = "Date", date = "numeric", codes = "character", DFstatus = "character", Rstatus = "character",
+    StemPaths = "integer"
+  )
+  for (i in seq_len(n_cens)) {
+    e <- new.env()
+    load(files[i], envir = e)
+    x <- get(ls(e)[1], envir = e)
+    expect_identical(vapply(x, function(v) class(v)[1L], ""), types)
+    expect_true(all(grepl("^[0-9]+$", x$treeID)))
+    expect_identical(order(as.numeric(x$treeID), x$stemID), seq_len(nrow(x)))
+  }
+  # tags exactly as in the stage-2 table (leading zeros and signs kept)
+  tags <- unique(rt[, .(StemID, tag)])
+  expect_identical(tags[, .N, by = StemID][N > 1L, .N], 0L)
+  raw_tags <- unique(raw[, .(StemID, Tag)])
+  expect_identical(tags[raw_tags, on = "StemID"][!same_chr(tag, Tag), .N], 0L)
+  cat(sprintf("  order and types: %d tables, %s stems; tag widths %s\n", n_cens, format(uniqueN(rt$StemID), big.mark = ","), paste(sort(unique(nchar(tags$tag))), collapse = ", ")))
+})
+
+test_that("real data: every raw state x Rstatus combination is one the rules can produce", {
+  skip_if_not(real_ok, "no R tables / stage-2 file found")
+  # raw code of every exported cell (rstatus_raw_code): evidence of life is
+  # always A; a dead record (dead, stem dead, stump) is A (alive later), G or
+  # D; no record is P (before the first record), A, G or D. P never sits on a
+  # record.
+  rt[, code := rstatus_raw_code(DFstatus, dbh)]
+  expect_true(all(rt[code == "A", Rstatus] == "A"))
+  expect_true(all(rt[code == "D", Rstatus] %in% c("A", "G", "D")))
+  expect_true(all(rt[code == "N", Rstatus] %in% c("P", "A", "G", "D")))
+  expect_identical(rt[Rstatus == "P" & code != "N", .N], 0L)
+  tab <- rt[, .N, keyby = .(DFstatus = fcoalesce(DFstatus, "<none>"), dbh = !is.na(dbh), Rstatus)]
+  cat("  raw state x Rstatus:", tab[, paste0(DFstatus, fifelse(dbh, "+dbh", ""), " -> ", Rstatus, ": ", N)], sep = "\n    ")
+  cat("\n")
+  rt[, code := NULL]
 })
