@@ -69,18 +69,17 @@
 #                     species_table_functions.R). It describes the change, not
 #                     which spelling is correct: the names are those of the
 #                     stage-1 table
-#   ReidentifiedFrom  codes that the trees now under this code had in Condit
-#                     et al. (2019), with the number of trees: "tremsp (84)"
-#   ReidentifiedTo    codes that the trees of this code in Condit et al.
-#                     (2019) have now, with the number of trees
 #   Notes             only what no column says, so that nothing is repeated:
 #                     the note of the stage-1 table, then that uniden is not a
 #                     taxon, that the code was not used in Condit et al.
 #                     (2019), and the codes no longer used whose trees are now
-#                     under this code, with their former name ("Code tremsp,
-#                     Trema unidentified in Condit et al. (2019), is no longer
-#                     used."). Name changes are in NameCondit2019 and
-#                     NameChange, tree counts in ReidentifiedFrom/To.
+#                     under this code, with their former name and how many of
+#                     their trees ("Code tremsp, Trema unidentified in Condit
+#                     et al. (2019), is no longer used; its 84 trees are under
+#                     this code."). Name changes are in NameCondit2019 and
+#                     NameChange. Trees re-identified between codes are in the
+#                     files of the changes of code (one row per change, one
+#                     row per tree), not in this table.
 # Only the codes and the names (genus, epithet, infraspecific name) are
 # compared with Condit et al. (2019); authority, family and the other columns
 # are not.
@@ -486,20 +485,21 @@ spp[names_cmp[!is.na(NameChange)], `:=`(NameCondit2019 = i.latin_old, NameChange
 # SECTION 6: NOTES
 # ========================================================================
 
-# --- 6a. Re-identified trees, both ways, with their counts ----------------------
-spp[, c("ReidentifiedFrom", "ReidentifiedTo") := NA_character_]
-spp[pairs[, .(x = format_code_counts(sp_condit, N)), by = sp_new], ReidentifiedFrom := i.x, on = .(sp = sp_new)]
-spp[pairs[, .(x = format_code_counts(sp_new, N)), by = sp_condit], ReidentifiedTo := i.x, on = .(sp = sp_condit)]
+# Trees re-identified between codes are not repeated here: they are in the
+# files of the changes of code (section 7), one row per change and one row
+# per tree.
 
-# --- 6b. Trees of the codes no longer used ---------------------------------------
+# --- 6a. Trees of the codes no longer used ---------------------------------------
 # A code no longer used has no row, so its trees are described in the notes
-# of the codes that hold them now. 2026-10-15: tremsp -> tremmi (84),
-# ingaun -> uniden (47), pterof -> pterro (9).
+# of the codes that hold them now, with their number. 2026-10-15: tremsp ->
+# tremmi (84), ingaun -> uniden (47), pterof -> pterro (9), each with all the
+# trees of the old code.
 absorbed <- pairs[sp_condit %in% codes_gone]
 absorbed[condit_spp, name_old := clean_text(i.Latin), on = .(sp_condit = sp)]
-absorbed[, sentence := absorbed_sentence(sp_condit, name_old, reference = CONDIT_REF)]
+absorbed[counts, n_total := i.n_condit, on = .(sp_condit = sp)]
+absorbed[, sentence := absorbed_sentence(sp_condit, name_old, N, n_total, reference = CONDIT_REF)]
 setorder(absorbed, sp_new, -N, sp_condit)
-absorbed[, .(sp_condit, name_old, sp_new, N)]
+absorbed[, .(sp_condit, name_old, sp_new, N, n_total)]
 
 # Codes no longer used whose trees all left the database, or went to a code
 # without a row (uniden when INCLUDE_UNIDEN = FALSE), have no note: they are
@@ -509,14 +509,14 @@ if (length(codes_gone_unplaced)) {
   note(paste("codes no longer used without a note in the species table:", show_codes(unique(codes_gone_unplaced))))
 }
 
-# --- 6c. Notes --------------------------------------------------------------------
-# Each fact is written once. The columns hold what changed since Condit et al.
-# (2019): the former name and the kind of change (NameCondit2019,
-# NameChange), and the re-identified trees with their numbers
-# (ReidentifiedFrom, ReidentifiedTo). Notes holds only what no column says:
-# the note of the stage-1 table first, then that uniden is not a taxon, that
-# the code was not used in Condit et al. (2019), and the codes no longer used
-# whose trees are now under this code, with their former name.
+# --- 6b. Notes --------------------------------------------------------------------
+# Each fact is written once. The columns hold what changed in the name since
+# Condit et al. (2019): the former name and the kind of change
+# (NameCondit2019, NameChange). Notes holds only what no column says: the
+# note of the stage-1 table first, then that uniden is not a taxon, that the
+# code was not used in Condit et al. (2019), and the codes no longer used
+# whose trees are now under this code, with their former name and the number
+# of their trees.
 spp[, note_uniden := fifelse(sp == UNIDEN_CODE, "Stems not identified to species; not a taxon.", "")]
 spp[, note_new := fifelse(sp %in% codes_new, paste0("Code not used in ", CONDIT_REF, "."), "")]
 spp[, note_absorbed := ""]
@@ -531,8 +531,8 @@ bio_check(
 )
 rm(absorbed_rows)
 
-# No repetition: the notes do not repeat the former name of the code, nor the
-# numbers of trees of ReidentifiedFrom / ReidentifiedTo
+# No repetition: the notes do not repeat the former name of the code, nor
+# list re-identified trees code by code (the files of the changes of code do)
 bio_check(
   spp[!is.na(Notes) & !is.na(NameCondit2019), !any(mapply(grepl, NameCondit2019, Notes, fixed = TRUE))],
   "the notes do not repeat NameCondit2019",
@@ -540,7 +540,7 @@ bio_check(
 )
 bio_check(
   !any(grepl("[a-z0-9]{6} \\([0-9]+\\)", spp$Notes)),
-  "the notes do not repeat the counts of re-identified trees"
+  "the notes do not list re-identified trees code by code"
 )
 
 # The codes with a note
@@ -552,7 +552,7 @@ spp[!is.na(Notes), .(sp, Notes)]
 out_cols <- c(
   "sp", "Order", "Family", "Genus", "SpeciesName", "Latin", "InfraspecificRank", "InfraspecificEpithet",
   "Authority", "Synonyms", "Lifeform_RFoster", "Lifeform_RPerez_SAguilar", "CommonName", "Herbarium",
-  "NameCondit2019", "NameChange", "ReidentifiedFrom", "ReidentifiedTo", "Notes"
+  "NameCondit2019", "NameChange", "Notes"
 )
 spptable <- spp[, ..out_cols]
 
@@ -571,16 +571,16 @@ bio_check(
 )
 rm(copy_cmp)
 
-# The uniden row has no names: only its re-identified trees and its notes
+# The uniden row has no names: only its notes
 if (INCLUDE_UNIDEN) {
   bio_check(
     spptable[sp == UNIDEN_CODE, all(is.na(unlist(.SD))), .SDcols = c(copied_cols, "Latin", "NameCondit2019", "NameChange")],
-    "the uniden row has no names, only re-identified trees and notes"
+    "the uniden row has no names, only notes"
   )
 }
 
 # The text built here has no empty strings, "NA" or outer spaces
-built_cols <- c("Latin", "NameCondit2019", "NameChange", "ReidentifiedFrom", "ReidentifiedTo", "Notes")
+built_cols <- c("Latin", "NameCondit2019", "NameChange", "Notes")
 built_text <- unlist(spptable[, ..built_cols], use.names = FALSE)
 built_text <- built_text[!is.na(built_text)]
 bio_check(
@@ -801,7 +801,7 @@ cat(
   "\nSummary\n",
   " species table:", nrow(spptable), "codes", if (INCLUDE_UNIDEN) "(uniden included, last row)" else "(uniden left out)", "\n",
   " codes whose name changed since Condit et al. (2019):", spptable[!is.na(NameChange), .N], "\n",
-  " codes with re-identified trees:", spptable[!is.na(ReidentifiedFrom) | !is.na(ReidentifiedTo), .N], "\n",
+  " codes that gained or lost trees by re-identification:", spptable[sp %in% c(pairs$sp_condit, pairs$sp_new), .N], "\n",
   " codes with a note:", spptable[!is.na(Notes), .N], "\n",
   " changes of code:", nrow(species_code_changes_summary), "| trees whose code changed:", nrow(species_code_changes), "\n",
   " written to", RTABLES_folder, "\n",

@@ -7,9 +7,8 @@
 #   full_name()           full name from its parts
 #   latin_stem()          epithet without its gender ending
 #   name_change_kind()    kind of change between two names
-#   format_code_counts()  codes with their tree counts, "tremsp (84)"
 #   absorbed_sentence()   note on a code no longer used, whose trees are
-#                         now under another code
+#                         now under another code, with their number
 #   join_notes()          sentences of a note joined into one text
 #   split_epithet()       epithet and infraspecific name of one text field
 #   authority_key()       authority without its format (spaces, periods,
@@ -93,23 +92,19 @@ name_change_kind <- function(genus_old, epithet_old, infra_old,
   )
 }
 
-# Codes with their tree counts, the largest group first (ties by code), e.g.
-# "swars2 (26), protpa (2)"; NA when there are none. For one code at a time
-# (call it by group).
-format_code_counts <- function(codes, counts) {
-  if (!length(codes)) {
-    return(NA_character_)
-  }
-  o <- order(-counts, codes)
-  paste0(codes[o], " (", counts[o], ")", collapse = ", ")
-}
-
 # Sentence for the note of a code that holds trees of a code no longer used:
-# the old code and its name in the reference release, e.g. "Code tremsp,
-# Trema unidentified in Condit et al. (2019), is no longer used." The number
-# of trees is not repeated: it is in the column ReidentifiedFrom.
-absorbed_sentence <- function(old_code, old_name, reference = "Condit et al. (2019)") {
-  paste0("Code ", old_code, ", ", old_name, " in ", reference, ", is no longer used.")
+# the old code, its name in the reference release and how many of its trees
+# are now under this code, e.g. "Code tremsp, Trema unidentified in Condit et
+# al. (2019), is no longer used; its 84 trees are under this code."
+#   n_here  : trees of the old code that are now under this code
+#   n_total : trees of the old code in the reference release
+absorbed_sentence <- function(old_code, old_name, n_here, n_total, reference = "Condit et al. (2019)") {
+  trees <- data.table::fifelse(
+    n_here == n_total,
+    data.table::fifelse(n_total == 1L, "its tree is under this code", paste0("its ", n_total, " trees are under this code")),
+    paste0(n_here, " of its ", n_total, " trees ", data.table::fifelse(n_here == 1L, "is", "are"), " under this code")
+  )
+  paste0("Code ", old_code, ", ", old_name, " in ", reference, ", is no longer used; ", trees, ".")
 }
 
 # The sentences of a note joined into one text, row by row: each part is

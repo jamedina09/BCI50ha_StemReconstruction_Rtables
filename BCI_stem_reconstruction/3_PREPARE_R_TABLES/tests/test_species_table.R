@@ -89,19 +89,19 @@ test_that("name_change_kind is vectorised, recycles IDLevel and takes no rows", 
   expect_identical(name_change_kind("Nectandra", "fuzzy", NA, "Nectandra", "fuzzy", NA, id_level_old = "genus"), NA_character_)
 })
 
-test_that("format_code_counts: largest group first, ties by code, NA when empty", {
-  expect_identical(format_code_counts(c("protpa", "tet2pa", "swars2"), c(2L, 2L, 26L)), "swars2 (26), protpa (2), tet2pa (2)")
-  expect_identical(format_code_counts(character(0), integer(0)), NA_character_)
-})
-
-test_that("absorbed_sentence: the old code and its name, no tree counts", {
+test_that("absorbed_sentence: the old code, its name and how many of its trees are under this code", {
   expect_identical(
-    absorbed_sentence("tremsp", "Trema unidentified"),
-    "Code tremsp, Trema unidentified in Condit et al. (2019), is no longer used."
+    absorbed_sentence("tremsp", "Trema unidentified", 84L, 84L),
+    "Code tremsp, Trema unidentified in Condit et al. (2019), is no longer used; its 84 trees are under this code."
   )
   expect_identical(
-    absorbed_sentence(c("a", "b"), c("A a", "B b"), reference = "R"),
-    c("Code a, A a in R, is no longer used.", "Code b, B b in R, is no longer used.")
+    absorbed_sentence(c("a", "b", "c", "d"), c("A a", "B b", "C c", "D d"), c(1L, 2L, 1L, 3L), c(1L, 5L, 4L, 3L), reference = "R"),
+    c(
+      "Code a, A a in R, is no longer used; its tree is under this code.",
+      "Code b, B b in R, is no longer used; 2 of its 5 trees are under this code.",
+      "Code c, C c in R, is no longer used; 1 of its 4 trees is under this code.",
+      "Code d, D d in R, is no longer used; its 3 trees are under this code."
+    )
   )
 })
 
@@ -231,18 +231,27 @@ test_that("real data: one row per change of code, with its number of trees", {
   expect_identical(smr$Latin, spp[match(smr$sp, sp), Latin])
 })
 
-test_that("real data: ReidentifiedFrom / ReidentifiedTo equal the counts of the trees", {
+test_that("real data: re-identified trees only in the files of the changes; codes no longer used counted in the notes", {
   skip_if_not(real_ok, "no R tables / species-table outputs found")
-  fmt <- function(codes) {
-    if (!length(codes)) return(NA_character_)
-    t <- table(codes)
-    o <- order(-as.integer(t), names(t))
-    paste0(names(t)[o], " (", as.integer(t)[o], ")", collapse = ", ")
+  # the species table has no columns of re-identified trees
+  expect_false(any(grepl("^Reidentified", names(spp))))
+  # the note of a code that holds the trees of a code no longer used says how
+  # many of them it holds, counted from the trees of the two releases
+  gone <- setdiff(unique(condit_trees$sp), unique(new_trees$sp))
+  both <- merge(condit_trees[sp %in% gone, .(treeID, sp_old = sp)], new_trees[, .(treeID, sp_new = sp)], by = "treeID")
+  held <- both[, .N, by = .(sp_old, sp_new)]
+  held[condit_trees[, .N, by = sp], n_total := i.N, on = .(sp_old = sp)]
+  expect_gt(nrow(held), 0L)
+  for (r in seq_len(nrow(held))) {
+    h <- held[r]
+    trees <- if (h$N == h$n_total) {
+      if (h$N == 1L) "its tree is under this code" else sprintf("its %d trees are under this code", h$N)
+    } else {
+      sprintf("%d of its %d trees %s under this code", h$N, h$n_total, if (h$N == 1L) "is" else "are")
+    }
+    expect_true(grepl(sprintf("Code %s, .* is no longer used; %s.", h$sp_old, trees), spp[sp == h$sp_new, Notes]), info = paste(h$sp_old, h$sp_new))
   }
-  from <- vapply(spp$sp, function(s) fmt(chg[sp == s, spCondit2019]), "")
-  to <- vapply(spp$sp, function(s) fmt(chg[spCondit2019 == s, sp]), "")
-  expect_identical(spp$ReidentifiedFrom, unname(from))
-  expect_identical(spp$ReidentifiedTo, unname(to))
+  cat(sprintf("  codes no longer used: %s\n", held[, paste0(sp_old, " -> ", sp_new, " (", N, " of ", n_total, ")", collapse = ", ")]))
 })
 
 flora_file <- file.path(data_dir, "RAW", "sp_tables", "flora_panama_oct_9_2026", "Lista de especies de la Flora de Panamá_nov25 original.xlsx")
@@ -278,7 +287,7 @@ test_that("real data: former names and notes", {
   expect_identical(spp$NameCondit2019[changed], old[changed])
   expect_identical(!is.na(spp$NameChange), changed)
   # Each fact once: the notes do not repeat the former name (NameCondit2019)
-  # nor the tree counts (ReidentifiedFrom / ReidentifiedTo)
+  # nor list re-identified trees code by code (the files of the changes do)
   with_both <- changed & !is.na(spp$Notes)
   expect_false(any(mapply(grepl, spp$NameCondit2019[with_both], spp$Notes[with_both], fixed = TRUE)))
   expect_false(any(grepl("[a-z0-9]{6} \\([0-9]+\\)", spp$Notes)))
