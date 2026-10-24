@@ -735,8 +735,8 @@ spp_flora[mnemonic %in% "nects3", notes := "No longer present: recorded alive un
 # pterro includes the trees recorded as pterof (Pterocarpus officinalis does
 # not occur in the plot; R. Pérez, email 1). The note gives only the reason:
 # the code pterof and its trees are described by the stage-3 species table
-# (3_create_species_table_BCI.R: Notes and ReidentifiedFrom), so they are not
-# repeated here.
+# (3_create_species_table_BCI.R: the Notes of pterro, with the number of
+# trees), so they are not repeated here.
 spp_flora[mnemonic %in% "pterro", notes := "Pterocarpus officinalis does not occur in the plot (R. Pérez, 2026)"]
 
 # =============================================================================

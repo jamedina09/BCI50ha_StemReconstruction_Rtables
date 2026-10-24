@@ -125,14 +125,14 @@ infraspecific name) are compared, not authority, family or other columns.
 | --- | --- |
 | `NameCondit2019` | the name of the code in Condit et al. (2019), when it differs from `Latin` |
 | `NameChange` | kind of change: `genus`, `genus and epithet`, `genus and epithet gender`, `epithet`, `epithet gender` (only the gender ending, e.g. *micrantha* → *micranthum*), `epithet spelling` (at most 2 other letters), `infraspecific name` or `morphospecies label`. It describes the change; it does not say which spelling is correct |
-| `ReidentifiedFrom` | the codes that the trees now under this code had in Condit et al. (2019), with the number of trees, e.g. `tremsp (84)` |
-| `ReidentifiedTo` | the codes that the trees of this code in Condit et al. (2019) have now |
-| `Notes` | only what no column says, so that each fact is written once: the note of the stage-1 table, then that `uniden` is not a taxon, that the code was not used in Condit et al. (2019), and the codes no longer used whose trees are now under this code, with their former name, e.g. "Code tremsp, Trema unidentified in Condit et al. (2019), is no longer used." Former names are only in `NameCondit2019` and `NameChange`, and numbers of trees only in `ReidentifiedFrom` and `ReidentifiedTo` |
+| `Notes` | only what no column says, so that each fact is written once: the note of the stage-1 table, then that `uniden` is not a taxon, that the code was not used in Condit et al. (2019), and the codes no longer used whose trees are now under this code, with their former name and the number of their trees, e.g. "Code tremsp, Trema unidentified in Condit et al. (2019), is no longer used; its 84 trees are under this code." Former names are only in `NameCondit2019` and `NameChange` |
 
 The releases are matched tree by tree on `treeID`, which pairs the same trees
 as matching on `tag`. A code no longer used (on 2026-10-15: tremsp, ingaun,
-pterof) has no row: the code that holds its trees names it in `Notes`, and
-counts the trees in `ReidentifiedFrom`. `uniden` (unidentified stems) gets a row without names, the
+pterof) has no row: the code that holds its trees names it in `Notes`, with
+the number of those trees. The trees re-identified from one code to another
+are not in the species table: they are in the two files of the changes of
+code below. `uniden` (unidentified stems) gets a row without names, the
 last row (`INCLUDE_UNIDEN` at the top of the script), so that every code of the R
 tables has a row: `merge()` of a census table with the species table is an
 inner join by default and would drop the uniden stems otherwise.
