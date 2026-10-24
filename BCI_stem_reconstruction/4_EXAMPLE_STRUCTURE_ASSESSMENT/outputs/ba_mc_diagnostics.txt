@@ -1,3 +1,6 @@
 CHECK OK: Every stem-census row has a date (ExactDate, completed from the stage-3 date column)
 CHECK OK: Species table found: /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/BCI_stem_reconstruction/DATA/RTABLES/bci.spptable.rdata
 CHECK OK: One row per species code in the species table
+CHECK OK: At least two censuses are available
+CHECK OK: One measurement per stem and census in the exported reconstruction
+CHECK OK: Every alive-but-unmeasured census lies in time between two measurements of its stem and gets an interpolated DBH
