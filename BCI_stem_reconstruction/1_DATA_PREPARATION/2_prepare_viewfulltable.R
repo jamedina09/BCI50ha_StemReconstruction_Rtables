@@ -53,7 +53,7 @@ if (basename(workspace_root) == "BCI_stem_reconstruction") {
 }
 
 # Export received on 2026-10-13. Compared with the previous export (see
-# DATA/RAW/compare_viewfulltable_bci_old_and_oct23_2026.R) it adds census 9 and
+# DATA/RAW/compare_viewfulltable_bci_old_and_oct13_2026.R) it adds census 9 and
 # new taxonomy names for 49 species; all other columns and records are the same.
 INPUT_folder_1 <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RAW", "oct_13_2026")
 # Previous export, read only to check that the records are the same

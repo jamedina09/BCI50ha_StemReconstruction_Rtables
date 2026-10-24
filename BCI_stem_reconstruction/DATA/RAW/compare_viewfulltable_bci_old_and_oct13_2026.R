@@ -1,5 +1,5 @@
 # ========================================================================
-# SCRIPT: compare_viewfulltable_bci_old_and_oct23_2026.R
+# SCRIPT: compare_viewfulltable_bci_old_and_oct13_2026.R
 # PURPOSE: Reassess the three BCI `ViewFullTable` files kept in DATA/RAW:
 #          what each one contains and how they differ, comparing every pair
 #          of tables with the same method.
