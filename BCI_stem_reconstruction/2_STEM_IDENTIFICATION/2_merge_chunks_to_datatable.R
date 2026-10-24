@@ -120,7 +120,6 @@ for (i in seq_len(n_groups)) {
 # 3. MERGE PARQUET PARTS INTO FINAL DATASET
 # =============================================================================
 
-
 # Open all intermediate parts as one unified Arrow dataset
 temp_files <- list.files(temp_dir, "\\.parquet$", full.names = TRUE)
 ds_final <- open_dataset(temp_files, format = "parquet", unify_schemas = FALSE)
