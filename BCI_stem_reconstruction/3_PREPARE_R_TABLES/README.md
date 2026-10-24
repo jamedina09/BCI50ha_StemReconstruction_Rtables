@@ -27,7 +27,8 @@ ForestGEO-format census tables plus QC exports used for downstream analysis.
   For the botanists it also lists the codes whose name or authority differs
   from the Flora de Panamá list (`DATA/CHECKS/species_changes_from_flora_panama_bci.csv`).
 - `rstatus_functions.R` — The `Rstatus` and `dbh` rules as small functions,
-  sourced by `2_create_R_tables_BCI.R` and by the tests.
+  and `tree_state()`, the independent check of the tree status; sourced by
+  `2_create_R_tables_BCI.R` and by the tests.
 - `species_table_functions.R` — The name, code and note rules of
   `3_create_species_table_BCI.R`, sourced by it and by the tests.
 
@@ -176,8 +177,24 @@ they are, and `read.csv()` needs `fileEncoding = "UTF-8-BOM"`.
 fixtures, every combination of raw states for small trees against a simple
 reference implementation (`tests/reference_rstatus.R`), the validity of every
 `Rstatus` sequence (`tests/rstatus_validity.R`), and the exported R tables
-cell by cell (`Rstatus`, `dbh`, `DFstatus`, `ExactDate`, `date`, location and
-`stemID`). Run from the project root:
+cell by cell (`Rstatus`, `dbh`, `DFstatus`, `ExactDate`, `date`, location,
+`stemID`, row order and column types). It also checks every possible case:
+
+- every one of the 12 raw states (each `Status` with and without a DBH, and
+  no row) gets the code of the rules: evidence of life, dead record (a stump
+  is one) or no record;
+- every stem history over the 9 censuses (3^9 code sequences) in every tree
+  context (the last census in which any stem of the tree is alive) equals the
+  rules written from scratch. `Rstatus` depends only on these two things, so
+  this covers every raw history of a stem in a tree of any size;
+- `tree_state()` (the script's check I4) equals the tree rule in every tree of
+  1-4 stems built from the 55 stem histories that the rules can produce. Three
+  stems already give every combination a census can hold, so this covers
+  trees of any size;
+- every raw state x `Rstatus` combination in the exported tables is one the
+  rules can produce.
+
+Run from the project root:
 
 ```r
 testthat::test_file("BCI_stem_reconstruction/3_PREPARE_R_TABLES/tests/test_Rstatus.R")
