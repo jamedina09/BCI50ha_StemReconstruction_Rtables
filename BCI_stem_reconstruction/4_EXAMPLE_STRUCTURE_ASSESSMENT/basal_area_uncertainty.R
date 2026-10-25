@@ -154,6 +154,9 @@ report_splice_methods <- TRUE
 # Palms and strangler figs, as in biomass_stocks_fluxes.R (see NOTES above).
 remove_strangler_figs <- TRUE # exclude all giant Ficus strangler spp. (Rutishauser 2020)
 use_median_palm_dbh <- TRUE # replace palm DBH with the species median (except Socratea)
+# Taper correction, as in biomass_stocks_fluxes.R
+use_taper_species_terms <- TRUE # taper model with the species terms of Cushman et al. 2014, Table 3 (FALSE: the base class for every species)
+taper_palms <- FALSE # FALSE: palms keep their measured DBH (no buttress taper; Socratea is measured above its stilt roots)
 
 out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -275,15 +278,23 @@ if (remove_strangler_figs) {
     cat(sprintf("[STRANGLER] Removed %d trees / %d stems.\n", length(strangler_trees), n_strangler_stems))
 }
 
-# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`
-# (taper model of Cushman et al. 2014):
-#   b      = exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
-#   dbh_at = dbh_cm / exp(-b * (hom - common_hom))
-# dbh_mm in mm, hom in m (NA is read as common_hom). Returns mm; NA where the
-# DBH or the HOM is not positive. Stops when the two vectors differ in length.
-taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
-    if (length(dbh_mm) != length(hom)) {
-        stop("'dbh_mm' and 'hom' must have the same length")
+# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`, with
+# Model 1 of Cushman et al. (2014) and its parameter b from their Table 3:
+#   b      = exp(-2.0205 + species term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
+#   dbh_at = dbh_cm * exp(b * (hom - common_hom))
+# The species terms (TAPER_SPECIES_2014) are the deviations of their ten focal
+# species from the base class (every other species), by BCI code; quaras and
+# tet2pa are now named Quararibea stenophylla and Protium stevensonii. With
+# sp = NULL every stem takes the base class. dbh_mm in mm, hom in m (NA is
+# read as common_hom). Returns mm; NA where the DBH or the HOM is not
+# positive. Stops when the vectors differ in length.
+TAPER_SPECIES_2014 <- c(
+    quaras = 0.4865, ceibpe = 0.0495, huracr = 0.0086, diptpa = 0.0150, alsebl = 0.1440,
+    brosal = 0.3874, cavapl = 0.7982, anacex = 0.4371, tet2pa = -0.5141, tab2ar = 0.3576
+)
+taper_2014 <- function(dbh_mm, hom, sp = NULL, common_hom = 1.3) {
+    if (length(dbh_mm) != length(hom) || (!is.null(sp) && length(sp) != length(hom))) {
+        stop("'dbh_mm', 'hom' and 'sp' must have the same length")
     }
     dbh_mm <- as.numeric(dbh_mm)
     hom <- as.numeric(hom)
@@ -296,7 +307,8 @@ taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
     dbh_cm[dbh_cm <= 0] <- NA_real_
     hom_for_log <- hom
     hom_for_log[hom_for_log <= 0] <- NA_real_
-    b <- exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
+    sp_term <- if (is.null(sp)) 0 else fcoalesce(unname(TAPER_SPECIES_2014[sp]), 0)
+    b <- exp(-2.0205 + sp_term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
     out <- dbh_cm / (exp(-b * (hom - common_hom)))
     # convert back to mm and set invalid values to NA
     out_mm <- out * 10
@@ -304,9 +316,15 @@ taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
     return(out_mm)
 }
 
-# taper_2014() takes the DBH in mm and returns mm.
+# taper_2014() takes the DBH in mm and returns mm. Palms keep the recorded DBH
+# (taper_palms = FALSE).
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
-rec[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
+if (use_taper_species_terms) {
+    bio_check(all(names(TAPER_SPECIES_2014) %in% rec$sp), "The ten focal species of the taper model (Cushman et al. 2014) are in the data",
+        examples = setdiff(names(TAPER_SPECIES_2014), rec$sp))
+}
+rec[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom, sp = if (use_taper_species_terms) sp else NULL)]
+if (!taper_palms) rec[Family %in% "Arecaceae", dbh_t := dbh]
 rec[, dbh_raw := dbh]
 rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 

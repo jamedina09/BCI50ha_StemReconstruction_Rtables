@@ -74,12 +74,16 @@ workspace_root <- getwd()
 # lower/upper_ddbh_threshold  — plausible annualised DBH growth bounds (cm yr⁻¹)
 # hom_change_threshold        — POM shift (m) above which a row is flagged as outlier
 # dbh_interp_method           — "linear", "locf", or "mean" (DBH NA-fill method)
+# use_taper_species_terms     — TRUE: taper with the species terms of Cushman 2014
+# taper_palms                 — FALSE: palms keep their measured DBH
 
 remove_strangler_figs <- TRUE # exclude trees of four strangler Ficus spp. with a stem > 500 mm DBH (Rutishauser 2020)
 use_median_palm_dbh <- TRUE # replace palm DBH with species median (except Socratea)
 biomass_allometry <- "chave14" # "chave14" or "chave05"
 use_local_height_allometry <- TRUE # use Martinez-Cano 2019 height model
 use_kohyama19_correction <- TRUE # Kohyama et al. 2019 productivity correction
+use_taper_species_terms <- TRUE # taper model with the species terms of Cushman et al. 2014, Table 3 (FALSE: the base class for every species)
+taper_palms <- FALSE # FALSE: palms keep their measured DBH (no buttress taper; Socratea is measured above its stilt roots)
 
 lower_ddbh_threshold <- -2.5 # cm yr⁻¹; minimum plausible DBH growth
 upper_ddbh_threshold <- 7.5 # cm yr⁻¹; maximum plausible DBH growth
@@ -263,15 +267,23 @@ rm(large_strangler_figs)
 # ============================================================
 # Section 5 — Taper correction
 # ============================================================
-# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`
-# (taper model of Cushman et al. 2014):
-#   b      = exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
-#   dbh_at = dbh_cm / exp(-b * (hom - common_hom))
-# dbh_mm in mm, hom in m (NA is read as common_hom). Returns mm; NA where the
-# DBH or the HOM is not positive. Stops when the two vectors differ in length.
-taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
-  if (length(dbh_mm) != length(hom)) {
-    stop("'dbh_mm' and 'hom' must have the same length")
+# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`, with
+# Model 1 of Cushman et al. (2014) and its parameter b from their Table 3:
+#   b      = exp(-2.0205 + species term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
+#   dbh_at = dbh_cm * exp(b * (hom - common_hom))
+# The species terms (TAPER_SPECIES_2014) are the deviations of their ten focal
+# species from the base class (every other species), by BCI code; quaras and
+# tet2pa are now named Quararibea stenophylla and Protium stevensonii. With
+# sp = NULL every stem takes the base class. dbh_mm in mm, hom in m (NA is
+# read as common_hom). Returns mm; NA where the DBH or the HOM is not
+# positive. Stops when the vectors differ in length.
+TAPER_SPECIES_2014 <- c(
+  quaras = 0.4865, ceibpe = 0.0495, huracr = 0.0086, diptpa = 0.0150, alsebl = 0.1440,
+  brosal = 0.3874, cavapl = 0.7982, anacex = 0.4371, tet2pa = -0.5141, tab2ar = 0.3576
+)
+taper_2014 <- function(dbh_mm, hom, sp = NULL, common_hom = 1.3) {
+  if (length(dbh_mm) != length(hom) || (!is.null(sp) && length(sp) != length(hom))) {
+    stop("'dbh_mm', 'hom' and 'sp' must have the same length")
   }
   dbh_mm <- as.numeric(dbh_mm)
   hom <- as.numeric(hom)
@@ -284,7 +296,8 @@ taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
   dbh_cm[dbh_cm <= 0] <- NA_real_
   hom_for_log <- hom
   hom_for_log[hom_for_log <= 0] <- NA_real_
-  b <- exp(-2.0205 - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
+  sp_term <- if (is.null(sp)) 0 else fcoalesce(unname(TAPER_SPECIES_2014[sp]), 0)
+  b <- exp(-2.0205 + sp_term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
   out <- dbh_cm / (exp(-b * (hom - common_hom)))
   # convert back to mm and set invalid values to NA
   out_mm <- out * 10
@@ -293,9 +306,15 @@ taper_2014 <- function(dbh_mm, hom, common_hom = 1.3) {
 }
 
 # taper_2014() takes the DBH in mm and returns mm. `dbh` becomes the
-# taper-corrected value; the recorded one is kept in dbh_raw.
+# taper-corrected value; the recorded one is kept in dbh_raw. Palms keep the
+# recorded DBH (taper_palms = FALSE).
 df_stem[, hom := ifelse(is.na(hom), 1.3, hom)]
-df_stem[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom)]
+if (use_taper_species_terms) {
+  bio_check(all(names(TAPER_SPECIES_2014) %in% df_stem$sp), "The ten focal species of the taper model (Cushman et al. 2014) are in the data",
+    examples = setdiff(names(TAPER_SPECIES_2014), df_stem$sp))
+}
+df_stem[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom, sp = if (use_taper_species_terms) sp else NULL)]
+if (!taper_palms) df_stem[Family == "Arecaceae", dbh_t := dbh]
 df_stem[, dbh_raw := dbh]
 df_stem[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 
@@ -487,7 +506,9 @@ agb_bci <- function(dbh, # dbh, in cm
                     method = "chave14",
                     use_height_allom = TRUE) {
   if (use_height_allom) {
-    # with multi-species height allometry from Martinez Cano et al 2019
+    # community-level height model of Martinez Cano et al. 2019 (Eq. 7); 58.0 =
+    # 57.1 * exp(0.181^2 / 2) includes the bias correction for the
+    # back-transformation from log H
     h <- 58.0 * dbh^0.73 / (21.8 + dbh^0.73)
     if (method == "chave05") {
       # Chave et al 2005 - moist forests, with height (in Mg)
@@ -513,7 +534,8 @@ agb_bci <- function(dbh, # dbh, in cm
     }
   }
   if (!is.null(palms)) {
-    # palm specific allometry from Goodman et al. 2013
+    # palm specific allometry from Goodman et al. 2013 (Arecaceae, diameter only):
+    # ln(AGB) = -3.3488 + 2.7483 ln(D); 0.0417565 = exp(-3.3488) * exp(0.5876^2 / 2)
     agb[palms] <- 0.0417565 * dbh[palms]^2.7483 / 1000
   }
   return(agb)
