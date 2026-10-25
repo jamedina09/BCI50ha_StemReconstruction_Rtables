@@ -1,0 +1,3189 @@
+############################################################
+### 1_main_cpp_chunk_bci.R — dp_global BCI chunked driver (stage 2)
+############################################################
+# Goal
+#   Reconstructs the stem identities of the BCI multiple-stem tags with the
+#   engines of dp_global/R/dp_global_main.R. Groups (Tag + species) are
+#   processed in parallel chunks of DP_CHUNK_SIZE and written to disk chunk by
+#   chunk. Run from the project root (see the usage guide at the end of the file
+#   and run_chunk_bci.md).
+#
+# - Loads the stage-1 table INPUT_FILE (RDS; DBH in mm, converted to cm here)
+#   and assigns the growth_form labels tree / shrub / palm / strangler / fern.
+# - Estimates biological parameters from the censuses from ANCHOR_START_CENSUS
+#   on (2010-2023): one set per species with enough data (trees, shrubs,
+#   palms) and pooled sets for the other species of each growth form (all
+#   trees, all shrubs, palms + tree ferns, strangler figs).
+# - Runs the reconstruction for the multiple-stem tags only
+#   (single_stem_tags == FALSE); single-stem tags are added by
+#   2_merge_chunks_to_datatable.R.
+# - BCI-specific TrueStemID pre-propagation (Steps 1–3) anchors unambiguous
+#   rows before handing control to the DP solver.
+# - After the engine, each chunk goes through the post-engine helper chain
+#   (pin-track rejoin, backfills, terminal-to-host, broken-below invariants,
+#   renumbering 1..N per tag, posterior path files).
+#
+# Outputs (in <BASE_OUT_DIR>/<run folder>/): per-chunk
+#   stem_reconstruction_dp_global_rcpp_chunk_NNN.feather with _done.txt (or
+#   _failed.txt) markers, posteriors/tag_<Tag>_posterior_samples_*_paths.feather,
+#   run_started.txt, run_finished.txt, run_log.txt, run_parameters_full.txt,
+#   and the run record (section 8.1): run_settings.txt, rerun_command.sh, a
+#   copy of this script, run_summary.txt (and uncommitted_changes.patch), also
+#   kept in RUN_RECORD_DIR/<run folder>/ with one line per run in
+#   RUN_RECORD_DIR/runs_index.csv.
+#
+
+# Note for orchestrators
+# - This script accepts CLI overrides of internal variables via --KEY=VALUE.
+# - See the `CLI_REFERENCE` variable below for the canonical keys; they
+#   should construct flags matching these names (case-insensitive, '-' or '_').
+#
+# Table of Contents
+#  0) Housekeeping       — workspace reset guard
+#  1) CLI parsing        — parse_args(); overrides applied later in section 4
+#  2) Dependencies       — package checks and imports
+#  3) Defaults           — editable run defaults
+#    3.1) Biological parameter estimation settings
+#    3.2) DP solver settings
+#    3.3) Chunking & posterior sampling settings
+#    3.4) Parallelism settings
+#    3.5) Output & path settings
+#  4) CLI reference & override mapping — CLI_REFERENCE list; apply overrides
+#  5) Input validation   — validate INPUT_FILE; derive boolean flags; compute out_dir
+#  6) Source project code — load dp_global R modules
+#  7) Helpers            — filesystem, logging, data-manipulation utilities
+#  8) Core DP functions  — run_dp_one_group(); maybe_add_posterior_bins()
+#    8.1) Run record      — write_run_record(): settings, rerun command, provenance
+#  9) Main pipeline      — run_main_chunked(); chunk loop; incremental writes
+# 10) Post-run utilities — merge_chunk_rds_to_csv(); merge_chunks_to_csv()
+# 11) Entrypoint         — execute run_main_chunked() when called via Rscript
+
+############################################################
+### 0) Housekeeping
+############################################################
+# Avoid nuking the user's interactive environment when sourcing this file.
+# Only clear the workspace when running as a top-level script.
+if (sys.nframe() == 0L) {
+    rm(list = ls())
+}
+
+############################################################
+### 1) CLI parsing — Command-line parsing & overrides
+############################################################
+# Parse command-line arguments to override defaults.
+# Usage: Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R --DP_CHUNK_SIZE=18 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=18
+# Supported args: any config variable name prefixed with --
+# parse_args() returns a named list of the overrides on the command line:
+#   --KEY=VALUE  "true"/"false" become logical, whole numbers integer, decimals
+#                numeric; the keys in .char_keys always stay character
+#   --FLAG       TRUE
+#   -h, --help   help = TRUE
+# The values are applied to the variables of the same name in section 4.
+
+parse_args <- function() {
+    args <- commandArgs(trailingOnly = TRUE)
+    overrides <- list()
+    for (arg in args) {
+        # Short help flag
+        if (identical(arg, "-h") || identical(arg, "--help")) {
+            overrides[["help"]] <- TRUE
+            next
+        }
+
+        if (grepl("^--", arg)) {
+            # --key=value or --FLAG
+            if (grepl("=", arg)) {
+                kv <- strsplit(sub("^--", "", arg), "=", fixed = TRUE)[[1]]
+                key <- kv[1]
+                val <- kv[2]
+                # Try to convert to appropriate type (handle booleans, integers, floats, including negatives)
+                # Keys whose values must stay character (e.g. Tag IDs with leading zeros)
+                .char_keys <- c(
+                    "WHICH_TAG", "PROB_SPECIES", "DP_FALLBACK_GROWTH_FORMS",
+                    "NON_TAPER_CORRECTED_GROWTH_FORMS", "CONFIG_NAME",
+                    "INPUT_FILE", "POSTERIOR_SAMPLES_FORMAT", "SPECIES_COL",
+                    "TAG_FILTER_FILE", "DBH_ROUND_CENSUSES", "RECRUIT_RATE_UNIT", "COVERAGE_RULE",
+                    "BB_DBH_RULE", "PROB_EXPORT_RULE"
+                )
+                if (tolower(val) %in% c("true", "false")) {
+                    val <- as.logical(tolower(val))
+                } else if (!(toupper(key) %in% .char_keys) && grepl("^[+-]?[0-9]+$", val)) {
+                    val <- as.integer(val)
+                } else if (!(toupper(key) %in% .char_keys) && grepl("^[+-]?[0-9]*\\.[0-9]+$", val)) {
+                    val <- as.numeric(val)
+                }
+            } else {
+                key <- sub("^--", "", arg)
+                # Valueless flags are treated as TRUE
+                val <- TRUE
+            }
+            overrides[[key]] <- val
+        } else if (grepl("^-[A-Za-z]$", arg)) {
+            # Short single-letter flags (-h handled above); treat others as boolean TRUE
+            key <- sub("^-", "", arg)
+            overrides[[key]] <- TRUE
+        }
+    }
+    overrides
+}
+
+overrides <- parse_args()
+
+############################################################
+### 2) Dependencies — package imports
+############################################################
+
+if (!requireNamespace("data.table", quietly = TRUE)) {
+    stop("Please install the 'data.table' package to run this script.")
+}
+library(data.table)
+
+############################################################
+### 3) Defaults — editable run defaults
+############################################################
+
+############################################################
+### 3.1) Biological parameter estimation settings
+############################################################
+# Input data and species handling
+
+# Project root: the working directory when running from the repo root
+# (i.e. /path/to/BCI50ha_StemReconstruction_Rtables).
+workspace_root <- getwd()
+
+INPUT_FILE <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_single_vs_multiple_stem_tags.rds")
+FORCE_ONE_SPECIES_PARAMETERS <- FALSE
+if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
+    FORCED_SPECIES_LABEL <- "all"
+    message("[dp_global main_cpp_chunk_bci.R] FORCE_ONE_SPECIES_PARAMETERS=TRUE: using single species label '", FORCED_SPECIES_LABEL, "' for all trees.")
+} else {
+    message("[dp_global main_cpp_chunk_bci.R] FORCE_ONE_SPECIES_PARAMETERS=FALSE: using species column from data for parameter estimation.")
+}
+SPECIES_COL <- NULL
+
+# Biological parameter sources and fixed values.
+# _SOURCE controls whether the bound is estimated from data ("data") or fixed ("fixed").
+# _FIXED is the value used when _SOURCE = "fixed". MAX_SHRINK_FIXED and
+# MAX_GROWTH_FIXED also bound the growth increments used in the estimation, set
+# the engines' growth bounds and (times PRUNE_BOUND_FACTOR) the prune bounds;
+# RECRUIT_MAX_FIXED also caps the recruits used to fit the recruit sizes.
+USE_MEASUREMENT_ERROR <- TRUE
+# DBH recorded in classes and rounded down: CensusIDs (comma-separated). In BCI
+# 1982 and 1985 (censuses 1 and 2) saplings were measured in 5 mm increments,
+# rounded down (CTFS R Package growth tutorial, `rnd` argument; Piponiot et al.
+# 2024 Appendix S1, as in biomass_stocks_fluxes.R Section 10b: DBH < 5.5 cm).
+# The data agree: 100% / 99.9% of DBH < 50 mm are multiples of 5 mm, against
+# ~20% from 1990 on; a recorded 50 mm stands for 50-54.9 mm. The engines treat such a DBH d as a true size in
+# [d, d + DBH_ROUND_WIDTH_MM): the expected growth uses the class mid-point and
+# the growth variance gains WIDTH^2 / 12 per rounded value, so a 10 -> 15 mm
+# step between 1982 and 1985 is not read as an impossible jump that splits
+# one stem into a death and a recruit. A visible check confirms the rounding in
+# the data at run time. --DBH_ROUND_CENSUSES=none turns it off.
+DBH_ROUND_CENSUSES <- "1,2"
+DBH_ROUND_MAX_MM <- 55
+DBH_ROUND_WIDTH_MM <- 5
+MAX_GROWTH_HARD_SOURCE <- "fixed"
+MAX_GROWTH_FIXED <- 5
+MAX_SHRINK_HARD_SOURCE <- "fixed"
+MAX_SHRINK_FIXED <- -0.5
+K_SHRINK_SOURCE <- "fixed"
+K_SHRINK_FIXED <- 0 # 0 to disable soft penalty
+K_GROWTH_SOURCE <- "fixed"
+K_GROWTH_FIXED <- 0 # 0 to disable soft penalty
+RECRUIT_MAX_SOURCE <- "fixed"
+RECRUIT_MAX_FIXED <- (MAX_GROWTH_FIXED * 5) + 0.9999
+# Recruitment rate lambda used by both engines (probability of a new stem in a
+# tree): "tree" = new stems per established tree per year (2010-2023 data);
+# "slot" = recruits per empty slot of the estimation grid, ~0.08/yr for
+# every species whatever its real recruitment (see dp_global_bio.R, section 9).
+RECRUIT_RATE_UNIT <- "tree"
+# Size coverage a species needs for its own parameter set (2010-2023 data): its
+# diameters must fill 4 equal bins on the log scale with >= 3 measurements each.
+# "minmax" spans the bins from the smallest to the largest diameter, so
+# a single out-of-range value (Beilschmiedia: one 2 mm record) leaves a bin
+# nearly empty and sends a well-sampled species to a pooled set. "union" also
+# accepts a species whose middle 95% of diameters fill the bins; in BCI it adds
+# beilpe, annoac, bactma, ast1st, hameax and pipeco and removes none.
+COVERAGE_RULE <- "union"
+
+############################################################
+### 3.2) DP solver settings
+############################################################
+# Controls the DP reconstruction: mode, anchor census, state-space limits,
+# slack tracks, growth-form fallbacks, and non-taper-corrected pruning bounds.
+DP_MODE <- "marginals+bins" # Options: "none", "map", "marginals", "marginals+bins". The chunked runner runs the DP for every mode; "+bins" adds DP_PosteriorBin
+# WHICH_TAG is not used for group selection in the chunked runner (all groups
+# are processed), but build_out_dir_name() reads it when RUN_ALL_TAGS=FALSE.
+# Keep it defined as 0 (meaning "all") for directory naming purposes.
+WHICH_TAG <- "0"
+ANCHOR_START_CENSUS <- 7L
+DP_VERBOSE <- TRUE
+DP_POSTERIOR_TOP_K <- 2L
+DP_MAX_TRACKS <- NULL # auto (computed from data)
+DP_MAX_STATES <- 10000L # largest number of assignment states per census for the DP; a tag above it goes to the probabilistic matcher (see dp_global/README.md, "Understanding max_states")
+DP_SLACK_TRACKS <- 1L # extra tracks, so that a death and a recruitment can share an interval
+# TRUE: the slack tracks are granted only when an anchor DBH is recruitable
+# (i.e., DBH <= Bio_Recruit_MaxDBH_unit + eps). FALSE grants them to every tag.
+DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE <- TRUE
+# Tolerance (cm) used when comparing anchor DBH to recruit_max_dbh
+DP_SLACK_REQUIRE_ANCHOR_EPS <- 1e-6
+# Growth forms sent to the probabilistic matcher instead of the DP.
+# Values must be growth_form labels of the data, which this script assigns
+# from Lifeform (Section 9): "tree", "shrub", "palm", "strangler", "fern".
+# They are matched exactly, and a visible check stops the run when a listed
+# value is not a label (e.g. "palms").
+DP_FALLBACK_GROWTH_FORMS <- character(0)
+# Growth forms that get the non-taper prune bounds (palms, strangler figs,
+# tree ferns): these show real DBH growth plus large apparent variation when
+# HOM changes. Wide base prune bounds prevent spurious pruning.
+# HOM tolerance adds per-census-pair widening when a HOM column is present.
+# Units: cm/year.  An empty NON_TAPER_CORRECTED_GROWTH_FORMS turns the override off.
+# Labels as assigned in Section 9 (checked at run time like
+# DP_FALLBACK_GROWTH_FORMS); the engine defaults "strangler_fig" / "tree_fern"
+# are not labels of this data. (Stage 1 applies the taper correction to
+# strangler figs, whose growth form contains "árbol"; palms and tree ferns
+# keep the uncorrected DBH.)
+PRUNE_BOUND_FACTOR <- 5
+NON_TAPER_CORRECTED_GROWTH_FORMS <- c("palm", "strangler", "fern")
+NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH <- PRUNE_BOUND_FACTOR * MAX_SHRINK_FIXED
+NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH <- PRUNE_BOUND_FACTOR * MAX_GROWTH_FIXED
+# HOM tolerance scale: cm of DBH tolerance per meter of HOM deviation from
+# 1.3 m, divided by the census interval to widen the annual bounds.
+# Set 0 to disable HOM widening.
+HOM_TOLERANCE_SCALE <- 2.0
+
+# Broken-below records. Up to 2010 a break is written on the tree's main-stem
+# record (PrimaryStem "main"): with the DBH of the largest living stem when
+# any stem was alive, as a stump otherwise; from 2015 every broken stem has
+# its own stump record (no DBH).
+# - DP_ALLOW_SEGMENT_SPLIT: TRUE solves a tag with a measured broken-below /
+#   R record before the anchor as two separate problems (every stem ends at the
+#   first such census and every stem of the next census starts new); FALSE
+#   treats that census like the later ones.
+# - BB_DBH_RULE: what a broken-below record WITH a DBH means.
+#   "r1"        rule R1: the record always starts a new stem;
+#   "main_ends" the main stem of the census before ends there; the record is
+#               matched like any other measurement but cannot continue it
+#               (with one stem before, it is always a new stem).
+# With the defaults (FALSE, "main_ends") the tree's other stems can continue
+# through a break before 2010, and the measured record can continue one of
+# them; only the main stem that broke ends there.
+DP_ALLOW_SEGMENT_SPLIT <- FALSE
+BB_DBH_RULE <- "main_ends"
+# Pins (TrueStemID) of measured broken-below / R records (Step 3a): TRUE pins
+# only records whose database StemID has another record (a pin on a record of
+# its own carries no identity and can block the link to a pinned 2010 stem).
+PIN_BB_REQUIRE_OTHER_RECORD <- TRUE
+# Step 3b: TRUE stops the propagation of a pin at a census in which its
+# database StemID has no record (the database attached a 2010 stem to an old
+# StemID with no record in between, e.g. tag 200431).
+PIN_STOP_AT_GAP <- TRUE
+# Step 3c: TRUE removes the pin from the records of a database StemID before
+# a link of that StemID, made before the field tags, that grows faster than
+# 99.9% of the tagged links of the species when another record of the tree in
+# the earlier census (unpinned, its StemID without a measured record in the
+# later census) grows into the later record within 99% of the tagged links.
+# The database attached the StemID of a small 2005 record to a 2010 stem that
+# continues another 2005 record, which then ended in 2005 (tag 170028: the
+# 2010 stem of 29 mm carries the StemID of a 10 mm 2005 record; the main stem
+# measured 29 mm in 2005). The engine places the freed records. Each fast link
+# and the record that fits it are written to pin_stop_at_fast_link.csv in the
+# run folder.
+PIN_STOP_AT_FAST_LINK <- TRUE
+# Pins hold after the engine (rows with the same TrueStemID stay one stem;
+# TrueStemID is never rewritten): the broken-below rules (R1/R2) do not cut
+# between rows with the same pin, and apply_terminal_to_host() leaves pinned
+# records where they are. Field-tagged stems (StemTag) are pinned by Step 1(a),
+# so each stays one stem: a broken-below record without a DBH that carries a
+# field tag is that stem with no measurable DBH at 1.3 m, e.g. a 2010 stump
+# whose tag is measured in 2015, or a stem measured, broken below and measured
+# again under its tag.
+# Exceptions, so that a stump stays the end record of the stem that broke (a
+# resprout measured later is a new stem): a dead / stem dead / broken-below /
+# missing record without a DBH that comes before any life of its own pin goes
+# to the stem that broke, as without hard pins, when it carries no field tag
+# (before 2010 the database shows a StemID's later tag on its earlier records;
+# those are not field tags) or its pin never lives (all its records go there
+# together). FALSE lets R1/R2 cut pins and rewrite TrueStemID.
+HARD_PINS <- TRUE
+# Field tags: StemTags placed in the field from this census on (BCI: 7 = 2010,
+# the first census that tagged every stem).
+FIELD_TAG_FIRST_CENSUS <- 7L
+# Probabilistic matcher: the sample it exports.
+#   "mea"       the sample whose links the other samples choose most often;
+#   "fewest_me" first the sample(s) with the fewest links that shrink beyond
+#               measurement error (CTFS rule), then as "mea".
+# In a blind test against the tagged censuses (2010 and 2015 identities
+# hidden) "fewest_me" removes most shrinking links but recovers no more true
+# links than "mea".
+PROB_EXPORT_RULE <- "mea"
+# DP posterior: tracks with no stem at the anchor and no pinned measurement are
+# interchangeable labels. TRUE counts each reconstruction once in the DP
+# marginals and posterior samples (not once per labeling of those tracks) and
+# gives the rows on them a label-free DP_PosteriorReconstructedProb (the share
+# of samples in which the row's stem ends at the same observation as in the
+# export). The exported reconstruction is the same either way. With TRUE the
+# probabilities no longer depend on the number of spare tracks.
+DP_POSTERIOR_LABEL_FREE <- TRUE
+# Blind test against the tagged censuses (diagnostics only). With
+# BLIND_MIN_CENSUS set, the engine input keeps only the censuses from it on and
+# every pin before ANCHOR_START_CENSUS is removed; BIO_ESTIMATION_START_CENSUS
+# (NULL = ANCHOR_START_CENSUS) is the first census of the parameter estimation.
+BLIND_MIN_CENSUS <- NULL
+BIO_ESTIMATION_START_CENSUS <- NULL
+
+# Posterior sampling defaults (200 samples; POSTERIOR_SAMPLES = 0 disables sampling)
+# - POSTERIOR_SAMPLES: number of full-path reconstructions to draw from the DP posterior
+# - POSTERIOR_SAMPLES_FORMAT: format of the final paths files ('rds','feather','csv')
+# - POSTERIOR_SAMPLES_PATH: optional path to write posterior files; when NULL DP writes to out_dir/posteriors
+# - POSTERIOR_SAMPLE_SEED: integer seed for reproducible posterior sampling. If NULL, this script defaults to 123L
+#   when sampling is enabled; pass --POSTERIOR_SAMPLE_SEED=<int> to override.
+POSTERIOR_SAMPLES <- 200L
+POSTERIOR_SAMPLES_FORMAT <- "feather" # options: 'rds', 'feather', 'csv'
+POSTERIOR_SAMPLES_PATH <- NULL
+POSTERIOR_SAMPLE_SEED <- NULL
+
+# Optional: restrict the chunked run to a subset of tags listed in a CSV/TSV
+# file. Useful for regression tests on curated tag subsets. When NULL or
+# empty, all tags in the input data are processed. The tags are read from the
+# first column of the file and matched to the Tag column of the input (with or
+# without leading zeros). TAG_FILTER_N (optional) caps the number of tags
+# taken from the file (head). The biological parameters are always estimated
+# from the full input.
+TAG_FILTER_FILE <- NULL
+TAG_FILTER_N <- NULL
+# Option: allow DP to use a provisional anchor at the last observed DBH census when no TrueStemID exists
+ALLOW_PROVISIONAL_DP_ANCHOR <- TRUE
+
+# Number of stochastic samples drawn by the probabilistic matcher
+PROB_N_SAMPLES <- 200L
+
+# Species that bypass the DP and go directly to the probabilistic matcher
+# (two colonial palms, Oenocarpus mapora and Bactris major, and every species
+# with a strangler growth form: eight strangler figs and Oreopanax capitatus;
+# DP_FALLBACK_GROWTH_FORMS = "strangler" routes them there too). Provide a
+# character vector of species codes (Mnemonic, copied to the Species column);
+# every code must occur in the data.
+PROB_SPECIES <- c("oenoma", "bactma", "ficuob", "ficupo", "ficuc2", "ficubu", "ficuc1", "ficuci", "ficupe", "ficutr", "oreoca")
+
+# Lookahead weight for probabilistic matcher (0 = disabled; engine default 0.5, this driver uses 1)
+PROB_LOOKAHEAD_WEIGHT <- 1
+
+# Bio hard bounds control for probabilistic matcher:
+# When TRUE (default), use bio-estimated hard shrink/growth guardrails (strict).
+# When FALSE, rely only on prune bounds (relaxed, for continuity rescue).
+USE_BIO_HARD_SHRINK_IN_PROB <- TRUE
+USE_BIO_HARD_GROWTH_IN_PROB <- TRUE
+
+# Pin observations with known TrueStemID at non-anchor censuses to their
+# correct track.  Reduces state space and prevents misidentification.
+PIN_TRUESTEMID <- TRUE
+
+# ME cumulative-shrinkage threshold for Layer 2 trajectory repair in the
+# probabilistic matcher.  A trajectory is severed when cumulative shrinkage
+# exceeds n_sigma_me * sqrt(SD(d_start)^2 + SD(d_curr)^2).  Lower = sever
+# sooner.  Only active when USE_BIO_HARD_SHRINK_IN_PROB = TRUE.
+# Inf (default) disables it: a severed observation becomes a one-census stem
+# (a recruit that dies at once), which fragments trajectories and double
+# counts basal area once gaps are filled. The DP applies no such rule. The
+# hard shrink/growth limits shared with the DP are enforced during sampling
+# instead (enforce_feasible_assignment() in dp_probabilistic_matching.R).
+PROB_N_SIGMA_ME <- Inf
+
+# Birth-death assignment in the probabilistic matcher (palm clumps, strangler
+# figs, trees too complex for the DP). TRUE: in every census pair each stem may
+# continue, die or be recruited, scored by the same biological model as the
+# DP, so a link is kept only when it is more likely than a death plus a
+# recruitment; each sample is the exact best assignment of a perturbed pair.
+# FALSE: count-based slots, which with stable stem counts force every stem to
+# continue (before 2010, 0.8-4.4 palm stem replacements per 100 trees per year
+# against 4.6-6.9 with the 2010-2023 stem tags). The DP itself is not affected.
+PROB_BIRTH_DEATH <- TRUE
+
+############################################################
+### 3.3) Chunking & posterior sampling settings
+############################################################
+# Controls incremental chunk processing and posterior path sampling.
+DP_CHUNK_SIZE <- 18L
+DP_CHUNK_RESUME <- TRUE
+DP_CHUNK_OVERWRITE <- FALSE
+# Optional: limit chunks to a specific range for testing (NULL means all)
+DP_CHUNK_START <- NULL
+DP_CHUNK_END <- NULL
+
+############################################################
+### 3.4) Parallelism settings
+############################################################
+RUN_ALL_TAGS <- TRUE
+MANUAL_CORES <- TRUE # Flag to manually define cores instead of auto-detecting
+MANUAL_CORES_VALUE <- 18L # Number of cores to use if MANUAL_CORES=TRUE
+
+############################################################
+### 3.5) Output & path settings
+############################################################
+# Base output directory: BCI_stem_reconstruction/output inside the project
+# unless overridden. Pass --BASE_OUT_DIR=/some/path on the CLI to redirect the
+# output anywhere (e.g. a folder outside a synchronised drive) without editing
+# this file.
+base_out_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "output")
+message("[dp_global main_cpp_chunk_bci.R] workspace_root: ", workspace_root)
+message("[dp_global main_cpp_chunk_bci.R] base_out_dir (raw): ", base_out_dir)
+base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
+message("[dp_global main_cpp_chunk_bci.R] base_out_dir (normalized): ", base_out_dir)
+
+# The output folder is named by build_out_dir_name() (timestamp + key
+# settings) unless OUT_DIR_OVERRIDE is set.
+# CONFIG_NAME can be set by an external orchestrator to identify the
+# experimental configuration; default to NULL so override parsing treats it as
+# a valid, known variable rather than an unknown override.
+CONFIG_NAME <- NULL
+# When non-NULL, OUT_DIR_OVERRIDE bypasses build_out_dir_name() and uses this
+# path directly as out_dir. Pass --OUT_DIR_OVERRIDE=/path/to/previous/run on
+# the command line to resume into an existing output directory.
+OUT_DIR_OVERRIDE <- NULL
+
+# Run record (section 8.1): every setting with its default, the command to
+# rerun the run, a copy of this script and the provenance of the run, written
+# to RUN_RECORD_DIR/<run folder name>/ and to the run folder; one line per run
+# in RUN_RECORD_DIR/runs_index.csv.
+WRITE_RUN_RECORD <- TRUE
+RUN_RECORD_DIR <- file.path(workspace_root, "BCI_stem_reconstruction", "2_STEM_IDENTIFICATION", "run_records")
+
+# Output path helpers (encode_num, build_out_dir_name) are provided by
+# dp_global/R/naming_helpers.R; sourced at the end of this section.
+
+WRITE_DP_CSV <- FALSE
+WRITE_DP_RDS <- FALSE
+WRITE_DP_FEATHER <- TRUE
+WRITE_DP_PDF_PER_CHUNK <- WRITE_DP_PDF <- FALSE
+# Set to FALSE when input data have no TrueStemID reference lines to plot.
+DP_PDF_INCLUDE_REFERENCE <- FALSE
+
+# Default project root so --PROJECT_ROOT=/path overrides are accepted by the CLI parser
+PROJECT_ROOT <- workspace_root
+# Batch timestamp can be provided by orchestrators; default empty so overrides like --BATCH_TS=... are accepted without warnings
+BATCH_TS <- ""
+# Naming helpers (encode_num, build_out_dir_name) live in a separate helper
+# file to keep the main script concise. Source it early so it's available
+# when we compute `out_dir` below.
+source(file.path(workspace_root, "dp_global", "R", "naming_helpers.R"))
+
+############################################################
+### 4) CLI reference & override mapping
+############################################################
+# CLI_REFERENCE maps canonical uppercase CLI flag names to internal variable
+# names. Keys are case-insensitive on the command line; use '-' or '_'.
+# Orchestrators should keep their flag list in sync with this table.
+CLI_REFERENCE <- list(
+    INPUT_FILE = "INPUT_FILE",
+    FORCE_ONE_SPECIES_PARAMETERS = "FORCE_ONE_SPECIES_PARAMETERS",
+    DP_MODE = "DP_MODE",
+    ANCHOR_START_CENSUS = "ANCHOR_START_CENSUS",
+    DP_VERBOSE = "DP_VERBOSE",
+    RUN_ALL_TAGS = "RUN_ALL_TAGS",
+    MANUAL_CORES = "MANUAL_CORES",
+    MANUAL_CORES_VALUE = "MANUAL_CORES_VALUE",
+    WRITE_DP_CSV = "WRITE_DP_CSV",
+    WRITE_DP_RDS = "WRITE_DP_RDS",
+    WRITE_DP_FEATHER = "WRITE_DP_FEATHER",
+    WRITE_DP_PDF = "WRITE_DP_PDF",
+    WRITE_DP_PDF_PER_CHUNK = "WRITE_DP_PDF_PER_CHUNK",
+    DP_PDF_INCLUDE_REFERENCE = "DP_PDF_INCLUDE_REFERENCE",
+    DP_MAX_STATES = "DP_MAX_STATES",
+    DP_FALLBACK_GROWTH_FORMS = "DP_FALLBACK_GROWTH_FORMS",
+    NON_TAPER_CORRECTED_GROWTH_FORMS = "NON_TAPER_CORRECTED_GROWTH_FORMS",
+    NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH = "NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH",
+    NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH = "NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH",
+    PRUNE_BOUND_FACTOR = "PRUNE_BOUND_FACTOR",
+    HOM_TOLERANCE_SCALE = "HOM_TOLERANCE_SCALE",
+    DP_SLACK_TRACKS = "DP_SLACK_TRACKS",
+    DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE = "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE",
+    DP_SLACK_REQUIRE_ANCHOR_EPS = "DP_SLACK_REQUIRE_ANCHOR_EPS",
+    POSTERIOR_SAMPLES = "POSTERIOR_SAMPLES",
+    POSTERIOR_SAMPLES_FORMAT = "POSTERIOR_SAMPLES_FORMAT",
+    POSTERIOR_SAMPLES_PATH = "POSTERIOR_SAMPLES_PATH",
+    POSTERIOR_SAMPLE_SEED = "POSTERIOR_SAMPLE_SEED",
+    DP_CHUNK_SIZE = "DP_CHUNK_SIZE",
+    DP_CHUNK_RESUME = "DP_CHUNK_RESUME",
+    DP_CHUNK_OVERWRITE = "DP_CHUNK_OVERWRITE",
+    DP_CHUNK_START = "DP_CHUNK_START",
+    DP_CHUNK_END = "DP_CHUNK_END",
+    PROJECT_ROOT = "PROJECT_ROOT",
+    BATCH_TS = "BATCH_TS",
+    CONFIG_NAME = "CONFIG_NAME",
+    USE_MEASUREMENT_ERROR = "USE_MEASUREMENT_ERROR",
+    ALLOW_PROVISIONAL_DP_ANCHOR = "ALLOW_PROVISIONAL_DP_ANCHOR",
+    DP_MAX_TRACKS = "DP_MAX_TRACKS",
+    OUT_DIR_OVERRIDE = "OUT_DIR_OVERRIDE",
+    PROB_N_SAMPLES = "PROB_N_SAMPLES",
+    PROB_SPECIES = "PROB_SPECIES",
+    PROB_LOOKAHEAD_WEIGHT = "PROB_LOOKAHEAD_WEIGHT",
+    USE_BIO_HARD_SHRINK_IN_PROB = "USE_BIO_HARD_SHRINK_IN_PROB",
+    USE_BIO_HARD_GROWTH_IN_PROB = "USE_BIO_HARD_GROWTH_IN_PROB",
+    PIN_TRUESTEMID = "PIN_TRUESTEMID",
+    PROB_N_SIGMA_ME = "PROB_N_SIGMA_ME",
+    PROB_BIRTH_DEATH = "PROB_BIRTH_DEATH",
+    RECRUIT_RATE_UNIT = "RECRUIT_RATE_UNIT",
+    COVERAGE_RULE = "COVERAGE_RULE",
+    DP_ALLOW_SEGMENT_SPLIT = "DP_ALLOW_SEGMENT_SPLIT",
+    BB_DBH_RULE = "BB_DBH_RULE",
+    PIN_BB_REQUIRE_OTHER_RECORD = "PIN_BB_REQUIRE_OTHER_RECORD",
+    PIN_STOP_AT_GAP = "PIN_STOP_AT_GAP",
+    PIN_STOP_AT_FAST_LINK = "PIN_STOP_AT_FAST_LINK",
+    HARD_PINS = "HARD_PINS",
+    PROB_EXPORT_RULE = "PROB_EXPORT_RULE",
+    DP_POSTERIOR_LABEL_FREE = "DP_POSTERIOR_LABEL_FREE",
+    BLIND_MIN_CENSUS = "BLIND_MIN_CENSUS",
+    BIO_ESTIMATION_START_CENSUS = "BIO_ESTIMATION_START_CENSUS",
+    WRITE_RUN_RECORD = "WRITE_RUN_RECORD",
+    RUN_RECORD_DIR = "RUN_RECORD_DIR"
+)
+
+# The chunked runner has no sensitivity sweeps or realism report: both need
+# the full result in memory.
+
+############################################################
+### 4.1) Help & override application
+############################################################
+# print_help(): print the keys of CLI_REFERENCE with their current values.
+# normalize_key() / find_matching_var(), below, match an override to a global
+# variable whatever its case and with '-' or '_'; any global variable can be
+# overridden, not only the keys of CLI_REFERENCE.
+print_help <- function() {
+    cat("Usage: Rscript scripts/main_cpp_chunk_bci.R [--KEY=VALUE] [--FLAG]\n")
+    cat("Common keys and defaults:\n")
+
+    # Prefer printing the canonical CLI keys from CLI_REFERENCE so the help is
+    # always in sync with the internal mapping.
+    for (key in names(CLI_REFERENCE)) {
+        varname <- CLI_REFERENCE[[key]]
+        if (exists(varname, envir = globalenv())) {
+            val <- get(varname, envir = globalenv())
+        } else {
+            val <- "<not set>"
+        }
+        cat(sprintf("  --%s = %s\n", key, as.character(val)))
+    }
+
+    cat("\nFlags without =value are treated as boolean TRUE (e.g., --DRY_RUN).\n")
+}
+
+# If user asked for help, print and exit (do this before applying overrides)
+if (isTRUE(overrides$help) || isTRUE(overrides$h)) {
+    print_help()
+    quit(save = "no", status = 0)
+}
+
+# Apply command-line overrides with validation and warnings for unknown keys
+# This logic is intentionally flexible: users can pass keys such as
+#   --POSTERIOR-SAMPLES=200  or  --posterior-samples=200  or  --POSTERIOR_SAMPLES=200
+# All of these will match the canonical in-memory variable names such as
+# `POSTERIOR_SAMPLES` or `POSTERIOR_SAMPLES_FORMAT` or `which_tag` regardless of
+# case or punctuation.
+
+# Helper: normalize an override key to uppercase letters and underscores
+normalize_key <- function(k) {
+    toupper(gsub("[- ]", "_", k))
+}
+
+# Helper: find an existing variable name that matches the normalized key (case-insensitive)
+find_matching_var <- function(norm_key) {
+    # Normalize current environment variable names for comparison (case-insensitive)
+    norm_var <- function(v) toupper(gsub("[^A-Z0-9_]", "", toupper(v)))
+    vars <- ls(envir = globalenv())
+    matches <- sapply(vars, function(v) norm_var(v) == norm_key)
+    if (any(matches)) {
+        return(vars[which(matches)[1]])
+    }
+    NULL
+}
+
+# Settings of the run record, grouped as in run_chunk_bci.md, and their
+# defaults (the values before the command-line overrides).
+RUN_RECORD_SETTINGS <- list(
+    "Input" = c("INPUT_FILE", "FORCE_ONE_SPECIES_PARAMETERS", "SPECIES_COL"),
+    "Engine routing and posterior" = c(
+        "DP_MODE", "DP_MAX_STATES", "DP_MAX_TRACKS", "DP_SLACK_TRACKS",
+        "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE", "DP_SLACK_REQUIRE_ANCHOR_EPS",
+        "DP_POSTERIOR_TOP_K", "ALLOW_PROVISIONAL_DP_ANCHOR", "PROB_SPECIES",
+        "DP_FALLBACK_GROWTH_FORMS", "PROB_N_SAMPLES", "PROB_LOOKAHEAD_WEIGHT",
+        "USE_BIO_HARD_SHRINK_IN_PROB", "USE_BIO_HARD_GROWTH_IN_PROB", "PROB_N_SIGMA_ME",
+        "PROB_BIRTH_DEATH", "PROB_EXPORT_RULE", "POSTERIOR_SAMPLES",
+        "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLES_PATH", "POSTERIOR_SAMPLE_SEED",
+        "DP_POSTERIOR_LABEL_FREE"
+    ),
+    "Biological model" = c(
+        "USE_MEASUREMENT_ERROR", "DBH_ROUND_CENSUSES", "DBH_ROUND_MAX_MM", "DBH_ROUND_WIDTH_MM",
+        "MAX_GROWTH_HARD_SOURCE", "MAX_GROWTH_FIXED", "MAX_SHRINK_HARD_SOURCE", "MAX_SHRINK_FIXED",
+        "K_SHRINK_SOURCE", "K_SHRINK_FIXED", "K_GROWTH_SOURCE", "K_GROWTH_FIXED",
+        "RECRUIT_MAX_SOURCE", "RECRUIT_MAX_FIXED", "RECRUIT_RATE_UNIT", "COVERAGE_RULE",
+        "PRUNE_BOUND_FACTOR", "NON_TAPER_CORRECTED_GROWTH_FORMS",
+        "NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH", "NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH",
+        "HOM_TOLERANCE_SCALE", "ANCHOR_START_CENSUS"
+    ),
+    "Pins and breaks" = c(
+        "PIN_TRUESTEMID", "FIELD_TAG_FIRST_CENSUS", "HARD_PINS", "PIN_BB_REQUIRE_OTHER_RECORD",
+        "PIN_STOP_AT_GAP", "PIN_STOP_AT_FAST_LINK", "BB_DBH_RULE", "DP_ALLOW_SEGMENT_SPLIT"
+    ),
+    "Test settings (a full run leaves them unset)" = c(
+        "TAG_FILTER_FILE", "TAG_FILTER_N", "BLIND_MIN_CENSUS", "BIO_ESTIMATION_START_CENSUS",
+        "DP_CHUNK_START", "DP_CHUNK_END"
+    ),
+    "Run control and output" = c(
+        "base_out_dir", "OUT_DIR_OVERRIDE", "CONFIG_NAME", "BATCH_TS", "PROJECT_ROOT",
+        "RUN_ALL_TAGS", "WHICH_TAG", "DP_CHUNK_SIZE", "DP_CHUNK_RESUME", "DP_CHUNK_OVERWRITE",
+        "MANUAL_CORES", "MANUAL_CORES_VALUE", "DP_VERBOSE", "WRITE_DP_CSV", "WRITE_DP_RDS",
+        "WRITE_DP_FEATHER", "WRITE_DP_PDF", "WRITE_DP_PDF_PER_CHUNK", "DP_PDF_INCLUDE_REFERENCE",
+        "WRITE_RUN_RECORD", "RUN_RECORD_DIR"
+    )
+)
+RUN_RECORD_DEFAULTS <- mget(unlist(RUN_RECORD_SETTINGS, use.names = FALSE), envir = globalenv(), ifnotfound = list(NULL))
+# Variables set on the command line (filled by the loop below)
+RUN_RECORD_OVERRIDDEN <- character(0)
+
+for (name in names(overrides)) {
+    if (name %in% c("help", "h")) next
+
+    norm <- normalize_key(name)
+    match_var <- find_matching_var(norm)
+
+    if (is.null(match_var)) {
+        warning(sprintf("[dp_global main_cpp_chunk_bci.R] Unknown override '%s' (ignored).\n", name))
+        next
+    }
+    RUN_RECORD_OVERRIDDEN <- union(RUN_RECORD_OVERRIDDEN, match_var)
+
+    # Coerce type where appropriate (basic numeric/logical conversions were
+    # already attempted in parse_args). Here we ensure that integer-like
+    # numeric values are stored as integers when the default was integer.
+    old_val <- get(match_var, inherits = FALSE)
+    new_val <- overrides[[name]]
+
+    if (is.integer(old_val) && is.numeric(new_val)) {
+        new_val <- as.integer(new_val)
+    }
+
+    assign(match_var, new_val, envir = globalenv())
+    message("[dp_global main_cpp_chunk_bci.R] Overriding ", match_var, " = ", as.character(new_val))
+}
+
+# CensusIDs whose small-stem DBH was rounded down to classes (see DBH_ROUND_CENSUSES);
+# "", "none", "off", FALSE or NA turn the rounding treatment off.
+DBH_ROUND_CENSUSES_INT <- local({
+    v <- DBH_ROUND_CENSUSES
+    if (is.null(v) || length(v) == 0L || all(is.na(v)) || isFALSE(v) ||
+        tolower(trimws(as.character(v[1L]))) %in% c("", "none", "off", "false", "na")) {
+        integer(0)
+    } else if (is.numeric(v)) {
+        as.integer(v)
+    } else {
+        out <- suppressWarnings(as.integer(trimws(strsplit(as.character(v[1L]), "[,;]")[[1]])))
+        if (anyNA(out)) {
+            .msg <- sprintf("CHECK FAILED: DBH_ROUND_CENSUSES = '%s' is not a comma-separated list of CensusIDs", as.character(v[1L]))
+            cat("❌", .msg, "\n"); warning(.msg); stop(.msg)
+        }
+        out
+    }
+})
+
+# Use canonical ALL-CAPS variables (e.g., WHICH_TAG, INPUT_FILE) everywhere.
+
+# Post-override validation: Check a few key options for allowed values and types
+if (!DP_MODE %in% c("none", "marginals", "marginals+bins", "map")) {
+    stop("Invalid DP_MODE: ", DP_MODE, ". Allowed: 'none','marginals','marginals+bins','map'.")
+}
+if (!POSTERIOR_SAMPLES_FORMAT %in% c("rds", "feather", "csv")) {
+    stop("Invalid POSTERIOR_SAMPLES_FORMAT: ", POSTERIOR_SAMPLES_FORMAT, ". Allowed: 'rds','feather','csv'.")
+}
+if (!is.null(POSTERIOR_SAMPLES) && (!is.numeric(POSTERIOR_SAMPLES) || as.integer(POSTERIOR_SAMPLES) < 0L)) {
+    stop("POSTERIOR_SAMPLES must be a non-negative integer or 0 to disable.")
+}
+if (!is.null(POSTERIOR_SAMPLE_SEED) && (!is.numeric(POSTERIOR_SAMPLE_SEED) || as.integer(POSTERIOR_SAMPLE_SEED) < 0L)) {
+    stop("POSTERIOR_SAMPLE_SEED must be a non-negative integer or NULL.")
+}
+
+# Recompute derived values that depend on overridable inputs so CLI overrides take effect
+# - MC_CORES depends on MANUAL_CORES and MANUAL_CORES_VALUE
+MC_CORES <- if (exists("MANUAL_CORES") && isTRUE(MANUAL_CORES)) {
+    as.integer(MANUAL_CORES_VALUE)
+} else if (requireNamespace("parallel", quietly = TRUE)) {
+    max(1L, parallel::detectCores(logical = TRUE) - 1L)
+} else {
+    1L
+}
+
+# Optional override: explicitly set base output directory directly.
+# If --BASE_OUT_DIR=/path was supplied, the override loop already set
+# base_out_dir; re-normalize here to handle tilde expansion.
+# Usage: --BASE_OUT_DIR=/absolute/path/to/output
+if ("BASE_OUT_DIR" %in% toupper(gsub("[- ]", "_", names(overrides)))) {
+    base_out_dir <- normalizePath(base_out_dir, winslash = "/", mustWork = FALSE)
+    message("[dp_global main_cpp_chunk_bci.R] BASE_OUT_DIR override applied: ", base_out_dir)
+}
+
+# Optional override: explicitly set project root (useful when running under different working dirs or job launchers)
+# Usage: --PROJECT_ROOT=/absolute/path/to/project
+if ("PROJECT_ROOT" %in% toupper(gsub("[- ]", "_", names(overrides)))) {
+    message("[dp_global main_cpp_chunk_bci.R] Using PROJECT_ROOT override: ", PROJECT_ROOT)
+    base_out_dir <- normalizePath(file.path(PROJECT_ROOT, "BCI_stem_reconstruction", "output"), winslash = "/", mustWork = FALSE)
+    message("[dp_global main_cpp_chunk_bci.R] base_out_dir overridden to: ", base_out_dir)
+}
+
+############################################################
+### 5) Input validation
+############################################################
+# Validate INPUT_FILE, derive boolean flags from mode strings, compute out_dir,
+# and define filesystem/logging helpers used throughout the script.
+
+if (!exists("INPUT_FILE") || is.null(INPUT_FILE) || !nzchar(INPUT_FILE)) {
+    stop(
+        "No INPUT_FILE specified. ",
+        "Provide --INPUT_FILE=... on the command line or define INPUT_FILE explicitly."
+    )
+}
+
+if (!file.exists(INPUT_FILE)) {
+    stop("INPUT_FILE does not exist: ", INPUT_FILE)
+}
+
+# Derive booleans from modes
+RUN_DP <- DP_MODE != "none"
+ADD_DP_POSTERIOR_BINS <- DP_MODE == "marginals+bins"
+
+# Final output directory for this run (created at runtime in run_main_chunked()).
+# OUT_DIR_OVERRIDE takes precedence: set it to resume into an existing output
+# directory (--OUT_DIR_OVERRIDE=/path/to/previous/run).
+if (!is.null(OUT_DIR_OVERRIDE) && nzchar(as.character(OUT_DIR_OVERRIDE))) {
+    out_dir <- normalizePath(OUT_DIR_OVERRIDE, winslash = "/", mustWork = FALSE)
+    message("[dp_global main_cpp_chunk_bci.R] OUT_DIR_OVERRIDE set — using existing dir: ", out_dir)
+} else {
+    out_dir <- file.path(base_out_dir, build_out_dir_name())
+    message("[dp_global main_cpp_chunk_bci.R] out_dir (computed): ", out_dir)
+}
+message("[dp_global main_cpp_chunk_bci.R] getwd(): ", getwd())
+
+# Define filesystem and logging helpers here (before source() calls) so they
+# are available in the input validation block above and in section 6.
+# Create `path` (recursively) when it does not exist; returns it invisibly.
+ensure_dir <- function(path) {
+    if (!dir.exists(path)) {
+        dir.create(path, recursive = TRUE)
+        message("[dp_global main_cpp_chunk_bci.R] Created directory: ", path)
+    } else {
+        message("[dp_global main_cpp_chunk_bci.R] Directory already exists: ", path)
+    }
+    invisible(path)
+}
+
+# Print a time-stamped message and append it to <out_dir>/run_log.txt.
+log_msg <- function(msg, level = "INFO") {
+    ts <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    full <- sprintf("[%s] %s: %s", ts, level, msg)
+    message(full)
+    if (exists("out_dir") && nzchar(out_dir)) {
+        tryCatch(write(full, file = file.path(out_dir, "run_log.txt"), append = TRUE), error = function(e) NULL)
+    }
+    invisible(full)
+}
+
+# Centralized DP naming and path helpers (same helpers as dp_global/scripts/main_cpp.R)
+DP_BASE <- "stem_reconstruction_dp_global_rcpp"
+# make_out_path(): <dir>/<base>.<ext>
+# out_path(target): path of a run-level output: "dp" (with `ext`, csv by
+# default), "dp_csv", "dp_rds", "dp_feather", "dp_pdf", or "posteriors" (the
+# posteriors folder). Stops on any other target.
+make_out_path <- function(base = DP_BASE, ext = "csv", dir = out_dir) {
+    file.path(dir, paste0(base, ".", ext))
+}
+out_path <- function(target, ext = NULL) {
+    if (!is.null(ext) && nzchar(ext)) {
+        ext_use <- ext
+    } else {
+        ext_use <- "csv"
+    }
+    switch(target,
+        dp = make_out_path(DP_BASE, ext_use),
+        dp_csv = make_out_path(DP_BASE, "csv"),
+        dp_rds = make_out_path(DP_BASE, "rds"),
+        dp_feather = make_out_path(DP_BASE, "feather"),
+        dp_pdf = make_out_path(DP_BASE, "pdf"),
+        posteriors = file.path(out_dir, "posteriors"),
+        stop("Unknown out_path target: ", target)
+    )
+}
+
+# Run write_expr() when `flag` is TRUE, after creating the folder of `path`.
+# Logs success or failure; returns TRUE / FALSE (invisible FALSE when skipped).
+maybe_write <- function(flag, path, write_expr, msg = NULL) {
+    if (!isTRUE(flag)) {
+        return(invisible(FALSE))
+    }
+    ensure_dir(dirname(path))
+    tryCatch(
+        {
+            write_expr()
+            log_msg(sprintf("Wrote %s: %s", if (!is.null(msg)) msg else basename(path), path))
+            TRUE
+        },
+        error = function(e) {
+            log_msg(sprintf("Failed to write %s: %s", path, conditionMessage(e)), "ERROR")
+            FALSE
+        }
+    )
+}
+
+DP_CSV_FILE <- out_path("dp_csv")
+DP_RDS_FILE <- out_path("dp_rds")
+DP_FEATHER_FILE <- out_path("dp_feather")
+DP_PDF_FILE <- out_path("dp_pdf")
+# The per-chunk outputs carry chunk-specific names; these globals are the
+# run-level names.
+
+# If posterior sampling is requested, provide the DP with the run's base out_dir.
+# The DP itself will create the 'posteriors/' subdirectory (avoids double-nesting).
+# These defaults can still be overridden via CLI (e.g., --POSTERIOR_SAMPLES_PATH=... or --POSTERIOR_SAMPLE_SEED=...)
+if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L) {
+    if (is.null(POSTERIOR_SAMPLES_PATH) || !nzchar(POSTERIOR_SAMPLES_PATH)) {
+        # Provide the DP with the run's base out_dir; the DP will create the
+        # 'posteriors/' subdirectory itself, avoiding double-nesting.
+        POSTERIOR_SAMPLES_PATH <- out_dir
+    }
+    # If user supplied a path that ends in 'posteriors', remove that suffix so
+    # DP's internal creation of '<base>/posteriors' doesn't create nested folders.
+    if (basename(POSTERIOR_SAMPLES_PATH) == "posteriors") {
+        POSTERIOR_SAMPLES_PATH <- dirname(POSTERIOR_SAMPLES_PATH)
+    }
+    # normalize path for consistency; don't require it to exist yet (created in run_main)
+    POSTERIOR_SAMPLES_PATH <- normalizePath(POSTERIOR_SAMPLES_PATH, winslash = "/", mustWork = FALSE)
+    if (is.null(POSTERIOR_SAMPLE_SEED)) {
+        POSTERIOR_SAMPLE_SEED <- as.integer(123L)
+    } else {
+        POSTERIOR_SAMPLE_SEED <- as.integer(POSTERIOR_SAMPLE_SEED)
+    }
+} else {
+    # Ensure disabled sampling leaves a NULL path to avoid accidental writes
+    POSTERIOR_SAMPLES_PATH <- NULL
+}
+
+# Coerce POSTERIOR_SAMPLE_SEED whenever explicitly provided via CLI, even when
+# posterior sampling is disabled (POSTERIOR_SAMPLES=0).  The seed is also used
+# by the probabilistic matcher's Gumbel-noise draws, so honouring it here
+# makes fallback runs reproducible.
+if (!is.null(POSTERIOR_SAMPLE_SEED)) {
+    POSTERIOR_SAMPLE_SEED <- as.integer(POSTERIOR_SAMPLE_SEED)
+}
+
+############################################################
+### 6) Source project code
+############################################################
+# Load the dp_global engine modules (DP solver, probabilistic matcher,
+# biological parameter estimation, post-engine helpers).
+source(file.path(workspace_root, "dp_global", "R", "dp_global_main.R"))
+
+############################################################
+### 7) Helpers — data-manipulation utilities
+############################################################
+# These functions support parameter estimation and input preparation.
+# Filesystem/logging helpers (ensure_dir, log_msg, maybe_write) are defined
+# in section 5 so they are available before project code is sourced.
+
+# Unit reminder for soft-penalty tuning:
+# - Soft penalties operate on DBH differences (cm) over the census interval.
+# - Hard guardrails operate on annualized growth (cm/year).
+# - Soft penalty is quadratic: soft_cost = k * delta_cm^2
+#   To have delta_cm = D contribute cost C, set k = C / D^2.
+# Make sure x has a character `species` column: the forced label when
+# FORCE_ONE_SPECIES_PARAMETERS is TRUE, else the existing `species`, else the
+# column named by SPECIES_COL or the first of a list of usual names. Stops when
+# none is found. Modifies x by reference and returns it.
+ensure_species_column <- function(x) {
+    if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) {
+        x[, species := FORCED_SPECIES_LABEL]
+        return(x)
+    }
+
+    if ("species" %in% names(x)) {
+        x[, species := as.character(species)]
+        return(x)
+    }
+
+    species_col <- SPECIES_COL
+    if (is.null(species_col) || !nzchar(species_col) || !(species_col %in% names(x))) {
+        candidates <- c(
+            "Species", "species", "SP", "sp", "spcode", "sp_code",
+            "taxon", "Taxon", "spname", "Sp"
+        )
+        found <- candidates[candidates %in% names(x)]
+        if (length(found) > 0L) {
+            species_col <- found[[1L]]
+            message("[dp_global main_cpp_chunk_bci.R] Using '", species_col, "' as species column. Set SPECIES_COL to override.")
+        }
+    }
+
+    if (is.null(species_col) || !nzchar(species_col) || !(species_col %in% names(x))) {
+        stop(
+            "FORCE_ONE_SPECIES_PARAMETERS=FALSE but no species column found. ",
+            "Add a 'species' column to the input, or set SPECIES_COL to an existing column name."
+        )
+    }
+
+    x[, species := as.character(get(species_col))]
+    x
+}
+
+get_growth_mu_const <- function(growth_list) {
+    # Growth mean model: mu(DBH) = alpha + gamma*log(DBH)
+    # Returns alpha, or the constant mean mu when the list has no alpha.
+    if (!is.null(growth_list$alpha)) {
+        return(growth_list$alpha)
+    }
+    growth_list$mu
+}
+
+# Evaluate the quoted expression `expr` inside list `x` (e.g.
+# quote(guardrails$hard$value)); returns it as a number when it is a single
+# finite value, otherwise `fallback`.
+get_nested_numeric <- function(x, expr, fallback = NULL) {
+    v <- tryCatch(eval(expr, envir = x), error = function(e) NULL)
+    if (!is.null(v) && length(v) == 1L && is.finite(v)) {
+        return(as.numeric(v))
+    }
+    fallback
+}
+
+# Add the Bio_* columns the engines read (growth, mortality, recruitment,
+# guardrails and soft-penalty weights) to xrun, per parameter set (column
+# `species`), from bio_pars (named by parameter set; each element from
+# estimate_bio_pars()). Modifies xrun by reference and returns it.
+attach_bio_columns <- function(xrun, bio_pars) {
+    xrun[, `:=`(
+        Bio_Mu_Growth = get_growth_mu_const(bio_pars[[.BY$species]]$growth),
+        Bio_Gamma_Growth = {
+            g <- bio_pars[[.BY$species]]$growth
+            if (!is.null(g$gamma)) g$gamma else 0
+        },
+        Bio_Sigma0_Growth = bio_pars[[.BY$species]]$growth$sigma0,
+        Bio_Sigma1_Growth = bio_pars[[.BY$species]]$growth$sigma1,
+        Bio_H0_Mortality = bio_pars[[.BY$species]]$mortality$h0,
+        Bio_Beta_Mortality = bio_pars[[.BY$species]]$mortality$beta,
+        Bio_Recruit_Meanlog = bio_pars[[.BY$species]]$recruitment$meanlog,
+        Bio_Recruit_Sdlog = bio_pars[[.BY$species]]$recruitment$sdlog,
+        Bio_Recruit_MaxDBH_unit = bio_pars[[.BY$species]]$recruitment$recruit_max_dbh,
+        Bio_Recruitment_lambda = bio_pars[[.BY$species]]$recruitment$lambda,
+        Bio_Max_Shrink = {
+            sh <- bio_pars[[.BY$species]]$shrinkage
+            get_nested_numeric(sh, quote(guardrails$hard$value), fallback = sh$max_shrink)
+        },
+        Bio_K_Shrink = {
+            sh <- bio_pars[[.BY$species]]$shrinkage
+            get_nested_numeric(sh, quote(penalties$soft$k), fallback = sh$k_shrink)
+        },
+        Bio_Max_Growth = {
+            g <- bio_pars[[.BY$species]]$growth
+            get_nested_numeric(g, quote(guardrails$hard$value), fallback = g$max_growth)
+        },
+        Bio_Max_Growth_Soft = {
+            g <- bio_pars[[.BY$species]]$growth
+            get_nested_numeric(g, quote(guardrails$soft$value), fallback = g$max_growth_soft)
+        },
+        Bio_K_Growth = {
+            g <- bio_pars[[.BY$species]]$growth
+            get_nested_numeric(g, quote(penalties$soft$k), fallback = g$k_growth)
+        }
+    ), by = species]
+    xrun
+}
+
+# Default DP track cap: the largest number of measured stems of any tag in
+# one census up to ANCHOR_START_CENSUS, plus 1.
+auto_dp_max_tracks <- function(xrun) {
+    max_obs_any_tag_census <- xrun[
+        CensusID <= ANCHOR_START_CENSUS & !is.na(DBH),
+        .N,
+        by = .(Tag, CensusID)
+    ][, max(N, na.rm = TRUE)]
+    if (!is.finite(max_obs_any_tag_census)) max_obs_any_tag_census <- 0L
+    as.integer(max_obs_any_tag_census + 1L)
+}
+
+############################################################
+### 8) Core DP functions
+############################################################
+# run_dp_one_group()       — runs the DP solver for a single (Tag, Species) group;
+#   when the DP call raises an error, the rows up to the anchor go to
+#   match_stems_probabilistic() and the later rows are labelled. The
+#   TrueStemID sweep at the end runs on every output.
+# maybe_add_posterior_bins() — applies posterior binning when DP_MODE includes bins
+
+run_dp_one_group <- function(dtg, dp_max_tracks, chunk_id = NULL) {
+    tag_label <- tryCatch(as.character(unique(dtg$Tag)[1]), error = function(e) "<unknown>")
+
+    out <- tryCatch(
+        match_stems_dp_global_backward_marginals_batch(
+            tree_data = data.table::copy(dtg),
+            chunk_id = chunk_id,
+            min_growth = MAX_SHRINK_FIXED,
+            max_growth = MAX_GROWTH_FIXED,
+            anchor_start = ANCHOR_START_CENSUS,
+            max_tracks = dp_max_tracks,
+            max_states = DP_MAX_STATES,
+            slack_tracks = DP_SLACK_TRACKS,
+            slack_require_anchor_recruitable = DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE,
+            slack_require_anchor_eps = DP_SLACK_REQUIRE_ANCHOR_EPS,
+            temperature = 1,
+            posterior_top_k = DP_POSTERIOR_TOP_K,
+            fallback_growth_forms = DP_FALLBACK_GROWTH_FORMS,
+            non_taper_corrected_growth_forms = NON_TAPER_CORRECTED_GROWTH_FORMS,
+            non_taper_corrected_prune_min_growth = NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH,
+            non_taper_corrected_prune_max_growth = NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH,
+            hom_tolerance_scale = HOM_TOLERANCE_SCALE,
+            # posterior sampling controls (POSTERIOR_SAMPLES = 0 disables sampling)
+            posterior_samples = POSTERIOR_SAMPLES,
+            posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
+            posterior_samples_path = POSTERIOR_SAMPLES_PATH,
+            posterior_sample_seed = POSTERIOR_SAMPLE_SEED,
+            use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+            dbh_round_censuses = DBH_ROUND_CENSUSES_INT,
+            dbh_round_max = DBH_ROUND_MAX_MM / 10, # mm -> cm (engine units)
+            dbh_round_width = DBH_ROUND_WIDTH_MM / 10,
+            # prune controls: fixed bounds, PRUNE_BOUND_FACTOR times the fixed limits
+            prune_hard = TRUE,
+            prune_min_growth = MAX_SHRINK_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
+            prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR, # very wide fixed bounds
+            prune_use_bio_bounds = FALSE, # use fixed prune bounds instead of biological ones
+            prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR, # very high recruit max dbh
+            prune_use_bio_recruit = FALSE, # FALSE = use prune_recruit_max_dbh as given; TRUE = use min(prune_recruit_max_dbh, Bio_Recruit_MaxDBH_unit)
+            allow_provisional_anchor = isTRUE(ALLOW_PROVISIONAL_DP_ANCHOR),
+            verbose = isTRUE(DP_VERBOSE),
+            prob_n_samples = PROB_N_SAMPLES,
+            prob_n_sigma_me = as.numeric(PROB_N_SIGMA_ME),
+            prob_species = PROB_SPECIES,
+            prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+            use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
+            use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
+            prob_birth_death = isTRUE(PROB_BIRTH_DEATH),
+            pin_truestemid = isTRUE(PIN_TRUESTEMID),
+            allow_segment_split = isTRUE(DP_ALLOW_SEGMENT_SPLIT)
+        ),
+        error = function(e) {
+            tag_val <- tryCatch(unique(dtg$Tag)[1], error = function(e2) NA)
+            msg <- conditionMessage(e)
+            log_msg(sprintf("DP error for Tag=%s: %s — falling back to probabilistic", tag_val, msg), "WARN")
+            # Scope to pre-anchor rows only — mirrors do_fallback() inside the DP.
+            # Post-anchor rows are appended afterward with proper given/none_after_anchor labels.
+            .pre_anchor_eh <- dtg[CensusID <= ANCHOR_START_CENSUS]
+            .post_anchor_eh <- dtg[CensusID > ANCHOR_START_CENSUS]
+            # Probabilistic fallback so the tag is not lost
+            out <- match_stems_probabilistic(
+                tree_data = data.table::copy(.pre_anchor_eh),
+                min_growth = MAX_SHRINK_FIXED,
+                max_growth = MAX_GROWTH_FIXED,
+                anchor_start = ANCHOR_START_CENSUS,
+                n_samples = PROB_N_SAMPLES,
+                temperature = 1,
+                posterior_top_k = DP_POSTERIOR_TOP_K,
+                posterior_samples_path = POSTERIOR_SAMPLES_PATH,
+                posterior_samples_format = POSTERIOR_SAMPLES_FORMAT,
+                prune_min_growth = MAX_SHRINK_FIXED * PRUNE_BOUND_FACTOR,
+                prune_max_growth = MAX_GROWTH_FIXED * PRUNE_BOUND_FACTOR,
+                prune_recruit_max_dbh = RECRUIT_MAX_FIXED * PRUNE_BOUND_FACTOR,
+                prob_lookahead_weight = PROB_LOOKAHEAD_WEIGHT,
+                n_sigma_me = as.numeric(PROB_N_SIGMA_ME),
+                use_bio_hard_shrink_in_prob = isTRUE(USE_BIO_HARD_SHRINK_IN_PROB),
+                use_bio_hard_growth_in_prob = isTRUE(USE_BIO_HARD_GROWTH_IN_PROB),
+                pin_truestemid = isTRUE(PIN_TRUESTEMID),
+                dbh_round_censuses = DBH_ROUND_CENSUSES_INT,
+                dbh_round_max = DBH_ROUND_MAX_MM / 10,
+                dbh_round_width = DBH_ROUND_WIDTH_MM / 10,
+                birth_death = isTRUE(PROB_BIRTH_DEATH),
+                verbose = isTRUE(DP_VERBOSE)
+            )
+            if (!("DP_FallbackReason" %in% names(out))) out[, DP_FallbackReason := NA_character_]
+            out[, DP_FallbackReason := paste0("error:", substr(msg, 1, 200))]
+            # R-boundary splitting, as in do_fallback(): a measured R-coded /
+            # broken-below row starts a new stem; only that stem's track is split
+            # (split_live_resprout_tracks() in dp_global_dp.R). With the
+            # main-stem rule the matcher already ends the main stem at the break.
+            if (!identical(BB_DBH_RULE, "main_ends")) {
+                out <- split_live_resprout_tracks(
+                    out,
+                    censuses = sort(unique(out$CensusID[out$CensusID < ANCHOR_START_CENSUS])),
+                    id_floor = suppressWarnings(max(dtg$TrueStemID, na.rm = TRUE))
+                )
+            }
+            # Append post-anchor rows with proper labeling (mirrors finalize_out / propagate_post_anchor_given)
+            if (nrow(.post_anchor_eh) > 0L) {
+                .post <- data.table::copy(.post_anchor_eh)
+                if (!("ReconstructedStemID" %in% names(.post))) .post[, ReconstructedStemID := NA_integer_]
+                if (!("ReconstructionMethod" %in% names(.post))) .post[, ReconstructionMethod := NA_character_]
+                if (!("ConstraintViolation" %in% names(.post))) .post[, ConstraintViolation := NA]
+                # No !is.na(DBH) guard here.  Terminal NA-DBH post-
+                # anchor rows with a known TrueStemID (rows anchored by
+                # the pre-DP propagation, Steps 2 / 3 in run_main_chunked())
+                # must also be honoured to satisfy the hard invariant.
+                .post[!is.na(TrueStemID), `:=`(
+                    ReconstructedStemID = as.integer(TrueStemID),
+                    ReconstructionMethod = "given"
+                )]
+                .post[is.na(ReconstructionMethod), ReconstructionMethod := "none_after_anchor"]
+                .post[, DP_FallbackReason := paste0("error:", substr(msg, 1, 200))]
+                out <- data.table::rbindlist(list(out, .post), use.names = TRUE, fill = TRUE)
+            }
+            out
+        }
+    )
+
+    # ---- TrueStemID HARD-INVARIANT backstop sweep (script-level) ----------
+    # Final, idempotent enforcement of TrueStemID == ReconstructedStemID for
+    # every row with a non-NA TrueStemID, regardless of which engine path
+    # produced this output (DP success, probabilistic fallback, error
+    # handler, MF reinsertion).  This guarantees the invariant at the
+    # script boundary even if a code path inside the engine somehow
+    # bypasses finalize_out's sweep.
+    if (isTRUE(PIN_TRUESTEMID) && !is.null(out) &&
+        all(c("TrueStemID", "ReconstructedStemID", "ReconstructionMethod") %in% names(out))) {
+        .ts_rows <- which(!is.na(out$TrueStemID))
+        if (length(.ts_rows) > 0L) {
+            # ---- Script-level audit: detect engine-vs-pin disagreements ----
+            # On the fallback paths finalize_out() and the probabilistic
+            # matcher have already run their own sweep and audit, so an
+            # override caught here means a row leaked through them. On the
+            # normal DP path this is the only sweep: the DP honours the pins
+            # through its state enumeration and does not call finalize_out().
+            if (!("SweepAuditOverride" %in% names(out))) {
+                out[, SweepAuditOverride := FALSE]
+            } else {
+                # Per-row backfill — mirrors dp_global_dp.R finalize_out.
+                out[is.na(SweepAuditOverride), SweepAuditOverride := FALSE]
+            }
+            # Snapshot the engine's pre-sweep ReconstructedStemID.
+            # Per-row backfill (see dp_global_dp.R::finalize_out): create the
+            # column if absent, otherwise populate only NA cells so rows that
+            # were appended after an inner sweep (post-anchor block, sub-
+            # segment merges) also get their pre-sweep value captured.
+            if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
+                out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+            } else {
+                out[
+                    is.na(ReconstructedStemID_PreSweep),
+                    ReconstructedStemID_PreSweep := ReconstructedStemID
+                ]
+            }
+            .pre_recon <- out$ReconstructedStemID_PreSweep[.ts_rows]
+            .true_int <- as.integer(out$TrueStemID[.ts_rows])
+            .override_local <- !is.na(.pre_recon) & .pre_recon != .true_int
+            if (any(.override_local)) {
+                out[.ts_rows[.override_local], SweepAuditOverride := TRUE]
+                log_msg(sprintf("[audit] script-level sweep overrode %d engine-assigned ReconstructedStemID value(s) for tag=%s (rows flagged via SweepAuditOverride=TRUE)", sum(.override_local), tag_label), "WARN")
+            }
+
+            # ---- Duplicate-aware pinning --------------------------------
+            # Per-row decision: tentatively pin Recon := TrueStemID, but
+            # only commit if doing so does NOT create a duplicate
+            # ReconstructedStemID at the same (Tag, CensusID) given the
+            # current state of the column (engine-assigned baseline +
+            # any pins already committed earlier in this pass). If a pin
+            # would collide, RESPECT THE ID GIVEN BY THE FULL ENGINE
+            # RECONSTRUCTION — restore the PreSweep value, flag the row
+            # via SweepRollbackToPreSweep=TRUE, and leave the row's
+            # ReconstructionMethod untouched. SweepAuditOverride above
+            # already records the disagreement; the rollback flag
+            # records the chosen resolution. Rows are processed in stable
+            # index order, so the outcome is deterministic.
+            if (!("SweepRollbackToPreSweep" %in% names(out))) {
+                out[, SweepRollbackToPreSweep := FALSE]
+            } else {
+                out[is.na(SweepRollbackToPreSweep), SweepRollbackToPreSweep := FALSE]
+            }
+
+            .working_recon <- as.integer(out$ReconstructedStemID)
+            .tag_vec <- out$Tag
+            .cen_vec <- out$CensusID
+            .true_vec_all <- as.integer(out$TrueStemID)
+            .pre_vec_all <- as.integer(out$ReconstructedStemID_PreSweep)
+
+            .grp_key <- paste(.tag_vec, .cen_vec, sep = "\u0001")
+            .grp_map <- split(seq_len(nrow(out)), .grp_key)
+
+            .pin_idx <- integer(0)
+            .rollback_idx <- integer(0)
+            for (.r in .ts_rows) {
+                .v <- .true_vec_all[.r]
+                .peers <- .grp_map[[.grp_key[.r]]]
+                .peers <- .peers[.peers != .r]
+                if (length(.peers) > 0L) {
+                    .peer_vals <- .working_recon[.peers]
+                    if (any(!is.na(.peer_vals) & .peer_vals == .v)) {
+                        .rollback_idx <- c(.rollback_idx, .r)
+                        next
+                    }
+                }
+                .working_recon[.r] <- .v
+                .pin_idx <- c(.pin_idx, .r)
+            }
+
+            if (length(.pin_idx) > 0L) {
+                out[.pin_idx, `:=`(
+                    ReconstructedStemID  = .true_vec_all[.pin_idx],
+                    ReconstructionMethod = "given"
+                )]
+            }
+            if (length(.rollback_idx) > 0L) {
+                .pre_for_rollback <- .pre_vec_all[.rollback_idx]
+                out[.rollback_idx, `:=`(
+                    ReconstructedStemID = .pre_for_rollback,
+                    SweepRollbackToPreSweep = TRUE
+                )]
+                log_msg(sprintf(
+                    "[audit] script-level sweep skipped %d TrueStemID pin(s) for tag=%s to avoid duplicate ReconstructedStemID at same (Tag,CensusID); engine's PreSweep id retained (rows flagged via SweepRollbackToPreSweep=TRUE)",
+                    length(.rollback_idx), tag_label
+                ), "WARN")
+            }
+        }
+        # Unconditional materialisation of the audit columns: tags with NO
+        # non-NA TrueStemID never enter the .ts_rows branch above, so the
+        # columns would otherwise be missing from their output and downstream
+        # consumers would have to special-case schema differences.  Create
+        # them here with the no-override defaults if absent.
+        if (!("SweepAuditOverride" %in% names(out))) {
+            out[, SweepAuditOverride := FALSE]
+        }
+        if (!("ReconstructedStemID_PreSweep" %in% names(out))) {
+            out[, ReconstructedStemID_PreSweep := ReconstructedStemID]
+        }
+        if (!("SweepRollbackToPreSweep" %in% names(out))) {
+            out[, SweepRollbackToPreSweep := FALSE]
+        }
+    }
+
+    out
+}
+
+# Add DP_PosteriorBin (add_dp_posterior_bins(): confident >= 0.95,
+# unlinked-likely >= 0.5) when DP_MODE is "marginals+bins"; otherwise returns
+# `out` unchanged.
+maybe_add_posterior_bins <- function(out) {
+    if (isTRUE(ADD_DP_POSTERIOR_BINS) && !is.null(out)) {
+        out <- add_dp_posterior_bins(
+            out,
+            confident_prob = 0.95,
+            unlinked_prob = 0.5,
+            use_reconstructed_prob = TRUE,
+            out_col = "DP_PosteriorBin"
+        )
+    }
+    out
+}
+
+############################################################
+### 8.1) Run record
+############################################################
+# write_run_record(event) keeps the record of a run in
+# RUN_RECORD_DIR/<run folder name>/ and copies it to the run folder:
+#   run_settings.txt           every setting of RUN_RECORD_SETTINGS with its
+#                              value, its default and whether the command line
+#                              changed it, after a plain-language summary of
+#                              the method;
+#   rerun_command.sh           the command of the run and the git commit to
+#                              check out before running it;
+#   1_main_cpp_chunk_bci.R     a copy of this script as it was run;
+#   uncommitted_changes.patch  git diff of dp_global/ and 2_STEM_IDENTIFICATION/
+#                              against the commit, when the code had
+#                              uncommitted changes;
+#   run_summary.txt            provenance, one entry per start, resume, finish
+#                              or stop: time, command, git commit, R and
+#                              package versions, machine, input file (path,
+#                              modification time, size, MD5), chunks.
+# It also writes the run's line of RUN_RECORD_DIR/runs_index.csv.
+# event: "start" (the first start, or a resume when the record exists),
+# "finish", or "stop" (the run ended with an error). A resume stops when the
+# input file (MD5), DP_CHUNK_SIZE or a setting outside "Run control and output"
+# differs from the first start, so that all chunks of a run share them. Any other failure of
+# the record is logged and the run goes on.
+
+# One setting value as text
+rr_fmt <- function(x) {
+    if (is.null(x)) {
+        "NULL"
+    } else if (length(x) == 0L) {
+        "<empty>"
+    } else if (is.logical(x) && length(x) == 1L && !is.na(x)) {
+        if (x) "TRUE" else "FALSE"
+    } else if (is.atomic(x)) {
+        paste(as.character(x), collapse = ", ")
+    } else {
+        paste0("<", class(x)[1], ">")
+    }
+}
+
+rr_record_dir <- function() {
+    file.path(normalizePath(RUN_RECORD_DIR, winslash = "/", mustWork = FALSE), basename(out_dir))
+}
+
+# Path relative to the project root when it lies inside it
+rr_rel <- function(path) {
+    root <- paste0(normalizePath(workspace_root, winslash = "/", mustWork = FALSE), "/")
+    path <- normalizePath(path, winslash = "/", mustWork = FALSE)
+    if (startsWith(path, root)) substring(path, nchar(root) + 1L) else path
+}
+
+# git output in the project root (character(0) when git or the repository is missing)
+rr_git <- function(args) {
+    out <- tryCatch(
+        suppressWarnings(system2("git", shQuote(c("-C", workspace_root, args)), stdout = TRUE, stderr = FALSE)),
+        error = function(e) character(0)
+    )
+    if (!is.null(attr(out, "status")) && attr(out, "status") != 0L) character(0) else out
+}
+RR_CODE_PATHS <- c(
+    "dp_global", "BCI_stem_reconstruction/2_STEM_IDENTIFICATION",
+    ":(exclude)BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_records"
+)
+
+# The script being run (Rscript --file=), else its place in the project
+rr_driver_path <- function() {
+    f <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))
+    f <- gsub("~+~", " ", f, fixed = TRUE)
+    if (length(f) && file.exists(f[1])) {
+        normalizePath(f[1], winslash = "/")
+    } else {
+        file.path(workspace_root, "BCI_stem_reconstruction", "2_STEM_IDENTIFICATION", "1_main_cpp_chunk_bci.R")
+    }
+}
+
+# Default shown in the record: the script resolves two NULL defaults at run time
+rr_default_text <- function(nm) {
+    d <- rr_fmt(RUN_RECORD_DEFAULTS[[nm]])
+    if (nm == "POSTERIOR_SAMPLE_SEED" && d == "NULL") d <- "NULL (123 when POSTERIOR_SAMPLES > 0)"
+    if (nm == "POSTERIOR_SAMPLES_PATH" && d == "NULL") d <- "NULL (the run folder)"
+    d
+}
+
+# Table of the settings: group, setting, value, default, changed
+#   changed = "yes" (command line, other value), "restated" (command line,
+#   default value), "derived" (not on the command line but set from another
+#   setting, e.g. base_out_dir from PROJECT_ROOT), "" (default)
+rr_settings_table <- function() {
+    rows <- lapply(names(RUN_RECORD_SETTINGS), function(g) {
+        nms <- RUN_RECORD_SETTINGS[[g]]
+        val <- vapply(nms, function(nm) rr_fmt(get0(nm, envir = globalenv(), inherits = FALSE)), "")
+        def <- vapply(nms, rr_default_text, "")
+        same <- val == def | (nms == "POSTERIOR_SAMPLE_SEED" & val == "123") |
+            (nms == "POSTERIOR_SAMPLES_PATH" & def == "NULL (the run folder)" & !(nms %in% RUN_RECORD_OVERRIDDEN))
+        chg <- ifelse(nms %in% RUN_RECORD_OVERRIDDEN, ifelse(same, "restated", "yes"), ifelse(same, "", "derived"))
+        data.table(group = g, setting = nms, value = val, default = def, changed = chg)
+    })
+    rbindlist(rows)
+}
+
+# Plain-language summary of the method
+rr_method_summary <- function() {
+    yn <- function(x) if (isTRUE(x)) "yes" else "no"
+    tests <- RUN_RECORD_SETTINGS[["Test settings (a full run leaves them unset)"]]
+    tests_set <- tests[!vapply(tests, function(nm) is.null(get0(nm, envir = globalenv())), TRUE)]
+    bio_start <- if (is.null(BIO_ESTIMATION_START_CENSUS)) ANCHOR_START_CENSUS else BIO_ESTIMATION_START_CENSUS
+    c(
+        sprintf("- Measurement-error model: %s (USE_MEASUREMENT_ERROR = %s)", if (isTRUE(USE_MEASUREMENT_ERROR)) "used, a measurement-error mixture in the parameter estimation and the DP growth likelihood" else "not used", rr_fmt(USE_MEASUREMENT_ERROR)),
+        sprintf("- DBH recorded in classes: %s", if (length(DBH_ROUND_CENSUSES_INT)) sprintf("censuses %s, DBH below %s mm read as a size within its %s mm class (rounded down)", paste(DBH_ROUND_CENSUSES_INT, collapse = ", "), rr_fmt(DBH_ROUND_MAX_MM), rr_fmt(DBH_ROUND_WIDTH_MM)) else "not treated (every DBH read as recorded)"),
+        sprintf("- Growth bounds: annual growth from %s to %s cm/yr (%s / %s); new stems up to %s cm DBH; pruning bounds %s x these", rr_fmt(MAX_SHRINK_FIXED), rr_fmt(MAX_GROWTH_FIXED), MAX_SHRINK_HARD_SOURCE, MAX_GROWTH_HARD_SOURCE, rr_fmt(RECRUIT_MAX_FIXED), rr_fmt(PRUNE_BOUND_FACTOR)),
+        sprintf("- Soft growth / shrinkage penalties: %s / %s (0 = off)", rr_fmt(K_GROWTH_FIXED), rr_fmt(K_SHRINK_FIXED)),
+        sprintf("- Biological parameters: estimated from census %s on, %s; recruitment rate per %s; size coverage rule \"%s\"", rr_fmt(bio_start), if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) "one set for all species" else "per species with enough data, pooled per growth form otherwise", RECRUIT_RATE_UNIT, COVERAGE_RULE),
+        sprintf("- Known identities: from census %s (anchor); field tags from census %s", rr_fmt(ANCHOR_START_CENSUS), rr_fmt(FIELD_TAG_FIRST_CENSUS)),
+        sprintf("- Engines: DP for tags up to %s assignment states per census (%s slack track(s)); probabilistic matcher for larger tags, the species %s and the growth forms %s", rr_fmt(DP_MAX_STATES), rr_fmt(DP_SLACK_TRACKS), rr_fmt(PROB_SPECIES), rr_fmt(DP_FALLBACK_GROWTH_FORMS)),
+        sprintf("- Probabilistic matcher: %s; %s samples; exports the \"%s\" sample", if (isTRUE(PROB_BIRTH_DEATH)) "birth-death (each stem may continue, die or be recruited)" else "count-based slots", rr_fmt(PROB_N_SAMPLES), PROB_EXPORT_RULE),
+        sprintf("- Pins (database StemIDs): used %s; hard pins %s; Step 3a only with another record %s; Step 3b stops at a gap %s; Step 3c frees fast links %s", yn(PIN_TRUESTEMID), yn(HARD_PINS), yn(PIN_BB_REQUIRE_OTHER_RECORD), yn(PIN_STOP_AT_GAP), yn(PIN_STOP_AT_FAST_LINK)),
+        sprintf("- Broken below with a DBH: \"%s\" (%s); whole-tree split at a break before the anchor %s", BB_DBH_RULE, if (identical(BB_DBH_RULE, "r1")) "always a new stem" else "ends the main stem of the census before", yn(DP_ALLOW_SEGMENT_SPLIT)),
+        sprintf("- Posterior: %s samples per tag, seed %s, label-free DP posterior %s", rr_fmt(POSTERIOR_SAMPLES), rr_fmt(POSTERIOR_SAMPLE_SEED), yn(DP_POSTERIOR_LABEL_FREE)),
+        sprintf("- Test settings: %s", if (length(tests_set)) paste0(paste(sprintf("%s = %s", tests_set, vapply(tests_set, function(nm) rr_fmt(get(nm)), "")), collapse = "; "), " (a test run: the merge refuses it)") else "none (a full run)")
+    )
+}
+
+rr_settings_lines <- function(st) {
+    esc <- function(x) gsub("|", "\\|", x, fixed = TRUE)
+    out <- c(
+        sprintf("Settings of the engine run %s", basename(out_dir)),
+        sprintf("Written %s by %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), rr_rel(rr_driver_path())),
+        "",
+        "Method",
+        rr_method_summary(),
+        "",
+        "Changed on the command line",
+        if (any(st$changed == "yes")) st[changed == "yes", sprintf("- %s = %s (default %s)", setting, value, default)] else "- none",
+        "",
+        "All settings (changed: yes = other value on the command line; restated = the",
+        "default given on the command line; derived = set from another setting)"
+    )
+    for (g in unique(st$group)) {
+        sg <- st[group == g]
+        out <- c(out, "", g, "", "| setting | value | default | changed |", "| --- | --- | --- | --- |",
+                 sprintf("| %s | %s | %s | %s |", sg$setting, esc(sg$value), esc(sg$default), sg$changed))
+    }
+    if (length(extra <- setdiff(RUN_RECORD_OVERRIDDEN, st$setting))) {
+        out <- c(out, "", "Other variables set on the command line", "",
+                 sprintf("- %s = %s", extra, vapply(extra, function(nm) rr_fmt(get0(nm, envir = globalenv())), "")))
+    }
+    out
+}
+
+# setting -> value from a run_settings.txt
+rr_read_settings <- function(path) {
+    l <- grep("^\\| [^ ]+ \\| ", readLines(path, warn = FALSE), value = TRUE)
+    l <- l[!grepl("^\\| (setting|---) \\|", l)]
+    parts <- strsplit(gsub("\\\\\\|", "\u0001", l), " | ", fixed = TRUE)
+    setNames(
+        vapply(parts, function(p) gsub("\u0001", "|", p[2], fixed = TRUE), ""),
+        vapply(parts, function(p) sub("^\\| ", "", p[1]), "")
+    )
+}
+
+rr_rerun_lines <- function(commit, has_patch, input_md5, rec_dir) {
+    args <- commandArgs(trailingOnly = TRUE)
+    args <- args[!grepl("^--(OUT[-_]DIR[-_]OVERRIDE|DP[-_]CHUNK[-_]RESUME)(=|$)", args, ignore.case = TRUE)]
+    args <- ifelse(grepl("^[A-Za-z0-9_.,/=:+@%-]+$", args), args, shQuote(args))
+    driver_rel <- "BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R"
+    cmd <- function(script) {
+        if (length(args)) c(paste0("Rscript ", script, " \\"), paste0("  ", args, c(rep(" \\", length(args) - 1L), "")))
+        else paste("Rscript", script)
+    }
+    c(
+        "#!/bin/sh",
+        sprintf("# Rerun of the engine run %s (started %s).", basename(out_dir), format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+        "# Run from the project root; the rerun writes a new run folder (new time stamp).",
+        "# On macOS, 'caffeinate -i' before Rscript keeps the computer awake.",
+        "#",
+        sprintf("# 1. Code of the run: git commit %s", if (length(commit)) commit else "unknown (no git repository)"),
+        if (length(commit)) sprintf("#      git checkout %s", commit),
+        if (has_patch) c("#    The code had uncommitted changes; apply them after the checkout:",
+                         sprintf("#      git apply %s/uncommitted_changes.patch", rr_rel(rec_dir))),
+        if (length(commit)) "#    (run_summary.txt lists files that were not tracked by git.)",
+        sprintf("# 2. Input: %s", rr_rel(INPUT_FILE)),
+        sprintf("#    MD5 %s; stage 1 must give the same file.", input_md5),
+        "# 3. Command:",
+        cmd(driver_rel),
+        "#",
+        "# The copy of the driver in this folder runs the same way, with the engine",
+        "# code (dp_global/) of the same commit:",
+        paste0("#   ", cmd(paste0(rr_rel(rec_dir), "/", basename(rr_driver_path()))))
+    )
+}
+
+rr_provenance_lines <- function(input_md5, commit, status_lines) {
+    pk <- c("data.table", "Rcpp", "arrow", "igraph", "MASS", "lpSolve")
+    pv <- vapply(pk, function(p) if (requireNamespace(p, quietly = TRUE)) as.character(utils::packageVersion(p)) else "not installed", "")
+    si <- Sys.info()
+    drv <- rr_driver_path()
+    c(
+        sprintf("Command: %s", paste(commandArgs(), collapse = " ")),
+        sprintf("Driver: %s (MD5 %s)", rr_rel(drv), unname(tools::md5sum(drv))),
+        sprintf("Code: git commit %s on branch %s", if (length(commit)) commit else "unknown",
+                if (length(b <- rr_git(c("rev-parse", "--abbrev-ref", "HEAD")))) b else "unknown"),
+        if (!length(commit)) "Uncommitted changes in dp_global/ and 2_STEM_IDENTIFICATION/: unknown (no git repository)"
+        else if (length(status_lines)) c("Uncommitted changes in dp_global/ and 2_STEM_IDENTIFICATION/ (diff in uncommitted_changes.patch; ?? = not tracked):",
+                                         paste0("  ", status_lines))
+        else "Uncommitted changes in dp_global/ and 2_STEM_IDENTIFICATION/: none",
+        sprintf("R: %s, %s", R.version.string, R.version$platform),
+        sprintf("Packages: %s", paste(pk, pv, collapse = ", ")),
+        sprintf("Machine: %s, %s %s %s; %s cores, %s workers", si[["nodename"]], si[["sysname"]], si[["release"]], si[["machine"]],
+                if (requireNamespace("parallel", quietly = TRUE)) parallel::detectCores() else NA, MC_CORES),
+        sprintf("Input: %s", normalizePath(INPUT_FILE, winslash = "/", mustWork = FALSE)),
+        sprintf("  modified %s, %s bytes, MD5 %s", format(file.mtime(INPUT_FILE), "%Y-%m-%d %H:%M:%S"), format(file.size(INPUT_FILE), scientific = FALSE), input_md5)
+    )
+}
+
+rr_count_chunks <- function() {
+    f <- list.files(out_dir, pattern = "_chunk_[0-9]+_(done|failed)\\.txt$")
+    num <- function(p) unique(sub(".*_chunk_([0-9]+)_.*", "\\1", f[grepl(p, f)]))
+    done <- num("_done\\.txt$")
+    c(done = length(done), failed = length(setdiff(num("_failed\\.txt$"), done)))
+}
+
+rr_index_update <- function(fields) {
+    f <- file.path(normalizePath(RUN_RECORD_DIR, winslash = "/", mustWork = FALSE), "runs_index.csv")
+    idx <- if (file.exists(f)) fread(f, colClasses = "character", na.strings = NULL) else data.table(run_folder = character(0))
+    row <- as.data.table(lapply(fields, function(x) if (is.null(x)) "" else as.character(x)))
+    i <- match(row$run_folder, idx$run_folder)
+    if (is.na(i)) {
+        idx <- rbind(idx, row, fill = TRUE)
+    } else {
+        for (nm in names(row)) {
+            if (!nm %in% names(idx)) idx[, (nm) := ""]
+            set(idx, i, nm, row[[nm]])
+        }
+    }
+    for (nm in names(idx)) set(idx, which(is.na(idx[[nm]])), nm, "")
+    fwrite(idx, f)
+}
+
+rr_index_row <- function() {
+    f <- file.path(normalizePath(RUN_RECORD_DIR, winslash = "/", mustWork = FALSE), "runs_index.csv")
+    if (!file.exists(f)) return(NULL)
+    idx <- fread(f, colClasses = "character", na.strings = NULL)
+    r <- idx[run_folder == basename(out_dir)]
+    if (nrow(r)) r else NULL
+}
+
+# Visible check (❌ + warning + log, then stop) used by the resume check
+rr_check <- function(ok, msg) {
+    if (isTRUE(ok)) {
+        cat("✓", msg, "\n")
+        log_msg(paste("CHECK OK:", msg))
+    } else {
+        cat("❌", msg, "\n")
+        warning(msg)
+        log_msg(paste("CHECK FAILED:", msg), "ERROR")
+        stop(msg)
+    }
+    invisible(TRUE)
+}
+
+# Resume: the input, the chunk size and every setting outside run control
+# must be those of the first start
+rr_check_resume <- function(rec_dir, input_md5) {
+    first <- rr_read_settings(file.path(rec_dir, "run_settings.txt"))
+    st <- rr_settings_table()[group != "Run control and output" | setting == "DP_CHUNK_SIZE"]
+    common <- intersect(st$setting, names(first))
+    diff <- common[first[common] != st[match(common, setting), value]]
+    rr_check(length(diff) == 0L, sprintf(
+        "Resume of %s: settings as at the first start (run_records/%s/run_settings.txt)%s",
+        basename(out_dir), basename(rec_dir),
+        if (length(diff)) paste0("; differ: ", paste(sprintf("%s = %s (first start %s)", diff, st[match(diff, setting), value], first[diff]), collapse = "; ")) else ""
+    ))
+    r <- rr_index_row()
+    if (!is.null(r) && "input_md5" %in% names(r) && nzchar(r$input_md5)) {
+        rr_check(identical(r$input_md5, input_md5), sprintf(
+            "Resume of %s: same input file as at the first start (MD5 %s%s)",
+            basename(out_dir), r$input_md5, if (identical(r$input_md5, input_md5)) "" else paste0(", now ", input_md5)
+        ))
+    }
+}
+
+write_run_record <- function(event = c("start", "finish", "stop"), n_tags = NULL, n_chunks = NULL) {
+    event <- match.arg(event)
+    if (!isTRUE(WRITE_RUN_RECORD)) return(invisible(NULL))
+    rec_dir <- rr_record_dir()
+    resume <- event == "start" && file.exists(file.path(rec_dir, "run_settings.txt"))
+    input_md5 <- unname(tools::md5sum(INPUT_FILE))
+    if (resume) rr_check_resume(rec_dir, input_md5)
+    tryCatch(
+        {
+            dir.create(rec_dir, recursive = TRUE, showWarnings = FALSE)
+            now <- Sys.time()
+            stamp <- format(now, "%Y-%m-%d %H:%M:%S")
+            summary_file <- file.path(rec_dir, "run_summary.txt")
+            commit <- rr_git(c("rev-parse", "HEAD"))
+            if (event == "start") {
+                status_lines <- rr_git(c("status", "--porcelain", "--", RR_CODE_PATHS))
+                if (!resume) {
+                    st <- rr_settings_table()
+                    writeLines(rr_settings_lines(st), file.path(rec_dir, "run_settings.txt"))
+                    patch <- rr_git(c("diff", "HEAD", "--", RR_CODE_PATHS))
+                    if (length(patch)) writeLines(patch, file.path(rec_dir, "uncommitted_changes.patch"))
+                    writeLines(rr_rerun_lines(commit, length(patch) > 0L, input_md5, rec_dir), file.path(rec_dir, "rerun_command.sh"))
+                    Sys.chmod(file.path(rec_dir, "rerun_command.sh"), "755")
+                    file.copy(rr_driver_path(), file.path(rec_dir, basename(rr_driver_path())), overwrite = TRUE)
+                    chunks_before <- rr_count_chunks()
+                    write(c(
+                        sprintf("Engine run %s", basename(out_dir)),
+                        sprintf("Run folder: %s", out_dir),
+                        "Settings: run_settings.txt; command to rerun: rerun_command.sh",
+                        "",
+                        sprintf("== Start %s ==", stamp),
+                        if (chunks_before[["done"]] > 0L) sprintf("The run folder already held %d finished chunks (a run started before run records existed)", chunks_before[["done"]]),
+                        rr_provenance_lines(input_md5, commit, status_lines),
+                        sprintf("Changed on the command line: %s", if (any(st$changed == "yes")) paste(st[changed == "yes", sprintf("%s = %s", setting, value)], collapse = "; ") else "none"),
+                        "Status: running"
+                    ), summary_file)
+                    tests <- RUN_RECORD_SETTINGS[["Test settings (a full run leaves them unset)"]]
+                    key <- c("USE_MEASUREMENT_ERROR", "DBH_ROUND_CENSUSES", "MAX_GROWTH_FIXED", "MAX_SHRINK_FIXED",
+                             "DP_MAX_STATES", "PROB_BIRTH_DEATH", "PROB_EXPORT_RULE", "BB_DBH_RULE", "HARD_PINS",
+                             "PIN_STOP_AT_FAST_LINK", "DP_POSTERIOR_LABEL_FREE", "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLE_SEED")
+                    rr_index_update(c(
+                        list(run_folder = basename(out_dir), status = "running", started = stamp, finished = "",
+                             duration_h = "", chunks_done = "", chunks_failed = "", n_tags = "",
+                             git_commit = if (length(commit)) commit else "", code_changed = if (length(status_lines)) "yes" else "no",
+                             input_file = basename(INPUT_FILE), input_md5 = input_md5,
+                             test_run = if (all(st[setting %in% tests, value] == "NULL")) "no" else "yes",
+                             changed_settings = paste(st[changed == "yes", sprintf("%s=%s", setting, value)], collapse = "; ")),
+                        setNames(as.list(st[match(key, setting), value]), key),
+                        list(output_dir = out_dir)
+                    ))
+                } else {
+                    copy <- file.path(rec_dir, basename(rr_driver_path()))
+                    same_driver <- file.exists(copy) && identical(unname(tools::md5sum(copy)), unname(tools::md5sum(rr_driver_path())))
+                    r <- rr_index_row()
+                    same_commit <- !is.null(r) && identical(r$git_commit, if (length(commit)) commit else "")
+                    if (!same_driver) log_msg("Run record: the driver differs from the copy made at the first start", "WARN")
+                    if (!same_commit) log_msg("Run record: the git commit differs from the first start", "WARN")
+                    write(c(
+                        "",
+                        sprintf("== Resume %s ==", stamp),
+                        rr_provenance_lines(input_md5, commit, status_lines),
+                        sprintf("Driver %s the copy of the first start; git commit %s the first start", if (same_driver) "identical to" else "DIFFERS FROM", if (same_commit) "as at" else "DIFFERS FROM"),
+                        sprintf("Chunks finished before the resume: %d", rr_count_chunks()[["done"]]),
+                        "Status: running"
+                    ), summary_file, append = TRUE)
+                    rr_index_update(list(run_folder = basename(out_dir), status = "resumed"))
+                }
+            } else {
+                r <- rr_index_row()
+                started <- if (!is.null(r) && nzchar(r$started)) as.POSIXct(r$started, format = "%Y-%m-%d %H:%M:%S") else NA
+                ch <- rr_count_chunks()
+                status <- if (event == "stop") "stopped" else if (ch[["failed"]] > 0L || (!is.null(n_chunks) && ch[["done"]] < n_chunks)) "finished, chunks missing or failed" else "finished"
+                write(c(
+                    "",
+                    sprintf("== %s %s ==", if (event == "stop") "Stop (error)" else "Finish", stamp),
+                    sprintf("Chunks: %d finished, %d failed%s", ch[["done"]], ch[["failed"]], if (is.null(n_chunks)) "" else sprintf(", of %d", n_chunks)),
+                    if (!is.null(n_tags)) sprintf("Tags: %d", n_tags),
+                    if (!is.na(started)) sprintf("Time since the first start: %.2f h", as.numeric(difftime(now, started, units = "hours"))),
+                    sprintf("Status: %s", status)
+                ), summary_file, append = TRUE)
+                rr_index_update(list(
+                    run_folder = basename(out_dir), status = status, finished = stamp,
+                    duration_h = if (is.na(started)) "" else sprintf("%.2f", as.numeric(difftime(now, started, units = "hours"))),
+                    chunks_done = ch[["done"]], chunks_failed = ch[["failed"]],
+                    n_tags = if (is.null(n_tags)) "" else n_tags
+                ))
+            }
+            # The same files in the run folder
+            if (dir.exists(out_dir)) {
+                for (f in list.files(rec_dir, full.names = TRUE)) file.copy(f, file.path(out_dir, basename(f)), overwrite = TRUE)
+            }
+            log_msg(sprintf("Run record (%s): %s", event, rec_dir))
+        },
+        error = function(e) log_msg(sprintf("Run record (%s) not written: %s", event, conditionMessage(e)), "WARN")
+    )
+    invisible(rec_dir)
+}
+
+############################################################
+### 9) Main pipeline — run_main_chunked()
+############################################################
+# Loads input data, estimates biological parameters, anchors TrueStemID
+# (Steps 1-3), processes the groups of the multiple-stem tags in chunks of
+# DP_CHUNK_SIZE, writes the per-chunk outputs (Feather by default; CSV / RDS /
+# PDF on request), and records run markers (run_started.txt,
+# run_finished.txt, run_log.txt). A chunk that fails leaves
+# <base>_chunk_NNN_failed.txt and the run goes on.
+# Returns list(xrun, bio_pars) invisibly.
+run_main_chunked <- function() {
+    ensure_dir(out_dir)
+    # Run record (section 8.1); "stop" is recorded when the run ends with an error
+    write_run_record("start")
+    run_record_closed <- FALSE
+    on.exit(if (!run_record_closed) write_run_record("stop"), add = TRUE)
+    tryCatch(
+        {
+            writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
+        },
+        error = function(e) {
+            message("[dp_global main_cpp_chunk_bci.R] Warning writing run_started marker: ", conditionMessage(e))
+        }
+    )
+    log_msg("Started run")
+
+    # Create posteriors subdirectory (DP writes its files into <base>/posteriors)
+    if (!is.null(POSTERIOR_SAMPLES) && as.integer(POSTERIOR_SAMPLES) > 0L && !is.null(POSTERIOR_SAMPLES_PATH) && nzchar(POSTERIOR_SAMPLES_PATH)) {
+        ensure_dir(file.path(POSTERIOR_SAMPLES_PATH, "posteriors"))
+        log_msg(paste("Ensured posterior samples path:", file.path(POSTERIOR_SAMPLES_PATH, "posteriors")))
+    }
+
+    # Load data
+    cat("[dp_global main_cpp_chunk_bci.R] Loading input data from: ", INPUT_FILE, "\n")
+    xraw <- as.data.table(readRDS(INPUT_FILE))
+
+    # Visible check: stage 1 ran in order, so the census table was written after
+    # the species table it reads (1_prepare_species_tables.R, then
+    # 2_prepare_viewfulltable.R).
+    .spp_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.RData")
+    if (file.exists(.spp_file) && file.mtime(.spp_file) > file.mtime(INPUT_FILE)) {
+        .msg <- sprintf(
+            "CHECK FAILED: the species table %s is newer than the census table %s: rerun 1_DATA_PREPARATION/2_prepare_viewfulltable.R before the engine",
+            basename(.spp_file), basename(INPUT_FILE)
+        )
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+
+    # growth_form label from the Spanish Lifeform of the species list. ORDER
+    # MATTERS: strangler ("árbol estrangulador") is checked BEFORE the general
+    # "árbol"; a species without a Lifeform is labelled "tree".
+    xraw[grepl("estrangulador", Lifeform, ignore.case = TRUE), growth_form := "strangler"]
+    xraw[grepl("árbol", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "tree"]
+    xraw[grepl("palma", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "palm"]
+    xraw[grepl("helecho", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "fern"]
+    xraw[grepl("arbusto", Lifeform, ignore.case = TRUE) & is.na(growth_form), growth_form := "shrub"]
+    xraw[is.na(growth_form), growth_form := "tree"]
+
+    # Visible checks: the engines match growth forms and species codes exactly,
+    # so a value that is not a label of the data (e.g. "palms" for "palm")
+    # would silently route nothing. Every value listed in the routing settings
+    # must exist in the full input (before any TAG_FILTER_FILE subset).
+    .split_arg <- function(v) {
+        v <- as.character(v)
+        if (length(v) == 1L && grepl("[,;]", v)) v <- strsplit(v, "[,;]")[[1L]]
+        v <- trimws(v)
+        v[!is.na(v) & nzchar(v)]
+    }
+    .gf_labels <- sort(unique(xraw$growth_form))
+    .route_checks <- list(
+        list(name = "DP_FALLBACK_GROWTH_FORMS", vals = .split_arg(DP_FALLBACK_GROWTH_FORMS), pool = .gf_labels, what = "growth_form labels"),
+        list(name = "NON_TAPER_CORRECTED_GROWTH_FORMS", vals = .split_arg(NON_TAPER_CORRECTED_GROWTH_FORMS), pool = .gf_labels, what = "growth_form labels"),
+        list(name = "PROB_SPECIES", vals = .split_arg(PROB_SPECIES), pool = unique(as.character(xraw$Mnemonic)), what = "species codes (Mnemonic)")
+    )
+    for (.chk in .route_checks) {
+        .bad <- setdiff(.chk$vals, .chk$pool)
+        if (length(.bad) > 0L) {
+            .msg <- sprintf(
+                "CHECK FAILED: %s lists %s, which %s not among the %s of the data%s",
+                .chk$name, paste(.bad, collapse = ", "), if (length(.bad) == 1L) "is" else "are", .chk$what,
+                if (.chk$what == "growth_form labels") paste0(" (", paste(.gf_labels, collapse = ", "), ")") else ""
+            )
+            cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+        }
+        .msg <- sprintf("%s: %s %s", .chk$name, if (length(.chk$vals) > 0L) paste(.chk$vals, collapse = ", ") else "(none)",
+            if (length(.chk$vals) > 0L) paste("all among the", .chk$what, "of the data") else "")
+        cat("✓", .msg, "\n"); log_msg(.msg)
+    }
+    if (!RECRUIT_RATE_UNIT %in% c("tree", "slot")) {
+        .msg <- sprintf("CHECK FAILED: RECRUIT_RATE_UNIT must be \"tree\" or \"slot\", not \"%s\"", RECRUIT_RATE_UNIT)
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+    if (!COVERAGE_RULE %in% c("union", "minmax")) {
+        .msg <- sprintf("CHECK FAILED: COVERAGE_RULE must be \"union\" or \"minmax\", not \"%s\"", COVERAGE_RULE)
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+    if (!BB_DBH_RULE %in% c("r1", "main_ends")) {
+        .msg <- sprintf("CHECK FAILED: BB_DBH_RULE must be \"r1\" or \"main_ends\", not \"%s\"", BB_DBH_RULE)
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+    if (!PROB_EXPORT_RULE %in% c("mea", "fewest_me")) {
+        .msg <- sprintf("CHECK FAILED: PROB_EXPORT_RULE must be \"mea\" or \"fewest_me\", not \"%s\"", PROB_EXPORT_RULE)
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+    if (identical(BB_DBH_RULE, "main_ends") && !("PrimaryStem" %in% names(xraw))) {
+        .msg <- "CHECK FAILED: BB_DBH_RULE = \"main_ends\" needs the PrimaryStem column of the input"
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+    # The engines and post-engine helpers read these rules as options
+    options(
+        dp_global.bb_dbh_rule = BB_DBH_RULE, dp_global.prob_export_rule = PROB_EXPORT_RULE,
+        dp_global.posterior_label_free = isTRUE(DP_POSTERIOR_LABEL_FREE),
+        dp_global.hard_pins = isTRUE(HARD_PINS),
+        # blind test: the hidden censuses carry no field tag
+        dp_global.field_tag_first_census = if (!is.null(BLIND_MIN_CENSUS)) {
+            max(FIELD_TAG_FIRST_CENSUS, as.integer(ANCHOR_START_CENSUS))
+        } else {
+            FIELD_TAG_FIRST_CENSUS
+        }
+    )
+    .msg <- sprintf(
+        "Broken-below and pin settings: DP_ALLOW_SEGMENT_SPLIT = %s, BB_DBH_RULE = %s, PIN_BB_REQUIRE_OTHER_RECORD = %s, PIN_STOP_AT_GAP = %s, PIN_STOP_AT_FAST_LINK = %s, HARD_PINS = %s (field tags from census %s), PROB_EXPORT_RULE = %s, DP_POSTERIOR_LABEL_FREE = %s%s",
+        DP_ALLOW_SEGMENT_SPLIT, BB_DBH_RULE, PIN_BB_REQUIRE_OTHER_RECORD, PIN_STOP_AT_GAP, isTRUE(PIN_STOP_AT_FAST_LINK), isTRUE(HARD_PINS), getOption("dp_global.field_tag_first_census"), PROB_EXPORT_RULE, isTRUE(DP_POSTERIOR_LABEL_FREE),
+        if (!is.null(BLIND_MIN_CENSUS)) sprintf(" | BLIND TEST: censuses from %s, pins only from C%s, parameters from C%s", BLIND_MIN_CENSUS, ANCHOR_START_CENSUS,
+            if (is.null(BIO_ESTIMATION_START_CENSUS)) ANCHOR_START_CENSUS else BIO_ESTIMATION_START_CENSUS) else ""
+    )
+    cat("✓", .msg, "\n"); log_msg(.msg)
+
+    xraw[, Lifeform := NULL]
+
+    xraw[, StemID := as.integer(as.character(StemID))] # StemID as integer (it is a factor in the stage-1 table)
+
+    ## ---- Clean raw data ------------------------------------------------------
+    xraw[
+        is.na(Mnemonic) | is.infinite(Mnemonic),
+        Mnemonic := "unknown"
+    ][, Tag := as.character(Tag)]
+
+    ## ---- Anchor data ---------------------------------------------------------
+    # Data for the parameter estimation: the measured rows from the anchor
+    # census on, of all tags (single- and multiple-stem), with the database
+    # StemID as the known identity.
+    .est_start <- if (is.null(BIO_ESTIMATION_START_CENSUS)) ANCHOR_START_CENSUS else as.integer(BIO_ESTIMATION_START_CENSUS)
+    anchor_data <- xraw[
+        CensusID >= .est_start &
+            !is.na(dbh_with_best_candidate_taper_corrected),
+        .(
+            Tag,
+            CensusID,
+            TrueStemID = StemID,
+            Mnemonic,
+            # BCI data is by default in mm
+            DBH = dbh_with_best_candidate_taper_corrected / 10, # mm → cm
+            ExactDate,
+            growth_form
+        )
+    ]
+
+    ## ---- Mean dates ----------------------------------------------------------
+    mean_date_tag_census <- anchor_data[
+        , .(MeanExactDate = as.IDate(mean(as.numeric(ExactDate)))),
+        keyby = .(Tag, CensusID)
+    ]
+
+    mean_date_census <- anchor_data[
+        , .(MeanExactDate_Census = as.IDate(mean(as.numeric(ExactDate)))),
+        keyby = CensusID
+    ]
+
+    ## ---- Complete grid -------------------------------------------------------
+    # Every stem (Tag, TrueStemID) at every census from the anchor on; a stem
+    # without a measurement at a census gets a row with DBH = NA and the mean
+    # date of its tag (or of the census).
+    tag_stem_combos <- unique(anchor_data[, .(Tag, TrueStemID)])
+
+    full_anchor_data <- CJ(
+        Tag_TrueStemID = tag_stem_combos[, paste(Tag, TrueStemID, sep = "_")],
+        CensusID = unique(anchor_data[CensusID >= .est_start, CensusID]),
+        sorted = FALSE
+    )
+
+    # Split IDs
+    full_anchor_data[, c("Tag", "TrueStemID") := tstrsplit(Tag_TrueStemID, "_", fixed = TRUE)]
+    full_anchor_data[, Tag_TrueStemID := NULL]
+    full_anchor_data[, TrueStemID := as.integer(as.character(TrueStemID))]
+
+    ## ---- Join dates ----------------------------------------------------------
+    full_anchor_data[mean_date_tag_census, MeanExactDate := i.MeanExactDate,
+        on = .(Tag, CensusID)
+    ]
+    full_anchor_data[mean_date_census, MeanExactDate_Census := i.MeanExactDate_Census,
+        on = .(CensusID)
+    ]
+
+    # Fill missing with census means
+    full_anchor_data[is.na(MeanExactDate), MeanExactDate := MeanExactDate_Census]
+
+    ## ---- Join anchor values --------------------------------------------------
+    full_anchor_data[
+        anchor_data,
+        `:=`(DBH = i.DBH, Mnemonic = i.Mnemonic),
+        on = .(Tag, TrueStemID, CensusID)
+    ]
+
+    ## ---- Fill species from Tag lookup ----------------------------------------
+    tag_mnemonic <- anchor_data[!is.na(Mnemonic), .(Mnemonic = first(Mnemonic)), keyby = .(Tag, growth_form)]
+    full_anchor_data[tag_mnemonic, Mnemonic := i.Mnemonic, on = "Tag"]
+    # add growth form to full_anchor_data
+    full_anchor_data[tag_mnemonic, growth_form := i.growth_form, on = "Tag"]
+
+    ## ---- Finalize ------------------------------------------------------------
+    full_anchor_data[
+        , `:=`(
+            ExactDate = as.IDate(MeanExactDate),
+            MeanExactDate = NULL,
+            MeanExactDate_Census = NULL
+        )
+    ]
+
+    setorder(full_anchor_data, Tag, TrueStemID, CensusID)
+
+    ## ---- Select species with sufficient repeated DBH -------------------------
+    to_do <- copy(full_anchor_data)
+
+    setorder(to_do, Tag, TrueStemID, CensusID)
+
+    # previous DBH within Tag x Stem
+    to_do[
+        , shift_DBH := shift(DBH),
+        by = .(Tag, TrueStemID)
+    ]
+
+    # valid consecutive DBH pairs
+    to_do[
+        , valid_growth_pair := !is.na(shift_DBH) & !is.na(DBH)
+    ]
+
+    # per-species summaries (single grouped pass)
+    to_do[
+        , `:=`(
+            n_valid_growth_pair = sum(valid_growth_pair),
+            n_tags = uniqueN(Tag)
+        ),
+        by = Mnemonic
+    ]
+
+    ## ---- Filter: require minimum measurements per log-DBH bin ---------------
+    ## has_dbh_coverage(): TRUE when the measured DBH values of `dt` fill each
+    ## of `n_bins` equal-width bins on the log(DBH) scale with at least
+    ## `min_per_bin` values.  This ensures that growth-mean, variance, and
+    ## guardrail regressions are anchored across the full size range,
+    ## preventing extrapolation artefacts for large stems.
+    ##
+    ## Species that fail are excluded from per-species estimation and use the
+    ## pooled parameter set of their growth form ("all_tree", "all_shrub",
+    ## "all_palm_fern").
+    ##
+    ## probs = NULL: bins span the smallest to the largest diameter (one
+    ## out-of-range value can leave a bin nearly empty). probs = c(lo, hi): bins
+    ## span those quantiles of log(DBH) and only the diameters inside count
+    ## (COVERAGE_RULE = "union" accepts a species that passes either version).
+    has_dbh_coverage <- function(dt, n_bins = 4L, min_per_bin = 3L, probs = NULL) {
+        d <- dt[!is.na(DBH) & is.finite(DBH) & DBH > 0, DBH]
+        # Too few values to fill the bins
+        if (length(d) < n_bins * min_per_bin) {
+            return(FALSE)
+        }
+        log_d <- log(d)
+        # Bin edges
+        rng <- if (is.null(probs)) range(log_d) else stats::quantile(log_d, probs, names = FALSE)
+        if (!is.null(probs)) log_d <- log_d[log_d >= rng[1] & log_d <= rng[2]]
+        breaks <- seq(rng[1], rng[2], length.out = n_bins + 1L)
+        ## Widen edges slightly so min/max fall inside
+        breaks[1] <- breaks[1] - 1e-6
+        breaks[n_bins + 1] <- breaks[n_bins + 1] + 1e-6
+        bin_id <- findInterval(log_d, breaks, rightmost.closed = TRUE)
+        # Every bin must meet the minimum count
+        tab <- tabulate(bin_id, nbins = n_bins)
+        all(tab >= min_per_bin)
+    }
+
+    ## ---- Helper: prepare data for bio parameter estimation -------------------
+    # Returns a filtered data.table ready for run_bio_par_estimation().
+    # - growth_forms:  character vector of growth_form values to include
+    # - species_label: NULL   -> per-species mode (species := Mnemonic, coverage by Mnemonic)
+    #                  string -> pooled mode (species := species_label, coverage on whole subset)
+    # - min_tags:  minimum n_tags required; NULL to skip this filter
+    # - min_pairs: minimum n_valid_growth_pair required
+    # - n_bins, min_per_bin: forwarded to has_dbh_coverage() (per-species mode only)
+    # In pooled mode the result is empty when the pool misses a threshold.
+    prepare_bio_data <- function(dt, growth_forms, species_label = NULL,
+                                 min_tags = 30L, min_pairs = 10L,
+                                 n_bins = 4L, min_per_bin = 4L) {
+        out <- dt[growth_form %in% growth_forms]
+        if (is.null(species_label)) {
+            # Per-species mode: compute coverage by Mnemonic, filter, then label
+            out[, has_size_coverage := has_dbh_coverage(.SD, n_bins = n_bins, min_per_bin = min_per_bin),
+                by = Mnemonic
+            ]
+            if (identical(COVERAGE_RULE, "union")) {
+                # also accept a species whose middle 95% of diameters cover the bins
+                out[, coverage_mid95 := has_size_coverage]
+                out[has_size_coverage == FALSE, coverage_mid95 := has_dbh_coverage(.SD,
+                    n_bins = n_bins, min_per_bin = min_per_bin, probs = c(0.025, 0.975)
+                ), by = Mnemonic]
+                counts_ok <- out$n_valid_growth_pair >= min_pairs
+                if (!is.null(min_tags)) counts_ok <- counts_ok & out$n_tags >= min_tags
+                added <- sort(unique(out$Mnemonic[counts_ok & !out$has_size_coverage & out$coverage_mid95]))
+                .msg <- sprintf(
+                    "COVERAGE_RULE union (%s): %s", paste(growth_forms, collapse = ", "),
+                    if (length(added) > 0L) paste("own parameter set through the middle-95% check only:", paste(added, collapse = ", ")) else "no species added by the middle-95% check"
+                )
+                cat("✓", .msg, "\n"); log_msg(.msg)
+                out[, has_size_coverage := coverage_mid95][, coverage_mid95 := NULL]
+            }
+            keep <- out$n_valid_growth_pair >= min_pairs & out$has_size_coverage == TRUE
+            if (!is.null(min_tags)) keep <- keep & out$n_tags >= min_tags
+            out <- out[keep][, species := Mnemonic][]
+        } else {
+            # Pooled mode: assign label, check pool-level totals, return all rows if pool qualifies.
+            # n_valid_growth_pair and n_tags are per-Mnemonic values from to_do; in
+            # pooled mode we must check the POOL's totals, not each individual species.
+            # has_size_coverage is intentionally NOT applied here: it is designed for
+            # per-species regressions and will incorrectly reject narrow-DBH pools
+            # (e.g. shrubs) even when the pool has ample data for a pooled model.
+            out[, species := species_label]
+            pool_n_pairs <- sum(out$valid_growth_pair, na.rm = TRUE)
+            pool_n_tags <- uniqueN(out$Tag)
+            passes <- pool_n_pairs >= min_pairs
+            if (!is.null(min_tags)) passes <- passes & (pool_n_tags >= min_tags)
+            if (!passes) out <- out[0L]
+        }
+        out
+    }
+
+    min_tags <- 20
+    min_pairs <- 20
+    n_bins <- 4
+    min_per_bin <- 3
+
+    ## ---- Get Bio Pars per species within growth_form -------------------------
+    # Per-species estimates for trees (species with sufficient data)
+
+    unique(to_do$growth_form)
+
+    to_do_tree_sp <- prepare_bio_data(
+        dt = to_do,
+        growth_forms = "tree",
+        species_label = NULL,
+        min_tags = min_tags, min_pairs = min_pairs,
+        n_bins = n_bins, min_per_bin = min_per_bin
+    )
+
+    # Pooled set for trees
+    to_do_tree_all_sp <- prepare_bio_data(
+        dt = to_do,
+        growth_forms = c("tree"), # species without a growth form were labelled "tree" above
+        species_label = "all_tree",
+        min_tags = min_tags, min_pairs = min_pairs,
+        n_bins = n_bins, min_per_bin = min_per_bin
+    )
+
+    to_do_shrub_sp <- prepare_bio_data(
+        dt = to_do,
+        growth_forms = c("shrub"),
+        species_label = NULL,
+        min_tags = min_tags, min_pairs = min_pairs,
+        n_bins = n_bins, min_per_bin = min_per_bin
+    )
+
+    # Per-species estimates for shrubs are above; pooled set for shrubs
+    to_do_shrub_all_sp <- prepare_bio_data(
+        dt = to_do,
+        growth_forms = c("shrub"),
+        species_label = "all_shrub",
+        min_tags = min_tags, min_pairs = min_pairs,
+        n_bins = n_bins, min_per_bin = min_per_bin
+    )
+
+    # per species estimates for palms (species with sufficient data)
+    to_do_palm_sp <- prepare_bio_data(
+        dt = to_do,
+        growth_forms = "palm",
+        species_label = NULL,
+        min_tags = min_tags, min_pairs = min_pairs,
+        n_bins = n_bins, min_per_bin = min_per_bin
+    )
+
+    # Pooled palms + tree ferns (NOTE: no tree fern data in census 7, 8, 9)
+    to_do_palm_fern_sp <- prepare_bio_data(
+        dt = to_do,
+        growth_forms = c("palm", "fern"),
+        species_label = "all_palm_fern",
+        min_tags = min_tags, min_pairs = min_pairs,
+        n_bins = n_bins, min_per_bin = min_per_bin
+    )
+
+    # Pooled strangler figs (lower thresholds: 10 tags, 5 growth pairs; the
+    # size-coverage test is not applied to pooled sets)
+    to_do_strangler_all_sp <- prepare_bio_data(
+        dt = to_do,
+        growth_forms = "strangler",
+        species_label = "all_strangler",
+        min_tags = 10, min_pairs = 5,
+        n_bins = 3, min_per_bin = 3
+    )
+
+    # run_bio_par_estimation(): estimate_bio_pars() for each value of
+    # dt$species (a species code or a pooled label). Returns a list of results
+    # named by species (empty when dt has no rows).
+    run_bio_par_estimation <- function(dt, verbose = FALSE) {
+        res <- vector("list", length = uniqueN(dt$species))
+        names(res) <- unique(dt$species)
+        sp_names <- names(res)
+        for (i in seq_along(sp_names)) {
+            sp <- sp_names[i]
+            res[[sp]] <- estimate_bio_pars(
+                dt[species == sp],
+                anchor_start_census = .est_start,
+                use_measurement_error = isTRUE(USE_MEASUREMENT_ERROR),
+                # Hard shrink guardrail (max_shrink)
+                # - "data": estimated from observed shrink tail (with measurement-error support)
+                # - "fixed": use a fixed constant bound (cm/year)
+                max_shrink_source = MAX_SHRINK_HARD_SOURCE,
+                max_shrink_fixed = MAX_SHRINK_FIXED,
+                # Soft shrinkage penalty strength (k_shrink)
+                # - "data": estimate from measurement-error scale (preferred) or from data variance
+                # - "fixed": use a fixed constant (units: 1/cm^2)
+                k_shrink_source = K_SHRINK_SOURCE,
+                k_shrink_fixed = K_SHRINK_FIXED,
+                # Soft extreme-growth penalty strength (k_growth), analogous to k_shrink
+                # - "data": estimate from measurement-error scale (preferred) or from data variance
+                # - "fixed": use a fixed constant (units: 1/cm^2); set 0 to disable soft penalty
+                k_growth_source = K_GROWTH_SOURCE,
+                k_growth_fixed = K_GROWTH_FIXED,
+                # Hard growth guardrail (max_growth)
+                # - "data": estimated from observed extreme-growth tail
+                # - "fixed": use a fixed constant bound (cm/year)
+                max_growth_source = MAX_GROWTH_HARD_SOURCE,
+                max_growth_fixed = MAX_GROWTH_FIXED,
+                # Quantiles used to set conservative guardrails
+                # the lowest value of the probability function to get lowest shrink from measurement error
+                shrink_hard_prob = 1e-4,
+                # the lowest value of the empirical quantile to get lowest shrink from data
+                shrink_data_quantile = 0.001,
+                # if measurement error, then lowest shrink is the min between the two for hard shrink guardrail
+                #################
+                # Extreme-growth guardrails (upper tail)
+                # - growth_hard_prob is the *upper-tail* probability (e.g., 1e-4 means 99.99th percentile)
+                # - growth_data_quantile is the empirical upper quantile used as a guardrail
+                # - growth_soft_quantile sets a softer threshold used for a quadratic penalty
+                # the highest (1 - growth_hard_prob) value of the probability function to get highest growth from measurement error
+                growth_hard_prob = 1e-4,
+                # Upper quantile for hard growth guardrail from empirical data
+                growth_data_quantile = 0.999,
+                # if measurement error, then highest growth is the max between the two for hard growth guardrail
+                #################
+                # to estimate the growth soft penalty k_growth - used if it becomes the minimum between max growth from measurement error or fixed or data
+                growth_soft_quantile = 0.99,
+                # Recruitment max DBH (upper bound for recruits dbh at first census)
+                recruit_max_quantile = 0.999,
+                recruit_max_source = RECRUIT_MAX_SOURCE,
+                recruit_max_fixed = as.numeric(RECRUIT_MAX_FIXED),
+                # -----------------------------------------------------------------
+                # Optional enforcement of user-specified growth/recruit bounds
+                # Units: growth bounds in cm/year; recruit max in cm.
+                # If 'enforce_growth_bounds' is TRUE, observations outside the provided fixed
+                # bounds ('growth_min_fixed' and/or 'growth_max_fixed') are dropped before estimation.
+                enforce_growth_bounds = TRUE,
+                growth_min_fixed = MAX_SHRINK_FIXED,
+                growth_max_fixed = MAX_GROWTH_FIXED,
+                # If 'enforce_recruit_max' is TRUE, recruits with DBH > 'recruit_max_fixed' are dropped
+                # before fitting the recruitment-size lognormal.
+                enforce_recruit_max = TRUE,
+                # Recruitment rate unit: new stems per established tree per year ("tree")
+                recruit_rate_unit = RECRUIT_RATE_UNIT
+            )
+            if (verbose) {
+                cat("Estimated bio parameters for species:", sp, "\n")
+            }
+        }
+        res
+    }
+
+    bio_pars_tree_sp <- run_bio_par_estimation(to_do_tree_sp, verbose = TRUE)
+    bio_pars_tree_all_sp <- run_bio_par_estimation(to_do_tree_all_sp, verbose = TRUE)
+    bio_pars_shrub_sp <- run_bio_par_estimation(to_do_shrub_sp, verbose = TRUE)
+    bio_pars_shrub_all_sp <- run_bio_par_estimation(to_do_shrub_all_sp, verbose = TRUE)
+    bio_pars_palm_sp <- run_bio_par_estimation(to_do_palm_sp, verbose = TRUE)
+    bio_pars_palm_fern_sp <- run_bio_par_estimation(to_do_palm_fern_sp, verbose = TRUE)
+    bio_pars_strangler_all_sp <- run_bio_par_estimation(to_do_strangler_all_sp, verbose = TRUE)
+    # Copy of the pooled tree parameters under the name "all_unknown" (no row
+    # is assigned this set below: species without a growth form are trees).
+    bio_pars_unknown_sp <- bio_pars_tree_all_sp
+    names(bio_pars_unknown_sp) <- "all_unknown"
+
+    # Combine bio pars
+    bio_pars <- c(
+        # tree and shrub parameters (per species, pooled)
+        bio_pars_tree_sp,
+        bio_pars_tree_all_sp,
+        bio_pars_shrub_sp,
+        bio_pars_shrub_all_sp,
+        # palm parameters
+        bio_pars_palm_sp,
+        # palm + tree fern parameters (pooled together since tree ferns have no data in censuses 7-9)
+        bio_pars_palm_fern_sp,
+        # strangler fig parameters
+        bio_pars_strangler_all_sp,
+        # copy of the pooled tree parameters named "all_unknown"
+        bio_pars_unknown_sp
+    )
+
+    # Stop if any Mnemonic is NA or infinite in xraw (the parameter sets are assigned by Mnemonic)
+    if (any(is.na(xraw$Mnemonic) | is.infinite(xraw$Mnemonic))) {
+        stop("Error: 'Mnemonic' column contains NA or infinite values. Please clean the data before proceeding.")
+    }
+
+    # Parameter set of every row (column `species`): the species' own set when
+    # it has one, otherwise the pooled set of its growth form; tree ferns use
+    # the palm + tree fern set and strangler figs the pooled strangler set.
+    xraw[
+        growth_form == "tree",
+        species := fifelse(
+            Mnemonic %in% names(bio_pars_tree_sp),
+            Mnemonic, "all_tree"
+        )
+    ]
+
+    xraw[
+        growth_form == "shrub",
+        species := fifelse(
+            Mnemonic %in% names(bio_pars_shrub_sp),
+            Mnemonic, "all_shrub"
+        )
+    ]
+
+    xraw[
+        growth_form == "palm",
+        species := fifelse(
+            Mnemonic %in% names(bio_pars_palm_sp),
+            Mnemonic, "all_palm_fern"
+        )
+    ]
+
+    xraw[
+        growth_form %in% c("fern"),
+        species := "all_palm_fern"
+    ]
+
+    xraw[
+        growth_form == "strangler",
+        species := "all_strangler"
+    ]
+
+    xraw[
+        is.na(growth_form),
+        species := "all_tree"
+    ]
+
+    # Single-stem tags: prepared here but not used further in this script
+    # (2_merge_chunks_to_datatable.R adds them to the final table).
+    xraw_single_stems <- xraw[single_stem_tags == TRUE]
+    xraw_single_stems[, `:=`(
+        ExactDate = as.IDate(ExactDate),
+        DBH_mm_original_backup = DBH,
+        DBH = dbh_with_best_candidate_taper_corrected / 10,
+        CensusID = as.integer(CensusID),
+        StemID = as.integer(as.character(StemID)),
+        TrueStemID = StemID
+    )]
+
+    # Multiple-stem tags: the rows that go to the engines
+    xraw_multi_stems <- xraw[single_stem_tags == FALSE]
+
+    # Visible check: censuses flagged in DBH_ROUND_CENSUSES must show the
+    # rounding (nearly all small-stem DBH values multiples of the class width).
+    if (length(DBH_ROUND_CENSUSES_INT) > 0L) {
+        .rd <- xraw[!is.na(DBH) & DBH < DBH_ROUND_MAX_MM, .(share = mean(DBH %% DBH_ROUND_WIDTH_MM == 0), n = .N), by = .(CensusID = as.integer(CensusID))][order(CensusID)]
+        .rd_flag <- .rd[CensusID %in% DBH_ROUND_CENSUSES_INT]
+        if (nrow(.rd_flag) < length(DBH_ROUND_CENSUSES_INT) || any(.rd_flag$share < 0.9)) {
+            .msg <- sprintf("CHECK FAILED: DBH_ROUND_CENSUSES = %s, but the share of DBH < %s mm that are multiples of %s mm is %s",
+                paste(DBH_ROUND_CENSUSES_INT, collapse = ","), DBH_ROUND_MAX_MM, DBH_ROUND_WIDTH_MM, paste(sprintf("C%d %.3f", .rd$CensusID, .rd$share), collapse = ", "))
+            cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+        }
+        .msg <- sprintf("DBH rounded down to %s mm classes below %s mm at census(es) %s (share of multiples: %s; other censuses: %s)",
+            DBH_ROUND_WIDTH_MM, DBH_ROUND_MAX_MM, paste(DBH_ROUND_CENSUSES_INT, collapse = ","),
+            paste(sprintf("C%d %.3f", .rd_flag$CensusID, .rd_flag$share), collapse = ", "),
+            paste(sprintf("C%d %.3f", .rd[!CensusID %in% DBH_ROUND_CENSUSES_INT, CensusID], .rd[!CensusID %in% DBH_ROUND_CENSUSES_INT, share]), collapse = ", "))
+        cat("✓", .msg, "\n"); log_msg(.msg)
+    }
+    xraw_multi_stems[, `:=`(
+        ExactDate = as.IDate(ExactDate),
+        DBH_mm_original_backup = DBH,
+        DBH = dbh_with_best_candidate_taper_corrected / 10,
+        CensusID = as.integer(CensusID),
+        StemID = as.integer(as.character(StemID))
+    )]
+
+    # Blind test (BLIND_MIN_CENSUS set): the engines see only the censuses from
+    # BLIND_MIN_CENSUS on; the pins before ANCHOR_START_CENSUS are removed after
+    # the pin steps below.
+    if (!is.null(BLIND_MIN_CENSUS)) {
+        xraw_multi_stems <- xraw_multi_stems[CensusID >= as.integer(BLIND_MIN_CENSUS)]
+        .msg <- sprintf("BLIND TEST: engine input restricted to censuses >= %s (%d rows, %d tags)",
+            BLIND_MIN_CENSUS, nrow(xraw_multi_stems), data.table::uniqueN(xraw_multi_stems$Tag))
+        cat("✓", .msg, "\n"); log_msg(.msg)
+    }
+
+    # ---- TrueStemID reconstruction ----
+    #
+    # TrueStemID is the ground-truth stem identity used as a hard anchor by the DP.
+    # When TrueStemID is non-NA for a row, the DP MUST assign that exact stem ID and
+    # cannot deviate. When it is NA, the DP resolves it freely using biological costs.
+    #
+    # -----------------------------------------------------------------------
+    # STEP 1 — Certain identity anchors (no ambiguity possible)
+    # -----------------------------------------------------------------------
+    #
+    #   (a) StemTag: any row where the field crew physically tagged the stem.
+    #       The StemID is unambiguous at any census, including pre-C7.
+    #
+    #   (a') A field tag recorded under 2+ StemIDs that never share a census
+    #       takes one pin: its first StemID.
+    #
+    #   (b) CensusID >= 7 (year 2010 onward): from C7 the BCI database assigned
+    #       StemIDs via a systematic re-tagging campaign. Every C7+ row
+    #       is anchored to its StemID, except the rows without a DBH
+    #       whose Status is dead / stem dead / broken below (the end of a
+    #       trajectory; see the comment at the code).
+    #
+    #   All other rows are left as NA — the DP resolves them.
+    #
+    # -----------------------------------------------------------------------
+    # STEP 2 — Conservative terminal propagation (post-last-DBH zone only)
+    # -----------------------------------------------------------------------
+    #
+    #   Within each (Tag, StemID) group, once a stem has made its last
+    #   live measurement (last non-NA DBH), all subsequent rows are in the
+    #   terminal phase: they can only record death, resprout, or missing status.
+    #
+    #   2a. Identify the boundary: the last census with a non-NA DBH per
+    #       (Tag, StemID). Rows strictly after this are the terminal
+    #       phase. Stems that never recorded a DBH get NA and are excluded
+    #       from the propagation by the guard in 2b. (Measured break /
+    #       resprout rows are anchored by Step 3a: no row after a stem's
+    #       last DBH has a DBH.)
+    #
+    #   2b. BIDIRECTIONAL FILL of the terminal-phase rows that are still NA.
+    #       Within the terminal phase of a group, LOCF carries an anchor
+    #       forward and NOCB carries a later anchor backward (anchors there
+    #       come from Step 1: a StemTag row, or a C7+ row that Step 1(b) did not
+    #       exclude). The CensusID > last_dbh_census filter strictly limits the
+    #       operation to the terminal phase: pre-last-DBH rows are never
+    #       modified.
+    #
+    #   Pre-last-DBH rows are deliberately left as NA. The DP must be free to
+    #   resolve ambiguous early-census identity assignments.
+
+    # ----- Step 1: certain anchors -----
+    xraw_multi_stems[, TrueStemID := NA_integer_]
+    xraw_multi_stems[!is.na(StemTag), TrueStemID := StemID] # (a) physical tag
+    # (a') One field tag, one pin. From FIELD_TAG_FIRST_CENSUS a field tag
+    #      (Tag, StemTag) keeps its StemID, but the database gave 2 tags a new
+    #      StemID (tag 523314 stem 2: StemID 890756 in 2010-2015, 1120187 in
+    #      2023). The later StemIDs of such a tag take its first StemID as
+    #      their pin, when the StemIDs never share a census.
+    .tag_keys <- xraw_multi_stems[
+        !is.na(StemTag) & nzchar(as.character(StemTag)) & CensusID >= FIELD_TAG_FIRST_CENSUS,
+        .(n_sid = uniqueN(StemID), first_sid = StemID[which.min(CensusID)], shared = anyDuplicated(CensusID) > 0L),
+        by = .(Tag, StemTag)
+    ][n_sid > 1L & !shared]
+    if (nrow(.tag_keys) > 0L) {
+        xraw_multi_stems[.tag_keys, on = .(Tag, StemTag), TrueStemID := fifelse(CensusID >= FIELD_TAG_FIRST_CENSUS, i.first_sid, TrueStemID)]
+        log_msg(sprintf("Step 1(a'): %d field tag(s) recorded under 2+ StemIDs take one pin each", nrow(.tag_keys)))
+    }
+    rm(.tag_keys)
+    # (b) C7+ re-tagging convention: every C7+ row gets its StemID pinned
+    #     EXCEPT end-of-trajectory rows with NA DBH (dead / stem dead / broken-below
+    #     without a measurement). Those rows describe a death/break event, not a
+    #     new identity, and pinning them to StemID severs them from their
+    #     prior alive trajectory (see tag 000378 C7-C9; in the BCI data 99.8% of
+    #     dead+NA-DBH rows have prior history at the same StemID, computed
+    #     in data_simulation/sample_data_BCI/general_data/dead_pattern.qmd). They
+    #     are filled after the engine by apply_carried_terminal_backfill()
+    #     (post-engine helper chain in the chunk loop below).
+    xraw_multi_stems[
+        is.na(TrueStemID) &
+            CensusID >= 7L &
+            !(
+                is.na(DBH) &
+                    !is.na(Status) &
+                    Status %in% c("dead", "stem dead", "broken below")
+            ),
+        TrueStemID := StemID
+    ]
+
+    # ----- Step 2: terminal propagation -----
+
+    # Word-boundary regex for R-family resprout codes in ListOfTSM.
+    # \\b = word boundary (perl=TRUE). Must match the pattern in dp_global_dp.R.
+    resprout_regex <- "\\b(R|RP|RF|RT|QR|OR)\\b"
+
+    # 2a. Last census with a non-NA DBH per (Tag, StemID).
+    #     CensusID > .last_dbh_census defines the terminal phase for that stem.
+    #     setorder ensures rows are sorted before the LOCF/NOCB fill in 2b.
+    # Find where “life ends”
+    setorder(xraw_multi_stems, Tag, StemID, CensusID)
+    .last_dbh <- xraw_multi_stems[
+        !is.na(DBH),
+        .(last_dbh_census = max(CensusID)),
+        by = .(Tag, StemID)
+    ]
+    xraw_multi_stems[.last_dbh, on = .(Tag, StemID), .last_dbh_census := i.last_dbh_census]
+
+    # 2b. Bidirectional fill of remaining post-last-DBH NA gaps within each group.
+    #     LOCF: carry a Step-1 anchor forward to later terminal rows.
+    #     NOCB: carry a later C7+ anchor backward to earlier terminal rows that had
+    #           no explicit terminal status code.
+    #     The row filter (CensusID > .last_dbh_census) guarantees pre-last-DBH rows
+    #     are never touched; nafill operates only on the terminal-phase subset.
+    xraw_multi_stems[
+        !is.na(.last_dbh_census) & CensusID > .last_dbh_census,
+        TrueStemID := nafill(nafill(TrueStemID, type = "locf"), type = "nocb"),
+        by = .(Tag, StemID)
+    ]
+
+    # 2c. Remove temporary column.
+    xraw_multi_stems[, .last_dbh_census := NULL]
+
+    # -----------------------------------------------------------------------
+    # STEP 3 — Extended propagation: terminal-event anchoring + StemID match
+    # -----------------------------------------------------------------------
+    #
+    #   Step 2 only touches rows STRICTLY AFTER the last non-NA DBH of a stem.
+    #   That leaves several common patterns unanchored:
+    #     • The last live row IS the broken-below row (DBH still recorded), so it
+    #       coincides with last_dbh_census
+    #       (e.g. tag 242114 c5 row 18: broken-below with DBH=8.6;
+    #             tag 000012 c5: broken-below with DBH=1.9).
+    #     • The alive rows of a stem whose only later records are death / break
+    #       rows without a DBH
+    #       (e.g. tag 004808 c1 alive 4769 → c2 dead 4769;
+    #             tag 006160, tag 264355).
+    #
+    #   Within a single Tag, identical StemID is treated as the same
+    #   biological individual (BCI database invariant pre- and post-C7).  So:
+    #
+    #   3a. ANCHOR any unresolved row WITH a DBH whose Status is "broken below"
+    #       or whose ListOfTSM contains an R-family resprout code: the start of
+    #       a new trajectory. Death / break rows without a DBH are not anchored
+    #       here.
+    #
+    #   3a.5 ANCHOR the alive measured rows of a group that is still entirely
+    #       unanchored and has a death / break row without a DBH.
+    #
+    #   3b. PROPAGATE within each (Tag, StemID) group: if the rows that
+    #       carry a DBH hold exactly one non-NA TrueStemID value, fill all
+    #       remaining NA rows of the group with that value.  This handles:
+    #         • backward and forward propagation from a measured anchor
+    #         • gap-filling between an early row and a later C7+ row
+    #         • any orphan NA rows in a group that has a measured anchor
+    #       Groups whose measured rows hold several distinct TrueStemIDs are
+    #       left alone and counted in the message.
+    #
+    #   3c. UNPIN the records of a StemID before a link of the StemID made
+    #       before the field tags that the measurements contradict
+    #       (PIN_STOP_AT_FAST_LINK).
+
+    # 3a. Direct anchor of START-OF-NEW-TRAJECTORY rows ONLY.
+    #     Conditions:
+    #       • Status == "broken below" with non-NA DBH, OR
+    #       • R-family resprout code in ListOfTSM with non-NA DBH.
+    #
+    #     Pattern evidence (computed in broken_below_pattern.qmd and
+    #     dead_pattern.qmd, data_simulation/sample_data_BCI/general_data/):
+    #       - broken-below + DBH     : start of a NEW trajectory
+    #                                  (98.8% have NO prior history at the same
+    #                                   StemID; ~51% appear alive later).
+    #                                  → anchor to StemID is correct;
+    #                                    no risk of pre-anchor collision.
+    #       - broken-below + NA DBH  : END of an existing trajectory
+    #                                  (55.6% have prior history at same
+    #                                   StemID).
+    #                                  → DO NOT anchor; let the engine link the
+    #                                    death back to its prior alive record.
+    #       - dead / stem dead       : END of an existing trajectory
+    #                                  (99.8% have prior history at same
+    #                                   StemID; 24 of 140,010 rows
+    #                                   have a DBH).
+    #                                  → DO NOT anchor; let the engine match.
+    #
+    #     Pre-pinning a terminal end-of-trajectory row to its own StemID
+    #     forces ReconstructionMethod = "given" on a 1-row singleton and severs
+    #     the death from its prior alive trajectory (see tag 000184 C5 dead row;
+    #     tag 000378 C6 alive row that gets back-propagated to 893101 by Step 3b).
+    #
+    #     PIN_BB_REQUIRE_OTHER_RECORD = TRUE anchors only the records whose
+    #     StemID has another record in the tag: before 2010 the database gives a
+    #     broken record a new StemID, and when that StemID has no other record
+    #     the pin carries no identity but forbids linking the record to a
+    #     pinned stem of the next census (e.g. the 2010 stem it grows into;
+    #     tree 5096: 87 -> 94 (2005, broken below) -> 98 -> 110 mm).
+    if (isTRUE(PIN_BB_REQUIRE_OTHER_RECORD)) {
+        xraw_multi_stems[, .n_rec_sid := .N, by = .(Tag, StemID)]
+    } else {
+        xraw_multi_stems[, .n_rec_sid := 2L]
+    }
+    .bb_r_rows <- xraw_multi_stems[, is.na(TrueStemID) & !is.na(DBH) &
+        ((!is.na(Status) & Status == "broken below") | (!is.na(ListOfTSM) & grepl(resprout_regex, ListOfTSM, perl = TRUE)))]
+    message(sprintf(
+        "[main_cpp_chunk_bci.R] Step 3a: %d measured broken-below / R row(s) anchored to their own StemID; %d left unpinned (StemID with no other record).",
+        sum(.bb_r_rows & xraw_multi_stems$.n_rec_sid > 1L), sum(.bb_r_rows & xraw_multi_stems$.n_rec_sid <= 1L)
+    ))
+    xraw_multi_stems[.bb_r_rows & .n_rec_sid > 1L, TrueStemID := StemID]
+    xraw_multi_stems[, .n_rec_sid := NULL]
+
+    # 3a.5 Same-StemID continuity for unanchored death/break trajectories.
+    #
+    #     Empirical evidence (computed in dead_pattern.qmd and
+    #     broken_below_pattern.qmd, data_simulation/sample_data_BCI/general_data/):
+    #       - dead / stem-dead + NA DBH : 99.8% have prior history at the
+    #                                     same StemID.
+    #       - broken-below     + NA DBH : 55.6% have prior history at the
+    #                                     same StemID.
+    #     In both cases the NA-DBH terminal record is overwhelmingly the END
+    #     of the SAME stem's trajectory.
+    #
+    #     Trigger conditions per (Tag, StemID) group:
+    #       • the group is currently entirely unanchored (every row's
+    #         TrueStemID is still NA after Steps 1, 2, 3a), AND
+    #       • the group has at least one alive DBH-bearing row, AND
+    #       • the group has at least one NA-DBH terminal row whose Status is
+    #         "dead" / "stem dead" / "broken below".
+    #     When all three hold, anchor TrueStemID := StemID on the
+    #     ALIVE DBH-bearing rows of the group only. Step 3b then propagates
+    #     that anchor across the rest of the group; the post-engine
+    #     `apply_carried_terminal_backfill()` carries Recon forward to the
+    #     NA-DBH terminal rows.
+    #
+    #     Why this is safe:
+    #       - The "currently unanchored" guard means Steps 1a/1b/2/3a have
+    #         already declined to commit on this group — there is no
+    #         competing pre-existing anchor to break.
+    #       - Anchoring only the alive DBH-bearing rows preserves the
+    #         dead-pattern policy of NOT pinning NA-DBH terminal singletons
+    #         (those are filled later by carried_terminal backfill).
+    #       - The StemID of a death record is the unambiguous
+    #         continuation of the same stem; the DP would otherwise be free
+    #         to reassign the unanchored alive history to a competing
+    #         newly-born stem and create duplicate Recon values at the
+    #         post-anchor censuses (see tags 060145, 233660, 606162, 639010,
+    #         739002, where a born-resprout stem at C8+ pulls the dying
+    #         stem's pre-C7 alive trajectory into its own track).
+    .n_before_3a5 <- sum(is.na(xraw_multi_stems$TrueStemID))
+    .n_groups_3a5 <- 0L
+    xraw_multi_stems[, TrueStemID := {
+        .v <- TrueStemID
+        if (all(is.na(.v))) {
+            .alive_mask <- !is.na(DBH) & !is.na(Status) & Status == "alive"
+            .terminal_mask <- is.na(DBH) & !is.na(Status) &
+                Status %in% c("dead", "stem dead", "broken below")
+            if (any(.alive_mask) && any(.terminal_mask)) {
+                .v[.alive_mask] <- StemID[.alive_mask]
+                .n_groups_3a5 <<- .n_groups_3a5 + 1L
+            }
+        }
+        .v
+    }, by = .(Tag, StemID)]
+    .n_after_3a5 <- sum(is.na(xraw_multi_stems$TrueStemID))
+    message(sprintf(
+        "[main_cpp_chunk_bci.R] Step 3a.5 same-StemID continuity: anchored %d alive row(s) across %d unanchored death/break group(s).",
+        .n_before_3a5 - .n_after_3a5, .n_groups_3a5
+    ))
+
+    # 3b. Propagate within (Tag, StemID) when a group has a unique anchor
+    #     that comes from a DBH-bearing row (i.e. a real start-of-trajectory or
+    #     C7+ retag anchor). Step 3a creates no anchor on a terminal-event
+    #     row without a DBH; the guard here also keeps any such anchor (e.g. a
+    #     tagged dead row from Step 1) out of the propagation:
+    #     end-of-trajectory rows must NEVER be allowed to back-propagate their
+    #     StemID to earlier alive rows (see tag 000378 C6 case).
+    #
+    #     PIN_STOP_AT_GAP = TRUE propagates only within runs of consecutive
+    #     censuses of the StemID: a pin does not cross a census in which its
+    #     StemID has no record. The database sometimes attached a 2010 stem to an
+    #     old StemID with no record in between (tag 200431: StemID 544452 is a
+    #     25 mm stem in 1982 and holds the large stem's 137 mm in 2010); the
+    #     records before such a gap stay free and the engine places them.
+    #     (The rows are sorted by Tag, StemID and CensusID in Step 2a.)
+    .stop_gap <- isTRUE(PIN_STOP_AT_GAP)
+    .n_before <- sum(is.na(xraw_multi_stems$TrueStemID))
+    .n_conflicts <- 0L
+    .n_gap_kept <- 0L
+    xraw_multi_stems[, TrueStemID := {
+        .v <- TrueStemID
+        if (anyNA(.v) && any(!is.na(.v))) {
+            # Only consider anchors from rows that carry DBH (start-of-trajectory
+            # or measured retag). Terminal-only NA-DBH anchors are excluded.
+            .run <- if (.stop_gap) cumsum(c(TRUE, diff(CensusID) > 1L)) else rep(1L, .N)
+            .na0 <- is.na(.v)
+            .all_anchor <- !is.na(.v) & !is.na(DBH)
+            for (.r in unique(.run)) {
+                .in <- .run == .r
+                .anchor_mask <- .in & .all_anchor
+                if (any(.anchor_mask)) {
+                    .u <- unique(.v[.anchor_mask])
+                    if (length(.u) == 1L) {
+                        .v[.in & is.na(.v)] <- .u
+                    } else {
+                        .n_conflicts <<- .n_conflicts + 1L
+                    }
+                }
+            }
+            # rows the propagation without the gap rule would have filled
+            if (.stop_gap && any(.all_anchor) && length(unique(.v[.all_anchor])) == 1L) {
+                .n_gap_kept <<- .n_gap_kept + sum(.na0 & is.na(.v))
+            }
+        }
+        .v
+    }, by = .(Tag, StemID)]
+    .n_after <- sum(is.na(xraw_multi_stems$TrueStemID))
+    message(sprintf(
+        "[main_cpp_chunk_bci.R] Step 3 propagation: filled %d NA rows; %d (Tag,StemID) groups had conflicting TrueStemID and were left untouched%s.",
+        .n_before - .n_after, .n_conflicts,
+        if (.stop_gap) sprintf("; %d row(s) left free across a census without a record of their StemID (PIN_STOP_AT_GAP)", .n_gap_kept) else ""
+    ))
+
+    # 3c. PIN_STOP_AT_FAST_LINK: a link of a database StemID made before the
+    #     field tags (consecutive censuses, measured records) is contradicted by
+    #     the measurements when its growth is above the 99.9% quantile of the
+    #     tagged growth of the species (bio_pars max_growth_data_value) and
+    #     another record of the tree in the earlier census fits the later
+    #     record: unpinned, its StemID without a measured record in the later
+    #     census, growth within [max_shrink, the 99% quantile]
+    #     (max_growth_soft_value; an alternative between the two quantiles
+    #     is no clear predecessor, and the engine then often starts a new
+    #     stem in the later census). The records
+    #     of the StemID up to the earlier census lose their pin (before the
+    #     field tags every pin is the row's own StemID: a pin propagated by
+    #     Step 3b or a StemTag the database copied back from a later record),
+    #     so the pin no longer forces the link and the engine places them.
+    #     Growth uses the taper-corrected DBH (cm); a missing date takes the
+    #     mean date of its census.
+    if (isTRUE(PIN_STOP_AT_FAST_LINK)) {
+        .q_hi <- vapply(bio_pars, function(p) as.numeric(p$growth$max_growth_data_value)[1L], numeric(1))
+        .q_99 <- vapply(bio_pars, function(p) as.numeric(p$growth$max_growth_soft_value)[1L], numeric(1))
+        .q_lo <- vapply(bio_pars, function(p) as.numeric(p$shrinkage$max_shrink)[1L], numeric(1))
+        .m <- xraw_multi_stems[, .(Tag, StemID, CensusID, DBH, set = as.character(species), pin = TrueStemID, .t = as.numeric(ExactDate))][!is.na(DBH)]
+        .m[, .t := fifelse(is.na(.t), mean(.t, na.rm = TRUE), .t), by = CensusID]
+        # links the pins force: both records carry the same pin
+        .lk <- .m[CensusID < FIELD_TAG_FIRST_CENSUS & !is.na(pin), .(Tag, StemID, c1 = CensusID, p1 = pin, d1 = DBH, t1 = .t, hi = .q_hi[set], q99 = .q_99[set], lo = .q_lo[set])][
+            .m[!is.na(pin), .(Tag, StemID, c1 = CensusID - 1L, p2 = pin, d2 = DBH, t2 = .t)], on = .(Tag, StemID, c1), nomatch = NULL][p1 == p2]
+        .lk <- .lk[(d2 - d1) / ((t2 - t1) / 365.25) > hi]
+        # other records of the census: unpinned, StemID without a measured record in the next census
+        .ends <- .m[is.na(pin)][!.m[, .(Tag, StemID, CensusID = CensusID - 1L)], on = .(Tag, StemID, CensusID)]
+        .alt <- .ends[, .(Tag, c1 = CensusID, alt_sid = StemID, d0 = DBH, t0 = .t)][.lk, on = .(Tag, c1), nomatch = NULL, allow.cartesian = TRUE][alt_sid != StemID]
+        .alt[, g0 := (d2 - d0) / ((t2 - t0) / 365.25)]
+        .cut <- unique(.alt[g0 >= lo & g0 <= q99, .(Tag, StemID, c1)])
+        .n_fast_links <- nrow(.cut)
+        data.table::fwrite(.alt[g0 >= lo & g0 <= q99][, `:=`(g = (d2 - d1) / ((t2 - t1) / 365.25))], file.path(out_dir, "pin_stop_at_fast_link.csv"))
+        .cut <- .cut[, .(c1 = max(c1)), by = .(Tag, StemID)]
+        .free <- xraw_multi_stems[.cut, on = .(Tag, StemID), nomatch = NULL, which = TRUE]
+        .free <- .free[xraw_multi_stems$CensusID[.free] <= .cut[xraw_multi_stems[.free], on = .(Tag, StemID), c1]]
+        .n_fast_rows <- sum(!is.na(xraw_multi_stems$TrueStemID[.free]))
+        xraw_multi_stems[.free, TrueStemID := NA_integer_]
+        .msg <- sprintf(
+            "Step 3c PIN_STOP_AT_FAST_LINK: %d database StemID link(s) before census %d grow faster than 99.9%% of the tagged links of the species while another record of the tree fits the later record (%d tree(s)); %d record(s) before them unpinned",
+            .n_fast_links, FIELD_TAG_FIRST_CENSUS, uniqueN(.cut$Tag), .n_fast_rows
+        )
+        cat("✓", .msg, "\n"); log_msg(.msg)
+        rm(.q_hi, .q_lo, .m, .lk, .ends, .alt, .cut, .free)
+    }
+
+    # Blind test: only the pins from the anchor census on are kept
+    if (!is.null(BLIND_MIN_CENSUS)) {
+        .n_blind <- xraw_multi_stems[CensusID < ANCHOR_START_CENSUS & !is.na(TrueStemID), .N]
+        xraw_multi_stems[CensusID < ANCHOR_START_CENSUS, TrueStemID := NA_integer_]
+        .msg <- sprintf("BLIND TEST: removed %d pin(s) before census %s", .n_blind, ANCHOR_START_CENSUS)
+        cat("✓", .msg, "\n"); log_msg(.msg)
+    }
+
+    # Fill a missing ExactDate with the mean date of its census.
+    # origin = "1970-01-01" is R's internal date origin: as.numeric() of a date
+    # gives days since 1970-01-01, so the mean must be converted back with the
+    # same origin. The result is an ordinary date; the 1960-01-01 origin of the
+    # `date` column of the R tables is applied in stage 3 and plays no role here.
+    xraw_multi_stems[, mean_date_census :=
+        as.IDate(mean(as.numeric(ExactDate), na.rm = TRUE),
+            origin = "1970-01-01"
+        ),
+    by = CensusID
+    ]
+
+    xraw_multi_stems[
+        is.na(ExactDate),
+        ExactDate := as.IDate(mean_date_census)
+    ][, mean_date_census := NULL]
+
+    xraw_multi_stems <- ensure_species_column(xraw_multi_stems)
+
+    xrun <- data.table::copy(xraw_multi_stems)
+
+    # Optional regression-test filter: restrict xrun to tags listed in
+    # TAG_FILTER_FILE (first column). The biological parameters were estimated
+    # above from the full input, so the filter does not change them.
+    if (exists("TAG_FILTER_FILE") && !is.null(TAG_FILTER_FILE) && nzchar(TAG_FILTER_FILE)) {
+        if (!file.exists(TAG_FILTER_FILE)) {
+            stop("TAG_FILTER_FILE not found: ", TAG_FILTER_FILE)
+        }
+        .tf <- tryCatch(data.table::fread(TAG_FILTER_FILE, colClasses = "character"),
+            error = function(e) {
+                stop("Failed to read TAG_FILTER_FILE: ", e$message)
+            }
+        )
+        if (ncol(.tf) < 1L) stop("TAG_FILTER_FILE has no columns: ", TAG_FILTER_FILE)
+        .filter_tags <- as.character(.tf[[1L]])
+        # Strip whitespace; drop NA/empty
+        .filter_tags <- trimws(.filter_tags)
+        .filter_tags <- .filter_tags[nzchar(.filter_tags) & !is.na(.filter_tags)]
+        if (exists("TAG_FILTER_N") && !is.null(TAG_FILTER_N)) {
+            .n_take <- as.integer(TAG_FILTER_N)
+            if (length(.filter_tags) > .n_take) .filter_tags <- head(.filter_tags, .n_take)
+        }
+        # Match Tag values robustly: accept either the raw string (e.g. "000015")
+        # OR the leading-zero-stripped form (e.g. "15") on either side, so the
+        # filter works regardless of whether xrun$Tag is character or integer.
+        .filter_norm <- sub("^0+", "", .filter_tags)
+        .filter_norm[!nzchar(.filter_norm)] <- "0"
+        .filter_keys <- unique(c(.filter_tags, .filter_norm))
+        .xrun_tag_char <- as.character(xrun$Tag)
+        .xrun_tag_norm <- sub("^0+", "", .xrun_tag_char)
+        .xrun_tag_norm[!nzchar(.xrun_tag_norm)] <- "0"
+        .keep <- (.xrun_tag_char %in% .filter_keys) | (.xrun_tag_norm %in% .filter_keys)
+        .before_n <- data.table::uniqueN(xrun$Tag)
+        xrun <- xrun[.keep]
+        message(sprintf(
+            "[main_cpp_chunk_bci.R] TAG_FILTER_FILE: kept %d of %d tags from %s (file lists %d tags).",
+            data.table::uniqueN(xrun$Tag), .before_n, TAG_FILTER_FILE, length(.filter_tags)
+        ))
+        if (nrow(xrun) == 0L) stop("After applying TAG_FILTER_FILE, xrun is empty.")
+    }
+
+    # ------------------------------------------------------------------
+    # free memory: the remaining objects are only needed to build xrun/
+    # bio_pars, which we now have; drop the big tables before the DP work
+    # ------------------------------------------------------------------
+    rm(
+        xraw,
+        anchor_data, mean_date_tag_census, mean_date_census, full_anchor_data,
+        tag_stem_combos, tag_mnemonic,
+        to_do,
+        to_do_tree_sp, to_do_tree_all_sp,
+        to_do_shrub_sp, to_do_shrub_all_sp,
+        to_do_palm_fern_sp,
+        bio_pars_tree_sp, bio_pars_tree_all_sp,
+        bio_pars_shrub_sp,
+        bio_pars_palm_sp, bio_pars_palm_fern_sp,
+        bio_pars_strangler_all_sp,
+        bio_pars_unknown_sp,
+        xraw_multi_stems
+    )
+    invisible(gc())
+
+    # Write run_parameters_full.txt: time stamp, output folder, command line
+    # and overrides, the parameter sets in use and the structure of bio_pars.
+
+    params <- list()
+    params$TIMESTAMP <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    params$OUT_DIR <- out_dir
+    params$GENERATED_DIR_NAME <- basename(out_dir)
+    # Record BATCH_TS explicitly: use provided BATCH_TS if present; otherwise
+    # extract the timestamp prefix used in the generated directory name (YYYYmmdd_HHMMSS)
+    if (exists("BATCH_TS") && nzchar(BATCH_TS)) {
+        params$BATCH_TS <- BATCH_TS
+    } else {
+        m <- regexpr("^[0-9]{8}_[0-9]{6}", basename(out_dir))
+        params$BATCH_TS <- if (m[1] == -1) "" else regmatches(basename(out_dir), m)
+    }
+
+    # Add called parameters (command-line overrides)
+    params$CALLED_PARAMETERS <- overrides
+
+    # Parameter sets in use
+    params$UNIQUE_SPECIES <- if (exists("xrun")) unique(xrun$species) else NA
+    # Record the exact command line used to invoke this run
+    # This is critical for full reproducibility
+    params$COMMAND_LINE <- paste(commandArgs(), collapse = " ")
+    # The input file and the settings that the merge checks
+    # (2_merge_chunks_to_datatable.R): the run must have read the current
+    # stage-1 table, be a full run, and use the merge's rejoin bounds.
+    params$INPUT_FILE <- normalizePath(INPUT_FILE, winslash = "/", mustWork = FALSE)
+    params$INPUT_FILE_MTIME <- sprintf("%.3f", as.numeric(file.mtime(INPUT_FILE)))
+    params$INPUT_FILE_SIZE <- sprintf("%.0f", file.size(INPUT_FILE))
+    params$N_TAGS <- data.table::uniqueN(xrun$Tag)
+    for (.k in c(
+        "MAX_GROWTH_FIXED", "MAX_SHRINK_FIXED", "RECRUIT_MAX_FIXED", "ANCHOR_START_CENSUS",
+        "TAG_FILTER_FILE", "TAG_FILTER_N", "BLIND_MIN_CENSUS", "BIO_ESTIMATION_START_CENSUS",
+        "DP_CHUNK_START", "DP_CHUNK_END"
+    )) {
+        .v <- get(.k)
+        params[[.k]] <- if (is.null(.v)) "NULL" else .v
+    }
+
+    # Add a readable version of bio_pars to the log
+    if (exists("bio_pars")) {
+        params$BIO_PARAMETERS_STR <- paste(capture.output(str(bio_pars)), collapse = "\n")
+    }
+
+    format_param <- function(x) {
+        if (is.null(x)) {
+            "NULL"
+        } else if (is.function(x)) {
+            "<function>"
+        } else if (is.environment(x)) {
+            "<environment>"
+        } else if (is.list(x)) {
+            "<list>"
+        } else if (length(x) == 0) {
+            "<empty>"
+        } else if (is.logical(x)) {
+            if (isTRUE(x)) "TRUE" else "FALSE"
+        } else if (is.atomic(x) && length(x) == 1 && is.na(x)) {
+            "NA"
+        } else if (is.atomic(x)) {
+            paste(as.character(x), collapse = ", ")
+        } else {
+            paste0("<", typeof(x), ">")
+        }
+    }
+    params_lines <- unlist(
+        Map(function(name, value) {
+            paste0(name, ": ", format_param(value))
+        }, names(params), params)
+    )
+    params_file <- file.path(out_dir, "run_parameters_full.txt")
+    writeLines(params_lines, con = params_file)
+
+    # Attach Bio_* columns (the engines read the parameters from columns)
+    xrun <- attach_bio_columns(xrun, bio_pars)
+
+    # `species` held the parameter set; keep it under an explicit name and let
+    # `Species` be the species code (the engines read `Species` for PROB_SPECIES)
+    setnames(xrun, "species", "parameter_set_for_species")
+    xrun[, Species := Mnemonic]
+
+    # DP track cap
+    dp_max_tracks_local <- if (is.null(DP_MAX_TRACKS)) auto_dp_max_tracks(xrun) else as.integer(DP_MAX_TRACKS)
+    dp_max_tracks_local <- as.integer(dp_max_tracks_local)
+
+    ## Create chunks based on unique (Tag, Species) groups
+    if (!requireNamespace("parallel", quietly = TRUE)) stop("Package not available: parallel.")
+    groups <- unique(xrun[, .(Tag, Species)])
+    data.table::setorder(groups, Tag, Species)
+    group_idx <- seq_len(nrow(groups))
+    chunks <- split(group_idx, ceiling(seq_along(group_idx) / as.integer(DP_CHUNK_SIZE)))
+    first_chunk <- !file.exists(DP_CSV_FILE)
+
+    # Optionally limit to a subset of chunks for testing
+    start_ci <- if (exists("DP_CHUNK_START") && !is.null(DP_CHUNK_START)) as.integer(DP_CHUNK_START) else 1L
+    end_ci <- if (exists("DP_CHUNK_END") && !is.null(DP_CHUNK_END)) as.integer(DP_CHUNK_END) else length(chunks)
+
+    # Handle edge cases: empty chunk list or out-of-range values
+    if (length(chunks) == 0L) {
+        log_msg("No groups/chunks to process — exiting.")
+        tryCatch(
+            {
+                writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt"))
+            },
+            error = function(e) NULL
+        )
+        write_run_record("finish", n_tags = data.table::uniqueN(xrun$Tag), n_chunks = 0L)
+        run_record_closed <- TRUE
+        return(invisible(list(xrun = xrun, bio_pars = bio_pars)))
+    }
+
+    # Clamp values to valid range
+    start_ci <- max(1L, min(length(chunks), start_ci))
+    end_ci <- max(1L, min(length(chunks), end_ci))
+
+    if (start_ci > end_ci) {
+        stop(sprintf(
+            "Invalid chunk range: DP_CHUNK_START=%s, DP_CHUNK_END=%s after clamping => start=%d > end=%d",
+            if (exists("DP_CHUNK_START") && !is.null(DP_CHUNK_START)) as.character(DP_CHUNK_START) else "NULL",
+            if (exists("DP_CHUNK_END") && !is.null(DP_CHUNK_END)) as.character(DP_CHUNK_END) else "NULL",
+            start_ci, end_ci
+        ))
+    }
+
+    for (ci in seq_len(length(chunks))) {
+        if (ci < start_ci || ci > end_ci) {
+            next
+        }
+        chunk_rds <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.rds"), ci))
+        chunk_done <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d_done.txt"), ci))
+
+        if (isTRUE(DP_CHUNK_RESUME) && file.exists(chunk_done) && !isTRUE(DP_CHUNK_OVERWRITE)) {
+            log_msg(sprintf("Skipping chunk %d/%d — already completed (resume enabled)", ci, length(chunks)))
+            first_chunk <- !file.exists(DP_CSV_FILE)
+            next
+        }
+
+        groups_ci <- groups[chunks[[ci]]]
+        log_msg(sprintf("Chunk %d/%d — %d groups", ci, length(chunks), nrow(groups_ci)))
+
+        # Run chunk with error isolation so one bad chunk doesn't kill the run
+        status <- tryCatch(
+            {
+                res <- parallel::mclapply(seq_len(nrow(groups_ci)), function(j) {
+                    data.table::setDTthreads(1L)
+                    g <- groups_ci[j]
+                    dtg <- xrun[Tag == g$Tag & Species == g$Species]
+
+                    # Return rows as-is for groups with missing DBH or CensusID (all NA)
+                    if (!("DBH" %in% names(dtg)) || !("CensusID" %in% names(dtg)) || all(is.na(dtg$DBH)) || all(is.na(dtg$CensusID))) {
+                        log_msg(sprintf("Skipping Tag=%s Species=%s in chunk %d: missing or all NA DBH/CensusID; returning rows as-is", g$Tag, g$Species, ci), "WARN")
+                        dtg[, ReconstructionMethod := "skipped_no_data"]
+                        return(dtg)
+                    }
+
+                    run_dp_one_group(dtg, dp_max_tracks = dp_max_tracks_local, chunk_id = ci)
+                }, mc.cores = MC_CORES)
+
+                # Remove NULLs (skipped groups) before binding
+                res <- Filter(Negate(is.null), res)
+                if (length(res) == 0L) {
+                    out_chunk <- data.table::data.table()
+                } else {
+                    out_chunk <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
+                }
+
+                if (nrow(out_chunk) > 0L) {
+                    out_chunk[, DP_Chunk := ci]
+                    # ---- Post-engine helper chain (all helpers in dp_global/R/dp_global_main.R) ----
+                    # 1. Posterior bins: adds DP_PosteriorBin column.
+                    out_chunk <- maybe_add_posterior_bins(out_chunk)
+                    # 2. Pin the track, not just the row: unpinned measurements the engine
+                    #    linked to pinned rows, left on another ID by the TrueStemID sweep,
+                    #    rejoin the track's single pin (no crossing of broken-below + DBH rows
+                    #    or NA-R barriers; no collisions). Pinned rows never move.
+                    out_chunk <- apply_pin_track_rejoin(out_chunk, verbose = FALSE)
+                    # 3. Carried-terminal backfill: LOCF of ReconstructedStemID onto
+                    #    NA-DBH terminal rows (dead/stem dead/broken below/missing).
+                    out_chunk <- apply_carried_terminal_backfill(out_chunk, verbose = FALSE)
+                    # 4. Orphan-stem backfill: fills NA-DBH, NA-TrueStemID rows from StemID.
+                    out_chunk <- apply_orphan_stem_backfill(out_chunk, verbose = FALSE)
+                    # 5. Terminal records back to their stem: an unmeasured dead / stem dead /
+                    #    broken-below record that precedes the first life of its identity goes to
+                    #    the stem that ended just before (the engine's pre-sweep choice, else the
+                    #    only stem ending then, else the main stem of the census before);
+                    #    otherwise it stays (never-alive stem).
+                    out_chunk <- apply_terminal_to_host(out_chunk, verbose = FALSE)
+                    # 6. Broken-below invariants (R1: a measured broken-below row starts a new
+                    #    stem; R2: a measurement after a stump starts a new stem).
+                    #    May mint new ReconstructedStemIDs tagged bb_split / bb_post_terminator_split.
+                    out_chunk <- apply_broken_below_invariants(out_chunk, verbose = FALSE)
+                    # 7. Chronological renumbering: assign ReconstructedStemID values from 1..N per tag,
+                    #    ordered by first census appearance (earliest = 1), breaking ties by largest DBH at first census,
+                    #    then by original ID, so no ID is negative or zero.
+                    #    Must run after apply_broken_below_invariants(); returns a mapping table.
+                    .renum <- renumber_engine_minted_ids(
+                        out_chunk,
+                        posterior_top_k = DP_POSTERIOR_TOP_K,
+                        posterior_samples_path = out_dir,
+                        verbose = FALSE
+                    )
+                    out_chunk <- .renum$out
+                    # 8. Finalize posterior path files: translates staged per-sample
+                    #    ReconstructedStemIDs via the mapping, applies the pins and the
+                    #    broken-below invariants per sample, writes
+                    #    posteriors/tag_*_paths.<ext>, and removes staging files.
+                    finalize_posterior_paths(
+                        out_chunk,
+                        posterior_samples_path = out_dir,
+                        mapping = .renum$mapping,
+                        verbose = FALSE
+                    )
+                    out_chunk[, run_out_dir := basename(out_dir)]
+
+                    if (isTRUE(WRITE_DP_CSV)) {
+                        maybe_write(isTRUE(WRITE_DP_CSV), DP_CSV_FILE, function() {
+                            data.table::fwrite(out_chunk, file = DP_CSV_FILE, append = !first_chunk)
+                        }, sprintf("DP CSV chunk %d", ci))
+                    }
+
+                    if (isTRUE(WRITE_DP_FEATHER)) {
+                        feather_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.feather"), ci))
+                        maybe_write(isTRUE(WRITE_DP_FEATHER), feather_path, function() {
+                            if (!requireNamespace("arrow", quietly = TRUE)) stop("'arrow' package not available; skipping feather output")
+                            arrow::write_feather(out_chunk, feather_path)
+                        }, sprintf("Feather for chunk %d", ci))
+                    }
+
+                    if (isTRUE(WRITE_DP_RDS)) {
+                        maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
+                            saveRDS(out_chunk, file = chunk_rds)
+                        }, sprintf("RDS chunk %d", ci))
+                    }
+
+                    if (isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF)) {
+                        pdf_path <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d.pdf"), ci))
+                        maybe_write(isTRUE(WRITE_DP_PDF_PER_CHUNK) && isTRUE(WRITE_DP_PDF), pdf_path, function() {
+                            plot_tag_to_pdf(out_chunk, pdf_file = pdf_path, include_reference = DP_PDF_INCLUDE_REFERENCE)
+                        }, sprintf("PDF chunk %d", ci))
+                    }
+                } else {
+                    log_msg(sprintf("Chunk %d returned no rows.", ci))
+                    if (isTRUE(WRITE_DP_RDS)) {
+                        maybe_write(isTRUE(WRITE_DP_RDS), chunk_rds, function() {
+                            saveRDS(out_chunk, file = chunk_rds)
+                        }, sprintf("RDS chunk %d (empty)", ci))
+                    }
+                }
+
+                # Write a completion marker so resume can skip this chunk
+                # even when WRITE_DP_RDS=FALSE.
+                tryCatch(
+                    writeLines(as.character(Sys.time()), con = chunk_done),
+                    error = function(e) log_msg(sprintf("Warning writing chunk done marker: %s", conditionMessage(e)), "WARN")
+                )
+
+                TRUE
+            },
+            error = function(e) {
+                # Write a small error marker for the chunk and continue
+                err_file <- file.path(out_dir, sprintf(paste0(DP_BASE, "_chunk_%03d_failed.txt"), ci))
+                writeLines(conditionMessage(e), con = err_file)
+                log_msg(sprintf("Chunk %d failed: %s", ci, conditionMessage(e)), "ERROR")
+                FALSE
+            }
+        )
+
+        first_chunk <- FALSE
+        # Safe cleanup: only rm() variables that were successfully assigned
+        for (.v in c("res", "out_chunk", "groups_ci")) {
+            if (exists(.v, inherits = FALSE)) rm(list = .v)
+        }
+        invisible(gc())
+    }
+
+    # Write a small finished marker so users and wrappers can detect job completion
+    tryCatch(
+        {
+            writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_finished.txt"))
+            log_msg("Finished run")
+        },
+        error = function(e) {
+            log_msg(sprintf("Warning writing run_finished marker: %s", conditionMessage(e)), "WARN")
+        }
+    )
+    write_run_record("finish", n_tags = data.table::uniqueN(xrun$Tag), n_chunks = length(chunks))
+    run_record_closed <- TRUE
+
+    invisible(list(xrun = xrun, bio_pars = bio_pars))
+}
+
+############################################################
+### 10) Post-run utilities
+############################################################
+# Helpers for merging per-chunk RDS or Feather files into a single CSV.
+# Call merge_chunks_to_csv(out_dir) after a run to produce a combined flat
+# file without loading all chunks into memory simultaneously. (The BCI
+# pipeline itself merges the chunks with 2_merge_chunks_to_datatable.R.)
+#   merge_chunk_rds_to_csv(out_dir, out_csv)      from the *_chunk_NNN.rds files
+#   merge_chunk_feathers_to_csv(out_dir, out_csv) from the *_chunk_NNN.feather
+#                                                 files (needs arrow)
+#   merge_chunks_to_csv(out_dir, prefer)          uses the preferred kind when
+#                                                 such files exist, else the other
+# out_csv defaults to <out_dir>/stem_reconstruction_dp_global_rcpp_merged.csv.
+# Chunks are read and appended one at a time; empty chunks are skipped. Each
+# returns the path of the CSV and stops when no chunk file is found.
+merge_chunk_rds_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(DP_BASE, "_merged.csv"))) {
+    files <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.rds$"), full.names = TRUE)
+    if (length(files) == 0L) stop("No chunk RDS files found in ", out_dir)
+    first <- TRUE
+    for (f in sort(files)) {
+        log_msg(paste("Merging RDS", basename(f)))
+        dt <- readRDS(f)
+        if (nrow(dt) == 0L) next
+        if (first) {
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv), sprintf("Merged RDS first write: %s", basename(out_csv)))
+            first <- FALSE
+        } else {
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv, append = TRUE), sprintf("Merged RDS append: %s", basename(out_csv)))
+        }
+        rm(dt)
+        invisible(gc())
+    }
+    log_msg(paste("Merged", length(files), "RDS chunks to", out_csv))
+    out_csv
+}
+
+merge_chunk_feathers_to_csv <- function(out_dir, out_csv = file.path(out_dir, paste0(DP_BASE, "_merged.csv"))) {
+    if (!requireNamespace("arrow", quietly = TRUE)) stop("arrow package required to read feather files")
+    files <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.feather$"), full.names = TRUE)
+    if (length(files) == 0L) stop("No chunk Feather files found in ", out_dir)
+    first <- TRUE
+    for (f in sort(files)) {
+        log_msg(paste("Merging Feather", basename(f)))
+        dt <- as.data.table(arrow::read_feather(f))
+        if (nrow(dt) == 0L) next
+        if (first) {
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv), sprintf("Merged Feather first write: %s", basename(out_csv)))
+            first <- FALSE
+        } else {
+            maybe_write(TRUE, out_csv, function() data.table::fwrite(dt, file = out_csv, append = TRUE), sprintf("Merged Feather append: %s", basename(out_csv)))
+        }
+        rm(dt)
+        invisible(gc())
+    }
+    log_msg(paste("Merged", length(files), "Feather chunks to", out_csv))
+    out_csv
+}
+
+merge_chunks_to_csv <- function(out_dir, prefer = c("rds", "feather")) {
+    prefer <- match.arg(prefer)
+    if (prefer == "feather") {
+        chars <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.feather$"), full.names = TRUE)
+        if (length(chars) > 0L) {
+            return(merge_chunk_feathers_to_csv(out_dir))
+        }
+        return(merge_chunk_rds_to_csv(out_dir))
+    }
+    # prefer rds
+    rds <- list.files(out_dir, pattern = paste0(DP_BASE, "_chunk_\\d{3}\\.rds$"), full.names = TRUE)
+    if (length(rds) > 0L) {
+        return(merge_chunk_rds_to_csv(out_dir))
+    }
+    return(merge_chunk_feathers_to_csv(out_dir))
+}
+
+############################################################
+### 11) Entrypoint
+############################################################
+# Executed only when called directly via Rscript; safe to source() without
+# triggering a run (sys.nframe() > 0 when sourced interactively).
+if (sys.nframe() == 0L) {
+    message("[dp_global main_cpp_chunk_bci.R] Starting chunked run_main_chunked()")
+    run_main_chunked()
+}
+
+############################################################
+### Usage guide
+############################################################
+#
+# PURPOSE
+#   Chunked reconstruction of the BCI multiple-stem tags. Splits all
+#   (Tag, Species) groups into batches of DP_CHUNK_SIZE, processes each batch
+#   in parallel, and writes one Feather file per chunk (plus CSV / RDS / PDF
+#   when the WRITE_DP_* flags are set), with a completion marker per chunk so
+#   that a stopped run can be resumed.
+#
+# BASIC RUN — all chunks, default settings (from the project root)
+#   Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
+#     --BASE_OUT_DIR=/path/to/outputs
+#   (INPUT_FILE defaults to
+#   BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds,
+#   an RDS file from stage 1.)
+#
+# COMMON OVERRIDES
+#   --DP_CHUNK_SIZE=18            Groups per chunk (increase for faster runs with enough RAM)
+#   --DP_MAX_STATES=10000         Max assignment states per census; a tag above it
+#                                 goes to the probabilistic matcher
+#   --MANUAL_CORES=TRUE           Use a fixed core count instead of auto-detect
+#   --MANUAL_CORES_VALUE=8        Number of cores (requires MANUAL_CORES=TRUE)
+#   --WRITE_DP_PDF=TRUE/FALSE     Whether to produce per-chunk PDF plots
+#   --WRITE_DP_PDF_PER_CHUNK=TRUE Per-chunk PDFs (written when both flags are TRUE;
+#                                 this driver writes no run-level PDF)
+#   --POSTERIOR_SAMPLES=250       Draw N posterior samples per group (0 = disabled)
+#   --POSTERIOR_SAMPLES_FORMAT=csv|rds|feather
+#   --USE_MEASUREMENT_ERROR=TRUE  Measurement-error model in the parameter estimation
+#                                 and in the DP growth likelihood
+#   --DP_FALLBACK_GROWTH_FORMS="strangler,palm"
+#                                 Comma-separated growth_form labels (tree, shrub,
+#                                 palm, strangler, fern) routed to the probabilistic
+#                                 matcher; a value that is not a label stops the run
+#   --PROB_BIRTH_DEATH=FALSE      Probabilistic matcher with count-based slots (forced
+#                                 survival with stable stem counts); default TRUE
+#                                 (birth-death)
+#   --RECRUIT_RATE_UNIT=slot      Recruitment rate per empty grid slot;
+#                                 default "tree" (new stems per established tree per year)
+#   --COVERAGE_RULE=minmax        Size-coverage rule with bins from min to max DBH only;
+#                                 default "union" (also the middle 95% of diameters)
+#   --DBH_ROUND_CENSUSES=none     Turn off the treatment of DBH recorded in 5 mm classes
+#                                 (default "1,2")
+#   --TAG_FILTER_FILE=tags.csv    Run only the tags listed in the first column of a file
+#   --DP_CHUNK_START=3            Start from chunk N (skip earlier chunks)
+#   --DP_CHUNK_END=9              Stop after chunk N
+#   --RUN_RECORD_DIR=/path        Folder of the run records (default
+#                                 2_STEM_IDENTIFICATION/run_records; another
+#                                 folder keeps test runs out of the repository)
+#   --WRITE_RUN_RECORD=FALSE      No run record
+#
+
+# STOPPING A RUN
+#   Send SIGINT (Ctrl-C in the terminal) or SIGTERM to the Rscript process.
+#   The completion marker (_done.txt) is written as the very last step of each
+#   chunk, after all outputs (Feather, CSV, RDS, PDF) have been written.
+#   A chunk without a _done.txt is treated as incomplete and will be re-run
+#   on resume, even if a partial chunk file exists from the interrupted run.
+#   Files in the output directory:
+#     stem_reconstruction_dp_global_rcpp_chunk_NNN.feather  — chunk data
+#     stem_reconstruction_dp_global_rcpp_chunk_NNN_done.txt — completion flag
+#                                                             (only present if chunk finished)
+#
+
+# RESUMING A STOPPED RUN
+#   Pass the path of the existing output directory via --OUT_DIR_OVERRIDE and
+#   enable the resume flag. The script will skip every chunk that already has a
+#   _done.txt marker and continue from where it stopped.
+#
+#   Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R \
+#     --OUT_DIR_OVERRIDE=/path/to/outputs/<run_dir> \
+#     --DP_CHUNK_RESUME=TRUE \
+#     --MANUAL_CORES=TRUE \
+#     --MANUAL_CORES_VALUE=8
+#
+
+#   Important: all non-output parameters (DP_MAX_STATES, POSTERIOR_SAMPLES,
+#   DP_FALLBACK_GROWTH_FORMS, etc.) must match the original run so that the
+#   resumed chunks are processed identically to the ones already completed.
+#
+# MERGING CHUNK FILES AFTER A RUN
+#   The pipeline continues with 2_merge_chunks_to_datatable.R, which reads the
+#   per-chunk Feather files of a run folder. For a flat CSV of the chunks alone:
+#
+#   source("BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R")   # defines helpers only
+#   merge_chunks_to_csv("/path/to/outputs/<run_dir>", prefer = "feather")
+#
+
+# HELP
+#   Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R --help

@@ -1,0 +1,138 @@
+Settings of the engine run 20261024_213308_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_PF_HP_LF_g5_sm0p5_kg0_ks0_rcpp
+Written 2026-10-24 21:33:13 by BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R
+
+Method
+- Measurement-error model: not used (USE_MEASUREMENT_ERROR = FALSE)
+- DBH recorded in classes: censuses 1, 2, DBH below 55 mm read as a size within its 5 mm class (rounded down)
+- Growth bounds: annual growth from -0.5 to 5 cm/yr (fixed / fixed); new stems up to 25.9999 cm DBH; pruning bounds 5 x these
+- Soft growth / shrinkage penalties: 0 / 0 (0 = off)
+- Biological parameters: estimated from census 7 on, per species with enough data, pooled per growth form otherwise; recruitment rate per tree; size coverage rule "union"
+- Known identities: from census 7 (anchor); field tags from census 7
+- Engines: DP for tags up to 10000 assignment states per census (1 slack track(s)); probabilistic matcher for larger tags, the species oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe,ficutr,oreoca and the growth forms strangler
+- Probabilistic matcher: birth-death (each stem may continue, die or be recruited); 200 samples; exports the "mea" sample
+- Pins (database StemIDs): used yes; hard pins yes; Step 3a only with another record yes; Step 3b stops at a gap yes; Step 3c frees fast links yes
+- Broken below with a DBH: "main_ends" (ends the main stem of the census before); whole-tree split at a break before the anchor no
+- Posterior: 200 samples per tag, seed 42, label-free DP posterior yes
+- Test settings: none (a full run)
+
+Changed on the command line
+- PROB_SPECIES = oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe,ficutr,oreoca (default oenoma, bactma, ficuob, ficupo, ficuc2, ficubu, ficuc1, ficuci, ficupe, ficutr, oreoca)
+- DP_FALLBACK_GROWTH_FORMS = strangler (default <empty>)
+- POSTERIOR_SAMPLE_SEED = 42 (default NULL (123 when POSTERIOR_SAMPLES > 0))
+- USE_MEASUREMENT_ERROR = FALSE (default TRUE)
+- base_out_dir = /Users/medinaja/outputs_bci_stem_identification (default /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/BCI_stem_reconstruction/output)
+
+All settings (changed: yes = other value on the command line; restated = the
+default given on the command line; derived = set from another setting)
+
+Input
+
+| setting | value | default | changed |
+| --- | --- | --- | --- |
+| INPUT_FILE | /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds | /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds |  |
+| FORCE_ONE_SPECIES_PARAMETERS | FALSE | FALSE |  |
+| SPECIES_COL | NULL | NULL |  |
+
+Engine routing and posterior
+
+| setting | value | default | changed |
+| --- | --- | --- | --- |
+| DP_MODE | marginals+bins | marginals+bins |  |
+| DP_MAX_STATES | 10000 | 10000 | restated |
+| DP_MAX_TRACKS | NULL | NULL |  |
+| DP_SLACK_TRACKS | 1 | 1 |  |
+| DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE | TRUE | TRUE |  |
+| DP_SLACK_REQUIRE_ANCHOR_EPS | 1e-06 | 1e-06 |  |
+| DP_POSTERIOR_TOP_K | 2 | 2 |  |
+| ALLOW_PROVISIONAL_DP_ANCHOR | TRUE | TRUE |  |
+| PROB_SPECIES | oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe,ficutr,oreoca | oenoma, bactma, ficuob, ficupo, ficuc2, ficubu, ficuc1, ficuci, ficupe, ficutr, oreoca | yes |
+| DP_FALLBACK_GROWTH_FORMS | strangler | <empty> | yes |
+| PROB_N_SAMPLES | 200 | 200 |  |
+| PROB_LOOKAHEAD_WEIGHT | 1 | 1 |  |
+| USE_BIO_HARD_SHRINK_IN_PROB | TRUE | TRUE |  |
+| USE_BIO_HARD_GROWTH_IN_PROB | TRUE | TRUE |  |
+| PROB_N_SIGMA_ME | Inf | Inf |  |
+| PROB_BIRTH_DEATH | TRUE | TRUE |  |
+| PROB_EXPORT_RULE | mea | mea |  |
+| POSTERIOR_SAMPLES | 200 | 200 |  |
+| POSTERIOR_SAMPLES_FORMAT | feather | feather |  |
+| POSTERIOR_SAMPLES_PATH | /Users/medinaja/outputs_bci_stem_identification/20261024_213308_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_PF_HP_LF_g5_sm0p5_kg0_ks0_rcpp | NULL (the run folder) |  |
+| POSTERIOR_SAMPLE_SEED | 42 | NULL (123 when POSTERIOR_SAMPLES > 0) | yes |
+| DP_POSTERIOR_LABEL_FREE | TRUE | TRUE |  |
+
+Biological model
+
+| setting | value | default | changed |
+| --- | --- | --- | --- |
+| USE_MEASUREMENT_ERROR | FALSE | TRUE | yes |
+| DBH_ROUND_CENSUSES | 1,2 | 1,2 |  |
+| DBH_ROUND_MAX_MM | 55 | 55 |  |
+| DBH_ROUND_WIDTH_MM | 5 | 5 |  |
+| MAX_GROWTH_HARD_SOURCE | fixed | fixed |  |
+| MAX_GROWTH_FIXED | 5 | 5 |  |
+| MAX_SHRINK_HARD_SOURCE | fixed | fixed |  |
+| MAX_SHRINK_FIXED | -0.5 | -0.5 |  |
+| K_SHRINK_SOURCE | fixed | fixed |  |
+| K_SHRINK_FIXED | 0 | 0 |  |
+| K_GROWTH_SOURCE | fixed | fixed |  |
+| K_GROWTH_FIXED | 0 | 0 |  |
+| RECRUIT_MAX_SOURCE | fixed | fixed |  |
+| RECRUIT_MAX_FIXED | 25.9999 | 25.9999 |  |
+| RECRUIT_RATE_UNIT | tree | tree |  |
+| COVERAGE_RULE | union | union |  |
+| PRUNE_BOUND_FACTOR | 5 | 5 |  |
+| NON_TAPER_CORRECTED_GROWTH_FORMS | palm, strangler, fern | palm, strangler, fern |  |
+| NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH | -2.5 | -2.5 |  |
+| NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH | 25 | 25 |  |
+| HOM_TOLERANCE_SCALE | 2 | 2 |  |
+| ANCHOR_START_CENSUS | 7 | 7 |  |
+
+Pins and breaks
+
+| setting | value | default | changed |
+| --- | --- | --- | --- |
+| PIN_TRUESTEMID | TRUE | TRUE |  |
+| FIELD_TAG_FIRST_CENSUS | 7 | 7 |  |
+| HARD_PINS | TRUE | TRUE |  |
+| PIN_BB_REQUIRE_OTHER_RECORD | TRUE | TRUE |  |
+| PIN_STOP_AT_GAP | TRUE | TRUE |  |
+| PIN_STOP_AT_FAST_LINK | TRUE | TRUE |  |
+| BB_DBH_RULE | main_ends | main_ends |  |
+| DP_ALLOW_SEGMENT_SPLIT | FALSE | FALSE |  |
+
+Test settings (a full run leaves them unset)
+
+| setting | value | default | changed |
+| --- | --- | --- | --- |
+| TAG_FILTER_FILE | NULL | NULL |  |
+| TAG_FILTER_N | NULL | NULL |  |
+| BLIND_MIN_CENSUS | NULL | NULL |  |
+| BIO_ESTIMATION_START_CENSUS | NULL | NULL |  |
+| DP_CHUNK_START | NULL | NULL |  |
+| DP_CHUNK_END | NULL | NULL |  |
+
+Run control and output
+
+| setting | value | default | changed |
+| --- | --- | --- | --- |
+| base_out_dir | /Users/medinaja/outputs_bci_stem_identification | /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/BCI_stem_reconstruction/output | yes |
+| OUT_DIR_OVERRIDE | NULL | NULL |  |
+| CONFIG_NAME | NULL | NULL |  |
+| BATCH_TS |  |  |  |
+| PROJECT_ROOT | /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables | /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables |  |
+| RUN_ALL_TAGS | TRUE | TRUE |  |
+| WHICH_TAG | 0 | 0 |  |
+| DP_CHUNK_SIZE | 18 | 18 | restated |
+| DP_CHUNK_RESUME | TRUE | TRUE |  |
+| DP_CHUNK_OVERWRITE | FALSE | FALSE |  |
+| MANUAL_CORES | TRUE | TRUE | restated |
+| MANUAL_CORES_VALUE | 18 | 18 | restated |
+| DP_VERBOSE | TRUE | TRUE |  |
+| WRITE_DP_CSV | FALSE | FALSE |  |
+| WRITE_DP_RDS | FALSE | FALSE |  |
+| WRITE_DP_FEATHER | TRUE | TRUE |  |
+| WRITE_DP_PDF | FALSE | FALSE |  |
+| WRITE_DP_PDF_PER_CHUNK | FALSE | FALSE |  |
+| DP_PDF_INCLUDE_REFERENCE | FALSE | FALSE |  |
+| WRITE_RUN_RECORD | TRUE | TRUE |  |
+| RUN_RECORD_DIR | /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_records | /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_records |  |

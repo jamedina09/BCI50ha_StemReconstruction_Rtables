@@ -1,0 +1,22 @@
+Engine run 20261024_213308_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_PF_HP_LF_g5_sm0p5_kg0_ks0_rcpp
+Run folder: /Users/medinaja/outputs_bci_stem_identification/20261024_213308_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_PF_HP_LF_g5_sm0p5_kg0_ks0_rcpp
+Settings: run_settings.txt; command to rerun: rerun_command.sh
+
+== Start 2026-10-24 21:33:13 ==
+Command: /Library/Frameworks/R.framework/Resources/bin/exec/R --no-echo --no-restore --file=BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R --args --DP_MAX_STATES=10000 --PROB_SPECIES=oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe,ficutr,oreoca --DP_FALLBACK_GROWTH_FORMS=strangler --POSTERIOR_SAMPLE_SEED=42 --MANUAL_CORES=TRUE --MANUAL_CORES_VALUE=18 --DP_CHUNK_SIZE=18 --USE_MEASUREMENT_ERROR=FALSE --BASE_OUT_DIR=/Users/medinaja/outputs_bci_stem_identification
+Driver: BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R (MD5 8e6bcb5537a0acc8658b0287bba790ea)
+Code: git commit 1d918b3e62dd20904b170f85ba7dacafb04d6ca4 on branch main
+Uncommitted changes in dp_global/ and 2_STEM_IDENTIFICATION/: none
+R: R version 4.6.1 (2026-06-24), aarch64-apple-darwin23
+Packages: data.table 1.18.4, Rcpp 1.1.2, arrow 24.0.0, igraph 2.3.1, MASS 7.3.65, lpSolve 5.6.23
+Machine: STRI-LP394906, Darwin 25.6.0 arm64; 18 cores, 18 workers
+Input: /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/BCI_stem_reconstruction/DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
+  modified 2026-10-24 21:30:34, 51037998 bytes, MD5 16bbf281cfd8fe7048c8b3db0c966930
+Changed on the command line: PROB_SPECIES = oenoma,bactma,ficuob,ficupo,ficuc2,ficubu,ficuc1,ficuci,ficupe,ficutr,oreoca; DP_FALLBACK_GROWTH_FORMS = strangler; POSTERIOR_SAMPLE_SEED = 42; USE_MEASUREMENT_ERROR = FALSE; base_out_dir = /Users/medinaja/outputs_bci_stem_identification
+Status: running
+
+== Finish 2026-10-25 13:57:45 ==
+Chunks: 7347 finished, 0 failed, of 7347
+Tags: 132243
+Time since the first start: 16.41 h
+Status: finished
