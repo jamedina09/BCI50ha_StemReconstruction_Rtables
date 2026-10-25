@@ -26,6 +26,7 @@ into the stem table read by stage 3 (`3_PREPARE_R_TABLES/`).
 | `1_main_cpp_chunk_bci.R` | Engine driver: sets the pins, estimates the biological parameters and runs the engine on the multiple-stem tags in parallel chunks |
 | `2_merge_chunks_to_datatable.R` | Merges the chunk outputs, adds the single-stem tags, joins stems split by a moved point of measurement and checks the field tags |
 | `run_chunk_bci.md` | Run command, settings and resume instructions of the driver |
+| `run_records/` | The record of every engine run, written by the driver: settings with their defaults, rerun command, copy of the driver, provenance, and `runs_index.csv` (one line per run); described in `run_records/README.md` |
 | `tests/test_measurement_rejoin.R` | Tests of the measurement rejoin |
 | `comparissons/` | Comparisons with the published stem tables of Condit et al. (2019); not under version control |
 
@@ -52,7 +53,9 @@ Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/2_merge_chunks_to_datatabl
 
 | File | Content |
 | --- | --- |
-| `<BASE_OUT_DIR>/<run folder>/` | One Feather file per chunk (`stem_reconstruction_dp_global_rcpp_chunk_NNN.feather`), its `_done.txt` marker, `posteriors/` (one path file per tag), `pin_stop_at_fast_link.csv`, `run_started.txt`, `run_finished.txt`, `run_log.txt` and `run_parameters_full.txt` (command line, input file with its modification time and size, the key settings and the parameter structure; read by the merge checks) |
+| `<BASE_OUT_DIR>/<run folder>/` | One Feather file per chunk (`stem_reconstruction_dp_global_rcpp_chunk_NNN.feather`), its `_done.txt` marker, `posteriors/` (one path file per tag), `pin_stop_at_fast_link.csv`, `run_started.txt`, `run_finished.txt`, `run_log.txt`, `run_parameters_full.txt` (command line, input file with its modification time and size, the key settings and the parameter structure; read by the merge checks) and the files of the run record |
+| `run_records/<run folder>/` | Run record: `run_settings.txt` (method summary and every setting with its default and whether it was changed), `rerun_command.sh`, a copy of the driver, `run_summary.txt` (time, git commit, R and package versions, machine, input file with its MD5, chunks, status) and `uncommitted_changes.patch` when the code had uncommitted changes |
+| `run_records/runs_index.csv` | One line per run: status, times, git commit, input MD5, test run or not, changed and key settings |
 | `DATA/<run_code>/merged_output.parquet`, `.rds` | Engine output of every chunk, merged |
 | `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds` | Final stem table: every record with its reconstructed stem (`ReconstructedStemID`) and how it was assigned (`ReconstructionMethod`); input of stage 3 |
 | `DATA/PROCESSED/measurement_rejoin_audit.csv` | Stems joined by the measurement rejoin, with the sign of a moved point of measurement found on each tree (`evidence`) |
@@ -153,6 +156,9 @@ Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/2_merge_chunks_to_datatabl
 8. Writes one Feather file per chunk and the posterior path files to
    `BASE_OUT_DIR/<run folder>/` (the folder name starts with the run's time
    stamp). Chunks with a `_done.txt` marker are skipped when a run is resumed.
+9. Keeps the run record in `run_records/<run folder>/` and in the run folder:
+   written at the start, completed at the finish (or at an error), with the
+   run's line in `run_records/runs_index.csv` (`run_records/README.md`).
 
 A blind-test mode checks the engines against the tagged censuses
 (`BLIND_MIN_CENSUS`, `BIO_ESTIMATION_START_CENSUS`; diagnostics only): the
@@ -202,8 +208,10 @@ A failed check prints `❌ CHECK FAILED`, raises a warning, writes to the log
 and stops.
 
 The driver stops when the stage-1 species table is newer than the census table
-(stage 1 run out of order: rerun `2_prepare_viewfulltable.R`), and when a
-setting names a growth form or species code that is not in the data.
+(stage 1 run out of order: rerun `2_prepare_viewfulltable.R`), when a
+setting names a growth form or species code that is not in the data, and when
+a resumed run has another input file (MD5), chunk size or setting outside run
+control than at its first start (read from its run record).
 
 The merge writes every check to `DATA/CHECKS/check_merge_bci.txt`. Before it
 reads anything it checks that the run is the right one and complete:
@@ -260,7 +268,8 @@ DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
         │
         ▼
 1_main_cpp_chunk_bci.R
-        └──▶ BASE_OUT_DIR/<run folder>/  (chunk Feather files, posteriors/)
+        ├──▶ BASE_OUT_DIR/<run folder>/  (chunk Feather files, posteriors/, run record)
+        └──▶ run_records/<run folder>/, run_records/runs_index.csv
 
 2_merge_chunks_to_datatable.R
         ├──▶ DATA/<run_code>/merged_output.{parquet,rds}

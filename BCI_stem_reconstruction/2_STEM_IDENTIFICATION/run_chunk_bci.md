@@ -107,6 +107,8 @@ Run control:
 | `DP_CHUNK_START`, `DP_CHUNK_END` | none | Runs only this range of chunks |
 | `TAG_FILTER_FILE` | none | Runs only the tags listed in the first column of this file (the parameters are still estimated from all tags) |
 | `BLIND_MIN_CENSUS`, `BIO_ESTIMATION_START_CENSUS` | none | Blind test (below) |
+| `WRITE_RUN_RECORD` | `TRUE` | Writes the run record (below) |
+| `RUN_RECORD_DIR` | `BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_records` | Folder of the run records and of `runs_index.csv`; set it outside the repository for a test run |
 
 ## Output folder
 
@@ -139,8 +141,20 @@ The folder holds `run_started.txt`, `run_finished.txt`, `run_log.txt`,
 time and size, the growth bounds, recruit limit, anchor census, test settings
 and the parameter structure), `pin_stop_at_fast_link.csv`, one
 `stem_reconstruction_dp_global_rcpp_chunk_NNN.feather` with its `_done.txt`
-marker per chunk (`_failed.txt` for a chunk that raised an error) and
-`posteriors/` with one `tag_<Tag>_posterior_samples__paths.feather` per tag.
+marker per chunk (`_failed.txt` for a chunk that raised an error),
+`posteriors/` with one `tag_<Tag>_posterior_samples__paths.feather` per tag,
+and the run record.
+
+The run record is written to `RUN_RECORD_DIR/<run folder>/` and copied to the
+run folder: `run_settings.txt` (a plain-language summary of the method, e.g.
+whether the measurement-error model was used, and every setting with its
+value, its default and whether the command line changed it),
+`rerun_command.sh` (the command and the git commit to check out), a copy of
+the driver, `run_summary.txt` (start, resume, finish or stop times, git commit
+and uncommitted files, R and package versions, machine, input file with its
+modification time, size and MD5, chunks, status) and, when the code had
+uncommitted changes, `uncommitted_changes.patch`. `RUN_RECORD_DIR/runs_index.csv`
+has one line per run. Details in `run_records/README.md`.
 
 ## Resume a run
 
@@ -161,8 +175,11 @@ caffeinate -i Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_c
   --USE_MEASUREMENT_ERROR=FALSE
 ```
 
-Keep every other setting as in the interrupted run. `DP_CHUNK_START` and
-`DP_CHUNK_END` limit the run to a range of chunks.
+Keep every other setting as in the interrupted run: the driver compares the
+resume with the run record of the first start and stops when the input file
+(MD5), the chunk size or a setting outside run control differs; cores, output
+folders and resume flags may change. `DP_CHUNK_START` and `DP_CHUNK_END` limit
+the run to a range of chunks.
 
 ## Blind test
 

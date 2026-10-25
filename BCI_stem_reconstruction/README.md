@@ -58,6 +58,12 @@ merged run or a table is older than the one it is built from; stage 4 stops
 when the R tables or the posterior samples are older than the stage-2 table or
 come from another run.
 
+Each engine run leaves a record in `2_STEM_IDENTIFICATION/run_records/`: its
+settings with their defaults, the command to rerun it, a copy of the driver,
+its git commit, R and package versions and input file (MD5), and one line in
+`runs_index.csv`. A resumed run stops when its input or settings differ from
+its first start.
+
 ## Data flow
 
 ```text
