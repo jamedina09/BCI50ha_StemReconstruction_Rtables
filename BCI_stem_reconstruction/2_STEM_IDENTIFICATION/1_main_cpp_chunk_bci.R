@@ -26,7 +26,11 @@
 # Outputs (in <BASE_OUT_DIR>/<run folder>/): per-chunk
 #   stem_reconstruction_dp_global_rcpp_chunk_NNN.feather with _done.txt (or
 #   _failed.txt) markers, posteriors/tag_<Tag>_posterior_samples_*_paths.feather,
-#   run_started.txt, run_finished.txt, run_log.txt, run_parameters_full.txt.
+#   run_started.txt, run_finished.txt, run_log.txt, run_parameters_full.txt,
+#   and the run record (section 8.1): run_settings.txt, rerun_command.sh, a
+#   copy of this script, run_summary.txt (and uncommitted_changes.patch), also
+#   kept in RUN_RECORD_DIR/<run folder>/ with one line per run in
+#   RUN_RECORD_DIR/runs_index.csv.
 #
 
 # Note for orchestrators
@@ -49,6 +53,7 @@
 #  6) Source project code — load dp_global R modules
 #  7) Helpers            — filesystem, logging, data-manipulation utilities
 #  8) Core DP functions  — run_dp_one_group(); maybe_add_posterior_bins()
+#    8.1) Run record      — write_run_record(): settings, rerun command, provenance
 #  9) Main pipeline      — run_main_chunked(); chunk loop; incremental writes
 # 10) Post-run utilities — merge_chunk_rds_to_csv(); merge_chunks_to_csv()
 # 11) Entrypoint         — execute run_main_chunked() when called via Rscript
@@ -437,6 +442,13 @@ CONFIG_NAME <- NULL
 # the command line to resume into an existing output directory.
 OUT_DIR_OVERRIDE <- NULL
 
+# Run record (section 8.1): every setting with its default, the command to
+# rerun the run, a copy of this script and the provenance of the run, written
+# to RUN_RECORD_DIR/<run folder name>/ and to the run folder; one line per run
+# in RUN_RECORD_DIR/runs_index.csv.
+WRITE_RUN_RECORD <- TRUE
+RUN_RECORD_DIR <- file.path(workspace_root, "BCI_stem_reconstruction", "2_STEM_IDENTIFICATION", "run_records")
+
 # Output path helpers (encode_num, build_out_dir_name) are provided by
 # dp_global/R/naming_helpers.R; sourced at the end of this section.
 
@@ -522,7 +534,9 @@ CLI_REFERENCE <- list(
     PROB_EXPORT_RULE = "PROB_EXPORT_RULE",
     DP_POSTERIOR_LABEL_FREE = "DP_POSTERIOR_LABEL_FREE",
     BLIND_MIN_CENSUS = "BLIND_MIN_CENSUS",
-    BIO_ESTIMATION_START_CENSUS = "BIO_ESTIMATION_START_CENSUS"
+    BIO_ESTIMATION_START_CENSUS = "BIO_ESTIMATION_START_CENSUS",
+    WRITE_RUN_RECORD = "WRITE_RUN_RECORD",
+    RUN_RECORD_DIR = "RUN_RECORD_DIR"
 )
 
 # The chunked runner has no sensitivity sweeps or realism report: both need
@@ -584,6 +598,49 @@ find_matching_var <- function(norm_key) {
     NULL
 }
 
+# Settings of the run record, grouped as in run_chunk_bci.md, and their
+# defaults (the values before the command-line overrides).
+RUN_RECORD_SETTINGS <- list(
+    "Input" = c("INPUT_FILE", "FORCE_ONE_SPECIES_PARAMETERS", "SPECIES_COL"),
+    "Engine routing and posterior" = c(
+        "DP_MODE", "DP_MAX_STATES", "DP_MAX_TRACKS", "DP_SLACK_TRACKS",
+        "DP_SLACK_REQUIRE_ANCHOR_RECRUITABLE", "DP_SLACK_REQUIRE_ANCHOR_EPS",
+        "DP_POSTERIOR_TOP_K", "ALLOW_PROVISIONAL_DP_ANCHOR", "PROB_SPECIES",
+        "DP_FALLBACK_GROWTH_FORMS", "PROB_N_SAMPLES", "PROB_LOOKAHEAD_WEIGHT",
+        "USE_BIO_HARD_SHRINK_IN_PROB", "USE_BIO_HARD_GROWTH_IN_PROB", "PROB_N_SIGMA_ME",
+        "PROB_BIRTH_DEATH", "PROB_EXPORT_RULE", "POSTERIOR_SAMPLES",
+        "POSTERIOR_SAMPLES_FORMAT", "POSTERIOR_SAMPLES_PATH", "POSTERIOR_SAMPLE_SEED",
+        "DP_POSTERIOR_LABEL_FREE"
+    ),
+    "Biological model" = c(
+        "USE_MEASUREMENT_ERROR", "DBH_ROUND_CENSUSES", "DBH_ROUND_MAX_MM", "DBH_ROUND_WIDTH_MM",
+        "MAX_GROWTH_HARD_SOURCE", "MAX_GROWTH_FIXED", "MAX_SHRINK_HARD_SOURCE", "MAX_SHRINK_FIXED",
+        "K_SHRINK_SOURCE", "K_SHRINK_FIXED", "K_GROWTH_SOURCE", "K_GROWTH_FIXED",
+        "RECRUIT_MAX_SOURCE", "RECRUIT_MAX_FIXED", "RECRUIT_RATE_UNIT", "COVERAGE_RULE",
+        "PRUNE_BOUND_FACTOR", "NON_TAPER_CORRECTED_GROWTH_FORMS",
+        "NON_TAPER_CORRECTED_PRUNE_MIN_GROWTH", "NON_TAPER_CORRECTED_PRUNE_MAX_GROWTH",
+        "HOM_TOLERANCE_SCALE", "ANCHOR_START_CENSUS"
+    ),
+    "Pins and breaks" = c(
+        "PIN_TRUESTEMID", "FIELD_TAG_FIRST_CENSUS", "HARD_PINS", "PIN_BB_REQUIRE_OTHER_RECORD",
+        "PIN_STOP_AT_GAP", "PIN_STOP_AT_FAST_LINK", "BB_DBH_RULE", "DP_ALLOW_SEGMENT_SPLIT"
+    ),
+    "Test settings (a full run leaves them unset)" = c(
+        "TAG_FILTER_FILE", "TAG_FILTER_N", "BLIND_MIN_CENSUS", "BIO_ESTIMATION_START_CENSUS",
+        "DP_CHUNK_START", "DP_CHUNK_END"
+    ),
+    "Run control and output" = c(
+        "base_out_dir", "OUT_DIR_OVERRIDE", "CONFIG_NAME", "BATCH_TS", "PROJECT_ROOT",
+        "RUN_ALL_TAGS", "WHICH_TAG", "DP_CHUNK_SIZE", "DP_CHUNK_RESUME", "DP_CHUNK_OVERWRITE",
+        "MANUAL_CORES", "MANUAL_CORES_VALUE", "DP_VERBOSE", "WRITE_DP_CSV", "WRITE_DP_RDS",
+        "WRITE_DP_FEATHER", "WRITE_DP_PDF", "WRITE_DP_PDF_PER_CHUNK", "DP_PDF_INCLUDE_REFERENCE",
+        "WRITE_RUN_RECORD", "RUN_RECORD_DIR"
+    )
+)
+RUN_RECORD_DEFAULTS <- mget(unlist(RUN_RECORD_SETTINGS, use.names = FALSE), envir = globalenv(), ifnotfound = list(NULL))
+# Variables set on the command line (filled by the loop below)
+RUN_RECORD_OVERRIDDEN <- character(0)
+
 for (name in names(overrides)) {
     if (name %in% c("help", "h")) next
 
@@ -594,6 +651,7 @@ for (name in names(overrides)) {
         warning(sprintf("[dp_global main_cpp_chunk_bci.R] Unknown override '%s' (ignored).\n", name))
         next
     }
+    RUN_RECORD_OVERRIDDEN <- union(RUN_RECORD_OVERRIDDEN, match_var)
 
     # Coerce type where appropriate (basic numeric/logical conversions were
     # already attempted in parse_args). Here we ensure that integer-like
@@ -1218,6 +1276,386 @@ maybe_add_posterior_bins <- function(out) {
 }
 
 ############################################################
+### 8.1) Run record
+############################################################
+# write_run_record(event) keeps the record of a run in
+# RUN_RECORD_DIR/<run folder name>/ and copies it to the run folder:
+#   run_settings.txt           every setting of RUN_RECORD_SETTINGS with its
+#                              value, its default and whether the command line
+#                              changed it, after a plain-language summary of
+#                              the method;
+#   rerun_command.sh           the command of the run and the git commit to
+#                              check out before running it;
+#   1_main_cpp_chunk_bci.R     a copy of this script as it was run;
+#   uncommitted_changes.patch  git diff of dp_global/ and 2_STEM_IDENTIFICATION/
+#                              against the commit, when the code had
+#                              uncommitted changes;
+#   run_summary.txt            provenance, one entry per start, resume, finish
+#                              or stop: time, command, git commit, R and
+#                              package versions, machine, input file (path,
+#                              modification time, size, MD5), chunks.
+# It also writes the run's line of RUN_RECORD_DIR/runs_index.csv.
+# event: "start" (the first start, or a resume when the record exists),
+# "finish", or "stop" (the run ended with an error). A resume stops when the
+# input file (MD5), DP_CHUNK_SIZE or a setting outside "Run control and output"
+# differs from the first start, so that all chunks of a run share them. Any other failure of
+# the record is logged and the run goes on.
+
+# One setting value as text
+rr_fmt <- function(x) {
+    if (is.null(x)) {
+        "NULL"
+    } else if (length(x) == 0L) {
+        "<empty>"
+    } else if (is.logical(x) && length(x) == 1L && !is.na(x)) {
+        if (x) "TRUE" else "FALSE"
+    } else if (is.atomic(x)) {
+        paste(as.character(x), collapse = ", ")
+    } else {
+        paste0("<", class(x)[1], ">")
+    }
+}
+
+rr_record_dir <- function() {
+    file.path(normalizePath(RUN_RECORD_DIR, winslash = "/", mustWork = FALSE), basename(out_dir))
+}
+
+# Path relative to the project root when it lies inside it
+rr_rel <- function(path) {
+    root <- paste0(normalizePath(workspace_root, winslash = "/", mustWork = FALSE), "/")
+    path <- normalizePath(path, winslash = "/", mustWork = FALSE)
+    if (startsWith(path, root)) substring(path, nchar(root) + 1L) else path
+}
+
+# git output in the project root (character(0) when git or the repository is missing)
+rr_git <- function(args) {
+    out <- tryCatch(
+        suppressWarnings(system2("git", shQuote(c("-C", workspace_root, args)), stdout = TRUE, stderr = FALSE)),
+        error = function(e) character(0)
+    )
+    if (!is.null(attr(out, "status")) && attr(out, "status") != 0L) character(0) else out
+}
+RR_CODE_PATHS <- c(
+    "dp_global", "BCI_stem_reconstruction/2_STEM_IDENTIFICATION",
+    ":(exclude)BCI_stem_reconstruction/2_STEM_IDENTIFICATION/run_records"
+)
+
+# The script being run (Rscript --file=), else its place in the project
+rr_driver_path <- function() {
+    f <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))
+    f <- gsub("~+~", " ", f, fixed = TRUE)
+    if (length(f) && file.exists(f[1])) {
+        normalizePath(f[1], winslash = "/")
+    } else {
+        file.path(workspace_root, "BCI_stem_reconstruction", "2_STEM_IDENTIFICATION", "1_main_cpp_chunk_bci.R")
+    }
+}
+
+# Default shown in the record: the script resolves two NULL defaults at run time
+rr_default_text <- function(nm) {
+    d <- rr_fmt(RUN_RECORD_DEFAULTS[[nm]])
+    if (nm == "POSTERIOR_SAMPLE_SEED" && d == "NULL") d <- "NULL (123 when POSTERIOR_SAMPLES > 0)"
+    if (nm == "POSTERIOR_SAMPLES_PATH" && d == "NULL") d <- "NULL (the run folder)"
+    d
+}
+
+# Table of the settings: group, setting, value, default, changed
+#   changed = "yes" (command line, other value), "restated" (command line,
+#   default value), "derived" (not on the command line but set from another
+#   setting, e.g. base_out_dir from PROJECT_ROOT), "" (default)
+rr_settings_table <- function() {
+    rows <- lapply(names(RUN_RECORD_SETTINGS), function(g) {
+        nms <- RUN_RECORD_SETTINGS[[g]]
+        val <- vapply(nms, function(nm) rr_fmt(get0(nm, envir = globalenv(), inherits = FALSE)), "")
+        def <- vapply(nms, rr_default_text, "")
+        same <- val == def | (nms == "POSTERIOR_SAMPLE_SEED" & val == "123") |
+            (nms == "POSTERIOR_SAMPLES_PATH" & def == "NULL (the run folder)" & !(nms %in% RUN_RECORD_OVERRIDDEN))
+        chg <- ifelse(nms %in% RUN_RECORD_OVERRIDDEN, ifelse(same, "restated", "yes"), ifelse(same, "", "derived"))
+        data.table(group = g, setting = nms, value = val, default = def, changed = chg)
+    })
+    rbindlist(rows)
+}
+
+# Plain-language summary of the method
+rr_method_summary <- function() {
+    yn <- function(x) if (isTRUE(x)) "yes" else "no"
+    tests <- RUN_RECORD_SETTINGS[["Test settings (a full run leaves them unset)"]]
+    tests_set <- tests[!vapply(tests, function(nm) is.null(get0(nm, envir = globalenv())), TRUE)]
+    bio_start <- if (is.null(BIO_ESTIMATION_START_CENSUS)) ANCHOR_START_CENSUS else BIO_ESTIMATION_START_CENSUS
+    c(
+        sprintf("- Measurement-error model: %s (USE_MEASUREMENT_ERROR = %s)", if (isTRUE(USE_MEASUREMENT_ERROR)) "used, a measurement-error mixture in the parameter estimation and the DP growth likelihood" else "not used", rr_fmt(USE_MEASUREMENT_ERROR)),
+        sprintf("- DBH recorded in classes: %s", if (length(DBH_ROUND_CENSUSES_INT)) sprintf("censuses %s, DBH below %s mm read as a size within its %s mm class (rounded down)", paste(DBH_ROUND_CENSUSES_INT, collapse = ", "), rr_fmt(DBH_ROUND_MAX_MM), rr_fmt(DBH_ROUND_WIDTH_MM)) else "not treated (every DBH read as recorded)"),
+        sprintf("- Growth bounds: annual growth from %s to %s cm/yr (%s / %s); new stems up to %s cm DBH; pruning bounds %s x these", rr_fmt(MAX_SHRINK_FIXED), rr_fmt(MAX_GROWTH_FIXED), MAX_SHRINK_HARD_SOURCE, MAX_GROWTH_HARD_SOURCE, rr_fmt(RECRUIT_MAX_FIXED), rr_fmt(PRUNE_BOUND_FACTOR)),
+        sprintf("- Soft growth / shrinkage penalties: %s / %s (0 = off)", rr_fmt(K_GROWTH_FIXED), rr_fmt(K_SHRINK_FIXED)),
+        sprintf("- Biological parameters: estimated from census %s on, %s; recruitment rate per %s; size coverage rule \"%s\"", rr_fmt(bio_start), if (isTRUE(FORCE_ONE_SPECIES_PARAMETERS)) "one set for all species" else "per species with enough data, pooled per growth form otherwise", RECRUIT_RATE_UNIT, COVERAGE_RULE),
+        sprintf("- Known identities: from census %s (anchor); field tags from census %s", rr_fmt(ANCHOR_START_CENSUS), rr_fmt(FIELD_TAG_FIRST_CENSUS)),
+        sprintf("- Engines: DP for tags up to %s assignment states per census (%s slack track(s)); probabilistic matcher for larger tags, the species %s and the growth forms %s", rr_fmt(DP_MAX_STATES), rr_fmt(DP_SLACK_TRACKS), rr_fmt(PROB_SPECIES), rr_fmt(DP_FALLBACK_GROWTH_FORMS)),
+        sprintf("- Probabilistic matcher: %s; %s samples; exports the \"%s\" sample", if (isTRUE(PROB_BIRTH_DEATH)) "birth-death (each stem may continue, die or be recruited)" else "count-based slots", rr_fmt(PROB_N_SAMPLES), PROB_EXPORT_RULE),
+        sprintf("- Pins (database StemIDs): used %s; hard pins %s; Step 3a only with another record %s; Step 3b stops at a gap %s; Step 3c frees fast links %s", yn(PIN_TRUESTEMID), yn(HARD_PINS), yn(PIN_BB_REQUIRE_OTHER_RECORD), yn(PIN_STOP_AT_GAP), yn(PIN_STOP_AT_FAST_LINK)),
+        sprintf("- Broken below with a DBH: \"%s\" (%s); whole-tree split at a break before the anchor %s", BB_DBH_RULE, if (identical(BB_DBH_RULE, "r1")) "always a new stem" else "ends the main stem of the census before", yn(DP_ALLOW_SEGMENT_SPLIT)),
+        sprintf("- Posterior: %s samples per tag, seed %s, label-free DP posterior %s", rr_fmt(POSTERIOR_SAMPLES), rr_fmt(POSTERIOR_SAMPLE_SEED), yn(DP_POSTERIOR_LABEL_FREE)),
+        sprintf("- Test settings: %s", if (length(tests_set)) paste0(paste(sprintf("%s = %s", tests_set, vapply(tests_set, function(nm) rr_fmt(get(nm)), "")), collapse = "; "), " (a test run: the merge refuses it)") else "none (a full run)")
+    )
+}
+
+rr_settings_lines <- function(st) {
+    esc <- function(x) gsub("|", "\\|", x, fixed = TRUE)
+    out <- c(
+        sprintf("Settings of the engine run %s", basename(out_dir)),
+        sprintf("Written %s by %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), rr_rel(rr_driver_path())),
+        "",
+        "Method",
+        rr_method_summary(),
+        "",
+        "Changed on the command line",
+        if (any(st$changed == "yes")) st[changed == "yes", sprintf("- %s = %s (default %s)", setting, value, default)] else "- none",
+        "",
+        "All settings (changed: yes = other value on the command line; restated = the",
+        "default given on the command line; derived = set from another setting)"
+    )
+    for (g in unique(st$group)) {
+        sg <- st[group == g]
+        out <- c(out, "", g, "", "| setting | value | default | changed |", "| --- | --- | --- | --- |",
+                 sprintf("| %s | %s | %s | %s |", sg$setting, esc(sg$value), esc(sg$default), sg$changed))
+    }
+    if (length(extra <- setdiff(RUN_RECORD_OVERRIDDEN, st$setting))) {
+        out <- c(out, "", "Other variables set on the command line", "",
+                 sprintf("- %s = %s", extra, vapply(extra, function(nm) rr_fmt(get0(nm, envir = globalenv())), "")))
+    }
+    out
+}
+
+# setting -> value from a run_settings.txt
+rr_read_settings <- function(path) {
+    l <- grep("^\\| [^ ]+ \\| ", readLines(path, warn = FALSE), value = TRUE)
+    l <- l[!grepl("^\\| (setting|---) \\|", l)]
+    parts <- strsplit(gsub("\\\\\\|", "\u0001", l), " | ", fixed = TRUE)
+    setNames(
+        vapply(parts, function(p) gsub("\u0001", "|", p[2], fixed = TRUE), ""),
+        vapply(parts, function(p) sub("^\\| ", "", p[1]), "")
+    )
+}
+
+rr_rerun_lines <- function(commit, has_patch, input_md5, rec_dir) {
+    args <- commandArgs(trailingOnly = TRUE)
+    args <- args[!grepl("^--(OUT[-_]DIR[-_]OVERRIDE|DP[-_]CHUNK[-_]RESUME)(=|$)", args, ignore.case = TRUE)]
+    args <- ifelse(grepl("^[A-Za-z0-9_.,/=:+@%-]+$", args), args, shQuote(args))
+    driver_rel <- "BCI_stem_reconstruction/2_STEM_IDENTIFICATION/1_main_cpp_chunk_bci.R"
+    cmd <- function(script) {
+        if (length(args)) c(paste0("Rscript ", script, " \\"), paste0("  ", args, c(rep(" \\", length(args) - 1L), "")))
+        else paste("Rscript", script)
+    }
+    c(
+        "#!/bin/sh",
+        sprintf("# Rerun of the engine run %s (started %s).", basename(out_dir), format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+        "# Run from the project root; the rerun writes a new run folder (new time stamp).",
+        "# On macOS, 'caffeinate -i' before Rscript keeps the computer awake.",
+        "#",
+        sprintf("# 1. Code of the run: git commit %s", if (length(commit)) commit else "unknown (no git repository)"),
+        if (length(commit)) sprintf("#      git checkout %s", commit),
+        if (has_patch) c("#    The code had uncommitted changes; apply them after the checkout:",
+                         sprintf("#      git apply %s/uncommitted_changes.patch", rr_rel(rec_dir))),
+        if (length(commit)) "#    (run_summary.txt lists files that were not tracked by git.)",
+        sprintf("# 2. Input: %s", rr_rel(INPUT_FILE)),
+        sprintf("#    MD5 %s; stage 1 must give the same file.", input_md5),
+        "# 3. Command:",
+        cmd(driver_rel),
+        "#",
+        "# The copy of the driver in this folder runs the same way, with the engine",
+        "# code (dp_global/) of the same commit:",
+        paste0("#   ", cmd(paste0(rr_rel(rec_dir), "/", basename(rr_driver_path()))))
+    )
+}
+
+rr_provenance_lines <- function(input_md5, commit, status_lines) {
+    pk <- c("data.table", "Rcpp", "arrow", "igraph", "MASS", "lpSolve")
+    pv <- vapply(pk, function(p) if (requireNamespace(p, quietly = TRUE)) as.character(utils::packageVersion(p)) else "not installed", "")
+    si <- Sys.info()
+    drv <- rr_driver_path()
+    c(
+        sprintf("Command: %s", paste(commandArgs(), collapse = " ")),
+        sprintf("Driver: %s (MD5 %s)", rr_rel(drv), unname(tools::md5sum(drv))),
+        sprintf("Code: git commit %s on branch %s", if (length(commit)) commit else "unknown",
+                if (length(b <- rr_git(c("rev-parse", "--abbrev-ref", "HEAD")))) b else "unknown"),
+        if (!length(commit)) "Uncommitted changes in dp_global/ and 2_STEM_IDENTIFICATION/: unknown (no git repository)"
+        else if (length(status_lines)) c("Uncommitted changes in dp_global/ and 2_STEM_IDENTIFICATION/ (diff in uncommitted_changes.patch; ?? = not tracked):",
+                                         paste0("  ", status_lines))
+        else "Uncommitted changes in dp_global/ and 2_STEM_IDENTIFICATION/: none",
+        sprintf("R: %s, %s", R.version.string, R.version$platform),
+        sprintf("Packages: %s", paste(pk, pv, collapse = ", ")),
+        sprintf("Machine: %s, %s %s %s; %s cores, %s workers", si[["nodename"]], si[["sysname"]], si[["release"]], si[["machine"]],
+                if (requireNamespace("parallel", quietly = TRUE)) parallel::detectCores() else NA, MC_CORES),
+        sprintf("Input: %s", normalizePath(INPUT_FILE, winslash = "/", mustWork = FALSE)),
+        sprintf("  modified %s, %s bytes, MD5 %s", format(file.mtime(INPUT_FILE), "%Y-%m-%d %H:%M:%S"), format(file.size(INPUT_FILE), scientific = FALSE), input_md5)
+    )
+}
+
+rr_count_chunks <- function() {
+    f <- list.files(out_dir, pattern = "_chunk_[0-9]+_(done|failed)\\.txt$")
+    num <- function(p) unique(sub(".*_chunk_([0-9]+)_.*", "\\1", f[grepl(p, f)]))
+    done <- num("_done\\.txt$")
+    c(done = length(done), failed = length(setdiff(num("_failed\\.txt$"), done)))
+}
+
+rr_index_update <- function(fields) {
+    f <- file.path(normalizePath(RUN_RECORD_DIR, winslash = "/", mustWork = FALSE), "runs_index.csv")
+    idx <- if (file.exists(f)) fread(f, colClasses = "character", na.strings = NULL) else data.table(run_folder = character(0))
+    row <- as.data.table(lapply(fields, function(x) if (is.null(x)) "" else as.character(x)))
+    i <- match(row$run_folder, idx$run_folder)
+    if (is.na(i)) {
+        idx <- rbind(idx, row, fill = TRUE)
+    } else {
+        for (nm in names(row)) {
+            if (!nm %in% names(idx)) idx[, (nm) := ""]
+            set(idx, i, nm, row[[nm]])
+        }
+    }
+    for (nm in names(idx)) set(idx, which(is.na(idx[[nm]])), nm, "")
+    fwrite(idx, f)
+}
+
+rr_index_row <- function() {
+    f <- file.path(normalizePath(RUN_RECORD_DIR, winslash = "/", mustWork = FALSE), "runs_index.csv")
+    if (!file.exists(f)) return(NULL)
+    idx <- fread(f, colClasses = "character", na.strings = NULL)
+    r <- idx[run_folder == basename(out_dir)]
+    if (nrow(r)) r else NULL
+}
+
+# Visible check (❌ + warning + log, then stop) used by the resume check
+rr_check <- function(ok, msg) {
+    if (isTRUE(ok)) {
+        cat("✓", msg, "\n")
+        log_msg(paste("CHECK OK:", msg))
+    } else {
+        cat("❌", msg, "\n")
+        warning(msg)
+        log_msg(paste("CHECK FAILED:", msg), "ERROR")
+        stop(msg)
+    }
+    invisible(TRUE)
+}
+
+# Resume: the input, the chunk size and every setting outside run control
+# must be those of the first start
+rr_check_resume <- function(rec_dir, input_md5) {
+    first <- rr_read_settings(file.path(rec_dir, "run_settings.txt"))
+    st <- rr_settings_table()[group != "Run control and output" | setting == "DP_CHUNK_SIZE"]
+    common <- intersect(st$setting, names(first))
+    diff <- common[first[common] != st[match(common, setting), value]]
+    rr_check(length(diff) == 0L, sprintf(
+        "Resume of %s: settings as at the first start (run_records/%s/run_settings.txt)%s",
+        basename(out_dir), basename(rec_dir),
+        if (length(diff)) paste0("; differ: ", paste(sprintf("%s = %s (first start %s)", diff, st[match(diff, setting), value], first[diff]), collapse = "; ")) else ""
+    ))
+    r <- rr_index_row()
+    if (!is.null(r) && "input_md5" %in% names(r) && nzchar(r$input_md5)) {
+        rr_check(identical(r$input_md5, input_md5), sprintf(
+            "Resume of %s: same input file as at the first start (MD5 %s%s)",
+            basename(out_dir), r$input_md5, if (identical(r$input_md5, input_md5)) "" else paste0(", now ", input_md5)
+        ))
+    }
+}
+
+write_run_record <- function(event = c("start", "finish", "stop"), n_tags = NULL, n_chunks = NULL) {
+    event <- match.arg(event)
+    if (!isTRUE(WRITE_RUN_RECORD)) return(invisible(NULL))
+    rec_dir <- rr_record_dir()
+    resume <- event == "start" && file.exists(file.path(rec_dir, "run_settings.txt"))
+    input_md5 <- unname(tools::md5sum(INPUT_FILE))
+    if (resume) rr_check_resume(rec_dir, input_md5)
+    tryCatch(
+        {
+            dir.create(rec_dir, recursive = TRUE, showWarnings = FALSE)
+            now <- Sys.time()
+            stamp <- format(now, "%Y-%m-%d %H:%M:%S")
+            summary_file <- file.path(rec_dir, "run_summary.txt")
+            commit <- rr_git(c("rev-parse", "HEAD"))
+            if (event == "start") {
+                status_lines <- rr_git(c("status", "--porcelain", "--", RR_CODE_PATHS))
+                if (!resume) {
+                    st <- rr_settings_table()
+                    writeLines(rr_settings_lines(st), file.path(rec_dir, "run_settings.txt"))
+                    patch <- rr_git(c("diff", "HEAD", "--", RR_CODE_PATHS))
+                    if (length(patch)) writeLines(patch, file.path(rec_dir, "uncommitted_changes.patch"))
+                    writeLines(rr_rerun_lines(commit, length(patch) > 0L, input_md5, rec_dir), file.path(rec_dir, "rerun_command.sh"))
+                    Sys.chmod(file.path(rec_dir, "rerun_command.sh"), "755")
+                    file.copy(rr_driver_path(), file.path(rec_dir, basename(rr_driver_path())), overwrite = TRUE)
+                    chunks_before <- rr_count_chunks()
+                    write(c(
+                        sprintf("Engine run %s", basename(out_dir)),
+                        sprintf("Run folder: %s", out_dir),
+                        "Settings: run_settings.txt; command to rerun: rerun_command.sh",
+                        "",
+                        sprintf("== Start %s ==", stamp),
+                        if (chunks_before[["done"]] > 0L) sprintf("The run folder already held %d finished chunks (a run started before run records existed)", chunks_before[["done"]]),
+                        rr_provenance_lines(input_md5, commit, status_lines),
+                        sprintf("Changed on the command line: %s", if (any(st$changed == "yes")) paste(st[changed == "yes", sprintf("%s = %s", setting, value)], collapse = "; ") else "none"),
+                        "Status: running"
+                    ), summary_file)
+                    tests <- RUN_RECORD_SETTINGS[["Test settings (a full run leaves them unset)"]]
+                    key <- c("USE_MEASUREMENT_ERROR", "DBH_ROUND_CENSUSES", "MAX_GROWTH_FIXED", "MAX_SHRINK_FIXED",
+                             "DP_MAX_STATES", "PROB_BIRTH_DEATH", "PROB_EXPORT_RULE", "BB_DBH_RULE", "HARD_PINS",
+                             "PIN_STOP_AT_FAST_LINK", "DP_POSTERIOR_LABEL_FREE", "POSTERIOR_SAMPLES", "POSTERIOR_SAMPLE_SEED")
+                    rr_index_update(c(
+                        list(run_folder = basename(out_dir), status = "running", started = stamp, finished = "",
+                             duration_h = "", chunks_done = "", chunks_failed = "", n_tags = "",
+                             git_commit = if (length(commit)) commit else "", code_changed = if (length(status_lines)) "yes" else "no",
+                             input_file = basename(INPUT_FILE), input_md5 = input_md5,
+                             test_run = if (all(st[setting %in% tests, value] == "NULL")) "no" else "yes",
+                             changed_settings = paste(st[changed == "yes", sprintf("%s=%s", setting, value)], collapse = "; ")),
+                        setNames(as.list(st[match(key, setting), value]), key),
+                        list(output_dir = out_dir)
+                    ))
+                } else {
+                    copy <- file.path(rec_dir, basename(rr_driver_path()))
+                    same_driver <- file.exists(copy) && identical(unname(tools::md5sum(copy)), unname(tools::md5sum(rr_driver_path())))
+                    r <- rr_index_row()
+                    same_commit <- !is.null(r) && identical(r$git_commit, if (length(commit)) commit else "")
+                    if (!same_driver) log_msg("Run record: the driver differs from the copy made at the first start", "WARN")
+                    if (!same_commit) log_msg("Run record: the git commit differs from the first start", "WARN")
+                    write(c(
+                        "",
+                        sprintf("== Resume %s ==", stamp),
+                        rr_provenance_lines(input_md5, commit, status_lines),
+                        sprintf("Driver %s the copy of the first start; git commit %s the first start", if (same_driver) "identical to" else "DIFFERS FROM", if (same_commit) "as at" else "DIFFERS FROM"),
+                        sprintf("Chunks finished before the resume: %d", rr_count_chunks()[["done"]]),
+                        "Status: running"
+                    ), summary_file, append = TRUE)
+                    rr_index_update(list(run_folder = basename(out_dir), status = "resumed"))
+                }
+            } else {
+                r <- rr_index_row()
+                started <- if (!is.null(r) && nzchar(r$started)) as.POSIXct(r$started, format = "%Y-%m-%d %H:%M:%S") else NA
+                ch <- rr_count_chunks()
+                status <- if (event == "stop") "stopped" else if (ch[["failed"]] > 0L || (!is.null(n_chunks) && ch[["done"]] < n_chunks)) "finished, chunks missing or failed" else "finished"
+                write(c(
+                    "",
+                    sprintf("== %s %s ==", if (event == "stop") "Stop (error)" else "Finish", stamp),
+                    sprintf("Chunks: %d finished, %d failed%s", ch[["done"]], ch[["failed"]], if (is.null(n_chunks)) "" else sprintf(", of %d", n_chunks)),
+                    if (!is.null(n_tags)) sprintf("Tags: %d", n_tags),
+                    if (!is.na(started)) sprintf("Time since the first start: %.2f h", as.numeric(difftime(now, started, units = "hours"))),
+                    sprintf("Status: %s", status)
+                ), summary_file, append = TRUE)
+                rr_index_update(list(
+                    run_folder = basename(out_dir), status = status, finished = stamp,
+                    duration_h = if (is.na(started)) "" else sprintf("%.2f", as.numeric(difftime(now, started, units = "hours"))),
+                    chunks_done = ch[["done"]], chunks_failed = ch[["failed"]],
+                    n_tags = if (is.null(n_tags)) "" else n_tags
+                ))
+            }
+            # The same files in the run folder
+            if (dir.exists(out_dir)) {
+                for (f in list.files(rec_dir, full.names = TRUE)) file.copy(f, file.path(out_dir, basename(f)), overwrite = TRUE)
+            }
+            log_msg(sprintf("Run record (%s): %s", event, rec_dir))
+        },
+        error = function(e) log_msg(sprintf("Run record (%s) not written: %s", event, conditionMessage(e)), "WARN")
+    )
+    invisible(rec_dir)
+}
+
+############################################################
 ### 9) Main pipeline — run_main_chunked()
 ############################################################
 # Loads input data, estimates biological parameters, anchors TrueStemID
@@ -1229,6 +1667,10 @@ maybe_add_posterior_bins <- function(out) {
 # Returns list(xrun, bio_pars) invisibly.
 run_main_chunked <- function() {
     ensure_dir(out_dir)
+    # Run record (section 8.1); "stop" is recorded when the run ends with an error
+    write_run_record("start")
+    run_record_closed <- FALSE
+    on.exit(if (!run_record_closed) write_run_record("stop"), add = TRUE)
     tryCatch(
         {
             writeLines(as.character(Sys.time()), con = file.path(out_dir, "run_started.txt"))
@@ -2384,6 +2826,8 @@ run_main_chunked <- function() {
             },
             error = function(e) NULL
         )
+        write_run_record("finish", n_tags = data.table::uniqueN(xrun$Tag), n_chunks = 0L)
+        run_record_closed <- TRUE
         return(invisible(list(xrun = xrun, bio_pars = bio_pars)))
     }
 
@@ -2561,6 +3005,8 @@ run_main_chunked <- function() {
             log_msg(sprintf("Warning writing run_finished marker: %s", conditionMessage(e)), "WARN")
         }
     )
+    write_run_record("finish", n_tags = data.table::uniqueN(xrun$Tag), n_chunks = length(chunks))
+    run_record_closed <- TRUE
 
     invisible(list(xrun = xrun, bio_pars = bio_pars))
 }
@@ -2697,6 +3143,10 @@ if (sys.nframe() == 0L) {
 #   --TAG_FILTER_FILE=tags.csv    Run only the tags listed in the first column of a file
 #   --DP_CHUNK_START=3            Start from chunk N (skip earlier chunks)
 #   --DP_CHUNK_END=9              Stop after chunk N
+#   --RUN_RECORD_DIR=/path        Folder of the run records (default
+#                                 2_STEM_IDENTIFICATION/run_records; another
+#                                 folder keeps test runs out of the repository)
+#   --WRITE_RUN_RECORD=FALSE      No run record
 #
 
 # STOPPING A RUN
