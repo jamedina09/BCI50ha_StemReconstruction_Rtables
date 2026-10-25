@@ -21,7 +21,6 @@ dp_global/R/dpglobal_bundle/dpglobal_bundle_manifest.rds
 
 data_simulation/sample_data_BCI/general_data/
 # BCI_stem_reconstruction/DATA/
-BCI_stem_reconstruction/2_STEM_IDENTIFICATION/comparissons/
 BCI_stem_reconstruction/3_PREPARE_R_TABLES/CHECKS/
 BCI_stem_reconstruction/3_PREPARE_R_TABLES/VIEWFULLTABLE_CHECKS/
 BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/wd/

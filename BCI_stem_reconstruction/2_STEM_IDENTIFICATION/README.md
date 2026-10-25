@@ -28,7 +28,6 @@ into the stem table read by stage 3 (`3_PREPARE_R_TABLES/`).
 | `run_chunk_bci.md` | Run command, settings and resume instructions of the driver |
 | `run_records/` | The record of every engine run, written by the driver: settings with their defaults, rerun command, copy of the driver, provenance, and `runs_index.csv` (one line per run); described in `run_records/README.md` |
 | `tests/test_measurement_rejoin.R` | Tests of the measurement rejoin |
-| `comparissons/` | Comparisons with the published stem tables of Condit et al. (2019); not under version control |
 
 ## How to run
 
@@ -278,13 +277,10 @@ DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
                measurement_rejoin_audit.csv, measurement_rejoin_pairs.csv
 ```
 
-`comparissons/` (not under version control) holds comparisons with the
-published stem tables of Condit et al. (2019): `compare_reconstruction_vs_dryad.R`
-(stem trajectories link by link, with PDFs per tag),
-`compare_records_vs_condit.R` (the final R tables record by record: trees,
-records, dates, locations, measurements, statuses and stems, with
-`records_comparison_report.html` and a CSV of every difference) and
-`dryad_approach_weaknesses.qmd`.
+The comparisons of the outputs with the published stem tables of Condit et al.
+(2019) are in `COMPARE_DATASETS/` at the project root, one folder per stage
+(not under version control); the stem trajectories, link by link, are in
+`COMPARE_DATASETS/2_STEM_IDENTIFICATION/`.
 
 ## Requirements
 
