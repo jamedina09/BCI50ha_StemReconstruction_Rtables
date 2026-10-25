@@ -1,0 +1,6 @@
+biomass_stocks_fluxes.R checks, 2026-10-25 14:39:57
+2026-10-25 14:39:57 ✓ The R tables and the species table exist (run stage 3 first) 
+2026-10-25 14:39:57 ✓ The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge) 
+2026-10-25 14:40:05 ✓ Every alive stem-census row has an ExactDate (needed to interpolate DBH in time) 
+2026-10-25 14:44:04 ✓ Every alive (A) row of a measured stem has a DBH (alive stems stay in the stock), stump censuses aside 
+2026-10-25 14:44:04 ✓ No stump census (A, no DBH, broken below) gets a DBH 
