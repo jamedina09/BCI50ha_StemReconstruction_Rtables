@@ -25,6 +25,7 @@ uncertainty, and plot summaries.
 | `biomass_stocks_fluxes.R` | Aboveground biomass (AGB) stocks, productivity, mortality and net change, for the plot and by size class |
 | `basal_area_uncertainty.R` | Basal-area (BA) stocks and fluxes of the exported reconstruction, with the uncertainty from the posterior samples |
 | `general_plot_information.R` | Structure and composition summaries, printed to the console |
+| `stem_dbh.R` | The diameter of a stem in a census, sourced by the three scripts: taper correction, stumps, the censuses to fill and their DBH, giant strangler figs |
 | `wd/` | Wood density dataset (input; not under version control) |
 | `outputs/` | Outputs of the first two scripts |
 
@@ -70,22 +71,40 @@ writes no other file.
 
 ## What it does
 
-The three scripts read the R tables in the same way:
+The three scripts read the R tables in the same way, with the rules of
+`stem_dbh.R`:
 
 - A stem is `treeID` + `stemID` (`stemID` is the stem number within its tree).
 - A missing `ExactDate` is completed from `date` (days since 1960-01-01,
   filled by stage 3 on every row), so every row has a date.
-- Only alive (`A`) rows enter stocks, fluxes and summaries; the DBH that a
-  `G` or `D` record can carry (stage 3 exports DBH as recorded) is ignored.
-- A **stump** (an `A` record without a DBH whose `DFstatus` is "broken
-  below") is a stem alive with no measurable DBH at 1.3 m (a broken-below
-  record with a field tag is that stem). It is out of the stock in that census:
-  no DBH, no stem count, no basal area or biomass. Before the stem's first
-  measurement the stem enters the stock at that measurement (a recruit).
-  Between two measurements its basal area or biomass leaves the stock and comes
-  back (a loss, then a gain); its `Rstatus` stays `A`, so it is not a death.
-- Any other `A` record without a DBH is a missed measurement and gets a DBH
-  from the stem's own measurements.
+- **A stem is in the stand (stocks, fluxes, stem counts) in a census only
+  when it has a DBH at 1.3 m**, measured or filled. The DBH that a `G` or `D`
+  record can carry (stage 3 exports DBH as recorded) is ignored.
+- **Taper.** Every DBH measured at another height than 1.3 m is corrected to
+  1.3 m with Model 1 of Cushman et al. (2014), `D = d exp(b (h − 1.3))` (d
+  measured at height h, in cm and m), with `log(b) = −2.0205 + species term −
+  0.5053 log(d) + 0.3748 log(h)` from their Table 3; the species terms are
+  those of their ten focal species, deviations from the base class of every
+  other species (`use_taper_species_terms`). Palms keep the recorded DBH
+  (`taper_palms = FALSE`): they have no buttress taper, and *Socratea* is
+  measured above its stilt roots.
+- **Stump.** An `A` record without a DBH whose `DFstatus` is "broken below":
+  the stem is alive but has no stem at 1.3 m (a broken-below record with a
+  field tag is that stem). It gets no DBH and is not in the stand. It splits
+  the stem's life into segments: the stem leaves the stand at the stump (its
+  basal area or biomass is a loss; its `Rstatus` stays `A`, so it is not a
+  death), and its next measurement is a recruit (a gain).
+- **Filled censuses.** An `A` record without a DBH, not a stump, that comes
+  after a measurement of the stem with no stump in between, is a missed
+  measurement: the stem stays in the stand, with a DBH from its own
+  measurements of that segment, linear in time between two measurements, and
+  after the last one the growth trend of the last two continued (a negative
+  trend is not extrapolated; one measurement is kept).
+- **Not in the stand** are, besides stumps, an `A` record before the stem's
+  first measurement (the stem enters the stand when it is first measured),
+  after a stump with no measurement since, and a stem never measured. A
+  check stops a script if a census to fill lies between two measurements
+  across a stump.
 
 ### `biomass_stocks_fluxes.R`
 
@@ -100,19 +119,13 @@ by the interval), per stem, then aggregates them.
 2. Removes the giant strangler figs (trees of *Ficus costaricana*,
    *obtusifolia*, *popenoei* or *trigonata* with a stem above 500 mm)
    (`remove_strangler_figs`).
-3. Corrects a DBH measured at another height than 1.3 m with Model 1 of
-   Cushman et al. (2014), `D = d exp(b (h − 1.3))` (d measured at height h,
-   in cm and m), with `log(b) = −2.0205 + species term − 0.5053 log(d) +
-   0.3748 log(h)` from their Table 3. The species terms are those of their ten
-   focal species, deviations from the base class of every other species
-   (`use_taper_species_terms`; `FALSE` gives every species the base class).
-   Palms keep the recorded DBH (`taper_palms = FALSE`): they have no buttress
-   taper, and *Socratea* is measured above its stilt roots. The recorded value
-   is kept in `dbh_raw`.
+3. Corrects the DBH for taper (above; the recorded value is kept in
+   `dbh_raw`).
 4. Converts DBH to cm and gives every alive palm stem, *Socratea* aside, its
    species' median DBH over all censuses (`use_median_palm_dbh`).
-5. Interpolates the DBH of missed measurements (`dbh_interp_method`: `linear`
-   between flanking measurements, `locf` or `mean`); stump censuses get none.
+5. Fills the DBH of the censuses to fill (`dbh_interp_method`: `linear`, the
+   rule of the other two scripts, `locf` or `mean`, within the stem's
+   segment); nothing else gets a DBH.
 6. Computes AGB with Chave et al. (2014) Eq. 4, `AGB = 0.0673 (ρ H D²)^0.976`
    (`biomass_allometry`; `chave05` available), with the height `H = 58.0
    D^0.73 / (21.8 + D^0.73)` of Martínez Cano et al. (2019) Eq. 7 (bias
@@ -198,12 +211,11 @@ Scope:
 
 ### `general_plot_information.R`
 
-1. Loads the R tables and the species table. An individual is a `treeID`; an
-   alive stem is `Rstatus == "A"`, except a stump census.
-2. Uses the taper-corrected DBH of the other two scripts (`use_taper_for_ba
-   = TRUE`; `FALSE` uses the DBH at the point of measurement), gives missed
-   measurements a DBH from the stem's own measurements and places trees
-   without coordinates at the centre of their quadrat. It describes every
+1. Loads the R tables and the species table. An individual is a `treeID`; the
+   stems of a census are those with a DBH at 1.3 m (measured or filled).
+2. Uses the taper-corrected DBH and the filled censuses of the other two
+   scripts, and places trees without coordinates at the centre of their
+   quadrat. It describes every
    tree of the plot: the giant strangler figs and the measured palm diameters
    stay, so its stand basal area is not the stock of
    `basal_area_uncertainty.R`.
@@ -222,19 +234,22 @@ Scope:
 | `biomass_allometry`, `use_local_height_allometry` | biomass | `"chave14"`, `TRUE` | AGB allometry; Martínez Cano et al. (2019) height model |
 | `use_kohyama19_correction` | biomass | `TRUE` | Kohyama et al. (2019) correction of productivity and mortality |
 | `lower_ddbh_threshold`, `upper_ddbh_threshold`, `hom_change_threshold` | biomass | −2.5, 7.5 cm/yr; 1 m | Outlier growth intervals |
-| `dbh_interp_method` | biomass | `"linear"` | DBH of missed measurements (`linear`, `locf`, `mean`) |
+| `dbh_interp_method` | biomass | `"linear"` | DBH of the censuses to fill (`linear`, the rule of the other two scripts; `locf`, `mean`) |
 | `ANCHOR_START_CENSUS` | basal area | `7` | First census with confirmed identities |
 | `K_realizations`, `mc_seed`, `mc_center` | basal area | `100`, `42`, `"median"` | Monte Carlo realizations, seed, centre line |
 | `write_tree_realizations`, `write_quadrat_realizations` | basal area | `FALSE`, `TRUE` | Optional heavy outputs |
 | `report_splice_methods` | basal area | `TRUE` | Report the stage-2 method of spliced observations |
 | `first_plot_census` | basal area | `2` | First census in the figures |
-| `use_taper_for_ba` | plot information | `TRUE` | Taper-corrected DBH for basal area and size classes |
 | `BOOT_R` | plot information | `4999` | Bootstrap replicates |
 
 ## Checks
 
 Each script prints ✓ or ❌ checks; a failed check prints ❌, raises a warning,
 writes to the script's check file and stops.
+
+Each script checks that no census to fill lies between two measurements
+across a stump, that every census to fill gets a DBH, and that no stump or
+other record outside the stand gets one.
 
 Each script first checks its inputs: the nine R tables and the species table
 exist and are newer than the stage-2 table (otherwise rerun stage 3 after the
