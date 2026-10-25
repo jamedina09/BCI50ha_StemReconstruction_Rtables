@@ -113,10 +113,15 @@ use_taper_for_ba <- TRUE
 
 # ---- Hard check that stays visible in interactive (line-by-line) runs --
 # On failure: prints a ❌ line (count + examples), raises an immediate
-# warning, and only then stops. On success it prints a ✓ line.
+# warning, writes to outputs/check_general_plot_information.txt and only then
+# stops. On success it prints and logs a ✓ line.
+check_log <- file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "outputs", "check_general_plot_information.txt")
+dir.create(dirname(check_log), recursive = TRUE, showWarnings = FALSE)
+writeLines(paste("general_plot_information.R checks,", format(Sys.time())), check_log)
 bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     if (isTRUE(all(ok))) {
         cat("✓", msg, "\n")
+        cat(format(Sys.time()), "✓", msg, "\n", file = check_log, append = TRUE)
         return(invisible(TRUE))
     }
     n_txt <- if (!is.null(n_bad)) sprintf(" [%d case(s)]", n_bad) else ""
@@ -128,8 +133,22 @@ bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     full_msg <- paste0("CHECK FAILED: ", msg, n_txt, ex_txt)
     cat("❌", full_msg, "\n")
     warning(full_msg, call. = FALSE, immediate. = TRUE)
+    cat(format(Sys.time()), "❌", full_msg, "\n", file = check_log, append = TRUE)
     stop(full_msg, call. = FALSE)
 }
+
+    # ---- Inputs written in order ----------------------------------------------
+    # The R tables and the species table must come from stage 3 run after the
+    # current stage-2 table (otherwise rerun stage 3).
+    .stage_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA")
+    .rtable_inputs <- file.path(.stage_dir, "RTABLES", c(paste0("bci.stem", 1:9, ".Rdata"), "bci.spptable.rdata"))
+    .stage2_table <- file.path(.stage_dir, "PROCESSED", "complete_dataset_final_with_reconstructed_stemids.rds")
+    bio_check(all(file.exists(.rtable_inputs)), "The R tables and the species table exist (run stage 3 first)",
+        examples = basename(.rtable_inputs[!file.exists(.rtable_inputs)]))
+    bio_check(
+        file.exists(.stage2_table) && all(file.mtime(.rtable_inputs) > file.mtime(.stage2_table)),
+        "The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge)"
+    )
 
 # ---- DBH of an alive stem whose measurement was missed ----------------
 # Rstatus "A" without a DBH = alive, measurement missed in the field. The DBH

@@ -183,6 +183,29 @@ bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     stop(full_msg, call. = FALSE)
 }
 
+    # ---- Inputs written in order ----------------------------------------------
+    # The R tables and the species table must come from stage 3 run after the
+    # current stage-2 table (otherwise rerun stage 3).
+    .stage_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA")
+    .rtable_inputs <- file.path(.stage_dir, "RTABLES", c(paste0("bci.stem", 1:9, ".Rdata"), "bci.spptable.rdata"))
+    .stage2_table <- file.path(.stage_dir, "PROCESSED", "complete_dataset_final_with_reconstructed_stemids.rds")
+    bio_check(all(file.exists(.rtable_inputs)), "The R tables and the species table exist (run stage 3 first)",
+        examples = basename(.rtable_inputs[!file.exists(.rtable_inputs)]))
+    bio_check(
+        file.exists(.stage2_table) && all(file.mtime(.rtable_inputs) > file.mtime(.stage2_table)),
+        "The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge)"
+    )
+
+# The posterior samples come from stage 3 run after the current stage-2 table,
+# for the engine run of that table (DATA/PROCESSED/engine_run.txt).
+.post_file <- file.path(.stage_dir, "POSTERIORS", "posterior_sampled_paths.rds")
+.engine_run_file <- file.path(.stage_dir, "PROCESSED", "engine_run.txt")
+bio_check(
+    file.exists(.post_file) && file.mtime(.post_file) > file.mtime(.stage2_table),
+    "The posterior samples are newer than the stage-2 table (rerun 1_prepare_posteriors_BCI.R after the merge)"
+)
+.table_run <- if (file.exists(.engine_run_file)) sub("^run_code: ", "", grep("^run_code: ", readLines(.engine_run_file, warn = FALSE), value = TRUE)[1L]) else NA_character_
+
 bci_stem_nums <- as.character(1:9)
 census_list <- lapply(bci_stem_nums, function(num) {
     fp <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "RTABLES", paste0("bci.stem", num, ".Rdata"))
@@ -581,7 +604,13 @@ cat("[BA] exported quadrat stock:", nrow(map_quadrat_stock), "quadrat×census ro
 # ============================================================
 
 # ---- 4.1 Posterior paths and weights ---------------------------------------
-post_full <- as.data.table(readRDS(post_file))
+post_full <- readRDS(post_file)
+bio_check(
+    identical(attr(post_full, "engine_run"), .table_run),
+    "The posterior samples and the stage-2 table come from the same engine run",
+    examples = c(paste("posteriors:", attr(post_full, "engine_run")), paste("stage-2 table:", .table_run))
+)
+post_full <- as.data.table(post_full)
 post_full[, treeID := as.character(treeID)]
 # Giant strangler figs left the analysis (remove_strangler_figs): so do their paths.
 n_strangler_post <- post_full[treeID %in% strangler_trees & remove_strangler_figs, uniqueN(treeID)]
