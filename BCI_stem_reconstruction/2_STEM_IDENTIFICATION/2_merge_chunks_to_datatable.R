@@ -63,7 +63,7 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Run subfolder to merge, selected by name: home_dir can hold several runs.
 # Update it for each new run; it must be the same run as in
 # 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R.
-run_code <- "20261022_220659_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_HP_LF_g5_sm0p5_kg0_ks0_rcpp"
+run_code <- "20261024_213308_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_PF_HP_LF_g5_sm0p5_kg0_ks0_rcpp"
 run_dir <- file.path(home_dir, run_code)
 
 # ---- Checks that the run is the right one and complete ----------------------
