@@ -98,37 +98,48 @@ by the interval), per stem, then aggregates them.
    a species without wood density takes the mean of its genus, else its
    family, else all species (each species counted once).
 2. Removes the giant strangler figs (trees of *Ficus costaricana*,
-   *obtusifolia*, *popenoei* or *trigonata* with a stem above 500 mm) and gives
-   every palm stem, *Socratea* aside, its species' median DBH
-   (`remove_strangler_figs`, `use_median_palm_dbh`).
-3. Converts DBH to cm and corrects it to 1.3 m with the taper model of Cushman
-   et al. (2014) (the recorded value is kept in `dbh_raw`).
-4. Interpolates the DBH of missed measurements (`dbh_interp_method`: `linear`
+   *obtusifolia*, *popenoei* or *trigonata* with a stem above 500 mm)
+   (`remove_strangler_figs`).
+3. Corrects a DBH measured at another height than 1.3 m with Model 1 of
+   Cushman et al. (2014), `D = d exp(b (h − 1.3))` (d measured at height h,
+   in cm and m), with `log(b) = −2.0205 + species term − 0.5053 log(d) +
+   0.3748 log(h)` from their Table 3. The species terms are those of their ten
+   focal species, deviations from the base class of every other species
+   (`use_taper_species_terms`; `FALSE` gives every species the base class).
+   Palms keep the recorded DBH (`taper_palms = FALSE`): they have no buttress
+   taper, and *Socratea* is measured above its stilt roots. The recorded value
+   is kept in `dbh_raw`.
+4. Converts DBH to cm and gives every alive palm stem, *Socratea* aside, its
+   species' median DBH over all censuses (`use_median_palm_dbh`).
+5. Interpolates the DBH of missed measurements (`dbh_interp_method`: `linear`
    between flanking measurements, `locf` or `mean`); stump censuses get none.
-5. Computes AGB with Chave et al. (2014) (`biomass_allometry`; `chave05`
-   available) and the height model of Martínez Cano et al. (2019)
-   (`use_local_height_allometry`), and with Goodman et al. (2013) for palms
-   (which ignores wood density).
-6. Corrects the 1985 small-stem DBH rounding (stems below 5.5 cm recorded in
+6. Computes AGB with Chave et al. (2014) Eq. 4, `AGB = 0.0673 (ρ H D²)^0.976`
+   (`biomass_allometry`; `chave05` available), with the height `H = 58.0
+   D^0.73 / (21.8 + D^0.73)` of Martínez Cano et al. (2019) Eq. 7 (bias
+   corrected for the back-transformation from log H;
+   `use_local_height_allometry`), and with the diameter-only Arecaceae model
+   of Goodman et al. (2013) for palms (which ignores wood density).
+7. Corrects the 1985 small-stem DBH rounding (stems below 5.5 cm recorded in
    5 mm classes) with census 3 as reference.
-7. Flags a growth interval as an outlier when the DBH growth is outside
+8. Flags a growth interval as an outlier when the DBH growth is outside
    [`lower_ddbh_threshold`, `upper_ddbh_threshold`] (−2.5, 7.5 cm/yr) or the
    height of measurement moved by more than `hom_change_threshold` (1 m), and
    replaces its AGB change by the size-class relative rate (non-outlier change
    / AGB of the class, recruits excluded) × its own AGB.
-8. Aggregates growth, recruitment and mortality by quadrat, interval and size
+9. Aggregates growth, recruitment and mortality by quadrat, interval and size
    class, and applies the Kohyama et al. (2019) bias correction to
    productivity and mortality per quadrat (`use_kohyama19_correction`).
-9. Plots the plot-level and size-class dynamics.
+10. Plots the plot-level and size-class dynamics.
 
 ### `basal_area_uncertainty.R`
 
 1. Loads the R tables (the exported reconstruction), the posterior samples and
    the stage-2 table.
-2. Treats palms and strangler figs as `biomass_stocks_fluxes.R` does: the
-   giant strangler figs are removed with every stem of their tree (and leave
-   the posterior paths too), and every measured alive palm stem other than
-   *Socratea* gets its species' median DBH over all censuses. A palm's basal
+2. Treats palms, strangler figs and the taper correction as
+   `biomass_stocks_fluxes.R` does: the giant strangler figs are removed with
+   every stem of their tree (and leave the posterior paths too), the DBH is
+   taper corrected (palms aside), and every measured alive palm stem other
+   than *Socratea* gets its species' median DBH over all censuses. A palm's basal
    area is then constant, so identity uncertainty changes only its loss and
    gain.
 3. Computes the stocks and fluxes of the exported reconstruction per tree and
@@ -189,11 +200,13 @@ Scope:
 
 1. Loads the R tables and the species table. An individual is a `treeID`; an
    alive stem is `Rstatus == "A"`, except a stump census.
-2. Uses the taper-corrected DBH (`use_taper_for_ba = TRUE`, so stand basal
-   area equals the exported stock of `basal_area_uncertainty.R`; `FALSE` uses
-   the DBH at the point of measurement), gives missed measurements a DBH from
-   the stem's own measurements and places trees without coordinates at the
-   centre of their quadrat.
+2. Uses the taper-corrected DBH of the other two scripts (`use_taper_for_ba
+   = TRUE`; `FALSE` uses the DBH at the point of measurement), gives missed
+   measurements a DBH from the stem's own measurements and places trees
+   without coordinates at the centre of their quadrat. It describes every
+   tree of the plot: the giant strangler figs and the measured palm diameters
+   stay, so its stand basal area is not the stock of
+   `basal_area_uncertainty.R`.
 3. Summarises the last census (individuals, stems, basal area, species,
    genera, families, life forms, diversity), per-hectare estimates by bootstrap
    over 20 m quadrats (`BOOT_R` replicates), trends and paired changes between
@@ -205,6 +218,7 @@ Scope:
 | Setting | Script | Default | What it does |
 | --- | --- | --- | --- |
 | `remove_strangler_figs`, `use_median_palm_dbh` | biomass, basal area | `TRUE`, `TRUE` | Giant strangler figs removed; palm DBH set to the species median |
+| `use_taper_species_terms`, `taper_palms` | biomass, basal area, plot information | `TRUE`, `FALSE` | Taper model with the species terms of Cushman et al. (2014); palms keep the recorded DBH (`FALSE`, `TRUE`: the base class for every species and palms corrected too, as Piponiot et al. 2024) |
 | `biomass_allometry`, `use_local_height_allometry` | biomass | `"chave14"`, `TRUE` | AGB allometry; Martínez Cano et al. (2019) height model |
 | `use_kohyama19_correction` | biomass | `TRUE` | Kohyama et al. (2019) correction of productivity and mortality |
 | `lower_ddbh_threshold`, `upper_ddbh_threshold`, `hom_change_threshold` | biomass | −2.5, 7.5 cm/yr; 1 m | Outlier growth intervals |
