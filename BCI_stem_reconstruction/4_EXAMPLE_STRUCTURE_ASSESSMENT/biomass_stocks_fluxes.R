@@ -40,6 +40,8 @@
 #   BCI_stem_reconstruction/DATA/RTABLES/bci.spptable.rdata   species table
 #   wd/doi_10_5061_dryad_5qfttdzn3__v20260403/WD_species.txt  wood density
 #     (in this folder)
+#   stem_dbh.R (this folder): taper correction, stumps, DBH of alive censuses
+#     without a measurement (shared with the other two scripts)
 #   Packages: data.table, truncnorm, lubridate, HDInterval, ggplot2, scales, cowplot
 #
 # OUTPUTS (written to BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/)
@@ -100,6 +102,9 @@ library(data.table)
 library(truncnorm)
 library(lubridate)
 library(HDInterval)
+# Taper correction, stumps and the DBH of alive censuses without a measurement:
+# the rules shared with basal_area_uncertainty.R and general_plot_information.R
+source(file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "stem_dbh.R"))
 
 # Hard check that stays visible in interactive (line-by-line) runs.
 # On failure: prints a ❌ line (count + examples), raises an immediate warning,
@@ -176,16 +181,18 @@ df_stem[Rstatus != "A" & !is.na(dbh), dbh := NA]
 message(sprintf("[DBH] %d DBH values recorded on dead (G/D) records are not used.", n_dead_dbh))
 rm(n_dead_dbh)
 
-# A stump: an alive (A) record without a DBH whose raw status (DFstatus) is
-# "broken below". The stem is alive but has no measurable DBH at 1.3 m (a
-# broken-below record with a field tag is that stem), so it is not in the
-# stock in that census: it gets no DBH, and the stem's life in the stock is
-# split there (`seg`, Sections 12 and 15). Before its first measurement the
-# stem enters the stock as a recruit; between two measurements its biomass
-# leaves the stock (mortality flux) and comes back (a recruit). Same rule in
-# basal_area_uncertainty.R and general_plot_information.R.
-df_stem[, stump := Rstatus == "A" & is.na(dbh) & DFstatus %in% "broken below"]
-message(sprintf("[STUMP] %d alive stump records (A, no DBH, broken below) are not in the stock.", df_stem[stump == TRUE, .N]))
+# A stem is in the stock only when it has a DBH at 1.3 m, measured or filled
+# (stem_dbh.R). stump_segments() marks the stumps (A, no DBH, broken below: no
+# stem at 1.3 m), which split a stem's life into segments (`seg`): the stem
+# leaves the stock at a stump (a mortality flux, Section 15) and a later
+# measurement is a recruit (Section 12). It also marks the censuses to fill
+# (`fill`, Section 8): alive, unmeasured, not a stump, after a measurement of
+# the same segment. Before a stem's first measurement it is not in the stock.
+stump_segments(df_stem, "dbh")
+message(sprintf(
+  "[STUMP] %d alive stump records (A, no DBH, broken below) are not in the stock; %d alive records without a DBH are to be filled.",
+  df_stem[stump == TRUE, .N], df_stem[fill == TRUE, .N]
+))
 
 # ExactDate is the raw field date (NA where there is no record). Every row
 # needs a date (DBH interpolation in time, dT), so a missing one is taken from
@@ -247,74 +254,32 @@ df_stem[, Latin := ifelse(is.na(Latin), "Unknown", Latin)]
 # are excluded following Rutishauser et al. 2020. They violate standard allometric
 # assumptions and inflate plot-level AGB disproportionately.
 # Exclusion applies to ALL censuses of affected trees/stems.
-large_strangler_figs <- df_stem[
-  dbh > 500 &
-    Genus == "Ficus" &
-    Species %in% c("costaricana", "obtusifolia", "popenoei", "trigonata")
-]
+large_strangler_trees <- giant_strangler_trees(df_stem) # stem_dbh.R
 
 if (remove_strangler_figs) {
   # stemID is the stem number within its tree (treeID + stemID identify a
   # stem): every stem of an affected tree is removed with the tree.
-  df_stem <- df_stem[!treeID %in% large_strangler_figs$treeID]
   message(sprintf(
     "[STRANGLER] Removed %d trees / %d stems.",
-    uniqueN(large_strangler_figs$treeID), uniqueN(large_strangler_figs[, .(treeID, stemID)])
+    length(large_strangler_trees), uniqueN(df_stem[treeID %in% large_strangler_trees, .(treeID, stemID)])
   ))
+  df_stem <- df_stem[!treeID %in% large_strangler_trees]
 }
-rm(large_strangler_figs)
+rm(large_strangler_trees)
 
 # ============================================================
 # Section 5 — Taper correction
 # ============================================================
-# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`, with
-# Model 1 of Cushman et al. (2014) and its parameter b from their Table 3:
-#   b      = exp(-2.0205 + species term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
-#   dbh_at = dbh_cm * exp(b * (hom - common_hom))
-# The species terms (TAPER_SPECIES_2014) are the deviations of their ten focal
-# species from the base class (every other species), by BCI code; quaras and
-# tet2pa are now named Quararibea stenophylla and Protium stevensonii. With
-# sp = NULL every stem takes the base class. dbh_mm in mm, hom in m (NA is
-# read as common_hom). Returns mm; NA where the DBH or the HOM is not
-# positive. Stops when the vectors differ in length.
-TAPER_SPECIES_2014 <- c(
-  quaras = 0.4865, ceibpe = 0.0495, huracr = 0.0086, diptpa = 0.0150, alsebl = 0.1440,
-  brosal = 0.3874, cavapl = 0.7982, anacex = 0.4371, tet2pa = -0.5141, tab2ar = 0.3576
-)
-taper_2014 <- function(dbh_mm, hom, sp = NULL, common_hom = 1.3) {
-  if (length(dbh_mm) != length(hom) || (!is.null(sp) && length(sp) != length(hom))) {
-    stop("'dbh_mm', 'hom' and 'sp' must have the same length")
-  }
-  dbh_mm <- as.numeric(dbh_mm)
-  hom <- as.numeric(hom)
-  # Replace NA heights with 1.3 m (do not modify valid measured heights)
-  hom_na <- is.na(hom)
-  hom[hom_na] <- common_hom
-  # convert dbh from mm to cm for the model
-  dbh_cm <- dbh_mm / 10
-  # Protect against log(0) or negative inputs by coercing non-positive values to NA
-  dbh_cm[dbh_cm <= 0] <- NA_real_
-  hom_for_log <- hom
-  hom_for_log[hom_for_log <= 0] <- NA_real_
-  sp_term <- if (is.null(sp)) 0 else fcoalesce(unname(TAPER_SPECIES_2014[sp]), 0)
-  b <- exp(-2.0205 + sp_term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
-  out <- dbh_cm / (exp(-b * (hom - common_hom)))
-  # convert back to mm and set invalid values to NA
-  out_mm <- out * 10
-  out_mm[is.na(out_mm) | is.infinite(out_mm)] <- NA_real_
-  return(out_mm)
-}
-
-# taper_2014() takes the DBH in mm and returns mm. `dbh` becomes the
-# taper-corrected value; the recorded one is kept in dbh_raw. Palms keep the
-# recorded DBH (taper_palms = FALSE).
+# Model 1 of Cushman et al. (2014) with the species terms of their Table 3
+# (taper_2014() and stem_dbh_taper(), stem_dbh.R). `dbh` becomes the
+# taper-corrected value (mm); the recorded one is kept in dbh_raw. Palms keep
+# the recorded DBH (taper_palms = FALSE).
 df_stem[, hom := ifelse(is.na(hom), 1.3, hom)]
 if (use_taper_species_terms) {
   bio_check(all(names(TAPER_SPECIES_2014) %in% df_stem$sp), "The ten focal species of the taper model (Cushman et al. 2014) are in the data",
     examples = setdiff(names(TAPER_SPECIES_2014), df_stem$sp))
 }
-df_stem[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom, sp = if (use_taper_species_terms) sp else NULL)]
-if (!taper_palms) df_stem[Family == "Arecaceae", dbh_t := dbh]
+df_stem[, dbh_t := stem_dbh_taper(df_stem, species_terms = use_taper_species_terms, taper_palms = taper_palms)]
 df_stem[, dbh_raw := dbh]
 df_stem[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 
@@ -332,16 +297,15 @@ df_stem[, dbh_cm := dbh / 10]
 # (Rutishauser et al. 2020; Piponiot et al. 2024).
 # The median is applied to dbh_cm — the column every downstream AGB calculation
 # uses (dbh_cm is created in Section 6, so correcting `dbh` here would have no
-# effect) — and only to alive rows, so dead or prior rows never get a diameter.
-# Alive palm rows without a measurement also receive the species median
-# (stump censuses aside: no measurable DBH).
+# effect) — and only to the rows in the stock: measured, or to fill (`fill`,
+# Section 2). An alive palm census to fill takes the species median too.
 n_palm_median_fill <- 0L
 if (use_median_palm_dbh) {
   n_palm_median_fill <- df_stem[
-    Family == "Arecaceae" & Genus != "Socratea" & Rstatus == "A" & !stump & is.na(dbh_cm), .N
+    Family == "Arecaceae" & Genus != "Socratea" & fill == TRUE & is.na(dbh_cm), .N
   ]
   df_stem[
-    Family == "Arecaceae" & Genus != "Socratea" & Rstatus == "A" & !stump,
+    Family == "Arecaceae" & Genus != "Socratea" & (!is.na(dbh_cm) | fill),
     dbh_cm := median(dbh_cm, na.rm = TRUE), .(Latin)
   ]
 }
@@ -350,97 +314,50 @@ if (use_median_palm_dbh) {
 # Section 8 — Interpolate DBH for unmeasured-but-alive stems
 # ============================================================
 
-# Some stems have Rstatus == "A" (alive) but dbh == NA — they were assumed alive
-# in the field and not re-measured. These rows would otherwise produce NA growth
-# / NA AGB and be silently dropped.
+# An alive census without a measurement is filled when it comes after a
+# measurement of the same stump segment (`fill`, Section 2): the stem was
+# alive and its measurement was missed in the field, so it stays in the stock
+# until it is dead (D / G) or a stump. Nothing else gets a DBH: not a stump,
+# not an alive census before the stem's first measurement or after a stump
+# with no measurement since, not a stem never measured (stem_dbh.R).
 #
-# We provide three interpolation methods. Set `dbh_interp_method` at the top of
-# the script and re-run to assess sensitivity:
+# Three methods (dbh_interp_method), within the segment:
 #   "linear" — the rule of basal_area_uncertainty.R and
-#              general_plot_information.R (dbh_from_own_measurements()):
-#              linear IN TIME (ExactDate) between the flanking measured DBHs;
+#              general_plot_information.R (fill_stem_dbh(), stem_dbh.R):
+#              linear in time (ExactDate) between the flanking measurements;
 #              after the last measurement, the growth trend of the last two
-#              measurements continued (preferred)
-#   "mean"   — mean of the two flanking measured DBHs; after the last
+#              continued (a negative trend is not extrapolated; one
+#              measurement: kept) (preferred)
+#   "mean"   — mean of the two flanking measurements; after the last
 #              measurement as "linear"
 #   "locf"   — last observation carried forward (sensitivity option only)
-#
-# Only rows where  Rstatus == "A"  AND  dbh is NA  are filled. Rstatus "A"
-# without a DBH means the stem was ALIVE and its measurement was missed in the
-# field: it stays in the stock until it is actually dead (D / G).
-# Original raw DBH is preserved in `dbh_raw`; the flag `was_interpolated`
-# marks the affected rows so downstream code (and tests) can audit them.
-#
-# [EDGE CASE] After the last measurement a negative trend (shrinkage, usually
-#             a measurement or POM problem) is not extrapolated, and a stem
-#             measured only once keeps that value.
-# [EDGE CASE] If a stem has Rstatus = A throughout but never measured, no method
-#             can fill it; it is excluded from analyses.
-
-# DBH of a stem at dates t_new from its own measurements (t_meas, d_meas):
-# between two measurements linear in time; after the last one the growth
-# trend of the last two continued (never shrinking; one measurement: kept);
-# before the first one the first measurement.
-# Same function in basal_area_uncertainty.R and general_plot_information.R.
-dbh_from_own_measurements <- function(t_meas, d_meas, t_new) {
-  o <- order(t_meas)
-  t_meas <- t_meas[o]
-  d_meas <- d_meas[o]
-  n <- length(t_meas)
-  if (n == 1L) {
-    return(rep(d_meas, length(t_new)))
-  }
-  out <- approx(t_meas, d_meas, xout = t_new, rule = 2)$y
-  after <- t_new > t_meas[n]
-  if (any(after)) {
-    growth <- max((d_meas[n] - d_meas[n - 1L]) / (t_meas[n] - t_meas[n - 1L]), 0)
-    out[after] <- d_meas[n] + growth * (t_new[after] - t_meas[n])
-  }
-  out
-}
-
-interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_interpolate = "dbh") {
+# The recorded DBH is kept in `dbh_raw`; `was_interpolated` marks the rows
+# that got a DBH here or the palm median in Section 7.
+interpolate_dbh <- function(dt, method = c("linear", "locf", "mean"), var_to_interpolate = "dbh_cm") {
   method <- match.arg(method)
-  # Save raw values before interpolation
-  if (!"dbh_raw" %in% names(dt)) {
-    dt[, dbh_raw := get(var_to_interpolate)]
+  data.table::setorder(dt, treeID, stemID, CensusID)
+  if (method == "linear") {
+    return(invisible(fill_stem_dbh(dt, var_to_interpolate)))
   }
-  fill_one <- function(x, status, t_num, skip) {
-    target <- !is.na(status) & status == "A" & is.na(x) & !skip
-    measured <- !is.na(x)
-    if (!any(target) || !any(measured)) {
+  fill_one <- function(x, target, t_num) {
+    target <- target & is.na(x)
+    if (!any(target)) {
       return(x)
     }
-    idx_meas <- which(measured)
+    idx_meas <- which(!is.na(x))
     out <- x
-    if (method %in% c("linear", "mean")) {
-      out[target] <- dbh_from_own_measurements(t_num[idx_meas], x[idx_meas], t_num[target])
-    }
     if (method == "mean") {
+      out[target] <- dbh_from_own_measurements(t_num[idx_meas], x[idx_meas], t_num[target])
       for (i in which(target)) {
-        if (any(idx_meas < i) && any(idx_meas > i)) {
-          out[i] <- mean(c(x[max(idx_meas[idx_meas < i])], x[min(idx_meas[idx_meas > i])]))
-        }
+        if (any(idx_meas > i)) out[i] <- mean(c(x[max(idx_meas[idx_meas < i])], x[min(idx_meas[idx_meas > i])]))
       }
-    } else if (method == "locf") {
-      last_val <- NA_real_
-      for (i in seq_along(x)) {
-        if (!is.na(x[i])) last_val <- x[i]
-        if (target[i] && !is.na(last_val)) out[i] <- last_val
-      }
+    } else {
+      for (i in which(target)) out[i] <- x[max(idx_meas[idx_meas < i])]
     }
     out
   }
-  # Rows must be in census order within each stem ("mean" and "locf").
-  data.table::setorder(dt, treeID, stemID, CensusID)
-  # stump censuses (column `stump`) are not filled: no measurable DBH
-  skip_col <- if ("stump" %in% names(dt)) dt$stump else rep(FALSE, nrow(dt))
-  dt[, .skip := skip_col]
-  dt[, (var_to_interpolate) := fill_one(get(var_to_interpolate), Rstatus, as.numeric(ExactDate), .skip),
-    by = .(treeID, stemID)
-  ]
-  dt[, .skip := NULL]
-  invisible(dt)
+  dt[, (var_to_interpolate) := fill_one(get(var_to_interpolate), fill, as.numeric(ExactDate)), by = .(treeID, stemID, seg)]
+  invisible(dt[fill == TRUE & !is.na(get(var_to_interpolate)), .N])
 }
 
 # Linear interpolation uses the measurement dates, set for every row in stage 3.
@@ -449,48 +366,42 @@ bio_check(
   "Every alive stem-census row has an ExactDate (needed to interpolate DBH in time)",
   n_bad = df_stem[Rstatus == "A" & is.na(ExactDate), .N]
 )
+bio_check(
+  nrow(fill_across_stump(df_stem, "dbh_raw")) == 0L,
+  "No census to fill lies between two measurements across a stump (it would mix the stem that broke with the resprout)",
+  n_bad = nrow(fill_across_stump(df_stem, "dbh_raw"))
+)
 
-# Count alive stems that are missing taper-corrected DBH before interpolation.
-# dbh_cm is NA whenever dbh (raw) is NA, so the counts are equivalent, but we
-# count dbh_cm explicitly for clarity since that is the column being filled.
-n_to_fill <- df_stem[!is.na(Rstatus) & Rstatus == "A" & !stump & is.na(dbh_cm), .N]
+n_to_fill <- df_stem[fill == TRUE & is.na(dbh_cm), .N]
 message(sprintf(
-  "[INTERP] %d stem-census rows are Rstatus=A & dbh_cm=NA. Filling with method='%s'.",
+  "[INTERP] %d alive stem-census rows to fill (after a measurement of their segment). Filling with method='%s'.",
   n_to_fill, dbh_interp_method
 ))
 interpolate_dbh(df_stem, method = dbh_interp_method, var_to_interpolate = "dbh_cm")
-# was_interpolated marks every alive row whose DBH is not a measurement: rows
-# filled here and unmeasured palm rows given the species median (Section 7).
+# was_interpolated marks every row in the stock whose DBH is not a measurement:
+# rows filled here and palm rows to fill given the species median (Section 7).
 df_stem[, was_interpolated := is.na(dbh_raw) & !is.na(dbh_cm)]
-n_filled <- df_stem[was_interpolated == TRUE, .N] - n_palm_median_fill
 message(sprintf(
-  "[INTERP] Filled %d / %d candidate rows (plus %d unmeasured alive palm rows given the species median in Section 7).",
-  n_filled, n_to_fill, n_palm_median_fill
+  "[INTERP] Filled %d rows (plus %d palm rows given the species median in Section 7). Alive without a DBH and not in the stock: %d stumps, %d others (before the stem's first measurement, after a stump with no measurement since, or a stem never measured).",
+  df_stem[was_interpolated == TRUE, .N] - n_palm_median_fill, n_palm_median_fill, df_stem[stump == TRUE, .N],
+  df_stem[Rstatus == "A" & !stump & !fill & is.na(dbh_raw), .N]
 ))
-rm(n_to_fill, n_filled, n_palm_median_fill)
+rm(n_to_fill, n_palm_median_fill)
 
-# Every alive row of a stem that was ever measured now has a DBH: an alive
-# stem stays in the stock until it is dead, stump censuses aside.
-measured_stems <- unique(df_stem[!is.na(dbh_raw), .(treeID, stemID)])
-no_dbh <- df_stem[Rstatus == "A" & !stump & is.na(dbh_cm)][measured_stems, on = .(treeID, stemID), nomatch = 0L]
+# The stock: every census to fill has a DBH, and nothing else without a
+# measurement has one.
 bio_check(
-  nrow(no_dbh) == 0L,
-  "Every alive (A) row of a measured stem has a DBH (alive stems stay in the stock), stump censuses aside",
-  examples = no_dbh[, paste(treeID, stemID, sep = "_")], n_bad = nrow(no_dbh)
+  df_stem[fill == TRUE & is.na(dbh_cm), .N] == 0L,
+  "Every alive census to fill (after a measurement of its segment) has a DBH",
+  examples = df_stem[fill == TRUE & is.na(dbh_cm), paste(treeID, stemID, sep = "_")],
+  n_bad = df_stem[fill == TRUE & is.na(dbh_cm), .N]
 )
-rm(measured_stems, no_dbh)
 bio_check(
-  df_stem[stump == TRUE & !is.na(dbh_cm), .N] == 0L,
-  "No stump census (A, no DBH, broken below) gets a DBH",
-  n_bad = df_stem[stump == TRUE & !is.na(dbh_cm), .N]
+  df_stem[is.na(dbh_raw) & !fill & !is.na(dbh_cm), .N] == 0L,
+  "No stump, no alive census before a stem's first measurement or after a stump, and no dead census gets a DBH",
+  examples = df_stem[is.na(dbh_raw) & !fill & !is.na(dbh_cm), paste(treeID, stemID, sep = "_")],
+  n_bad = df_stem[is.na(dbh_raw) & !fill & !is.na(dbh_cm), .N]
 )
-
-# Diagnostic: stems that are alive but still have NA dbh_cm after interpolation.
-# These were never measured.
-inc <- unique(df_stem[!is.na(Rstatus) & Rstatus == "A" & !stump & is.na(dbh_cm), .(treeID, stemID)])
-if (nrow(inc) > 0L) {
-  message(sprintf("[INTERP] %d stems remain with NA dbh_cm after interpolation.", nrow(inc)))
-}
 
 # ============================================================
 # Section 9 — Allometric functions
@@ -707,7 +618,7 @@ df_stem[, prev_agb_t := shift(agb_t), .(treeID, stemID)]
 #      are excluded (they are start-of-monitoring, not new recruits).
 #      A stump census (Section 2) splits the stem's life in the stock into
 #      segments (`seg`): the first measurement after a stump is a recruit.
-df_stem[, seg := cumsum(stump), .(treeID, stemID)]
+# (`seg` is set by stump_segments(), Section 2.)
 df_stem[, n_alive_prior := cumsum(!is.na(dbh_cm) & Rstatus == "A") -
   (!is.na(dbh_cm) & Rstatus == "A"), .(treeID, stemID, seg)]
 df_stem[, is_recruit := !is.na(dbh_cm) & Rstatus == "A" &

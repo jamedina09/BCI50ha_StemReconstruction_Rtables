@@ -123,6 +123,9 @@ library(collapse)
 library(arrow)
 
 workspace_root <- getwd()
+# Taper correction, stumps and the DBH of alive censuses without a measurement:
+# the rules shared with biomass_stocks_fluxes.R and general_plot_information.R
+source(file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "stem_dbh.R"))
 
 # ============================================================
 # SECTION 1: Configuration and data loading
@@ -230,15 +233,16 @@ rec[Rstatus != "A" & !is.na(dbh), dbh := NA]
 cat(sprintf("[BA] %d DBH values recorded on dead (G/D) records are not used\n", n_dead_dbh))
 rm(n_dead_dbh)
 
-# A stump: an alive (A) record without a DBH whose raw status (DFstatus) is
-# "broken below". The stem is alive but has no measurable DBH at 1.3 m (a
-# broken-below record with a field tag is that stem), so it is not in the
-# stock in that census and gets no DBH. Before its first measurement the stem
-# enters the stock there; between two measurements its basal area leaves the
-# stock and comes back (a loss, then a gain). Same rule in
-# biomass_stocks_fluxes.R and general_plot_information.R.
-rec[, stump := Rstatus == "A" & is.na(dbh) & DFstatus %in% "broken below"]
-cat(sprintf("[BA] %d alive stump records (A, no DBH, broken below) are not in the stock\n", rec[stump == TRUE, .N]))
+# A stem is in the stock only when it has a DBH at 1.3 m, measured or filled
+# (stem_dbh.R). stump_segments() marks the stumps (A, no DBH, broken below: no
+# stem at 1.3 m; the stem's basal area leaves the stock there, and a later
+# measurement brings it back: a loss, then a gain) and the alive censuses to
+# fill (`fill`: unmeasured, not a stump, after a measurement of the stem with
+# no stump in between). An alive census before the stem's first measurement
+# is not in the stock.
+stump_segments(rec, "dbh")
+cat(sprintf("[BA] %d alive stump records (A, no DBH, broken below) are not in the stock; %d alive records without a DBH are to be filled\n",
+    rec[stump == TRUE, .N], rec[fill == TRUE, .N]))
 
 # stemID is the stem number within its tree (1, 2, ...): treeID + stemID
 # identify a stem, so every stem key below uses both.
@@ -267,10 +271,7 @@ rm(bci.spptable)
 # Giant strangler figs (> 500 mm DBH, raw units, in any census) are excluded with
 # every stem of their tree in all censuses (Rutishauser et al. 2020), as in
 # biomass_stocks_fluxes.R. Selected on the recorded DBH, before the taper correction.
-strangler_trees <- as.character(unique(rec[
-    dbh > 500 & Genus %in% "Ficus" & Species %in% c("costaricana", "obtusifolia", "popenoei", "trigonata"),
-    treeID
-]))
+strangler_trees <- as.character(giant_strangler_trees(rec)) # stem_dbh.R
 n_strangler_stems <- 0L
 if (remove_strangler_figs) {
     n_strangler_stems <- uniqueN(rec[as.character(treeID) %in% strangler_trees & !is.na(stemID), .(treeID, stemID)])
@@ -278,53 +279,16 @@ if (remove_strangler_figs) {
     cat(sprintf("[STRANGLER] Removed %d trees / %d stems.\n", length(strangler_trees), n_strangler_stems))
 }
 
-# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`, with
-# Model 1 of Cushman et al. (2014) and its parameter b from their Table 3:
-#   b      = exp(-2.0205 + species term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
-#   dbh_at = dbh_cm * exp(b * (hom - common_hom))
-# The species terms (TAPER_SPECIES_2014) are the deviations of their ten focal
-# species from the base class (every other species), by BCI code; quaras and
-# tet2pa are now named Quararibea stenophylla and Protium stevensonii. With
-# sp = NULL every stem takes the base class. dbh_mm in mm, hom in m (NA is
-# read as common_hom). Returns mm; NA where the DBH or the HOM is not
-# positive. Stops when the vectors differ in length.
-TAPER_SPECIES_2014 <- c(
-    quaras = 0.4865, ceibpe = 0.0495, huracr = 0.0086, diptpa = 0.0150, alsebl = 0.1440,
-    brosal = 0.3874, cavapl = 0.7982, anacex = 0.4371, tet2pa = -0.5141, tab2ar = 0.3576
-)
-taper_2014 <- function(dbh_mm, hom, sp = NULL, common_hom = 1.3) {
-    if (length(dbh_mm) != length(hom) || (!is.null(sp) && length(sp) != length(hom))) {
-        stop("'dbh_mm', 'hom' and 'sp' must have the same length")
-    }
-    dbh_mm <- as.numeric(dbh_mm)
-    hom <- as.numeric(hom)
-    # Replace NA heights with 1.3 m (do not modify valid measured heights)
-    hom_na <- is.na(hom)
-    hom[hom_na] <- common_hom
-    # convert dbh from mm to cm for the model
-    dbh_cm <- dbh_mm / 10
-    # Protect against log(0) or negative inputs by coercing non-positive values to NA
-    dbh_cm[dbh_cm <= 0] <- NA_real_
-    hom_for_log <- hom
-    hom_for_log[hom_for_log <= 0] <- NA_real_
-    sp_term <- if (is.null(sp)) 0 else fcoalesce(unname(TAPER_SPECIES_2014[sp]), 0)
-    b <- exp(-2.0205 + sp_term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
-    out <- dbh_cm / (exp(-b * (hom - common_hom)))
-    # convert back to mm and set invalid values to NA
-    out_mm <- out * 10
-    out_mm[is.na(out_mm) | is.infinite(out_mm)] <- NA_real_
-    return(out_mm)
-}
-
-# taper_2014() takes the DBH in mm and returns mm. Palms keep the recorded DBH
-# (taper_palms = FALSE).
+# Model 1 of Cushman et al. (2014) with the species terms of their Table 3
+# (taper_2014() and stem_dbh_taper(), stem_dbh.R); palms keep the recorded DBH
+# (taper_palms = FALSE). `dbh` becomes the corrected value (mm); the recorded
+# one is kept in dbh_raw.
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
 if (use_taper_species_terms) {
     bio_check(all(names(TAPER_SPECIES_2014) %in% rec$sp), "The ten focal species of the taper model (Cushman et al. 2014) are in the data",
         examples = setdiff(names(TAPER_SPECIES_2014), rec$sp))
 }
-rec[, dbh_t := taper_2014(dbh_mm = dbh, hom = hom, sp = if (use_taper_species_terms) sp else NULL)]
-if (!taper_palms) rec[Family %in% "Arecaceae", dbh_t := dbh]
+rec[, dbh_t := stem_dbh_taper(rec, species_terms = use_taper_species_terms, taper_palms = taper_palms)]
 rec[, dbh_raw := dbh]
 rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 
@@ -378,17 +342,19 @@ ba_m2 <- function(dbh_mm) pi / 4 * (dbh_mm / 1000)^2
 # missed in the field, so it stays in the stock until it is dead (D / G). A
 # census in `alive` after the stem's last measurement gets the growth trend of
 # its last two measurements continued in time (a negative trend is not
-# extrapolated; a stem measured once keeps that value); one before its first
-# measurement gets the first measurement. This is dbh_from_own_measurements()
-# of general_plot_information.R and biomass_stocks_fluxes.R.
+# extrapolated; a stem measured once keeps that value). This is the fill rule
+# of stem_dbh.R, shared with general_plot_information.R and
+# biomass_stocks_fluxes.R: an alive census before the stem's first
+# measurement is not filled.
 #   dt        : one row per stem × census with a measured `dbh` and its date `t`
 #   stem_cols : columns identifying a stem (e.g. treeID, stemID)
 #   gap_dates : date `t` of a missing census, joined on its other columns
 #               (the stem's own row date, or the tree's date in that census)
 #   alive     : stem_cols + CensusID of censuses in which the stem is alive
 #               without a DBH (NULL: none)
-#   skip      : stem_cols + CensusID of censuses that are not filled (stumps:
-#               alive without a measurable DBH; NULL: none)
+#   skip      : stem_cols + CensusID of alive censuses without a DBH that are
+#               not filled (stumps, and censuses after a stump before the
+#               stem's next measurement; NULL: none)
 # Added rows are flagged `interpolated` (not a measurement); those beyond the
 # measured span are also flagged `carried`.
 fill_stem_gaps <- function(dt, stem_cols, gap_dates, alive = NULL, skip = NULL) {
@@ -420,10 +386,10 @@ fill_stem_gaps <- function(dt, stem_cols, gap_dates, alive = NULL, skip = NULL) 
         added$gap <- miss[, c(stem_cols, "CensusID", "dbh", "t"), with = FALSE][, `:=`(interpolated = TRUE, carried = FALSE)]
     }
 
-    # 2. Alive censuses outside the measured span.
+    # 2. Alive censuses after the measured span.
     if (!is.null(alive) && nrow(alive) > 0L) {
         carry <- unique(alive[, c(stem_cols, "CensusID"), with = FALSE])
-        carry <- rng[carry, on = stem_cols, nomatch = 0L][CensusID > c_max | CensusID < c_min]
+        carry <- rng[carry, on = stem_cols, nomatch = 0L][CensusID > c_max]
         if (nrow(carry) > 0L) {
             carry[gap_dates, on = date_keys, t := i.t]
             # last measurement (after the span) and the one before it
@@ -432,14 +398,12 @@ fill_stem_gaps <- function(dt, stem_cols, gap_dates, alive = NULL, skip = NULL) 
             prevq <- carry[, c(stem_cols, "CensusID"), with = FALSE][, CensusID := carry$c_l - 1L]
             prevm <- dt[prevq, on = c(stem_cols, "CensusID"), roll = Inf, .(d_p = x.dbh, t_p = x.t)]
             carry[, c("d_p", "t_p") := prevm]
-            # first measurement (before the span)
-            carry[, d_f := dt[carry, on = c(stem_cols, "CensusID"), roll = -Inf, x.dbh]]
             carry[, growth := fifelse(is.na(d_p), 0, pmax((d_l - d_p) / (t_l - t_p), 0))]
-            carry[, dbh := fifelse(CensusID > c_max, d_l + growth * (t - t_l), d_f)]
-            bad <- carry[is.na(dbh) | (CensusID > c_max & !(t > t_l))]
+            carry[, dbh := d_l + growth * (t - t_l)]
+            bad <- carry[is.na(dbh) | !(t > t_l)]
             bio_check(
                 nrow(bad) == 0L,
-                "Every alive census outside a stem's measured span gets a DBH from the stem's own measurements",
+                "Every alive census after a stem's last measurement gets a DBH from the stem's own measurements",
                 examples = bad$treeID, n_bad = nrow(bad)
             )
             added$carry <- carry[, c(stem_cols, "CensusID", "dbh", "t"), with = FALSE][, `:=`(interpolated = TRUE, carried = TRUE)]
@@ -553,10 +517,17 @@ tree_dates <- rec[, .N, by = .(treeID, CensusID, ExactDate)][order(-N)][
     by = .(treeID, CensusID)
 ]
 
-# Censuses in which a stem is alive (A) but its measurement was missed; stump
-# censuses are not filled (no measurable DBH at 1.3 m).
-alive_nodbh <- rec[Rstatus == "A" & is.na(dbh) & !stump, .(treeID, stemID, CensusID)]
-stump_cens <- rec[stump == TRUE, .(treeID, stemID, CensusID)]
+# Censuses to fill (`fill`, stem_dbh.R): alive (A), measurement missed, after a
+# measurement of the stem with no stump in between. Every other alive census
+# without a DBH (a stump; after a stump, before the stem's next measurement)
+# is skipped; one before the stem's first measurement is never filled.
+bio_check(
+    nrow(fill_across_stump(rec, "dbh")) == 0L,
+    "No census to fill lies between two measurements across a stump (it would mix the stem that broke with the resprout)",
+    n_bad = nrow(fill_across_stump(rec, "dbh"))
+)
+alive_nodbh <- rec[fill == TRUE, .(treeID, stemID, CensusID)]
+stump_cens <- rec[Rstatus == "A" & is.na(dbh) & !fill, .(treeID, stemID, CensusID)]
 exp_stems <- fill_stem_gaps(stem_obs, c("treeID", "stemID"), stem_dates, alive = alive_nodbh, skip = stump_cens)
 exp_stems[, BA := ba_m2(dbh)]
 cat(sprintf(
@@ -565,29 +536,30 @@ cat(sprintf(
     alive_nodbh[!stem_obs, on = .(treeID, stemID), .N]
 ))
 
-# An alive stem is in the stock in every census it is alive, except a stump
-# census; a stem is never in the stock in a census where it is not alive.
-alive_rows <- rec[Rstatus == "A" & !stump, .(treeID, stemID, CensusID)][
+# The stock: every measured census and every census to fill; nothing else (no
+# stump, no alive census before a stem's first measurement or after a stump
+# before its next measurement, no census where the stem is not alive).
+alive_rows <- rec[!is.na(dbh) | fill == TRUE, .(treeID, stemID, CensusID)][
     unique(stem_obs[, .(treeID, stemID)]),
     on = .(treeID, stemID), nomatch = 0L
 ]
 not_in_stock <- alive_rows[!exp_stems, on = .(treeID, stemID, CensusID)]
 bio_check(
     nrow(not_in_stock) == 0L,
-    "Every alive (A) census of a measured stem is in the stock (measured, interpolated or trend-continued), stump censuses aside",
+    "Every measured census and every census to fill is in the stock (measured, interpolated or trend-continued)",
     examples = not_in_stock[, paste(treeID, stemID, sep = "_")], n_bad = nrow(not_in_stock)
 )
 stump_in_stock <- exp_stems[stump_cens, on = .(treeID, stemID, CensusID), nomatch = 0L]
 bio_check(
     nrow(stump_in_stock) == 0L,
-    "No stump census (A, no DBH, broken below) is in the stock",
+    "No stump, and no alive census after a stump before the stem's next measurement, is in the stock",
     examples = stump_in_stock[, paste(treeID, stemID, sep = "_")], n_bad = nrow(stump_in_stock)
 )
 rm(stump_in_stock)
 not_alive <- exp_stems[, .(treeID, stemID, CensusID)][!alive_rows, on = .(treeID, stemID, CensusID)]
 bio_check(
     nrow(not_alive) == 0L,
-    "No stem is in the stock in a census where it is not alive (A)",
+    "No stem is in the stock in a census where it is neither measured nor to fill",
     examples = not_alive[, paste(treeID, stemID, sep = "_")], n_bad = nrow(not_alive)
 )
 rm(alive_rows, not_in_stock, not_alive)
@@ -773,25 +745,26 @@ cat(sprintf(
 ))
 
 # ---- 4.4 Gap filling, per-path stocks and fluxes ----------------------------
-# An exported stem alive (A) without a DBH outside its measured span stays
-# alive in every path: the census joins the path stem that holds the exported
-# stem's last measurement (after the span) or first one (before it), as in the
-# splice. Censuses between two measurements are gap-filled anyway.
+# An exported stem's census to fill after its measured span stays in the stock
+# in every path: the census joins the path stem that holds the exported
+# stem's last measurement, as in the splice. Censuses between two
+# measurements are gap-filled anyway.
 xspan <- U[treeID %in% sampled_trees, .(
     first_oid = oid[which.min(CensusID)], last_oid = oid[which.max(CensusID)],
     c_min = min(CensusID), c_max = max(CensusID)
 ), by = .(treeID, xstem)]
 path_alive <- xspan[alive_nodbh[, .(treeID, xstem = stemID, CensusID)], on = .(treeID, xstem), nomatch = 0L][
-    CensusID > c_max | CensusID < c_min
-][, anchor_oid := fifelse(CensusID > c_max, last_oid, first_oid)]
+    CensusID > c_max
+][, anchor_oid := last_oid]
 path_alive <- unique(comp[, .(treeID, path_idx, anchor_oid = oid, lab)][
     path_alive[, .(treeID, anchor_oid, CensusID)],
     on = .(treeID, anchor_oid), allow.cartesian = TRUE, nomatch = 0L
 ][, .(treeID, path_idx, lab, CensusID)])
 rm(xspan)
-# A stump census between two measurements of an exported stem is not filled in
-# a path either: the path stem that holds the exported stem's last measurement
-# before it skips that census.
+# A skipped census (a stump, or after a stump before the next measurement)
+# between two measurements of an exported stem is not filled in a path either:
+# the path stem that holds the exported stem's last measurement before it
+# skips that census.
 xprev <- U[treeID %in% sampled_trees, .(treeID, xstem, CensusID, oid)]
 setorder(xprev, treeID, xstem, CensusID)
 path_skip <- xprev[stump_cens[treeID %in% sampled_trees, .(treeID, xstem = stemID, CensusID)],

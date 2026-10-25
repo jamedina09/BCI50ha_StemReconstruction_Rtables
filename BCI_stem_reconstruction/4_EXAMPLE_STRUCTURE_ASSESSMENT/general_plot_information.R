@@ -18,18 +18,20 @@ workspace_root <- getwd()
 # Key definitions used throughout
 #   Individual   : one unique treeID. A tree may have multiple
 #                  stems, but it is counted once as one individual.
-#   Alive stem   : Rstatus == "A", except a stump (A without a DBH whose raw
-#                  status is "broken below": no stem at 1.3 m, Sec. 3). Trees
-#                  without (gx, gy) are placed at the centre of their 20 m
-#                  quadrat (Sec. 3).
+#   Stem in the stand : a stem with a DBH at 1.3 m in that census, measured
+#                  or filled (stem_dbh.R, shared with basal_area_uncertainty.R
+#                  and biomass_stocks_fluxes.R). A stump (A without a DBH whose
+#                  raw status is "broken below": no stem at 1.3 m) is not in
+#                  the stand, nor an alive census before the stem's first
+#                  measurement. Trees without (gx, gy) are placed at the centre
+#                  of their 20 m quadrat (Sec. 3).
 #   DBH          : Cushman et al. 2014 taper-corrected diameter at 1.3 m, as
-#                  in basal_area_uncertainty.R and biomass_stocks_fluxes.R
-#                  (use_taper_for_ba = FALSE uses the diameter measured at the
-#                  point of measurement instead). Alive stems whose DBH was
-#                  missed in the field keep a DBH from their own
-#                  measurements: interpolated in time between two of them;
-#                  after the last one, its growth trend continued (Sec. 2-3),
-#                  the same rule as the other two scripts.
+#                  in the other two scripts (palms keep the measured DBH). An
+#                  alive census whose DBH was missed in the field after a
+#                  measurement of the stem (no stump in between) gets a DBH
+#                  from the stem's own measurements: interpolated in time
+#                  between two of them; after the last one, its growth trend
+#                  continued (Sec. 3).
 #   Basal area   : π/4 × (DBH mm / 1000)² m² per stem;
 #                  summed across all alive stems per treeID.
 #   Per-hectare  : bootstrapped mean across super-quadrats (20 m quadrats are
@@ -72,6 +74,9 @@ workspace_root <- getwd()
 
 library(data.table)
 library(boot)
+# Taper correction, stumps and the DBH of alive censuses without a measurement:
+# the rules shared with basal_area_uncertainty.R and biomass_stocks_fluxes.R
+source(file.path(workspace_root, "BCI_stem_reconstruction", "4_EXAMPLE_STRUCTURE_ASSESSMENT", "stem_dbh.R"))
 # HDInterval is called via :: inside boot_mean_ci().
 # Install once if needed: install.packages("HDInterval")
 
@@ -98,14 +103,11 @@ BOOT_R <- 4999L # number of bootstrap replicates
 set.seed(42) # for reproducibility
 
 # ---- Diameter used for basal area and size classes --------------------
-# TRUE (default): Cushman et al. 2014 taper-corrected diameter at 1.3 m, with
-#   the taper settings of basal_area_uncertainty.R and biomass_stocks_fluxes.R
-#   (below). It raises the basal area of buttressed trees measured above 1.3 m.
-#   Unlike those scripts, this one keeps the giant strangler figs and the
-#   measured palm diameters (a description of every tree of the plot), so its
-#   stand basal area is not their stock.
-# FALSE: DBH as measured at the point of measurement (POM).
-use_taper_for_ba <- TRUE
+# Cushman et al. 2014 taper-corrected diameter at 1.3 m, with the taper
+# settings of basal_area_uncertainty.R and biomass_stocks_fluxes.R. Unlike
+# those scripts, this one keeps the giant strangler figs and the measured palm
+# diameters (a description of every tree of the plot), so its stand basal area
+# is not their stock.
 use_taper_species_terms <- TRUE # taper model with the species terms of Cushman et al. 2014, Table 3 (FALSE: the base class for every species)
 taper_palms <- FALSE # FALSE: palms keep their measured DBH (no buttress taper; Socratea is measured above its stilt roots)
 
@@ -153,34 +155,6 @@ bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
         file.exists(.stage2_table) && all(file.mtime(.rtable_inputs) > file.mtime(.stage2_table)),
         "The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge)"
     )
-
-# ---- DBH of an alive stem whose measurement was missed ----------------
-# Rstatus "A" without a DBH = alive, measurement missed in the field. The DBH
-# comes from the stem's own measurements (dates t_meas, DBHs d_meas) at the
-# dates t_new:
-#   • between two measurements: linear interpolation in time;
-#   • after the last measurement: the growth trend of the last two
-#     measurements continued in time. A negative trend (shrinkage: usually a
-#     measurement or POM problem) is not extrapolated, and a stem measured
-#     only once keeps that value;
-#   • before the first measurement: the first measurement.
-# Same function in basal_area_uncertainty.R and biomass_stocks_fluxes.R.
-dbh_from_own_measurements <- function(t_meas, d_meas, t_new) {
-    o <- order(t_meas)
-    t_meas <- t_meas[o]
-    d_meas <- d_meas[o]
-    n <- length(t_meas)
-    if (n == 1L) {
-        return(rep(d_meas, length(t_new)))
-    }
-    out <- approx(t_meas, d_meas, xout = t_new, rule = 2)$y
-    after <- t_new > t_meas[n]
-    if (any(after)) {
-        growth <- max((d_meas[n] - d_meas[n - 1L]) / (t_meas[n] - t_meas[n - 1L]), 0)
-        out[after] <- d_meas[n] + growth * (t_new[after] - t_meas[n])
-    }
-    out
-}
 
 # ---- Modal value ----------------------------------------------------
 # Returns the most frequent element of x. Used to assign a single
@@ -302,14 +276,14 @@ rec[Rstatus != "A" & !is.na(dbh), dbh := NA]
 message(sprintf("%d DBH values recorded on dead (G/D) records are not used.", n_dead_dbh))
 rm(n_dead_dbh)
 
-# A stump: an alive (A) record without a DBH whose raw status (DFstatus) is
-# "broken below". The stem is alive but has no measurable DBH at 1.3 m (a
-# broken-below record with a field tag is that stem), so in that census it is
-# not counted as a stem (nor its tree, if it has no other alive stem) and has
-# no basal area. Same rule in basal_area_uncertainty.R and
-# biomass_stocks_fluxes.R.
-rec[, stump := Rstatus == "A" & is.na(dbh) & DFstatus %in% "broken below"]
-message(sprintf("%d alive stump records (A, no DBH, broken below) are not counted as stems.", rec[stump == TRUE, .N]))
+# A stem is in the stand only when it has a DBH at 1.3 m, measured or filled
+# (stem_dbh.R). stump_segments() marks the stumps (A, no DBH, broken below: no
+# stem at 1.3 m, so not a stem of the stand in that census) and the alive
+# censuses to fill (`fill`: unmeasured, not a stump, after a measurement of
+# the stem with no stump in between).
+stump_segments(rec, "dbh")
+message(sprintf("%d alive stump records (A, no DBH, broken below) are not counted as stems; %d alive records without a DBH are to be filled.",
+    rec[stump == TRUE, .N], rec[fill == TRUE, .N]))
 
 # ExactDate is the raw field date (NA where there is no record). A missing
 # one is taken from `date` (days since 1960-01-01, filled in stage 3: the
@@ -340,96 +314,45 @@ bci.spptable <- bci.spptable[, keep_spp, with = FALSE]
 rec <- merge(rec, bci.spptable, by = "sp", all.x = TRUE)
 
 # ---- Taper correction -------------------------------------
-# taper_2014(): DBH at `common_hom` from a DBH measured at height `hom`, with
-# Model 1 of Cushman et al. (2014) and its parameter b from their Table 3:
-#   b      = exp(-2.0205 + species term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom))
-#   dbh_at = dbh_cm * exp(b * (hom - common_hom))
-# The species terms (TAPER_SPECIES_2014) are the deviations of their ten focal
-# species from the base class (every other species), by BCI code; quaras and
-# tet2pa are now named Quararibea stenophylla and Protium stevensonii. With
-# sp = NULL every stem takes the base class. dbh_mm in mm, hom in m (NA is
-# read as common_hom). Returns mm; NA where the DBH or the HOM is not
-# positive. Stops when the vectors differ in length.
-TAPER_SPECIES_2014 <- c(
-    quaras = 0.4865, ceibpe = 0.0495, huracr = 0.0086, diptpa = 0.0150, alsebl = 0.1440,
-    brosal = 0.3874, cavapl = 0.7982, anacex = 0.4371, tet2pa = -0.5141, tab2ar = 0.3576
-)
-taper_2014 <- function(dbh_mm, hom, sp = NULL, common_hom = 1.3) {
-    if (length(dbh_mm) != length(hom) || (!is.null(sp) && length(sp) != length(hom))) {
-        stop("'dbh_mm', 'hom' and 'sp' must have the same length")
-    }
-    dbh_mm <- as.numeric(dbh_mm)
-    hom <- as.numeric(hom)
-    # Replace NA heights with 1.3 m (do not modify valid measured heights)
-    hom_na <- is.na(hom)
-    hom[hom_na] <- common_hom
-    # convert dbh from mm to cm for the model
-    dbh_cm <- dbh_mm / 10
-    # Protect against log(0) or negative inputs by coercing non-positive values to NA
-    dbh_cm[dbh_cm <= 0] <- NA_real_
-    hom_for_log <- hom
-    hom_for_log[hom_for_log <= 0] <- NA_real_
-    sp_term <- if (is.null(sp)) 0 else fcoalesce(unname(TAPER_SPECIES_2014[sp]), 0)
-    b <- exp(-2.0205 + sp_term - 0.5053 * log(dbh_cm) + 0.3748 * log(hom_for_log))
-    out <- dbh_cm / (exp(-b * (hom - common_hom)))
-    # convert back to mm and set invalid values to NA
-    out_mm <- out * 10
-    out_mm[is.na(out_mm) | is.infinite(out_mm)] <- NA_real_
-    return(out_mm)
-}
-
-# taper_2014() takes the DBH in mm and returns mm. Palms keep the recorded DBH
-# (taper_palms = FALSE).
+# Model 1 of Cushman et al. (2014) with the species terms of their Table 3
+# (taper_2014() and stem_dbh_taper(), stem_dbh.R); palms keep the recorded DBH
+# (taper_palms = FALSE). `dbh` becomes the corrected value (mm); the recorded
+# one is kept in dbh_raw.
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
 rec[, dbh_raw := dbh] # as measured at the POM (mm)
 if (use_taper_species_terms) {
     bio_check(all(names(TAPER_SPECIES_2014) %in% rec$sp), "The ten focal species of the taper model (Cushman et al. 2014) are in the data",
         examples = setdiff(names(TAPER_SPECIES_2014), rec$sp))
 }
-rec[, dbh_t := taper_2014(dbh_mm = dbh_raw, hom = hom, sp = if (use_taper_species_terms) sp else NULL)]
-if (!taper_palms) rec[Family %in% "Arecaceae", dbh_t := dbh_raw]
-# Diameter used downstream (basal area, size classes): see use_taper_for_ba.
-if (use_taper_for_ba) {
-    rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
-}
-message(sprintf(
-    "Basal area and size classes use %s DBH.",
-    if (use_taper_for_ba) "taper-corrected (1.3 m)" else "measured (POM)"
-))
+rec[, dbh_t := stem_dbh_taper(rec, species_terms = use_taper_species_terms, taper_palms = taper_palms)]
+rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
 
 # ---- Alive stems without a measured DBH -------------------------------
-# Rstatus "A" without a DBH means the stem was alive but its measurement was
-# missed in the field. It stays in the stand with a DBH from its own
-# measurements (dbh_from_own_measurements(), Sec. 2): interpolated in time
-# between two measurements; after the last one, its growth trend continued
-# (never shrinking). This is the rule of basal_area_uncertainty.R and
-# biomass_stocks_fluxes.R. Only stems never measured have no diameter (basal
-# area 0); they are still counted as alive stems / trees.
-rec[, dbh_filled := FALSE]
-need_ids <- unique(rec[Rstatus == "A" & is.na(dbh) & !stump, .(treeID, stemID)])
-if (nrow(need_ids) > 0L) {
-    fill <- rec[need_ids, on = .(treeID, stemID), nomatch = 0L][,
-        {
-            t_num <- as.numeric(ExactDate)
-            meas <- !is.na(dbh)
-            target <- Rstatus == "A" & is.na(dbh) & !stump
-            out <- dbh
-            if (any(meas) && any(target)) {
-                out[target] <- dbh_from_own_measurements(t_num[meas], dbh[meas], t_num[target])
-            }
-            .(CensusID, dbh_new = out, filled = target & !is.na(out))
-        },
-        by = .(treeID, stemID)
-    ]
-    rec[fill, on = .(treeID, stemID, CensusID), `:=`(dbh = i.dbh_new, dbh_filled = i.filled)]
-    rm(fill)
-}
+# An alive census whose measurement was missed in the field, after a
+# measurement of the stem with no stump in between (`fill`), gets a DBH from
+# the stem's own measurements of that segment (fill_stem_dbh(), stem_dbh.R):
+# interpolated in time between two measurements; after the last one, its
+# growth trend continued (never shrinking). This is the rule of
+# basal_area_uncertainty.R and biomass_stocks_fluxes.R. Every other alive
+# record without a DBH (a stump, before the stem's first measurement, after a
+# stump with no measurement since, a stem never measured) is not in the stand.
+bio_check(
+    nrow(fill_across_stump(rec, "dbh_raw")) == 0L,
+    "No census to fill lies between two measurements across a stump (it would mix the stem that broke with the resprout)",
+    n_bad = nrow(fill_across_stump(rec, "dbh_raw"))
+)
+fill_stem_dbh(rec, "dbh")
+rec[, dbh_filled := fill & !is.na(dbh)]
+bio_check(
+    rec[fill == TRUE & is.na(dbh), .N] == 0L && rec[is.na(dbh_raw) & !fill & !is.na(dbh), .N] == 0L,
+    "Every alive census to fill has a DBH, and no other record without a measurement has one",
+    n_bad = rec[(fill & is.na(dbh)) | (is.na(dbh_raw) & !fill & !is.na(dbh)), .N]
+)
 message(sprintf(
-    "Alive stem-census rows without a measured DBH (stumps aside): %d | given a DBH from the stem's own measurements: %d | never measured (no diameter): %d",
-    rec[Rstatus == "A" & !stump & (is.na(dbh_raw)), .N], rec[dbh_filled == TRUE, .N],
-    rec[Rstatus == "A" & !stump & is.na(dbh), .N]
+    "Alive stem-census rows without a measured DBH: %d | given a DBH from the stem's own measurements: %d | stumps: %d | other, not in the stand: %d",
+    rec[Rstatus == "A" & is.na(dbh_raw), .N], rec[dbh_filled == TRUE, .N], rec[stump == TRUE, .N],
+    rec[Rstatus == "A" & is.na(dbh_raw) & !fill & !stump, .N]
 ))
-rm(need_ids)
 
 # ---- Trees without coordinates ------------------------------------------
 # Every tree has a quadrat, but a few alive trees have no (gx, gy). Quadrat
@@ -451,7 +374,7 @@ bio_check(
     examples = bad_q$treeID, n_bad = nrow(bad_q)
 )
 rm(xy_rows, bad_q)
-no_xy <- rec[Rstatus == "A" & !stump & (is.na(gx) | is.na(gy)), .(trees_without_xy = uniqueN(treeID)), by = CensusID][order(CensusID)]
+no_xy <- rec[!is.na(dbh) & (is.na(gx) | is.na(gy)), .(trees_without_xy = uniqueN(treeID)), by = CensusID][order(CensusID)]
 if (nrow(no_xy) > 0L) {
     message("Alive trees without coordinates, placed at their quadrat centre (per census):")
     print(no_xy)
@@ -491,7 +414,8 @@ census_meta <- data.table(
 # (unique treeID) per census.
 #
 # Filtering rule applied before aggregation:
-#   • Rstatus == "A"        : resolved alive status only
+#   • a DBH at 1.3 m         : the stems of the stand (alive, measured or
+#                              filled; Sec. 3)
 #   (every tree has coordinates here: missing ones were set to the quadrat
 #   centre in Sec. 3)
 #
@@ -506,7 +430,7 @@ census_meta <- data.table(
 # treeID in the most recent census, so .N on that table always gives
 # the individual (treeID) count.
 
-rec_alive <- rec[Rstatus == "A" & !stump] # stump censuses: no stem at 1.3 m (Sec. 3)
+rec_alive <- rec[!is.na(dbh)] # the stems of the stand: a DBH at 1.3 m (Sec. 3)
 
 by_cols <- c(
     "censusID", "CensusID", "treeID",
@@ -1044,7 +968,7 @@ print(census_div_dt)
 #   10–20, 20–30, 30–50, 50–70, 70–100,
 #   100–150, 150–200, 200–300, 300–500, ≥500
 # The distribution uses measured diameters only (interpolated DBHs are
-# excluded) and follows use_taper_for_ba (taper-corrected by default).
+# excluded) and is taper corrected.
 
 breaks_mm <- c(10, 20, 30, 50, 70, 100, 150, 200, 300, 500, Inf)
 labels_mm <- c(
