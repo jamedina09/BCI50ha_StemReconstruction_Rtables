@@ -297,6 +297,20 @@ cat(strrep("=", 70), "\n\n")
 # Load ViewFullTable_RAW (census data) ####
 cat("📂 Loading ViewFullTable_RAW...\n")
 
+# The stage-2 table comes from a merge run after the current stage-1 table
+# (otherwise stage 2 must be rerun), and the merge recorded its engine run.
+stage2_file <- file.path(INPUT_folder, "complete_dataset_final_with_reconstructed_stemids.rds")
+stage1_file <- file.path(INPUT_folder, "ViewFullTable_single_vs_multiple_stem_tags.rds")
+bio_check(file.exists(stage2_file), "The stage-2 table exists (run 2_merge_chunks_to_datatable.R first)")
+bio_check(
+  file.exists(stage1_file) && file.mtime(stage2_file) > file.mtime(stage1_file),
+  "The stage-2 table is newer than the stage-1 table: after rerunning stage 1, rerun the engine and the merge"
+)
+bio_check(
+  file.exists(file.path(INPUT_folder, "engine_run.txt")),
+  "DATA/PROCESSED/engine_run.txt exists (written by 2_merge_chunks_to_datatable.R)"
+)
+
 ViewFullTable_RAW <- as.data.table(readRDS(file.path(
   INPUT_folder,
   "complete_dataset_final_with_reconstructed_stemids.rds"

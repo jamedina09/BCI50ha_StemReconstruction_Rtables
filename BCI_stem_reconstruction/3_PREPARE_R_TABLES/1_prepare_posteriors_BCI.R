@@ -55,10 +55,15 @@ library(data.table)
 
 # ── Hard check that stays visible in interactive (line-by-line) runs ────────
 # On failure: prints a ❌ line (count + examples), raises an immediate
-# warning, and only then stops. On success it prints a ✓ line.
+# warning, writes to DATA/CHECKS/check_posteriors_bci.txt and only then stops.
+# On success it prints and logs a ✓ line.
+check_log <- file.path(getwd(), "BCI_stem_reconstruction", "DATA", "CHECKS", "check_posteriors_bci.txt")
+dir.create(dirname(check_log), recursive = TRUE, showWarnings = FALSE)
+writeLines(paste("1_prepare_posteriors_BCI.R checks,", format(Sys.time())), check_log)
 bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     if (isTRUE(all(ok))) {
         cat("✓", msg, "\n")
+        cat(format(Sys.time()), "✓", msg, "\n", file = check_log, append = TRUE)
         return(invisible(TRUE))
     }
     n_txt <- if (!is.null(n_bad)) sprintf(" [%d case(s)]", n_bad) else ""
@@ -70,6 +75,7 @@ bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     full_msg <- paste0("CHECK FAILED: ", msg, n_txt, ex_txt)
     cat("❌", full_msg, "\n")
     warning(full_msg, call. = FALSE, immediate. = TRUE)
+    cat(format(Sys.time()), "❌", full_msg, "\n", file = check_log, append = TRUE)
     stop(full_msg, call. = FALSE)
 }
 
@@ -87,6 +93,20 @@ run_code <- "20261022_220659_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_HP_
 bio_check(
     dir.exists(file.path(home_dir, run_code, "posteriors")),
     sprintf("Run folder %s exists in %s and has a posteriors/ folder", run_code, home_dir),
+    examples = run_code
+)
+bio_check(
+    file.exists(file.path(home_dir, run_code, "run_finished.txt")),
+    sprintf("The run %s finished (run_finished.txt)", run_code)
+)
+# The same run as the merge: 2_merge_chunks_to_datatable.R records its run in
+# DATA/PROCESSED/engine_run.txt.
+engine_run_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "engine_run.txt")
+bio_check(file.exists(engine_run_file), "DATA/PROCESSED/engine_run.txt exists (run 2_merge_chunks_to_datatable.R first)")
+merged_run <- sub("^run_code: ", "", grep("^run_code: ", readLines(engine_run_file, warn = FALSE), value = TRUE)[1L])
+bio_check(
+    identical(merged_run, run_code),
+    sprintf("run_code is the run of the merge (%s): set run_code at the top of this script", merged_run),
     examples = run_code
 )
 post_dir <- normalizePath(file.path(home_dir, run_code, "posteriors"), winslash = "/", mustWork = FALSE)
@@ -142,10 +162,7 @@ post_files <- list.files(
     full.names = TRUE
 )
 
-# Validate that at least one file was found
-if (length(post_files) == 0) {
-    stop("No posterior feather files found in directory: ", post_dir)
-}
+bio_check(length(post_files) > 0L, "The run has posterior path files", examples = post_dir)
 
 cat("Found", length(post_files), "posterior files\n")
 
@@ -247,6 +264,24 @@ obs_info <- as.data.table(readRDS(file.path(processed_dir, "complete_dataset_fin
     !is.na(DBH) & !is.na(obs_row_id),
     .(tag = as.character(Tag), obs = as.integer(obs_row_id), c = as.integer(as.character(CensusID)), pin = as.character(TrueStemID))
 ]
+# The posterior files and the final table come from the same run: every
+# posterior tag is a multiple-stem tag of the final table, and the observations
+# of its paths (all paths of a tree hold the same set, checked above) are
+# measured observations (obs_row_id) of that tag.
+final_multi_tags <- unique(as.character(readRDS(file.path(processed_dir, "complete_dataset_final_with_reconstructed_stemids.rds"))[
+    single_stem_tags == FALSE, Tag
+]))
+not_multi <- setdiff(unique(dt_posteriors$tag), final_multi_tags)
+bio_check(length(not_multi) == 0L, "Every posterior tag is a multiple-stem tag of the final table", examples = not_multi, n_bad = length(not_multi))
+path_obs <- dt_posteriors[, .(recon = recon[1L]), by = tag][, .(obs = as.integer(sub(":.*", "", unlist(strsplit(recon, ";", fixed = TRUE))))), by = tag]
+unknown_obs <- path_obs[!obs_info, on = .(tag, obs)]
+bio_check(
+    nrow(unknown_obs) == 0L,
+    "Every observation of the posterior paths is a measured observation of its tag in the final table",
+    examples = unique(unknown_obs$tag), n_bad = nrow(unknown_obs)
+)
+cat(sprintf("Multiple-stem tags of the final table with a posterior file: %d of %d\n", uniqueN(dt_posteriors$tag), length(final_multi_tags)))
+rm(final_multi_tags, not_multi, path_obs, unknown_obs)
 samples_before <- dt_posteriors[, .(n = sum(path_count)), by = treeID][order(treeID)]
 dt_posteriors <- apply_measurement_rejoin_to_paths(dt_posteriors, rejoin_pairs, obs_info)
 bio_check(
@@ -269,6 +304,7 @@ rm(obs_info, samples_before, touched, lab_long, collisions)
 # =============================================================================
 
 output_file <- file.path(output_dir_posteriors, "posterior_sampled_paths.rds")
+attr(dt_posteriors, "engine_run") <- run_code # checked by 4_EXAMPLE_STRUCTURE_ASSESSMENT/basal_area_uncertainty.R
 saveRDS(dt_posteriors, file = output_file)
 
 cat("Posterior samples saved to:", output_file, "\n")
