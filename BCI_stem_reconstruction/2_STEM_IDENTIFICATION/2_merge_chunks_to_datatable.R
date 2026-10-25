@@ -38,6 +38,19 @@ library(data.table)
 # Project root when running from the repository root.
 workspace_root <- getwd()
 
+# Visible checks (mr_check(): ✓ / ❌ + warning + stop) are also written to
+# DATA/CHECKS/check_merge_bci.txt (a new file each run).
+source(file.path(workspace_root, "dp_global", "R", "measurement_rejoin.R"))
+check_folder <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "CHECKS")
+dir.create(check_folder, recursive = TRUE, showWarnings = FALSE)
+merge_log <- file.path(check_folder, "check_merge_bci.txt")
+writeLines(paste("2_merge_chunks_to_datatable.R checks,", format(Sys.time())), merge_log)
+options(dp_global.check_log = merge_log)
+
+# The stage-1 table: the engine input, and the reference of the checks below.
+stage1_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_single_vs_multiple_stem_tags.rds")
+mr_check(file.exists(stage1_file), "The stage-1 table exists (run 1_DATA_PREPARATION first)", examples = stage1_file)
+
 # =============================================================================
 # 1. CONFIGURATION
 # =============================================================================
@@ -51,11 +64,52 @@ home_dir <- "/Users/medinaja/outputs_bci_stem_identification"
 # Update it for each new run; it must be the same run as in
 # 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R.
 run_code <- "20261022_220659_unknown_allT_DP_MB_NME_R12_BD_LT_CU_NS_MS_PO_PG_HP_LF_g5_sm0p5_kg0_ks0_rcpp"
-if (!file.exists(file.path(home_dir, run_code, "run_finished.txt"))) {
-    run_msg <- sprintf("CHECK FAILED: run folder %s not found in %s, or the run did not finish (no run_finished.txt)", run_code, home_dir)
-    cat("❌", run_msg, "\n")
-    warning(run_msg, call. = FALSE, immediate. = TRUE)
-    stop(run_msg, call. = FALSE)
+run_dir <- file.path(home_dir, run_code)
+
+# ---- Checks that the run is the right one and complete ----------------------
+mr_check(
+    file.exists(file.path(run_dir, "run_finished.txt")),
+    sprintf("Run folder %s exists in %s and the run finished (run_finished.txt)", run_code, home_dir)
+)
+# Every chunk finished: chunk files numbered 1..N, each with a _done.txt marker;
+# a chunk with a _failed.txt marker must have been rerun (a _done.txt marker).
+chunk_num <- function(x) as.integer(sub(".*_chunk_([0-9]+).*$", "\\1", x))
+chunk_feathers <- chunk_num(list.files(run_dir, "_chunk_[0-9]+\\.feather$"))
+chunk_done <- chunk_num(list.files(run_dir, "_chunk_[0-9]+_done\\.txt$"))
+chunk_failed <- setdiff(chunk_num(list.files(run_dir, "_chunk_[0-9]+_failed\\.txt$")), chunk_done)
+mr_check(length(chunk_failed) == 0L, "No chunk of the run failed without being rerun", examples = chunk_failed, n_bad = length(chunk_failed))
+mr_check(
+    length(chunk_feathers) > 0L && setequal(chunk_feathers, chunk_done) && setequal(chunk_feathers, seq_len(max(chunk_feathers))),
+    sprintf("Every chunk 1-%d has its Feather file and its _done.txt marker", max(c(chunk_feathers, 0L))),
+    examples = setdiff(seq_len(max(c(chunk_feathers, chunk_done, 0L))), intersect(chunk_feathers, chunk_done))
+)
+# Settings recorded by the driver (run_parameters_full.txt, "KEY: value" lines)
+params_file <- file.path(run_dir, "run_parameters_full.txt")
+mr_check(file.exists(params_file), "The run folder has run_parameters_full.txt")
+params_lines <- readLines(params_file, warn = FALSE)
+params_kv <- regmatches(params_lines, regexec("^([A-Z][A-Z0-9_]*): (.*)$", params_lines))
+params_kv <- params_kv[lengths(params_kv) == 3L]
+run_params <- setNames(lapply(params_kv, `[`, 3L), vapply(params_kv, `[`, "", 2L))
+run_param <- function(key) if (is.null(run_params[[key]]) || run_params[[key]] %in% c("NULL", "NA", "")) NULL else run_params[[key]]
+# A full production run: no tag filter, blind test or chunk range
+test_flags <- c("TAG_FILTER_FILE", "TAG_FILTER_N", "BLIND_MIN_CENSUS", "BIO_ESTIMATION_START_CENSUS", "DP_CHUNK_START", "DP_CHUNK_END")
+cmd_line <- if (is.null(run_param("COMMAND_LINE"))) "" else run_param("COMMAND_LINE")
+flags_used <- test_flags[vapply(test_flags, function(k) {
+    grepl(paste0("--", gsub("_", "[-_]", k), "="), cmd_line, ignore.case = TRUE) || !is.null(run_param(k))
+}, logical(1))]
+mr_check(length(flags_used) == 0L, "The run is a full run (no tag filter, blind test or chunk range)", examples = flags_used)
+# The run read the current stage-1 table
+if (!is.null(run_param("INPUT_FILE_MTIME"))) {
+    mr_check(
+        abs(as.numeric(run_param("INPUT_FILE_MTIME")) - as.numeric(file.mtime(stage1_file))) < 1 &&
+            as.numeric(run_param("INPUT_FILE_SIZE")) == file.size(stage1_file),
+        "The run read the current stage-1 table (same modification time and size): rerun the engine after rerunning stage 1"
+    )
+} else {
+    mr_check(
+        file.mtime(file.path(run_dir, "run_started.txt")) > file.mtime(stage1_file),
+        "The run started after the stage-1 table was last written: rerun the engine after rerunning stage 1"
+    )
 }
 cat("✓ Run folder", run_code, "found and finished\n")
 
@@ -81,10 +135,8 @@ feathers <- list.files(chunks_path, "\\.feather$", full.names = TRUE)
 cat("Total Feather files found:", length(feathers), "\n")
 
 # Extract the embedded sequence number from each filename for correct ordering.
-feathers_seq <- as.integer(gsub(".*_(\\d{1,4})\\.feather$", "\\1", feathers))
-if (any(is.na(feathers_seq))) {
-    stop("Error: Some Feather files do not match the expected naming pattern.")
-}
+feathers_seq <- as.integer(gsub(".*_(\\d+)\\.feather$", "\\1", feathers))
+mr_check(!anyNA(feathers_seq), "Every Feather file of the run is named ..._chunk_<number>.feather", examples = basename(feathers[is.na(feathers_seq)]))
 
 # Sort files by their embedded sequence number to guarantee correct ordering
 # before the batched Parquet conversion and subsequent merge.
@@ -177,11 +229,18 @@ compare_columns <- function(dt1, dt2) {
 # is renamed growth_form here, the name the stage-2 output uses for its own
 # labels (tree, shrub, palm, strangler, fern).
 
-xraw <- as.data.table(readRDS(file.path(
-    workspace_root, "BCI_stem_reconstruction", "DATA", "PROCESSED", "ViewFullTable_single_vs_multiple_stem_tags.rds"
-)))
+xraw <- as.data.table(readRDS(stage1_file))
 xraw[, growth_form := Lifeform]
 xraw[, Lifeform := NULL]
+
+# The engine output holds every multiple-stem record of the stage-1 table, once
+missing_rows <- setdiff(xraw[single_stem_tags == FALSE, RowID], ds_final$RowID)
+extra_rows <- setdiff(ds_final$RowID, xraw[single_stem_tags == FALSE, RowID])
+mr_check(
+    length(missing_rows) == 0L && length(extra_rows) == 0L && !anyDuplicated(ds_final$RowID),
+    "The engine output holds every multiple-stem record of the stage-1 table once (RowID)",
+    examples = c(head(missing_rows, 5), head(extra_rows, 5)), n_bad = length(missing_rows) + length(extra_rows)
+)
 
 # Validate that the DP output row count matches the multi-stem records in raw input.
 cat("Row count breakdown by stem type in raw data:\n")
@@ -199,12 +258,12 @@ input_multi_stem_data <- xraw[single_stem_tags == FALSE]
 setorder(input_multi_stem_data, RowID)
 
 # Verify the DP output's duplicate species column matches the original Mnemonic.
-if (isTRUE(unique(ds_final$Mnemonic == ds_final$Species))) {
-    cat("OK: 'Mnemonic' and 'species' columns are identical; dropping 'species'.\n")
-    ds_final[, Species := NULL]
-} else {
-    stop("PROBLEM: 'Mnemonic' and 'species' differ — investigate before proceeding.")
-}
+mr_check(
+    isTRUE(all(ds_final$Mnemonic == ds_final$Species)),
+    "The engine's Species column equals Mnemonic (Species is dropped)",
+    examples = unique(ds_final[Mnemonic != Species, Tag])
+)
+ds_final[, Species := NULL]
 
 # Sort the merged output to match the ordering of the raw multi-stem subset
 setorder(ds_final, RowID)
@@ -370,11 +429,10 @@ complete_dataset[, ReconstructedStemID := as.character(ReconstructedStemID)]
 setorder(complete_dataset, RowID) # restore original row ordering
 setorder(xraw, RowID)
 
-if (nrow(complete_dataset) == nrow(xraw)) {
-    cat("\nRow count check passed: complete dataset has the same number of rows as the raw table.\n")
-} else {
-    stop("\nRow count mismatch: complete dataset has ", nrow(complete_dataset), " rows, but raw table has ", nrow(xraw), " rows.")
-}
+mr_check(
+    nrow(complete_dataset) == nrow(xraw),
+    sprintf("The complete dataset has as many rows as the stage-1 table (%d and %d)", nrow(complete_dataset), nrow(xraw))
+)
 
 # =============================================================================
 # 9. FINAL VALIDATION: COMPLETE DATASET VS. RAW TABLE (SHARED COLUMNS)
@@ -472,10 +530,24 @@ print(complete_dataset_final[Tag %in% chk_skipped_full_na, .(Tag, CensusID, Reco
 # Rules and their justification: dp_global/R/measurement_rejoin.R. The bounds
 # must be those of the stage-2 run: MAX_SHRINK_FIXED and MAX_GROWTH_FIXED
 # (cm/yr) and RECRUIT_MAX_FIXED (cm, here in mm) of 1_main_cpp_chunk_bci.R.
-source(file.path(workspace_root, "dp_global", "R", "measurement_rejoin.R"))
 REJOIN_MAX_SHRINK <- -0.5
 REJOIN_MAX_GROWTH <- 5
 REJOIN_RECRUIT_MAX_MM <- 260
+# The bounds of the run: recorded by the driver, else read from the folder
+# label (g<growth>_sm<shrink>, "p" for the decimal point), with the driver's
+# recruit limit MAX_GROWTH_FIXED × 5 + 0.9999 cm.
+label_num <- function(pattern) as.numeric(sub("p", ".", sub(pattern, "\\1", run_code), fixed = TRUE))
+run_max_growth <- if (!is.null(run_param("MAX_GROWTH_FIXED"))) as.numeric(run_param("MAX_GROWTH_FIXED")) else label_num(".*_g([0-9p]+)_sm.*")
+run_max_shrink <- if (!is.null(run_param("MAX_SHRINK_FIXED"))) as.numeric(run_param("MAX_SHRINK_FIXED")) else -label_num(".*_sm([0-9p]+)_.*")
+run_recruit_max <- if (!is.null(run_param("RECRUIT_MAX_FIXED"))) as.numeric(run_param("RECRUIT_MAX_FIXED")) else run_max_growth * 5 + 0.9999
+mr_check(
+    isTRUE(all.equal(REJOIN_MAX_GROWTH, run_max_growth)) && isTRUE(all.equal(REJOIN_MAX_SHRINK, run_max_shrink)) &&
+        isTRUE(abs(REJOIN_RECRUIT_MAX_MM - 10 * run_recruit_max) < 0.01),
+    sprintf(
+        "The rejoin bounds (%s / %s cm/yr, recruit limit %s mm) equal those of the run (%s / %s cm/yr, %s mm)",
+        REJOIN_MAX_SHRINK, REJOIN_MAX_GROWTH, REJOIN_RECRUIT_MAX_MM, run_max_shrink, run_max_growth, round(10 * run_recruit_max, 3)
+    )
+)
 REJOIN_IRREGULAR_FORMS <- "strangler|estrangulador" # growth forms without a stable POM (stage-2 and species-list labels)
 # Buttress codes (B) exist from census 3 (1990); in censuses 1-2 the species decides:
 # species with >= 80% of their trees >= 30 cm carrying B (at least 10 such trees).
@@ -635,6 +707,15 @@ saveRDS(
     complete_dataset_final,
     file.path(post_dir, "complete_dataset_final_with_reconstructed_stemids.rds")
 )
+
+# Record of the engine run behind the final table; stages 3 and 4 check
+# against it that they use the same run.
+writeLines(c(
+    paste0("run_code: ", run_code),
+    paste0("home_dir: ", home_dir),
+    paste0("run_finished: ", readLines(file.path(run_dir, "run_finished.txt"), warn = FALSE)[1L]),
+    paste0("merged: ", format(Sys.time()))
+), file.path(post_dir, "engine_run.txt"))
 
 # Rejoin outputs: the export joins (for review) and the eligible observation
 # pairs that 3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R joins inside the
