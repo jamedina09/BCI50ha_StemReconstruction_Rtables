@@ -108,15 +108,19 @@
 # in m.
 # ========================================================================
 
-# Visible check (prints ✓ / ❌; on failure also warns, then stops).
+# Visible check (prints ✓ / ❌; on failure also warns, then stops). With
+# option dp_global.check_log set to a file path, every check is also appended
+# to that file (the failure before the stop).
 #   ok       : TRUE when the check passes
 #   msg      : what is checked
 #   examples : optional values shown on failure (first 10)
 #   n_bad    : optional number of failing cases shown on failure
 mr_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     ok <- isTRUE(ok)
+    log_file <- getOption("dp_global.check_log")
     if (ok) {
         cat("✓", msg, "\n")
+        if (!is.null(log_file)) cat(format(Sys.time()), "✓", msg, "\n", file = log_file, append = TRUE)
         return(invisible(TRUE))
     }
     txt <- paste0(
@@ -125,6 +129,7 @@ mr_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     )
     cat("❌", txt, "\n")
     warning(txt, call. = FALSE, immediate. = TRUE)
+    if (!is.null(log_file)) cat(format(Sys.time()), "❌", txt, "\n", file = log_file, append = TRUE)
     stop(txt, call. = FALSE)
 }
 

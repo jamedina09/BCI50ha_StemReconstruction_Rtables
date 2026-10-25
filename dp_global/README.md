@@ -1575,7 +1575,9 @@ parameter set from stems of known identity; the drivers call it per species
 - **Intervals**: computed per stem from `ExactDate` (date at t₁ minus date at
   t₀, in years of 365.25 days); a stem without a record at a census takes its
   tag's mean date there, else the census mean. `res$interval$per_pair_intervals`
-  holds the intervals of the growth pairs.
+  holds the intervals of the growth pairs and
+  `res$interval$pairs_candidate_count` the number of growth pairs plus
+  mortality at-risk rows.
 - **Sources**: each guardrail and soft penalty has `*_source` `"data"`
   (estimated) or `"fixed"` (`*_fixed`): `recruit_max_source`,
   `max_shrink_source`, `max_growth_source`, `k_shrink_source`,
@@ -1745,6 +1747,7 @@ sets all of them):
 | `dp_global.field_tag_first_census` | `Inf` | First census whose `StemTag`s are field tags |
 | `dp_global.posterior_label_free` | `FALSE` | Label-free DP posterior |
 | `dp_global.prob_export_rule` | `"mea"` | Export of the matcher: `"mea"` or `"fewest_me"` |
+| `dp_global.check_log` | none | File to which `mr_check()` (`R/measurement_rejoin.R`, used by the BCI merge) also writes every check |
 
 Arguments of `match_stems_dp_global_backward_marginals_batch()`:
 
