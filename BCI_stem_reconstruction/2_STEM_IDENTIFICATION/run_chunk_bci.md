@@ -33,8 +33,12 @@ The command sets four values that differ from the script defaults:
 and `BASE_OUT_DIR`. The other flags restate the defaults. Any setting below
 can be given on the command line as `--NAME=value`.
 
-When the run finishes (`run_finished.txt` in the run folder), run
-`2_merge_chunks_to_datatable.R` (see `README.md`).
+When the run finishes (`run_finished.txt` in the run folder), set `home_dir`
+and `run_code` at the top of `2_merge_chunks_to_datatable.R` and
+`3_PREPARE_R_TABLES/1_prepare_posteriors_BCI.R` to this run and run the merge
+(see `README.md`). The merge stops if the run is unfinished, has a missing or
+failed chunk, is a test run (tag filter, blind test, chunk range), did not read
+the current stage-1 table, or has other growth bounds than the merge's rejoin.
 
 ## Settings
 
@@ -131,7 +135,9 @@ the command above the label is
 `FM` would mark `PROB_EXPORT_RULE = "fewest_me"`.
 
 The folder holds `run_started.txt`, `run_finished.txt`, `run_log.txt`,
-`run_parameters_full.txt`, `pin_stop_at_fast_link.csv`, one
+`run_parameters_full.txt` (command line, the input file with its modification
+time and size, the growth bounds, recruit limit, anchor census, test settings
+and the parameter structure), `pin_stop_at_fast_link.csv`, one
 `stem_reconstruction_dp_global_rcpp_chunk_NNN.feather` with its `_done.txt`
 marker per chunk (`_failed.txt` for a chunk that raised an error) and
 `posteriors/` with one `tag_<Tag>_posterior_samples__paths.feather` per tag.

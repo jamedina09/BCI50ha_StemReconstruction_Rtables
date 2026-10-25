@@ -18,11 +18,11 @@ is written by a stage and is rebuilt by running stages 1–4
 | --- | --- | --- |
 | `RAW/` | Inputs: database exports (`oct_13_2026/`, `oct_16_2026/`, `ViewFiles_bci_allcensuses/`), species sources (`sp_tables/`), the stem data of Condit et al. (2019) (`bci_dryad_condit.rds`) | — |
 | `SPP_TABLE/` | Stage-1 species table (`bci_spptable.*`); Condit's species table (`condit/bci.spptable.rdata`, input); the helper `compare_species_condit_and_new_release.R` and its outputs in `condit/` (the folder is not under version control) | stage 1, helper |
-| `PROCESSED/` | Stage-1 census table (`ViewFullTable_single_vs_multiple_stem_tags.rds`, the engine input); stage-2 final stem table (`complete_dataset_final_with_reconstructed_stemids.rds`) and the measurement-rejoin files | stages 1 and 2 |
+| `PROCESSED/` | Stage-1 census table (`ViewFullTable_single_vs_multiple_stem_tags.rds`, the engine input); stage-2 final stem table (`complete_dataset_final_with_reconstructed_stemids.rds`), the measurement-rejoin files and `engine_run.txt` (the engine run behind the final table) | stages 1 and 2 |
 | `<run_code>/` | Merged engine output (`merged_output.parquet`, `.rds`); the engine run folder itself is in `/Users/medinaja/outputs_bci_stem_identification/` | stage 2 |
 | `POSTERIORS/` | Posterior samples of every tree (`posterior_sampled_paths.rds`) | stage 3 |
 | `RTABLES/` | R tables `bci.stem1`–`bci.stem9`, species table and species code changes | stage 3 |
-| `CHECKS/` | Check and review files: `check_bci.txt` (read it first), `status_patterns_bci.csv`, `field_records_to_review_bci.csv`, `reconstruction_to_review_bci.csv`, `check_species_table_bci.txt`, `species_changes_from_flora_panama_bci.csv` (stage 3) and the WFO lists (stage 1) | stages 1 and 3 |
+| `CHECKS/` | Check and review files: `check_merge_bci.txt` (stage 2), `check_posteriors_bci.txt`, `check_bci.txt` (read it first), `status_patterns_bci.csv`, `field_records_to_review_bci.csv`, `reconstruction_to_review_bci.csv`, `check_species_table_bci.txt`, `species_changes_from_flora_panama_bci.csv` (stage 3) and the WFO lists (stage 1) | stages 1 and 3 |
 | `BACKUPS/` | Archives of earlier outputs, each with its original paths: `before_final_run_20261024/` (with `README.txt` and an md5 manifest), `species_tables_20261021/`, and zip archives | — |
 
 ## Inputs

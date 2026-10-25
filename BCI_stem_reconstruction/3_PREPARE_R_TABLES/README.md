@@ -63,11 +63,12 @@ Script 3 reads the R tables, so it runs after script 2.
 
 | File | Content |
 | --- | --- |
-| `DATA/POSTERIORS/posterior_sampled_paths.rds` | One row per sampled path of a tree: `tag`, `treeID`, `path_sig`, `path_count`, `path_prob`, `recon`. Draw a tree's paths with weight `path_count` |
+| `DATA/POSTERIORS/posterior_sampled_paths.rds` | One row per sampled path of a tree: `tag`, `treeID`, `path_sig`, `path_count`, `path_prob`, `recon`; attribute `engine_run` (the run code). Draw a tree's paths with weight `path_count` |
 | `DATA/RTABLES/bci.stem1.Rdata` … `bci.stem9.Rdata` (and `.csv`) | One R table per census (columns below) |
 | `DATA/RTABLES/bci.spptable.rdata` (object `bci.spptable`, a data.frame) and `.csv` | Species table: one row per species code of the R tables |
 | `DATA/RTABLES/bci.species_code_changes_summary.rdata` and `.csv` | One row per change of species code since Condit et al. (2019), with its number of trees |
 | `DATA/RTABLES/bci.species_code_changes.rdata` and `.csv` | One row per tree whose species code changed since Condit et al. (2019) |
+| `DATA/CHECKS/check_posteriors_bci.txt` | Every check of script 1 |
 | `DATA/CHECKS/check_bci.txt` | Every check of script 2 and its summary tables; read it first |
 | `DATA/CHECKS/status_patterns_bci.csv` | One row per encounter history (raw codes, `Rstatus` and tree histories, number of stems, one example stem) |
 | `DATA/CHECKS/field_records_to_review_bci.csv` | Raw records that need a look, for the data manager (one row per case, column `reason`) |
@@ -219,7 +220,20 @@ text columns as text.
 ## Checks
 
 A failed check prints ❌, raises a warning and writes to the script's check
-file before it stops. Script 2 checks the order and column types of every
+file before it stops.
+
+Each script first checks that it reads the right inputs:
+
+- script 1: the run `home_dir/run_code` finished, `run_code` is the run of the
+  merge (`DATA/PROCESSED/engine_run.txt`), every posterior tag is a
+  multiple-stem tag of the final table, and every observation of the paths is
+  a measured observation of its tag there;
+- script 2: the stage-2 table is newer than the stage-1 table (after rerunning
+  stage 1, rerun the engine and the merge) and `engine_run.txt` exists;
+- script 3: the stage-1 species table, the stage-1 census table, the stage-2
+  table and the R tables were written in this order.
+
+Script 2 checks the order and column types of every
 table before writing it, and writes every check to `check_bci.txt` (✓ passed,
 ❌ failed) with the summary tables: raw records alive because of their DBH,
 status codes, the biology assessment of every version of the histories, the

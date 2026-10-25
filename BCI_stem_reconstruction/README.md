@@ -49,6 +49,15 @@ top of `2_merge_chunks_to_datatable.R` and `1_prepare_posteriors_BCI.R`.
 The scripts can also be run line by line. A failed check prints ❌, raises a
 warning and writes to the log of its script before it stops.
 
+The scripts guard against running out of order or on the wrong run: the engine
+stops when stage 1 ran out of order; the merge stops when the run did not
+finish, a chunk is missing or failed, the run was a test run (tag filter,
+blind test, chunk range), it did not read the current stage-1 table, or its
+growth bounds differ from the merge's; stage 3 stops when `run_code` is not the
+merged run or a table is older than the one it is built from; stage 4 stops
+when the R tables or the posterior samples are older than the stage-2 table or
+come from another run.
+
 ## Data flow
 
 ```text

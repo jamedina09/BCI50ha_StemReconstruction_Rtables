@@ -52,11 +52,13 @@ Rscript BCI_stem_reconstruction/2_STEM_IDENTIFICATION/2_merge_chunks_to_datatabl
 
 | File | Content |
 | --- | --- |
-| `<BASE_OUT_DIR>/<run folder>/` | One Feather file per chunk (`stem_reconstruction_dp_global_rcpp_chunk_NNN.feather`), its `_done.txt` marker, `posteriors/` (one path file per tag), `pin_stop_at_fast_link.csv`, `run_log.txt` and `run_parameters_full.txt` |
+| `<BASE_OUT_DIR>/<run folder>/` | One Feather file per chunk (`stem_reconstruction_dp_global_rcpp_chunk_NNN.feather`), its `_done.txt` marker, `posteriors/` (one path file per tag), `pin_stop_at_fast_link.csv`, `run_started.txt`, `run_finished.txt`, `run_log.txt` and `run_parameters_full.txt` (command line, input file with its modification time and size, the key settings and the parameter structure; read by the merge checks) |
 | `DATA/<run_code>/merged_output.parquet`, `.rds` | Engine output of every chunk, merged |
 | `DATA/PROCESSED/complete_dataset_final_with_reconstructed_stemids.rds` | Final stem table: every record with its reconstructed stem (`ReconstructedStemID`) and how it was assigned (`ReconstructionMethod`); input of stage 3 |
 | `DATA/PROCESSED/measurement_rejoin_audit.csv` | Stems joined by the measurement rejoin, with the sign of a moved point of measurement found on each tree (`evidence`) |
 | `DATA/PROCESSED/measurement_rejoin_pairs.csv` | Observation pairs of those joins, applied to the posterior samples in stage 3 |
+| `DATA/PROCESSED/engine_run.txt` | The engine run behind the final table (`run_code`, `home_dir`, finish and merge times); stages 3 and 4 check that they use the same run |
+| `DATA/CHECKS/check_merge_bci.txt` | Every check of the merge (✓ passed, ❌ failed) |
 
 ## What it does
 
@@ -196,10 +198,33 @@ the anchor is removed. All settings are listed in `run_chunk_bci.md`.
 
 ## Checks
 
-A failed check prints `❌ CHECK FAILED`, raises a warning and stops. The merge
-checks that:
+A failed check prints `❌ CHECK FAILED`, raises a warning, writes to the log
+and stops.
 
-- the engine output holds every multiple-stem record of the stage-1 table,
+The driver stops when the stage-1 species table is newer than the census table
+(stage 1 run out of order: rerun `2_prepare_viewfulltable.R`), and when a
+setting names a growth form or species code that is not in the data.
+
+The merge writes every check to `DATA/CHECKS/check_merge_bci.txt`. Before it
+reads anything it checks that the run is the right one and complete:
+
+- the stage-1 table exists, and the run folder `home_dir/run_code` exists and
+  has `run_finished.txt`;
+- every chunk 1..N has its Feather file and its `_done.txt` marker, and no
+  chunk failed without being rerun;
+- the run is a full run: no `TAG_FILTER_FILE`, `TAG_FILTER_N`,
+  `BLIND_MIN_CENSUS`, `BIO_ESTIMATION_START_CENSUS`, `DP_CHUNK_START` or
+  `DP_CHUNK_END`;
+- the run read the current stage-1 table (same modification time and size as
+  recorded in `run_parameters_full.txt`; for a run without that record, the run
+  started after the table was written). After rerunning stage 1, the engine
+  must be run again;
+- the rejoin bounds of the merge equal the growth bounds and recruit limit of
+  the run.
+
+Then it checks that:
+
+- the engine output holds every multiple-stem record of the stage-1 table once,
   and every stage-1 column of the final table equals the stage-1 table
   (`growth_form` aside, the engine's label);
 - stage 2 changed no recorded DBH or date;

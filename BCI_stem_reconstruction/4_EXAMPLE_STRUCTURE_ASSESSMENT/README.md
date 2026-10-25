@@ -63,7 +63,10 @@ Rscript BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/general_plot_info
 | `outputs/fig3_BA_trajectories.pdf` | BA trajectories of a sample of trees: exported reconstruction and posterior paths |
 | `outputs/ba_mc_diagnostics.txt` | Tree counts (one path, sampled, fallback; by engine), splice counts, the exported reconstruction against the posterior per engine, invariance checks and the Monte Carlo error of the interval bounds |
 
-`general_plot_information.R` writes no files.
+`biomass_stocks_fluxes.R` and `general_plot_information.R` write their checks
+to `outputs/check_biomass_stocks_fluxes.txt` and
+`outputs/check_general_plot_information.txt`; `general_plot_information.R`
+writes no other file.
 
 ## What it does
 
@@ -216,8 +219,17 @@ Scope:
 
 ## Checks
 
-Each script prints ✓ or ❌ checks; a failed check prints ❌, raises a warning
-and stops. `basal_area_uncertainty.R` checks, among others, that in every
+Each script prints ✓ or ❌ checks; a failed check prints ❌, raises a warning,
+writes to the script's check file and stops.
+
+Each script first checks its inputs: the nine R tables and the species table
+exist and are newer than the stage-2 table (otherwise rerun stage 3 after the
+merge). `basal_area_uncertainty.R` also checks that the posterior samples are
+newer than the stage-2 table and come from the same engine run (the
+`engine_run` attribute of the posterior file against
+`DATA/PROCESSED/engine_run.txt`).
+
+`basal_area_uncertainty.R` checks, among others, that in every
 realization growth + loss + gain equals the change of the plot stock, reports
 the largest difference between a realization's plot stock and the exported
 stock (only stems alive without a measurement can differ), and writes its
