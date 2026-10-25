@@ -1249,6 +1249,18 @@ run_main_chunked <- function() {
     cat("[dp_global main_cpp_chunk_bci.R] Loading input data from: ", INPUT_FILE, "\n")
     xraw <- as.data.table(readRDS(INPUT_FILE))
 
+    # Visible check: stage 1 ran in order, so the census table was written after
+    # the species table it reads (1_prepare_species_tables.R, then
+    # 2_prepare_viewfulltable.R).
+    .spp_file <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA", "SPP_TABLE", "bci_spptable.RData")
+    if (file.exists(.spp_file) && file.mtime(.spp_file) > file.mtime(INPUT_FILE)) {
+        .msg <- sprintf(
+            "CHECK FAILED: the species table %s is newer than the census table %s: rerun 1_DATA_PREPARATION/2_prepare_viewfulltable.R before the engine",
+            basename(.spp_file), basename(INPUT_FILE)
+        )
+        cat("❌", .msg, "\n"); warning(.msg); log_msg(.msg, "ERROR"); stop(.msg)
+    }
+
     # growth_form label from the Spanish Lifeform of the species list. ORDER
     # MATTERS: strangler ("árbol estrangulador") is checked BEFORE the general
     # "árbol"; a species without a Lifeform is labelled "tree".
@@ -2289,6 +2301,21 @@ run_main_chunked <- function() {
     # Record the exact command line used to invoke this run
     # This is critical for full reproducibility
     params$COMMAND_LINE <- paste(commandArgs(), collapse = " ")
+    # The input file and the settings that the merge checks
+    # (2_merge_chunks_to_datatable.R): the run must have read the current
+    # stage-1 table, be a full run, and use the merge's rejoin bounds.
+    params$INPUT_FILE <- normalizePath(INPUT_FILE, winslash = "/", mustWork = FALSE)
+    params$INPUT_FILE_MTIME <- sprintf("%.3f", as.numeric(file.mtime(INPUT_FILE)))
+    params$INPUT_FILE_SIZE <- sprintf("%.0f", file.size(INPUT_FILE))
+    params$N_TAGS <- data.table::uniqueN(xrun$Tag)
+    for (.k in c(
+        "MAX_GROWTH_FIXED", "MAX_SHRINK_FIXED", "RECRUIT_MAX_FIXED", "ANCHOR_START_CENSUS",
+        "TAG_FILTER_FILE", "TAG_FILTER_N", "BLIND_MIN_CENSUS", "BIO_ESTIMATION_START_CENSUS",
+        "DP_CHUNK_START", "DP_CHUNK_END"
+    )) {
+        .v <- get(.k)
+        params[[.k]] <- if (is.null(.v)) "NULL" else .v
+    }
 
     # Add a readable version of bio_pars to the log
     if (exists("bio_pars")) {
