@@ -1,4 +1,5 @@
-general_plot_information.R checks, 2026-10-25 14:40:04
-2026-10-25 14:40:04 ✓ The R tables and the species table exist (run stage 3 first) 
-2026-10-25 14:40:04 ✓ The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge) 
-2026-10-25 14:40:12 ✓ Every stem-census row has a date (ExactDate, completed from the stage-3 date column) 
+general_plot_information.R checks, 2026-10-25 14:55:21
+2026-10-25 14:55:21 ✓ The R tables and the species table exist (run stage 3 first) 
+2026-10-25 14:55:21 ✓ The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge) 
+2026-10-25 14:55:25 ✓ Every stem-census row has a date (ExactDate, completed from the stage-3 date column) 
+2026-10-25 14:55:28 ✓ Quadrat codes are 'XXYY' 20 m cells consistent with (gx, gy) 
