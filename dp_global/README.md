@@ -34,6 +34,65 @@ Key features:
 
 Author: José A. Medina-Vega
 
+## Table of contents
+
+- [Contents](#contents)
+- [How to run](#how-to-run)
+  - [Calling the engine directly](#calling-the-engine-directly)
+  - [Usage patterns](#usage-patterns)
+- [Inputs](#inputs)
+  - [Biological parameter columns](#biological-parameter-columns)
+- [Outputs](#outputs)
+  - [Posterior path files](#posterior-path-files)
+  - [Files written by the drivers](#files-written-by-the-drivers)
+- [What it does](#what-it-does)
+  - [The problem](#the-problem)
+  - [Overview of a run](#overview-of-a-run)
+  - [Track-based state space](#track-based-state-space)
+  - [Life-cycle phases](#life-cycle-phases)
+  - [Choosing K](#choosing-k)
+  - [Understanding `max_states`](#understanding-max_states)
+  - [DP objective](#dp-objective)
+  - [Biological model](#biological-model)
+  - [Transition cost](#transition-cost)
+  - [Anchor census](#anchor-census)
+  - [Backward DP recursion](#backward-dp-recursion)
+  - [Uncertainty quantification](#uncertainty-quantification)
+  - [Pruning and conservative guards](#pruning-and-conservative-guards)
+  - [ForestGEO field codes](#forestgeo-field-codes)
+    - [1. Resprout segment split](#1-resprout-segment-split)
+    - [2. Post-segment recruit continuity](#2-post-segment-recruit-continuity)
+    - [3. R-recruit constraint](#3-r-recruit-constraint)
+    - [4. NA-R barrier](#4-na-r-barrier)
+    - [5. Main-stem rule (option `dp_global.bb_dbh_rule = "main_ends"`)](#5-main-stem-rule-option-dp_globalbb_dbh_rule--main_ends)
+    - [6. Missing from the field](#6-missing-from-the-field)
+  - [Pins, the pin sweep and hard pins](#pins-the-pin-sweep-and-hard-pins)
+  - [Fallback mechanisms](#fallback-mechanisms)
+  - [Probabilistic matcher](#probabilistic-matcher)
+    - [DP and matcher compared](#dp-and-matcher-compared)
+  - [Post-engine helpers](#post-engine-helpers)
+  - [Measurement rejoin](#measurement-rejoin)
+- [Parameter estimation](#parameter-estimation)
+  - [Growth](#growth)
+  - [Soft penalties](#soft-penalties)
+  - [Hard bounds](#hard-bounds)
+  - [Mortality](#mortality)
+  - [Recruitment](#recruitment)
+  - [Quantiles](#quantiles)
+- [Settings](#settings)
+- [Checks and diagnostics](#checks-and-diagnostics)
+  - [Complexity estimation](#complexity-estimation)
+  - [Numerical stability](#numerical-stability)
+  - [Performance](#performance)
+- [Implementation reference](#implementation-reference)
+  - [Function map](#function-map)
+  - [Inside the DP function](#inside-the-dp-function)
+  - [Common questions](#common-questions)
+- [Basal area uncertainty (`scripts/basal_area_uncertainty.R`)](#basal-area-uncertainty-scriptsbasal_area_uncertaintyr)
+- [Tests](#tests)
+- [Requirements](#requirements)
+- [References](#references)
+
 ## Contents
 
 | File | What it does |
@@ -760,8 +819,8 @@ A disappearance is cheap only where mortality is high.
   ($g_{\text{soft}}$ = `Bio_Max_Growth_Soft`), when $D_1 > D_{1,\text{cap}}$,
   $\text{cost} \mathrel{+}= k_{\text{growth}} (D_1 - D_{1,\text{cap}})^2$.
 - **D8** tie-break (not biological), after summing the tracks: with $r_0$, $r_1$
-  the DBH ranks of the measured tracks at t and t+1 (stable ranks, ties in track
-  order),
+  the DBH ranks of the measured tracks at t and t+1 (ranks from sorting
+  (DBH, track) pairs, so equal DBHs keep track order),
 
   $$\text{cost} \mathrel{+}= \varepsilon_{\text{tiebreak}} \sum_{k \in \text{both measured}} |r_0[k] - r_1[k]|$$
 
@@ -1756,7 +1815,8 @@ The driver settings are in `scripts/README.md` and in the BCI stage-2 README.
   ```
 
 - `plot_tag_to_pdf(out, pdf_file, include_reference = TRUE, tag = NULL)`:
-  reconstructed trajectories per tag (with the `TrueStemID` panel).
+  reconstructed trajectories per tag (`include_reference = TRUE` adds a panel
+  with the trajectories grouped by `OriginalStemID`).
 - `R/sensitivity_transition_cost_bio.R` (`build_all_sweeps()`,
   `plot_all_sweeps_to_pdf()`): the cost of fixed scenarios along each
   parameter; an opt-in demo runs on the simulated data (file header).
@@ -1801,7 +1861,7 @@ transitions, so the slowest tags appear first.
 | Mortality and recruitment probabilities | Range clamp | [10⁻¹², 1 − 10⁻¹²] |
 | Log-sum-exp (mixture, recursion) | Maximum subtracted before `exp` | No overflow or underflow |
 | k in data mode | Range clamp | [10⁻⁶, 10⁶] |
-| Rank tie-break | Stable ranks (equal DBHs keep track order) | `std::stable_sort` |
+| Rank tie-break | Ranks from sorting (DBH, track) pairs: equal DBHs keep track order | `std::sort` on pairs |
 
 ### Performance
 

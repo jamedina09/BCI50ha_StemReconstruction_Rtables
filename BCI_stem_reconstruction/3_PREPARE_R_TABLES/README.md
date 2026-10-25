@@ -4,6 +4,22 @@ Stage 3 of the pipeline. It turns the stem table of stage 2 into the ForestGEO
 R tables (one table per census), the species table and the review files, and
 collects the posterior samples used by stage 4.
 
+## Table of contents
+
+- [Contents](#contents)
+- [How to run](#how-to-run)
+- [Inputs](#inputs)
+- [Outputs](#outputs)
+  - [R-table columns](#r-table-columns)
+- [What it does](#what-it-does)
+  - [`1_prepare_posteriors_BCI.R`](#1_prepare_posteriors_bcir)
+  - [`2_create_R_tables_BCI.R`](#2_create_r_tables_bcir)
+  - [`3_create_species_table_BCI.R`](#3_create_species_table_bcir)
+- [Checks](#checks)
+- [Settings](#settings)
+- [Tests](#tests)
+- [Requirements](#requirements)
+
 ## Contents
 
 | File | What it does |
@@ -27,8 +43,9 @@ Rscript BCI_stem_reconstruction/3_PREPARE_R_TABLES/2_create_R_tables_BCI.R
 Rscript BCI_stem_reconstruction/3_PREPARE_R_TABLES/3_create_species_table_BCI.R
 ```
 
-Scripts 1 and 2 are independent. Script 3 reads the R tables, so it runs after
-script 2.
+Scripts 1 and 2 are independent: script 2 does not read the posterior file,
+which is used by `4_EXAMPLE_STRUCTURE_ASSESSMENT/basal_area_uncertainty.R`.
+Script 3 reads the R tables, so it runs after script 2.
 
 ## Inputs
 
@@ -111,8 +128,9 @@ text columns as text.
      or without DBH), and `broken below` without DBH.
    - Between a stem's first record and its last evidence of life the stem is
      `A`, also in a census without a record or with a dead record (alive later
-     means never dead). After its last evidence of life it is dead from the
-     first census without one.
+     means never dead); a dead first record of a stem alive later is `A` too.
+     After its last evidence of life it is dead from the first census without
+     one.
    - A stem never alive is `P` until its first record, then `G` or `D`. A stem
      with only `missing` records is `P` in every census.
    - Placeholder rows of stage 1 that carry no stem are dropped.
@@ -122,13 +140,24 @@ text columns as text.
    without a DBH is a missed measurement, or a stump: a `broken below` record
    without a DBH of a stem alive later (alive, with no measurable DBH at 1.3 m;
    stage 4 keeps it out of the stock).
-3. Numbers the stems of each tree (`stemID`) in order of first appearance, as
-   the engine does. A stem joined by the measurement rejoin keeps one of its two
-   numbers, so such a tree skips one number.
-4. Fills `date` on every row: the recorded date; otherwise the most common
-   recorded date of the tree in that census; otherwise that of its quadrat in
-   that census; otherwise that of the census. Only recorded dates vote and ties
-   go to the earliest date. Census intervals are computed from `date`.
+3. Numbers the stems of each tree (`stemID`) as the engine does (1, 2, … in
+   order of first appearance), so `treeID` + `stemID` identify a stem. A stem
+   joined by the measurement rejoin keeps one of its two numbers, so such a tree
+   skips one number per join. Internally stems are keyed on
+   `TreeID_ReconstructedStemID`; every exported stem has a `stemID`.
+4. Fills `date` on every row, in days since 1960-01-01 (the unit of the
+   ForestGEO database's `Date` field; `as.Date(date, origin = "1960-01-01")`
+   gives the calendar date):
+   1. the recorded date (`ExactDate`) where there is one;
+   2. otherwise the most common recorded date of the same tree in that census;
+   3. otherwise the most common recorded date of its quadrat in that census;
+   4. otherwise the most common recorded date of the census.
+
+   Only recorded dates vote, and ties go to the earliest date. The most common
+   date (the mode) is used rather than a mean or median because it is always a
+   day on which the field crew was recording; the tree's own date comes first
+   because the records of one quadrat can span months (1982). Census intervals
+   (growth, recruitment, mortality) are computed from `date`.
 5. Gives each tree one location: each census votes for the most common
    (`PX`, `PY`) pair of the tree's stems (ties: smallest x, then y), and the
    tree takes the pair with the most votes (ties: the most recent census).
@@ -140,47 +169,89 @@ text columns as text.
 ### `3_create_species_table_BCI.R`
 
 1. Writes one row per species code (`sp`) of the R tables, in code order with
-   `uniden` last. The names and the other columns come from the stage-1 table
-   (`Mnemonic` renamed `sp`), plus `Latin` (genus, epithet and infraspecific
-   name). `uniden` gets a row without names, so that `merge()` of a census
-   table with the species table keeps the unidentified stems.
+   `uniden` last. The names and the other columns come unchanged from the
+   stage-1 table (`Mnemonic` renamed `sp`), plus `Latin` = `Genus SpeciesName`,
+   followed by the infraspecific name when there is one (`Swartzia simplex
+   var. grandiflora`), as in Condit's species table. `uniden` (unidentified
+   stems) gets a row without names (`INCLUDE_UNIDEN = TRUE`), so that every
+   code of the R tables has a row: `merge()` of a census table with the species
+   table is an inner join by default and would drop the unidentified stems
+   otherwise.
 2. Compares each code with the release of Condit R, Pérez R, Aguilar S, Lao S,
    Foster R, Hubbell S (2019), *Complete data from the Barro Colorado 50-ha
-   plot: 423617 trees, 35 years*, Dryad, doi:10.15146/5xcp-0d46. Trees are
-   matched on `treeID`; only codes and names (genus, epithet, infraspecific
-   name) are compared.
+   plot: 423617 trees, 35 years*, Dryad, doi:10.15146/5xcp-0d46 (the last
+   public release; its species table is checked by SHA-256). The releases are
+   matched tree by tree on `treeID`, which pairs the same trees as matching on
+   `tag`. Only codes and names (genus, epithet, infraspecific name) are
+   compared, not authority, family or other columns.
 
    | Column | Content |
    | --- | --- |
    | `NameCondit2019` | Name of the code in Condit et al. (2019), when it differs from `Latin` |
-   | `NameChange` | Kind of change: `genus`, `genus and epithet`, `genus and epithet gender`, `epithet`, `epithet gender`, `epithet spelling` (at most 2 other letters), `infraspecific name` or `morphospecies label` |
-   | `Notes` | The note of the stage-1 table; that `uniden` is not a taxon; that the code was not used in Condit et al. (2019); and the codes no longer used whose trees are under this code, with their former name and number of trees |
+   | `NameChange` | Kind of change: `genus`, `genus and epithet`, `genus and epithet gender`, `epithet`, `epithet gender` (only the gender ending, e.g. *micrantha* → *micranthum*), `epithet spelling` (at most 2 other letters, edit distance), `infraspecific name` or `morphospecies label`. It describes the change, not which spelling is correct |
+   | `Notes` | Only what no column says, so each fact is written once: the note of the stage-1 table; that `uniden` is not a taxon; that the code was not used in Condit et al. (2019); and the codes no longer used whose trees are now under this code, with their former name and number of trees, e.g. "Code tremsp, Trema unidentified in Condit et al. (2019), is no longer used; its 84 trees are under this code." |
+
+   A code no longer used has no row: the code that holds its trees names it in
+   `Notes`. Trees re-identified from one code to another are not in the species
+   table but in the two files of step 3.
 
 3. Writes the changes of species code: `bci.species_code_changes_summary`
    (one row per change: `spCondit2019`, `LatinCondit2019`, `sp`, `Latin`,
    `trees`, largest changes first) and `bci.species_code_changes` (one row per
-   tree: `treeID`, `tag`, `spCondit2019`, `LatinCondit2019`, `sp`, `Latin`).
-4. Writes `species_changes_from_flora_panama_bci.csv`: one row per code whose
-   genus, epithet, infraspecific name or authority differs from the Flora de
-   Panamá list, with both full names and the parts that differ. The authority
-   is compared by its authors only (`C. DC.` = `C.DC.`). The morphospecies
-   `apeihy`, `nects1` and `nects3` are not in the Flora list and are named in
-   the log.
+   tree: `treeID`, `tag`, `spCondit2019`, `LatinCondit2019`, `sp`, `Latin`;
+   tags are text with their leading zeros, so read the `.csv` with the tag
+   column as text).
+4. Writes `species_changes_from_flora_panama_bci.csv`, for the botanists. The
+   stage-1 names come from the Flora de Panamá list and change only by the hand
+   corrections of `1_DATA_PREPARATION/1_prepare_species_tables.R` (section 9);
+   this file lists them: one row per code whose genus, epithet, infraspecific
+   name or authority differs from the Flora list, with `sp`, `FloraName` and
+   `Name` (full names with authority), `Changed` (the parts that differ) and
+   the parts of both names. The authority is compared by its authors only:
+   another way of writing the same authors (spaces, periods, capitals, accents:
+   `C. DC.` = `C.DC.`) is not a change. Family, synonyms and the other columns
+   are not compared. The morphospecies `apeihy`, `nects1` and `nects3` are not
+   in the Flora list (no baseline) and are named in the log. The stage-1 file
+   `CHECKS/species_wfo_vs_flora_panama.csv` lists, from the WFO side, the WFO
+   corrections adopted against the Flora list. It is a review file, not part of
+   the R tables.
 
 ## Checks
 
 A failed check prints ❌, raises a warning and writes to the script's check
-file before it stops. Script 2 writes every check to `check_bci.txt`, with the
-summary tables (raw records alive because of their DBH, status codes, the
-evidence behind each stem death, status × DBH by census) and the number of
-cases in each review list.
+file before it stops. Script 2 checks the order and column types of every
+table before writing it, and writes every check to `check_bci.txt` (✓ passed,
+❌ failed) with the summary tables: raw records alive because of their DBH,
+status codes, the biology assessment of every version of the histories, the
+evidence behind each stem death, status × DBH by census (stumps apart from
+missed measurements), and at the end the number of cases in each review list.
+Read it first.
 
-Review lists (column `reason`):
+`status_patterns_bci.csv` has one row per encounter history: `raw_history`
+(raw codes, one per census: `A` evidence of life, `D` dead record, `N` no
+record), `dbh_recorded` (1 where a DBH was recorded), `Rstatus_history`,
+`tree_history`, the number of stems and one example stem (`example_treeID`,
+`example_stemID`).
+
+The two review lists have one row per case with `reason`, `treeID`, `tag`,
+`stemID` (NA for a whole tree), `census`, `dbh`, `DFstatus`, `Rstatus` and
+`details`:
 
 | File | Reasons |
 | --- | --- |
-| `field_records_to_review_bci.csv` | `dead_record_of_stem_alive_later`, `dbh_on_dead_record`, `stem_dead_but_tree_dead`, `duplicate_measurement` (two stems of one tree measured on the same date at heights at least 0.5 m apart, taper-corrected DBHs within 20%), `two_dates_in_census`, `location_spread_over_1m`, `no_coordinates`, `quadrat_differs_from_coordinates` |
-| `reconstruction_to_review_bci.csv` | `identity_break_candidate` (one stem ends and a new stem of similar size starts in the same tree and census), `new_stem_50mm_or_more`, `stem_never_alive`, `stem_never_recorded`, `stump_of_stem_alive_later` |
+| `field_records_to_review_bci.csv` (raw records, for the data manager) | `dead_record_of_stem_alive_later` (a dead / stem dead record of a stem recorded alive later, exported `A`), `dbh_on_dead_record`, `stem_dead_but_tree_dead` (raw "stem dead" while no stem of the tree is alive then or later), `duplicate_measurement` (two stems of one tree measured on the same date at heights at least 0.5 m apart, taper-corrected DBHs within 20%: the trunk measured at the old and the new height when its point of measurement was raised), `two_dates_in_census`, `location_spread_over_1m`, `no_coordinates`, `quadrat_differs_from_coordinates` |
+| `reconstruction_to_review_bci.csv` (stems) | `identity_break_candidate` (one stem ends and a new stem of similar size starts in the same tree and census), `new_stem_50mm_or_more` (ingrowth or a new tree first measured at 50 mm or more), `stem_never_alive`, `stem_never_recorded`, `stump_of_stem_alive_later` (exported `A` without a DBH; out of the stock in stage 4) |
+
+Script 3 writes its failed checks and notes to `check_species_table_bci.txt`.
+The stage-1 species script writes the WFO comparison lists
+(`species_*wfo*.csv`, `species_table_vs_wfo.csv`).
+
+## Settings
+
+| Setting | Script | Default | What it does |
+| --- | --- | --- | --- |
+| `home_dir`, `run_code` | 1 | engine output folder; run folder name | The engine run whose posterior files are read (the same run as in the stage-2 merge) |
+| `INCLUDE_UNIDEN` | 3 | `TRUE` | Add the row of `uniden` to the species table |
 
 ## Tests
 
@@ -198,14 +269,18 @@ testthat::test_file("BCI_stem_reconstruction/3_PREPARE_R_TABLES/tests/test_speci
   context against the rules written from scratch (`tests/reference_rstatus.R`).
   `Rstatus` depends only on the stem's codes and the last census in which its
   tree is alive, so this covers every stem;
-- the validity of every `Rstatus` sequence (`tests/rstatus_validity.R`), and
-  `tree_state()` against the tree rule in every tree of 1–4 stems;
+- the validity of every `Rstatus` sequence (`tests/rstatus_validity.R`);
+- `tree_state()` (the script's check I4) against the tree rule in every tree of
+  1–4 stems built from the 55 stem histories the rules can produce; three
+  stems already give every combination a census can hold, so this covers trees
+  of any size;
 - the exported R tables cell by cell (`Rstatus`, `dbh`, `DFstatus`,
   `ExactDate`, `date`, location, `stemID`, row order, column types, raw state ×
   `Rstatus`).
 
 Options (environment variables): `RSTATUS_TEST_LEVEL` (`full`, the default,
-about 10 minutes on 16 cores; `quick`, smaller enumerations),
+about 10 minutes on 16 cores; `quick`, the smaller enumerations only, a few
+minutes with the real-data tests),
 `RSTATUS_RTABLES_DIR` and `RSTATUS_STAGE2_FILE` (other tables to test),
 `RSTATUS_CORES` (default: all cores but two). The real-data tests are skipped
 when the tables are missing.

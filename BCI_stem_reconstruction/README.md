@@ -6,6 +6,14 @@ prepares the census table, stage 2 reconstructs the stems with the `dp_global`
 engine, stage 3 writes the R tables and stage 4 gives example analyses. Each
 stage folder has its own README.
 
+## Table of contents
+
+- [Contents](#contents)
+- [How to run](#how-to-run)
+- [Data flow](#data-flow)
+- [Conventions](#conventions)
+- [Requirements](#requirements)
+
 ## Contents
 
 | Folder | What it does |
@@ -34,9 +42,9 @@ Rscript BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/basal_area_uncert
 Rscript BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/general_plot_information.R
 ```
 
-Before the merge and the posterior preparation, set `run_code` at the top of
-`2_merge_chunks_to_datatable.R` and `1_prepare_posteriors_BCI.R` to the name of
-the engine run folder.
+Before the merge and the posterior preparation, set `home_dir` (the
+`BASE_OUT_DIR` of the engine run) and `run_code` (the run folder name) at the
+top of `2_merge_chunks_to_datatable.R` and `1_prepare_posteriors_BCI.R`.
 
 The scripts can also be run line by line. A failed check prints ❌, raises a
 warning and writes to the log of its script before it stops.

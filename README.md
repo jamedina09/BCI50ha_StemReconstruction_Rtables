@@ -2,6 +2,24 @@
 
 # Stem Reconstruction and Rtables for the Barro Colorado 50-ha Forest Dynamics Plot
 
+## Table of contents
+
+- [Overview](#overview)
+- [Repository Structure](#repository-structure)
+- [`dp_global/` — Stem Reconstruction Engine](#dp_global--stem-reconstruction-engine)
+  - [Prerequisites](#prerequisites)
+  - [Quickstart](#quickstart)
+  - [Key CLI flags](#key-cli-flags)
+  - [How the two algorithms work](#how-the-two-algorithms-work)
+- [`data_simulation/` — Test Dataset](#data_simulation--test-dataset)
+- [`BCI_stem_reconstruction/` — BCI 50-ha Pipeline](#bci_stem_reconstruction--bci-50-ha-pipeline)
+  - [Stage 1 — Data Preparation (`1_DATA_PREPARATION/`)](#stage-1--data-preparation-1_data_preparation)
+  - [Stage 2 — Stem Identification (`2_STEM_IDENTIFICATION/`)](#stage-2--stem-identification-2_stem_identification)
+  - [Stage 3 — Prepare R Tables (`3_PREPARE_R_TABLES/`)](#stage-3--prepare-r-tables-3_prepare_r_tables)
+  - [Stage 4 — Example Structure Assessment (`4_EXAMPLE_STRUCTURE_ASSESSMENT/`)](#stage-4--example-structure-assessment-4_example_structure_assessment)
+- [Engine Output Reference](#engine-output-reference)
+- [Key Documentation](#key-documentation)
+
 ## Overview
 
 This repository has three components:
@@ -145,9 +163,9 @@ A sequential four-stage pipeline that takes raw BCI ForestGEO exports through to
 
 ### Stage 1 — Data Preparation (`1_DATA_PREPARATION/`)
 
-Converts raw ForestGEO census exports into the species table and a cleaned ViewFullTable. Checks the species names (TNRS), keeps one measurement per stem and census, flags likely DBH entry errors and writes a corrected value in a new column (the recorded `DBH` is kept), applies the Cushman et al. 2014 taper correction (the corrected DBH is the one the engine parameters are estimated from), adds each species' growth form (`Lifeform`, which the stage-2 driver maps to the engine's growth forms), and labels tags as single- or multiple-stem.
+Converts raw ForestGEO census exports into the species table and a cleaned ViewFullTable. Names every species code from the botanists' lists (the Flora de Panamá list has priority) and checks the names against World Flora Online, keeps one measurement per stem and census, flags likely DBH entry errors and writes a corrected value in a new column (the recorded `DBH` is kept), applies the Cushman et al. 2014 taper correction (the corrected DBH is the one the engine parameters are estimated from), adds each species' growth form (`Lifeform`, which the stage-2 driver maps to the engine's growth forms), and labels tags as single- or multiple-stem.
 
-Scripts (run in order): `0_prepare_species_tables.R` → `1_prepare_viewfulltable.R.R`
+Scripts (run in order): `1_prepare_species_tables.R` → `2_prepare_viewfulltable.R`
 
 ### Stage 2 — Stem Identification (`2_STEM_IDENTIFICATION/`)
 
@@ -172,7 +190,7 @@ Three independent analysis scripts; `biomass_stocks_fluxes.R` and `basal_area_un
 
 **`biomass_stocks_fluxes.R`** — estimates AGB stocks, productivity, mortality, and net AGB change across nine BCI censuses using Chave et al. 2014 allometry with Martinez-Cano et al. 2019 height model (trees) and Goodman et al. 2013 (palms). Applies optional strangler-fig removal, palm DBH correction, taper correction, DBH interpolation, 1985 rounding-bias correction, size-class stratification, and Kohyama et al. 2019 productivity/mortality bias correction. Outputs: `outputs/plot_agb_dynamics.png`, `outputs/plot_agb_by_size.png`.
 
-**`basal_area_uncertainty.R`** — propagates stem-identity uncertainty from `dp_global` posterior paths into basal area stocks and fluxes via Monte Carlo realizations. Reports the exported reconstruction and the mean and 2.5–97.5 % quantile interval of the realizations; identities from the anchor census (2010) on are fixed, so the realizations differ before it (and for the rare unmeasured gap that spans it). Outputs: `outputs/fig1_BA_stock.pdf`, `outputs/fig2_BA_fluxes.pdf`, `outputs/fig3_BA_trajectories.pdf`, plus feather tables of the exported reconstruction (`ba_map_*`) and of the realizations (`ba_mc_*`).
+**`basal_area_uncertainty.R`** — propagates stem-identity uncertainty from `dp_global` posterior paths into basal area stocks and fluxes via Monte Carlo realizations. Reports the exported reconstruction and the centre (median by default) and 2.5–97.5 % quantile interval of the realizations; identities from the anchor census (2010) on are fixed, so the realizations differ before it (and for the rare unmeasured gap that spans it). Outputs: `outputs/fig1_BA_stock.pdf`, `outputs/fig2_BA_fluxes.pdf`, `outputs/fig3_BA_trajectories.pdf`, plus feather tables of the exported reconstruction (`ba_map_*`) and of the realizations (`ba_mc_*`).
 
 **`general_plot_information.R`** — descriptive summaries of forest structure and composition: individuals, stems, basal area, species, genera, families, lifeforms and diversity in the most recent census, bootstrapped per-hectare estimates, temporal trends and changes between censuses, and the DBH size-class distribution.
 

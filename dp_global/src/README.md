@@ -5,6 +5,15 @@ feasibility checks of the DP, and the exact assignment solver of the
 probabilistic matcher. `dp_global/R/dp_global_main.R` compiles them when it
 is sourced; the DP cannot run without them.
 
+## Table of contents
+
+- [Contents](#contents)
+- [How to run](#how-to-run)
+- [What it does](#what-it-does)
+- [Checks](#checks)
+- [Tests](#tests)
+- [Requirements](#requirements)
+
 ## Contents
 
 | File | What it does |
@@ -33,7 +42,9 @@ do.call(transition_cost_tracks_bio_batch_rcpp,
         c(list(track_dbh_t = track_dbh_t, track_dbh_tp1 = mat_tp1, interval_years = 5), pars))
 ```
 
-`transition_cost_rcpp.R` documents every argument.
+`transition_cost_rcpp.R` documents every argument. `track_dbh_tp1` is a
+matrix (one row per candidate state, one column per track) or a list of
+length-K vectors, which the wrapper binds into that matrix.
 
 ## What it does
 
@@ -48,8 +59,17 @@ The cost is the negative log-likelihood of the transition summed over the
 tracks: recruitment, mortality, the growth likelihood (Gaussian, or the
 four-component measurement-error mixture), the hard bounds (`hard_penalty`),
 the soft penalties and a rank tie-break (`dp_global/README.md`, *Transition
-cost*). The statistical functions are written in C++, so no R function is
-called per transition.
+cost*). The measurement-error mixture, the DBH rounding, the hard and soft
+bounds and the tie-break (ranks from sorting (DBH, track) pairs, so equal
+DBHs keep track order) are computed in
+C++, with the statistical functions (normal and lognormal densities,
+log-sum-exp) written out, so no R function is called per transition.
+
+The C++ code is the only backend of the transition costs: in the DP backward
+pass (`R/dp_global_dp.R`) each census pair calls `derive_phase_prev_batch_rcpp()`
+on all state pairs, then `transition_cost_paired_rcpp()` once on the feasible
+pairs. `transition_cost_tracks_bio_components()` (`R/dp_global_bio.R`) gives
+the same cost split into its terms, for diagnostics.
 
 DBH recorded in classes: with `round_t` / `round_tp1` (default `FALSE`), a DBH
 below `round_max_dbh` (5.5 cm) at census t / t+1 is read as a size in
@@ -57,6 +77,15 @@ below `round_max_dbh` (5.5 cm) at census t / t+1 is read as a size in
 mid-points and adds `round_width`² / 12 per rounded value to the variance,
 while the hard bounds stay on the measured values. The DP sets the flags from
 `dbh_round_censuses`.
+
+## Checks
+
+- If `Rcpp::sourceCpp()` fails on macOS, install the command-line tools
+  (`xcode-select --install`) and check that R finds clang / clang++.
+- Unexpected numeric differences between configurations: check
+  `eps_tiebreak` and floating-point tolerances.
+- For reproducible builds on servers, the C++ code can be packaged into an R
+  package, which avoids compiling on the fly.
 
 ## Tests
 

@@ -4,12 +4,20 @@ Inputs and outputs of the pipeline. `RAW/` holds the inputs; every other folder
 is written by a stage and is rebuilt by running stages 1–4
 (`BCI_stem_reconstruction/README.md`).
 
+## Table of contents
+
+- [Contents](#contents)
+- [Inputs](#inputs)
+- [Status](#status)
+- [Known data issues](#known-data-issues)
+- [Fixed rules](#fixed-rules)
+
 ## Contents
 
 | Folder | Content | Written by |
 | --- | --- | --- |
 | `RAW/` | Inputs: database exports (`oct_13_2026/`, `oct_16_2026/`, `ViewFiles_bci_allcensuses/`), species sources (`sp_tables/`), the stem data of Condit et al. (2019) (`bci_dryad_condit.rds`) | — |
-| `SPP_TABLE/` | Stage-1 species table (`bci_spptable.*`); Condit's species table (`condit/bci.spptable.rdata`, input); the helper `compare_species_condit_and_new_release.R` and its outputs in `condit/` | stage 1, helper |
+| `SPP_TABLE/` | Stage-1 species table (`bci_spptable.*`); Condit's species table (`condit/bci.spptable.rdata`, input); the helper `compare_species_condit_and_new_release.R` and its outputs in `condit/` (the folder is not under version control) | stage 1, helper |
 | `PROCESSED/` | Stage-1 census table (`ViewFullTable_single_vs_multiple_stem_tags.rds`, the engine input); stage-2 final stem table (`complete_dataset_final_with_reconstructed_stemids.rds`) and the measurement-rejoin files | stages 1 and 2 |
 | `<run_code>/` | Merged engine output (`merged_output.parquet`, `.rds`); the engine run folder itself is in `/Users/medinaja/outputs_bci_stem_identification/` | stage 2 |
 | `POSTERIORS/` | Posterior samples of every tree (`posterior_sampled_paths.rds`) | stage 3 |
@@ -26,6 +34,7 @@ is written by a stage and is rebuilt by running stages 1–4
 | `RAW/ViewFiles_bci_allcensuses/ViewFullTable_bci.csv` | An earlier export; stage 1 reads its `DBHID` column to check the records |
 | `RAW/sp_tables/` | Species lists of the botanists (`email_1/`, `email_2/`), the Flora de Panamá list (`flora_panama_oct_9_2026/`) and the WFO backbone (`wfo_plant_list_2026_06/`) |
 | `RAW/bci_dryad_condit.rds` | Stem data of Condit et al. (2019), for the species code changes of stage 3 |
+| `RAW/compare_viewfulltable_bci_old_and_oct13_2026.R` | Helper (not part of the pipeline): compares the earlier export, the Oct 13 export and a 2022-23 extract with one method (censuses, rows, trees, stems, DBH, changed cells, renamed species, DBH distributions) and writes `CHECKS/compare_viewfulltable_*` |
 
 ## Status
 

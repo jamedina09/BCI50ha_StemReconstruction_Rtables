@@ -4,6 +4,18 @@ Stage 1 of the pipeline. It builds the species table from the botanists' lists
 and the census table that the engine reads in stage 2
 (`2_STEM_IDENTIFICATION/`). It reconstructs no stems.
 
+## Table of contents
+
+- [Contents](#contents)
+- [How to run](#how-to-run)
+- [Inputs](#inputs)
+- [Outputs](#outputs)
+- [What it does](#what-it-does)
+  - [`1_prepare_species_tables.R`](#1_prepare_species_tablesr)
+  - [`2_prepare_viewfulltable.R`](#2_prepare_viewfulltabler)
+- [Checks](#checks)
+- [Requirements](#requirements)
+
 ## Contents
 
 | File | What it does |
@@ -21,7 +33,8 @@ Rscript BCI_stem_reconstruction/1_DATA_PREPARATION/1_prepare_species_tables.R
 Rscript BCI_stem_reconstruction/1_DATA_PREPARATION/2_prepare_viewfulltable.R
 ```
 
-Both scripts print inspection tables; script 2 also draws diagnostic plots.
+Both scripts are written to be run line by line: besides their outputs they
+print inspection tables, and script 2 draws diagnostic plots.
 
 ## Inputs
 
@@ -46,7 +59,7 @@ All in `BCI_stem_reconstruction/DATA/RAW/`.
 | `DATA/CHECKS/species_wfo_candidates.csv` | Names with several WFO records |
 | `DATA/CHECKS/species_wfo_accepted_changes.csv` | The WFO corrections adopted in section 9 of script 1 |
 | `DATA/CHECKS/species_wfo_vs_flora_panama.csv` | Names whose WFO record differs from the Flora de Panamá in family, genus, epithet, infraspecific name or authority, with both versions of each part |
-| `DATA/CHECKS/species_table_vs_wfo.csv` | Names of the final species table that still differ from their WFO record, or that WFO treats as synonyms, with the accepted name |
+| `DATA/CHECKS/species_table_vs_wfo.csv` | Names of the final species table that still differ from their WFO record (family, genus, epithet, infraspecific name, authority, or only the writing of the authority), or that WFO treats as synonyms, with the accepted name |
 | `DATA/CHECKS/species_synonyms_vs_wfo.csv` | The `Synonyms` column checked against WFO |
 
 ## What it does
@@ -84,9 +97,10 @@ All in `BCI_stem_reconstruction/DATA/RAW/`.
 4. Flags likely DBH entry errors (a jump in and back out over three
    consecutive measurements) and replaces them, in a separate column, by the
    geometric mean of their neighbours. The recorded `DBH` is kept.
-5. Corrects the DBH to 1.3 m with the taper model of Cushman et al. (2014) for
-   trees and shrubs (`dbh_with_best_candidate_taper_corrected`). Palms and
-   tree ferns keep the recorded value.
+5. Corrects the DBH to 1.3 m with the taper model of Cushman et al. (2014)
+   (`dbh_with_best_candidate_taper_corrected`) for species whose growth form
+   contains "árbol" or "arbusto" (trees and shrubs, strangler figs included)
+   or that have none. Palms and tree ferns keep the recorded value.
 6. Labels each tag as single-stem (one `StemID`, no `StemTag`) or
    multiple-stem. Stage 2 reconstructs the multiple-stem tags only.
 7. Takes only the code and the growth form (`Lifeform_RPerez_SAguilar`) from
