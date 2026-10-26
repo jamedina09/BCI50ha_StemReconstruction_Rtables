@@ -1,0 +1,99 @@
+# Identifiers
+(data set) title:
+data identifier DOI: (may be updated after issued)
+data paper DOI: (may be updated after issued)
+license: (specify a common license, e.g., CC-BY, CC0; and/or include a separate LICENSE file)
+keywords:
+data paper citation:
+
+## Authors (for each author)
+author name (req):
+author ORCID (req):
+author email (req-corresponding; optional-others):
+author affiliation (optional):
+
+## Status
+
+version:
+latest update: (date of last modification of data set)
+latest archive date: (date of last data set archival)
+metadata status: (date of last metadata update and current status)
+data verification: (status of data quality assurance checking)
+
+# Research Origin Descriptors
+
+## Study Design
+project title:
+objectives: (scope and purpose of research program)
+funding:
+
+## Subproject / Sampling Site Descriptors (1 for each subproject / sampling site)
+
+### Site Description (include following categories as appropriate)
+site type: (descriptive, e.g., short-grass prairie, blackwater stream, etc.)
+geography: (location, latitude/longitude, size)
+habitat: (detailed characteristics of habitats sampled)
+geology: (landform, soils, slope/elevation/aspect, terrain/physiography, geology/lithology)
+hydrology: (watershed, size, boundaries, receiving streams, etc.)
+site history: (site management practices, disturbance history, etc.)
+climate: (descriptive summary of site climatic characteristics)
+
+### Experimental / Sampling Design
+design characteristics: (description of statistical/sampling design; be specific enough that someone could replicate)
+spatial extent:
+temporal extent:
+spatial grain/resolution:
+temporal grain/resolution:
+
+### Research Methods
+data collection protocol: (be specific enough that someone could replicate the data collection exactly; include following categories as appropriate)
+instrumentation: (description and model/serial numbers)
+taxonomy and systematics: (references for taxonomic keys, identification, and location of voucher specimens, etc.)
+permit history: (references to pertinent scientific and collecting permits)
+legal/organizational requirements: (relevant laws, decision criteria, compliance standards, etc.)
+data forms or acquisition methods: (description or examples of data forms, automated data loggers, digitizing procedures, etc.)
+storage / location of completed data forms:
+data entry verification procedures: (procedures employed to verify that digital data set is free of errors)
+quality assurance/quality control procedures: (identification and treatment of outliers, description of quality assessments, calibration of reference standards, equipment performance results, etc.)
+data anomalies: (description of missing data, anomalous data, calibration errors, etc.)
+
+### Other
+related materials: (references and locations of maps, photographs, videos, GIS data layers, physical specimens, field notebooks, comments, etc.)
+computer programs and data-processing algorithms: (description or listing of any algorithms used in deriving, processing, or transforming data)
+
+# Data Structure Descriptors
+
+## Data File Descriptors
+
+naming scheme:
+file size(s):
+file contents:
+format and storage mode: (file type, e.g., ASCII, binary, etc., compression schemes employed, etc.)
+header information: (description of any header data or information attached to file [note: may include elements related to variable information (IV.B.); if so, could be linked to appropriate section(s)])
+
+## Observation Information (row descriptors)
+unique identifier/primary key: (what column encodes the unique identifier)
+sampling unit: (what each row represents; e.g., each individual organism, each independent observation)
+
+## Variable Information (column descriptors)
+
+variable identity: (unique variable name or code)
+variable definition: (precise definition of variables in data set)
+units of measurement:
+data type: (integer, numeric, date, logical, text, etc.)
+variable codes and description: (description of any codes associated with variables, missing values, numerical range, numerical precision)
+
+# Supplemental Descriptors
+
+## Archiving
+
+archival procedures: (description of how data are archived for long-term storage and access)
+redundant archival sites: (locations and procedures followed)
+related publications and results: (electronic reprints, lists of publications resulting from or related to the study, graphical/statistical data representations, etc.)
+
+## History of Usage:
+
+data request history: (log of who requested data, for what purpose, and how data set was actually used)
+data set update history: (description of any updates performed on data set)
+review history: (last entry, last researcher review, etc.)
+questions and comments from secondary users: (questionable or unusual data discovered by secondary users; limitations or problems encountered in specific applications of data; unresolved questions or comments)

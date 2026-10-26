@@ -1,0 +1,73 @@
+NULL
+
+Table 1. Censuses
+   CensusID first_date  last_date records measurements living_stems
+      <int>     <Date>     <Date>   <int>        <int>        <int>
+1:        1 1981-03-11 1983-07-30  263934       263896       263896
+2:        2 1985-01-05 1985-10-05  299447       273062       273598
+3:        3 1990-02-06 1992-12-04  328634       286910       287115
+4:        4 1995-01-02 1996-02-15  317354       267448       267625
+5:        5 2000-01-03 2001-03-31  298817       249546       249831
+6:        6 2005-01-03 2006-01-24  287494       244793       244965
+7:        7 2010-01-18 2011-03-28  317226       246898       247731
+8:        8 2013-09-01 2016-02-18  335207       248713       249054
+9:        9 2022-02-15 2023-12-23  370635       244205       244204
+   living_trees
+          <int>
+1:       235336
+2:       242611
+3:       244252
+4:       229213
+5:       214066
+6:       208542
+7:       208079
+8:       207981
+9:       203489
+
+Table 4. Rstatus counts over the nine tables
+   Rstatus       N
+    <char>   <int>
+1:       A 2328019
+2:       P 1755546
+3:       D 1377759
+4:       G  359993
+
+Data Description
+Trees: 460,211; stems: 646,813; rows per census table: 646,813
+Field records: 2,818,748; with a diameter: 2,325,471
+Trees with more than one stem: 104,889
+Taxa (species codes without uniden): 327 in 192 genera and 62 families
+Trees never identified (uniden): 74
+Trees with a reconstruction key (StemPaths): 132,220; without: 327,991
+Posterior samples: 1,554,448 rows for 131,999 trees
+Species codes whose name changed since Condit et al. (2019) (NameChange): 49
+Field-status records: alive 2,305,420; dead 333,542; broken below 139,887; stem dead 34,707; missing 5,192
+
+Median interval between consecutive censuses of a tree (years)
+    from    to median_years
+   <int> <int>        <num>
+1:     1     2         3.36
+2:     2     3         5.29
+3:     3     4         4.77
+4:     4     5         4.99
+5:     5     6         5.04
+6:     6     7         4.97
+7:     7     8         5.14
+8:     8     9         7.50
+Census duration (years): 1: 2.38; 2: 0.75; 3: 2.83; 4: 1.12; 5: 1.24; 6: 1.06; 7: 1.19; 8: 2.46; 9: 1.85
+
+Limitations
+Alive cells without a diameter: 2,566 (stumps, broken below: 777; missed measurements: 1,789)
+Measurements taken away from 1.3 m: 1.1%
+Trees without coordinates: 86
+
+Census 9 (2022-2023)
+Living trees: 203,489; living stems: 244,204; species: 300; genera: 180; families: 59
+Basal area: 1715.67 m2 in total, 34.31 m2/ha
+Density: 4070 trees/ha (95% interval 4023-4114); basal area: 34.31 m2/ha (95% interval 33.00-35.53)
+Species below half the mean abundance (339.1): 212 (70.7%), with 14,590 individuals (7.2%)
+Species with ten or fewer individuals: 67 (237 individuals); singletons: 22
+Top species by individuals: Pombalia prunifolia 24,720 (12.15%); Faramea occidentalis 21,604 (10.62%); Trichilia tuberculata 10,067 (4.95%)
+Top species by basal area: Quararibea stenophylla 117.24 m2 (6.83%); Alseis blackiana 87.14 m2 (5.08%); Prioria copaifera 81.57 m2 (4.75%)
+Top families by individuals: Rubiaceae 37,571 (18.46%); Violaceae 26,974 (13.26%); Fabaceae 17,136 (8.42%)
+Top families by basal area: Malvaceae 313.14 m2 (18.25%); Fabaceae 186.96 m2 (10.90%); Rubiaceae 166.74 m2 (9.72%)

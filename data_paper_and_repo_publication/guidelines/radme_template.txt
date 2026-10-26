@@ -1,0 +1,25 @@
+## Identifiers
+(data set) title:
+data identifier DOI: (may be updated after issued)
+data paper DOI: (may be updated after issued)
+license: (specify a common license, e.g. CC-BY, CC0; and/or include a separate LICENSE file)
+keywords:
+data paper citation:
+
+## Authors (for each author)
+author name (req):
+author ORCID (req):
+author email (req-corresponding; optional-others):
+author affiliation (optional):
+
+## Study Design
+project title:
+objectives: (scope and purpose of research program)
+funding:
+
+## Data Files
+
+naming scheme:
+file size(s):
+file contents:
+
