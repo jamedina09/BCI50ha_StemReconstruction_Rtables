@@ -8,11 +8,11 @@ Status: ✓ met · ✗ not yet met · ◐ met in part, or a choice of the author
 
 | Element | File | Goes to | Status |
 | --- | --- | --- | --- |
-| Manuscript | `manuscript/bci-50ha_data-paper_manuscript.docx`, built from `build/manuscript.md` | ScholarOne, as the "Main Document" (the only part typeset in Ecology) | ◐ Draft; what the authors must supply is highlighted |
+| Manuscript | `manuscript/bci-50ha_data-paper_manuscript.docx`, edited by hand | ScholarOne, as the "Main Document" (the only part typeset in Ecology) | ◐ Draft; what the authors must supply is highlighted |
 | Metadata | `repository/Metadata.md` | Repository | ◐ Template filled; fields marked `[ ]` to complete |
 | README | `repository/README.md` | Repository | ◐ Template filled; ORCIDs, DOIs and license to complete |
-| Data | `repository/data/`: 11 files, 102.1 MB | Repository | ✓ Built and checked (59 checks, `checks/data-checks.txt`) |
-| Code | `repository/code/`: `load-bci-tables.R`, `make-manuscript-tables.R` | Repository | ✓ Tested: reproduces every number and table of the manuscript (`checks/manuscript-numbers.txt`) |
+| Data | `repository/data/`: 11 files, 102.1 MB | Repository | ✓ The stage-3 files, unchanged; objects, columns, types and keys checked (59 checks, all passed) |
+| Code | `repository/code/`: `load-bci-tables.R`, `1_tables.R`, `2_data-description.R`, `3_census-9-summary.R` | Repository | ✓ Tested: reproduces every number and table of the manuscript (outputs in `manuscript_outputs/`) |
 | Code of the processing | GitHub repository of the pipeline | Repository or Zenodo | ✗ To archive with a DOI (see Open Research) |
 
 The data files are the stage-3 outputs, copied unchanged (same MD5):
@@ -120,7 +120,7 @@ Note 1: the abstract's summary of census 9 is not in the main text. That summary
    - ForestGEO's grant DEB-00753102, which has one digit too many;
    - the wording for Frank H. Levinson and for the Office of the Under Secretary for Science and Research;
    - research permits.
-3. **Field codes:** the meaning of the 61 codes found in `codes` is not documented in the package. `checks/field-codes-to-define.csv` lists each code with its records by census and field status, and an empty `definition` column for the data manager. The definitions can go into `Metadata.md`. The reference in `data_simulation/.../forestgeo_codes_reference.qmd` was not used: some of its definitions are generic, and its `OR` ("other breakage") contradicts the project's finding (a stump still broken from an earlier census).
+3. **Field codes:** the meaning of the 61 codes found in `codes` is not documented in the package. `manuscript/field-codes-to-define.csv` lists each code with its records by census and field status, and an empty `definition` column for the data manager. The definitions can go into `Metadata.md`. The reference in `data_simulation/.../forestgeo_codes_reference.qmd` was not used: some of its definitions are generic, and its `OR` ("other breakage") contradicts the project's finding (a stump still broken from an earlier census).
 4. **Species:**
    - add to the `nects3` note that *Nectandra* sp.4 was merged into it (todo.txt);
    - check the list against S. Lao's latest list and against H. Muller-Landau's version;
@@ -132,22 +132,23 @@ Note 1: the abstract's summary of census 9 is not in the main text. That summary
 7. **License and repository** (see Open Research).
 8. **Abstract** (note 1).
 
-## How to rebuild
+## How to reproduce the outputs of the manuscript
 
-From the project root:
+In R (or with `Rscript`), with the working directory set to `repository/`, run:
 
-```sh
-Rscript data_paper_and_repo_publication/ecology_data_paper/build/build-data-package.R
-(cd data_paper_and_repo_publication/ecology_data_paper/repository && Rscript code/make-manuscript-tables.R > ../checks/manuscript-numbers.txt)
-sh data_paper_and_repo_publication/ecology_data_paper/build/build-manuscript.sh
+```r
+source("code/1_tables.R")             # Tables 1-4
+source("code/2_data-description.R")   # numbers of the Data Description and Limitations
+source("code/3_census-9-summary.R")   # census-9 summary of the Abstract
 ```
 
-1. `build-data-package.R` copies the stage-3 outputs into `repository/data/` and checks them. It writes:
-   - `checks/data-checks.txt`;
-   - `checks/data-file-inventory.csv` (size and MD5 of each file);
-   - `checks/field-codes-to-define.csv`.
-2. `make-manuscript-tables.R` recomputes the numbers of the manuscript from the package alone.
-3. `build-manuscript.sh` builds the Word file from `build/manuscript.md`.
+The scripts write CSV files to `manuscript_outputs/`:
+
+- `table-1_censuses.csv`, `table-2_files.csv`, `table-3_columns.csv`, `table-4_status-counts.csv`;
+- `data-description_numbers.csv`;
+- `census-9_summary.csv`, `census-9_species.csv`, `census-9_families.csv`.
+
+They need the R packages data.table, boot and HDInterval.
 
 ## Upload
 

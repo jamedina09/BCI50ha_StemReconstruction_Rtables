@@ -1,0 +1,43 @@
+section,item,value
+Data Description,trees,460211
+Data Description,stems (rows per census table),646813
+Data Description,trees with more than one stem,104889
+Data Description,field records (DFstatus not NA),2818748
+Data Description,measurements (dbh not NA),2325471
+Data Description,taxa (species codes without uniden),327
+Data Description,genera,192
+Data Description,families,62
+Data Description,trees never identified (uniden),74
+Data Description,species codes renamed since 2019 (NameChange),49
+Data Description,trees reconstructed (StemPaths not NA),132220
+Data Description,trees not reconstructed,327991
+Data Description,trees with posterior samples,131999
+Data Description,rows of the posterior samples,1554448
+Data Description,DFstatus records: alive,2305420
+Data Description,DFstatus records: dead,333542
+Data Description,DFstatus records: broken below,139887
+Data Description,DFstatus records: stem dead,34707
+Data Description,DFstatus records: missing,5192
+Data Description,census 1 duration (years),2.38
+Data Description,census 2 duration (years),0.75
+Data Description,census 3 duration (years),2.83
+Data Description,census 4 duration (years),1.12
+Data Description,census 5 duration (years),1.24
+Data Description,census 6 duration (years),1.06
+Data Description,census 7 duration (years),1.19
+Data Description,census 8 duration (years),2.46
+Data Description,census 9 duration (years),1.85
+Data Description,"median interval, census 1 to 2 (years)",3.36
+Data Description,"median interval, census 2 to 3 (years)",5.29
+Data Description,"median interval, census 3 to 4 (years)",4.77
+Data Description,"median interval, census 4 to 5 (years)",4.99
+Data Description,"median interval, census 5 to 6 (years)",5.04
+Data Description,"median interval, census 6 to 7 (years)",4.97
+Data Description,"median interval, census 7 to 8 (years)",5.14
+Data Description,"median interval, census 8 to 9 (years)",7.5
+Limitations,alive cells without a diameter,2566
+Limitations,of which stumps (DFstatus broken below),777
+Limitations,of which missed measurements,1789
+Limitations,measurements away from 1.3 m (%),1.1
+Limitations,trees without coordinates,86
+Limitations,trees without quadrat,51

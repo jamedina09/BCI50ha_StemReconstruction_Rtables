@@ -1,0 +1,20 @@
+item,value
+living trees,203489
+living stems,244204
+species,300
+genera,180
+families,59
+"basal area, total (m2)",1715.67
+density (trees/ha),4070
+"density, 95% interval low",4023
+"density, 95% interval high",4114
+basal area (m2/ha),34.31
+"basal area, 95% interval low",33
+"basal area, 95% interval high",35.53
+half the mean abundance (individuals),339.1
+species below half the mean abundance,212
+species below half the mean abundance (%),70.7
+individuals of those species,14590
+species with ten or fewer individuals,67
+individuals of those species,237
+singleton species,22
