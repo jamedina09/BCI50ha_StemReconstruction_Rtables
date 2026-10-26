@@ -189,18 +189,19 @@ bio_check <- function(ok, msg, examples = NULL, n_bad = NULL) {
     stop(full_msg, call. = FALSE)
 }
 
-    # ---- Inputs written in order ----------------------------------------------
-    # The R tables and the species table must come from stage 3 run after the
-    # current stage-2 table (otherwise rerun stage 3).
-    .stage_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA")
-    .rtable_inputs <- file.path(.stage_dir, "RTABLES", c(paste0("bci.stem", 1:9, ".Rdata"), "bci.spptable.rdata"))
-    .stage2_table <- file.path(.stage_dir, "PROCESSED", "complete_dataset_final_with_reconstructed_stemids.rds")
-    bio_check(all(file.exists(.rtable_inputs)), "The R tables and the species table exist (run stage 3 first)",
-        examples = basename(.rtable_inputs[!file.exists(.rtable_inputs)]))
-    bio_check(
-        file.exists(.stage2_table) && all(file.mtime(.rtable_inputs) > file.mtime(.stage2_table)),
-        "The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge)"
-    )
+# ---- Inputs written in order ----------------------------------------------
+# The R tables and the species table must come from stage 3 run after the
+# current stage-2 table (otherwise rerun stage 3).
+.stage_dir <- file.path(workspace_root, "BCI_stem_reconstruction", "DATA")
+.rtable_inputs <- file.path(.stage_dir, "RTABLES", c(paste0("bci.stem", 1:9, ".Rdata"), "bci.spptable.rdata"))
+.stage2_table <- file.path(.stage_dir, "PROCESSED", "complete_dataset_final_with_reconstructed_stemids.rds")
+bio_check(all(file.exists(.rtable_inputs)), "The R tables and the species table exist (run stage 3 first)",
+    examples = basename(.rtable_inputs[!file.exists(.rtable_inputs)])
+)
+bio_check(
+    file.exists(.stage2_table) && all(file.mtime(.rtable_inputs) > file.mtime(.stage2_table)),
+    "The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge)"
+)
 
 # The posterior samples come from stage 3 run after the current stage-2 table,
 # for the engine run of that table (DATA/PROCESSED/engine_run.txt).
@@ -241,8 +242,10 @@ rm(n_dead_dbh)
 # no stump in between). An alive census before the stem's first measurement
 # is not in the stock.
 stump_segments(rec, "dbh")
-cat(sprintf("[BA] %d alive stump records (A, no DBH, broken below) are not in the stock; %d alive records without a DBH are to be filled\n",
-    rec[stump == TRUE, .N], rec[fill == TRUE, .N]))
+cat(sprintf(
+    "[BA] %d alive stump records (A, no DBH, broken below) are not in the stock; %d alive records without a DBH are to be filled\n",
+    rec[stump == TRUE, .N], rec[fill == TRUE, .N]
+))
 
 # stemID is the stem number within its tree (1, 2, ...): treeID + stemID
 # identify a stem, so every stem key below uses both.
@@ -286,7 +289,8 @@ if (remove_strangler_figs) {
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
 if (use_taper_species_terms) {
     bio_check(all(names(TAPER_SPECIES_2014) %in% rec$sp), "The ten focal species of the taper model (Cushman et al. 2014) are in the data",
-        examples = setdiff(names(TAPER_SPECIES_2014), rec$sp))
+        examples = setdiff(names(TAPER_SPECIES_2014), rec$sp)
+    )
 }
 rec[, dbh_t := stem_dbh_taper(rec, species_terms = use_taper_species_terms, taper_palms = taper_palms)]
 rec[, dbh_raw := dbh]
