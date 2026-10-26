@@ -37,22 +37,7 @@ data_paper_documentation
 David/
 SPECIES_RAW/
 
-BCI_stem_reconstruction/DATA/20260603_193836_unknown_allT_DP_MB_NME_g5_sm0p5_kg0_ks0_rcpp
-BCI_stem_reconstruction/DATA/CHECKS
-BCI_stem_reconstruction/DATA/POSTERIORS
-BCI_stem_reconstruction/DATA/PROCESSED
-BCI_stem_reconstruction/DATA/RAW/sp_tables
-BCI_stem_reconstruction/DATA/RAW/bci_dryad_condit.rds
-BCI_stem_reconstruction/DATA/RAW/compare_tables1_and_tables2.R
-BCI_stem_reconstruction/DATA/RAW/ViewFullTable_census2022-23.txt
-BCI_stem_reconstruction/DATA/RAW/ViewFiles_bci_allcensuses/ViewFullTable_bci.csv
-BCI_stem_reconstruction/DATA/RTABLES
-BCI_stem_reconstruction/DATA/SPP_TABLE
-BCI_stem_reconstruction/DATA/BACKUPS
-BCI_stem_reconstruction/DATA/RTABLES.zip
-BCI_stem_reconstruction/DATA/RTABLES_OLD
-BCI_stem_reconstruction/DATA/RAW/oct_13_2026
-BCI_stem_reconstruction/DATA/RAW
+BCI_stem_reconstruction/DATA/
 bci_lines
 1ha_plots_species
 COMPARE_DATASETS
