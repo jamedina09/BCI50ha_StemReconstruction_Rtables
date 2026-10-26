@@ -1,10 +1,11 @@
 # =============================================================================
 # 3_census-9-summary.R — the census-9 (2022–2023) summary of the Abstract of
-# the Data Paper, from the files of this package: living trees and stems,
+# the Data Paper, from the files of this package: living trees,
 # species, genera and families, density and basal area per hectare with 95%
 # intervals, rarity, and the leading species and families.
 #
-#   - Living trees and stems: Rstatus A.
+#   - Living trees: trees with a living stem (Rstatus A); a tree's basal area
+#     is the sum over its living stems.
 #   - Diameters are corrected to 1.3 m with Model 1 of Cushman et al. (2014)
 #     and the species terms of their Table 3; palms (Arecaceae) keep the
 #     recorded diameter. Basal area = pi/4 * (DBH in m)^2.
@@ -19,6 +20,7 @@
 # to ../manuscript_outputs when that folder exists, else to outputs/.
 # Needs data.table, boot and HDInterval.
 # =============================================================================
+rm(list = ls())
 
 suppressMessages(library(data.table))
 source(file.path("code", "load-bci-tables.R"))
@@ -56,8 +58,10 @@ c9 <- merge(c9, spp[, .(sp, Family, Genus, Latin)], by = "sp", all.x = TRUE)
 c9[, dbh_t := taper_dbh(dbh, hom, sp)]
 c9[Family %in% "Arecaceae" | is.na(dbh_t), dbh_t := dbh]
 c9[, ba_m2 := pi / 4 * (dbh_t / 1000)^2]
-c9[is.na(gx) | is.na(gy), `:=`(gx = as.integer(substr(quadrat, 1, 2)) * 20 + 10,
-                               gy = as.integer(substr(quadrat, 3, 4)) * 20 + 10)]
+c9[is.na(gx) | is.na(gy), `:=`(
+    gx = as.integer(substr(quadrat, 1, 2)) * 20 + 10,
+    gy = as.integer(substr(quadrat, 3, 4)) * 20 + 10
+)]
 trees <- c9[, .(ba_m2 = sum(ba_m2), gx = mean(gx), gy = mean(gy)), by = .(treeID, sp, Family, Genus, Latin)]
 trees[gx < 0, gx := 0][gx >= 1000, gx := 1000 - 1e-3][gy < 0, gy := 0][gy >= 500, gy := 500 - 1e-3]
 n_tot <- nrow(trees)
@@ -86,26 +90,34 @@ setorder(fam9, -individuals)
 half <- mean(sp9$individuals) / 2
 
 summary9 <- data.table(
-    item = c("living trees", "living stems", "species", "genera", "families",
-             "basal area, total (m2)", "density (trees/ha)", "density, 95% interval low", "density, 95% interval high",
-             "basal area (m2/ha)", "basal area, 95% interval low", "basal area, 95% interval high",
-             "half the mean abundance (individuals)", "species below half the mean abundance",
-             "species below half the mean abundance (%)", "individuals of those species",
-             "species with ten or fewer individuals", "individuals of those species", "singleton species"),
-    value = c(n_tot, nrow(c9), uniqueN(trees$sp), uniqueN(trees$Genus), uniqueN(trees$Family),
-              round(ba_tot, 2), round(mean(q$trees_ha)), round(ci_t[1]), round(ci_t[2]),
-              round(mean(q$ba_ha), 2), round(ci_b[1], 2), round(ci_b[2], 2),
-              round(half, 1), sp9[individuals < half, .N],
-              round(100 * sp9[individuals < half, .N] / nrow(sp9), 1), sp9[individuals < half, sum(individuals)],
-              sp9[individuals <= 10, .N], sp9[individuals <= 10, sum(individuals)], sp9[individuals == 1, .N])
+    item = c(
+        "living trees", "species", "genera", "families",
+        "basal area, total (m2)", "density (trees/ha)", "density, 95% interval low", "density, 95% interval high",
+        "basal area (m2/ha)", "basal area, 95% interval low", "basal area, 95% interval high",
+        "half the mean abundance (individuals)", "species below half the mean abundance",
+        "species below half the mean abundance (%)", "individuals of those species",
+        "species with ten or fewer individuals", "individuals of those species", "singleton species"
+    ),
+    value = c(
+        n_tot, uniqueN(trees$sp), uniqueN(trees$Genus), uniqueN(trees$Family),
+        round(ba_tot, 2), round(mean(q$trees_ha)), round(ci_t[1]), round(ci_t[2]),
+        round(mean(q$ba_ha), 2), round(ci_b[1], 2), round(ci_b[2], 2),
+        round(half, 1), sp9[individuals < half, .N],
+        round(100 * sp9[individuals < half, .N] / nrow(sp9), 1), sp9[individuals < half, sum(individuals)],
+        sp9[individuals <= 10, .N], sp9[individuals <= 10, sum(individuals)], sp9[individuals == 1, .N]
+    )
 )
 fwrite(summary9, file.path(OUT, "census-9_summary.csv"))
 fwrite(sp9, file.path(OUT, "census-9_species.csv"))
 fwrite(fam9, file.path(OUT, "census-9_families.csv"))
 
 print(summary9, nrows = 50)
-cat("\nLeading species by individuals:\n"); print(sp9[1:3, .(Latin, individuals, pct_individuals)])
-cat("Leading species by basal area:\n"); print(sp9[order(-ba_m2)][1:3, .(Latin, ba_m2 = round(ba_m2, 2), pct_ba)])
-cat("Leading families by individuals:\n"); print(fam9[1:3, .(Family, genera, species, individuals, pct_individuals)])
-cat("Leading families by basal area:\n"); print(fam9[order(-ba_m2)][1:3, .(Family, ba_m2 = round(ba_m2, 2), pct_ba)])
+cat("\nLeading species by individuals:\n")
+print(sp9[1:3, .(Latin, individuals, pct_individuals)])
+cat("Leading species by basal area:\n")
+print(sp9[order(-ba_m2)][1:3, .(Latin, ba_m2 = round(ba_m2, 2), pct_ba)])
+cat("Leading families by individuals:\n")
+print(fam9[1:3, .(Family, genera, species, individuals, pct_individuals)])
+cat("Leading families by basal area:\n")
+print(fam9[order(-ba_m2)][1:3, .(Family, ba_m2 = round(ba_m2, 2), pct_ba)])
 cat("Written to", normalizePath(OUT), "\n")

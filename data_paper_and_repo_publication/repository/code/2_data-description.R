@@ -8,6 +8,7 @@
 # Writes data-description_numbers.csv to ../manuscript_outputs when that
 # folder exists, else to outputs/. Needs data.table.
 # =============================================================================
+rm(list = ls())
 
 suppressMessages(library(data.table))
 source(file.path("code", "load-bci-tables.R"))
@@ -27,10 +28,6 @@ add <- function(section, item, value) out[[length(out) + 1L]] <<- data.table(sec
 # ---- Data Description ------------------------------------------------------------
 taxa <- spp[sp != "uniden"]
 add("Data Description", "trees", uniqueN(x$treeID))
-add("Data Description", "stems (rows per census table)", x[CensusID == 1, .N])
-add("Data Description", "trees with more than one stem", x[CensusID == 1, .N, by = treeID][N > 1, .N])
-add("Data Description", "field records (DFstatus not NA)", sum(!is.na(x$DFstatus)))
-add("Data Description", "measurements (dbh not NA)", sum(!is.na(x$dbh)))
 add("Data Description", "taxa (species codes without uniden)", nrow(taxa))
 add("Data Description", "genera", uniqueN(taxa$Genus))
 add("Data Description", "families", uniqueN(taxa$Family))
@@ -40,15 +37,14 @@ add("Data Description", "trees reconstructed (StemPaths not NA)", x[!is.na(StemP
 add("Data Description", "trees not reconstructed", uniqueN(x$treeID) - x[!is.na(StemPaths), uniqueN(treeID)])
 add("Data Description", "trees with posterior samples", uniqueN(post$treeID))
 add("Data Description", "rows of the posterior samples", nrow(post))
-for (s in x[!is.na(DFstatus), .N, by = DFstatus][order(-N), DFstatus]) {
-    add("Data Description", paste0("DFstatus records: ", s), x[DFstatus %in% s, .N])
-}
 
 # Census duration and the interval between consecutive censuses of a tree
 # (mean date of its living stems in each census)
+# Duration: span of the central 95% of the record dates (2.5% to 97.5%
+# quantiles), as the field dates of Table 1.
 for (k in 1:9) {
-    d <- x[CensusID == k, range(ExactDate, na.rm = TRUE)]
-    add("Data Description", sprintf("census %d duration (years)", k), round(as.numeric(diff(d)) / 365.25, 2))
+    d <- x[CensusID == k & !is.na(ExactDate), quantile(as.numeric(ExactDate), c(0.025, 0.975), type = 1, names = FALSE)]
+    add("Data Description", sprintf("census %d duration, 95%% of records (months)", k), round(diff(d) / 30.44, 1))
 }
 td <- x[Rstatus == "A", .(d = mean(date)), by = .(treeID, CensusID)]
 setorder(td, treeID, CensusID)
@@ -59,12 +55,10 @@ for (i in seq_len(nrow(iv))) {
 }
 
 # ---- Limitations and Challenges ------------------------------------------------------------
-a <- x[Rstatus == "A" & is.na(dbh)]
-add("Limitations", "alive cells without a diameter", nrow(a))
-add("Limitations", "of which stumps (DFstatus broken below)", a[DFstatus %in% "broken below", .N])
-add("Limitations", "of which missed measurements", a[!DFstatus %in% "broken below", .N])
-add("Limitations", "measurements away from 1.3 m (%)",
-    round(100 * x[!is.na(dbh) & !is.na(hom) & abs(hom - 1.3) > 0.01, .N] / x[!is.na(dbh), .N], 1))
+add(
+    "Limitations", "measurements away from 1.3 m (%)",
+    round(100 * x[!is.na(dbh) & !is.na(hom) & abs(hom - 1.3) > 0.01, .N] / x[!is.na(dbh), .N], 1)
+)
 add("Limitations", "trees without coordinates", x[is.na(gx) | is.na(gy), uniqueN(treeID)])
 add("Limitations", "trees without quadrat", x[is.na(quadrat), uniqueN(treeID)])
 

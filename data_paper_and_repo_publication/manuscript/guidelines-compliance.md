@@ -77,7 +77,7 @@ Note 1: the abstract's summary of census 9 is not in the main text. That summary
 
 | Guideline | This package | Status |
 | --- | --- | --- |
-| Tidy data: each variable a column, each observation a row, each kind of observational unit a table (exceptions case by case) | Census tables: one row per stem and census, one column per variable, one table per census (the ForestGEO R-table format). Every table lists every stem, before it appeared (P) and after it died (G, D). The posterior samples pack the labels of one sample into `path_sig` and `recon`; one row per record and sample would be 26.6 million rows. Both exceptions are explained in the metadata | ◐ |
+| Tidy data: each variable a column, each observation a row, each kind of observational unit a table (exceptions case by case) | Census tables: one row per stem and census, one column per variable, one table per census (the ForestGEO R-table format). Every table lists every stem, before it appeared (P) and after it died (G, D). The posterior samples pack the labels of one sample into `path_sig` and `recon`; one row per record and sample would make the file many times larger. Both exceptions are explained in the metadata | ◐ |
 | Nonproprietary formats such as `.csv` or `.txt` | R data files (`.Rdata`, `.rds`) by the authors' choice: R is free and open source, and the files total 102 MB, against 743 MB as CSV. The metadata gives the format, the loading commands and a reader for other software. The technical review may still ask for plain text | ◐ |
 | Software as source code | R scripts | ✓ |
 | File names: letters, digits, `-`, `_`, `.` only | All files | ✓ |
@@ -137,14 +137,14 @@ Note 1: the abstract's summary of census 9 is not in the main text. That summary
 In R (or with `Rscript`), with the working directory set to `repository/`, run:
 
 ```r
-source("code/1_tables.R")             # Tables 1-4
+source("code/1_tables.R")             # Tables 1-3
 source("code/2_data-description.R")   # numbers of the Data Description and Limitations
 source("code/3_census-9-summary.R")   # census-9 summary of the Abstract
 ```
 
 The scripts write CSV files to `manuscript_outputs/`:
 
-- `table-1_censuses.csv`, `table-2_files.csv`, `table-3_columns.csv`, `table-4_status-counts.csv`;
+- `table-1_censuses.csv`, `table-2_files.csv`, `table-3_columns.csv`;
 - `data-description_numbers.csv`;
 - `census-9_summary.csv`, `census-9_species.csv`, `census-9_families.csv`.
 
