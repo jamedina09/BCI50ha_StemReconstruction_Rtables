@@ -92,7 +92,7 @@ data anomalies:
   - A few records fall far outside the main field period of their census (census 8 has records from September 2013 to February 2016, although 95% were taken in 2015; census 3 has records until December 1992); census 9 followed census 8 by 7.5 years.
 
 ### Other
-related materials: Earlier release: Condit et al. (2019a), eight censuses 1982–2015 on Dryad, with the taxonomy as a separate data set (Condit et al. 2019b). The code that builds these tables: https://github.com/jamedina09/BCI50ha_StemReconstruction_Rtables [archived version: DOI].
+related materials: This data set supersedes Condit et al. (2019a). The code that builds these tables: https://github.com/jamedina09/BCI50ha_StemReconstruction_Rtables [archived version: DOI].
 computer programs and data-processing algorithms: The tables are built by a scripted pipeline in R and C++ (code repository above) from the ForestGEO database export (ViewFullTable, 2026-10-13). Recorded diameters, heights of measurement, dates, codes and field statuses are copied unchanged at every step.
   1. Census records. The partial census of 2020 is removed and the censuses are numbered 1–9 by date. When a stem has two measurements in one census (a trunk measured at the old and at the new height after its point of measurement was raised), the measurement at the higher point is kept, ties going to the larger diameter. Each tree is labelled single-stem (one database stem identifier and no stem tag; 327,991 trees) or multiple-stem (132,220 trees); only multiple-stem trees are reconstructed.
   2. Species names, as under taxonomy and systematics.
@@ -205,13 +205,6 @@ related publications and results: Selected publications based on the BCI 50-ha p
 ## History of Usage:
 
 data request history: The BCI census data have been distributed by the Center for Tropical Forest Science and ForestGEO on request since the 1980s, and openly since Condit et al. (2019a). [Add if wanted.]
-data set update history: First release of this data set: [date]. Changes from Condit et al. (2019a):
-  - adds census 9 (2022–2023);
-  - updates species names, with every change of name or code documented;
-  - reconstructs stems across all censuses instead of using the database stem identifiers (a stem renumbered by the database before 2010 is one stem here), with posterior samples of the reconstruction;
-  - gives the field status (DFstatus) and one analytical status (Rstatus, four codes) instead of the status codes of the 2019 tables;
-  - gives each tree one location and every row a date (date);
-  - holds stem tables only: the 2019 tree tables, elevation map, full measurement table and database copy are not included [confirm];
-  - for censuses 1–8, 99.99% of the records match a record of the 2019 release, with the same diameters and dates; coordinates differ by rounding [confirm wording].
+data set update history: First release of this data set: [date]. It supersedes Condit et al. (2019a).
 review history: [Date of the last review by the authors.]
 questions and comments from secondary users: None yet.

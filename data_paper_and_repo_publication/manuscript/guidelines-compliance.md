@@ -114,15 +114,11 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
    - the names of the 2022–2023 census team (Name1, Name2, Name3; list from D. Mitre);
    - research permits.
 3. **Species:**
-   - earlier labels of the morphospecies as synonyms: *Nectandra* sp. nov. 1 (`nects1`) and *Nectandra* sp. nov. 3 (`nects3`), and the provisional labels of eight other codes, are in the 2019 taxonomy but not in the botanists' lists; to decide;
+   - earlier labels as synonyms: three of the four morphospecies have synonyms in the 2019 taxonomy (`nects1`: *Nectandra* sp.nov.1; `nects3`: *Nectandra* sp._4, *Nectandra* sp.nov.3; `sapisp`: *Sapium* sp 1, *Sapium* sp. nov.), and seven named species have provisional labels there; none is in the botanists' lists; to decide;
    - the note that *Nectandra* sp.4 was merged into `nects3` is not supported by the database (one tree, one code and one label in both exports): leave it out unless the botanists confirm it;
    - check the list against S. Lao's latest list and against H. Muller-Landau's version;
    - choose how to cite the Flora de Panamá list.
-4. **Posterior samples:** the 221 reconstructed trees with `StemPaths` but no posterior samples have one possible reconstruction: 123 have every stem tagged and first appear in 2010 or later, and 98 were measured in only one census up to 2010 (82 palms, 7 strangler figs). Confirm.
-5. **Relationship to the 2019 release:** confirm two statements in the metadata:
-   - the agreement of the records ("99.99% … same diameters and dates");
-   - that the 2019 tree tables, elevation map and database copy are not part of this release.
-6. **License and repository:** both options stay open: Dryad (CC0 only; free for Ecology Data Papers up to 10 GB) or Zenodo (CC BY 4.0). See Open Research.
+4. **License and repository:** both options stay open: Dryad (CC0 only; free for Ecology Data Papers up to 10 GB) or Zenodo (CC BY 4.0). See Open Research.
 
 ## How to reproduce the outputs of the manuscript
 
