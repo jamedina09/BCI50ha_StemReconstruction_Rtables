@@ -84,7 +84,12 @@ All in `BCI_stem_reconstruction/DATA/RAW/`.
    name is adopted in 9h, which keeps the code and adds the old name to the
    synonyms (e.g. Laetia thamnia → Casearia thamnia). The authority is
    compared by its authors only (spaces, periods, capitals and accents aside).
-6. Writes the species table and the check lists.
+6. Takes the synonyms from the botanists' lists. The morphospecies get none
+   there; `nects1`, `nects3` and `sapisp` get their labels in the 2019 taxonomy
+   of the plot (Condit et al. 2019b, column `syn`), as written there: Nectandra
+   sp.nov.1; Nectandra sp._4 and Nectandra sp.nov.3; Sapium sp 1 and Sapium
+   sp. nov. (section 10c).
+7. Writes the species table and the check lists.
 
 ### `2_prepare_viewfulltable.R`
 

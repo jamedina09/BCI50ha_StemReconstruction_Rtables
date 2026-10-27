@@ -9,7 +9,10 @@
 #          (ViewFullTable) gives the species codes; its names are not up to
 #          date and are used only for the three codes that no list names (the
 #          morphospecies apeihy, nects1 and nects3), checked against the email
-#          of R. Pérez. The names are then checked, step by step, against the
+#          of R. Pérez. The synonyms come from the lists, except those of the
+#          morphospecies nects1, nects3 and sapisp, which are their labels in
+#          the 2019 taxonomy of the plot (section 10c). The names are then
+#          checked, step by step, against the
 #          current World Flora Online (WFO) backbone (a local copy of the June
 #          2026 release) with the WorldFlora package. WFO only suggests
 #          corrections, mainly of spelling and of the format of the authority;
@@ -1553,6 +1556,24 @@ check(
 )
 
 # --- 10c. Synonyms -----------------------------------------------------------
+# The botanists' lists give no synonyms for the morphospecies. Three of them
+# have earlier labels in the 2019 taxonomy of the plot (Condit et al. 2019b,
+# "BCI 50-ha plot taxonomy", Dryad, doi:10.15146/R3FH61, column syn of its
+# bci.spptable), added here as written there; apeihy has none:
+#   nects1  Nectandra fuzzy             Nectandra sp.nov.1
+#   nects3  Nectandra sp.4_(tiny_leaf)  Nectandra sp._4, Nectandra sp.nov.3
+#   sapisp  Sapium sp.                  Sapium sp 1, Sapium sp. nov.
+morphospecies_2019 <- c("nects1", "nects3", "sapisp")
+spp_new[mnemonic %in% morphospecies_2019, .(mnemonic, scientific_name, name_type, synonyms)]
+check(
+    spp_new[mnemonic %in% morphospecies_2019, .N == 3L && all(name_type == "morphospecies") && all(is.na(synonyms))],
+    "nects1, nects3 and sapisp are morphospecies of the table without synonyms from the lists"
+)
+spp_new[mnemonic == "nects1", synonyms := "Nectandra sp.nov.1"]
+spp_new[mnemonic == "nects3", synonyms := "Nectandra sp._4, Nectandra sp.nov.3"]
+spp_new[mnemonic == "sapisp", synonyms := "Sapium sp 1, Sapium sp. nov."]
+spp_new[mnemonic %in% morphospecies_2019, .(mnemonic, scientific_name, synonyms)]
+
 # A synonym must not repeat the name itself. For a variety, the old name of
 # the same variety is a valid synonym (e.g. Swartzia simplex var. ochnacea for
 # swars2, its name in the database until October 2026).
@@ -1655,8 +1676,8 @@ check(
     "every synonym of the table is compared with WFO once"
 )
 
-# With the current inputs: 203 synonyms of 157 codes; the ones that are not the same taxon
-# or species in WFO are printed for review
+# Synonyms by result; the ones that are not the same taxon or species in WFO
+# are printed for review
 synonyms_vs_wfo[, .N, by = synonym_check][order(-N)]
 synonyms_vs_wfo[
     !synonym_check %in% c("same taxon in WFO", "same species in WFO"),
