@@ -7,7 +7,9 @@
 # A stem is in the stand (stocks, fluxes, stem counts) in a census only when it
 # has a DBH at 1.3 m: measured, or filled from its own measurements.
 #   - Taper: a DBH measured at another height is corrected to 1.3 m with Model
-#     1 of Cushman et al. (2014) (taper_2014()).
+#     1 of Cushman et al. (2014) (taper_2014()), for the stocks and for the
+#     fluxes as each script's use_taper_stocks and use_taper_fluxes set; without
+#     it the DBH is kept as recorded.
 #   - Stump: an alive (A) record without a DBH whose raw status (DFstatus) is
 #     "broken below". The stem is alive but has no stem at 1.3 m: it gets no
 #     DBH, and it splits the stem's life into segments (`seg`). The stem

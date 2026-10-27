@@ -88,6 +88,15 @@ The three scripts read the R tables in the same way, with the rules of
   other species (`use_taper_species_terms`). Palms keep the recorded DBH
   (`taper_palms = FALSE`): they have no buttress taper, and *Socratea* is
   measured above its stilt roots.
+- **Taper for stocks and for fluxes.** The correction is set separately for
+  the stocks (`use_taper_stocks`) and for the fluxes (`use_taper_fluxes`),
+  both `TRUE` by default; without it the DBH is used as recorded, at its height
+  of measurement. `general_plot_information.R` describes stocks only and has
+  `use_taper_stocks` alone. With different settings the stocks and the fluxes
+  are in different diameters: the change of the reported stock between two
+  censuses is then not the net flux, and the scripts check their flux
+  accounting, and apply the Kohyama correction, with the stock in the DBH of
+  the fluxes.
 - **Stump.** An `A` record without a DBH whose `DFstatus` is "broken below":
   the stem is alive but has no stem at 1.3 m (a broken-below record with a
   field tag is that stem). It gets no DBH and is not in the stand. It splits
@@ -119,8 +128,12 @@ by the interval), per stem, then aggregates them.
 2. Removes the giant strangler figs (trees of *Ficus costaricana*,
    *obtusifolia*, *popenoei* or *trigonata* with a stem above 500 mm)
    (`remove_strangler_figs`).
-3. Corrects the DBH for taper (above; the recorded value is kept in
-   `dbh_raw`).
+3. Sets the DBH of the fluxes and the DBH of the stocks, each taper-corrected
+   or as recorded (`use_taper_fluxes`, `use_taper_stocks`; above). The
+   recorded value is kept in `dbh_raw`. Steps 4–6 apply to both. Growth,
+   recruitment, mortality, the outlier rule, the Kohyama correction and the
+   size classes of the fluxes use the DBH of the fluxes; the reported stocks
+   (plot and size class) use the DBH of the stocks.
 4. Converts DBH to cm and gives every alive palm stem, *Socratea* aside, its
    species' median DBH over all censuses (`use_median_palm_dbh`).
 5. Fills the DBH of the censuses to fill (`dbh_interp_method`: `linear`, the
@@ -150,11 +163,12 @@ by the interval), per stem, then aggregates them.
    the stage-2 table.
 2. Treats palms, strangler figs and the taper correction as
    `biomass_stocks_fluxes.R` does: the giant strangler figs are removed with
-   every stem of their tree (and leave the posterior paths too), the DBH is
-   taper corrected (palms aside), and every measured alive palm stem other
-   than *Socratea* gets its species' median DBH over all censuses. A palm's basal
-   area is then constant, so identity uncertainty changes only its loss and
-   gain.
+   every stem of their tree (and leave the posterior paths too), the DBH of
+   the fluxes and the DBH of the stocks are taper corrected or not
+   (`use_taper_fluxes`, `use_taper_stocks`; palms aside), and every measured
+   alive palm stem other than *Socratea* gets its species' median DBH over all
+   censuses. A palm's basal area is then constant, so identity uncertainty
+   changes only its loss and gain.
 3. Computes the stocks and fluxes of the exported reconstruction per tree and
    quadrat.
 4. Separates trees with one sampled path (no identity uncertainty) from trees
@@ -213,9 +227,9 @@ Scope:
 
 1. Loads the R tables and the species table. An individual is a `treeID`; the
    stems of a census are those with a DBH at 1.3 m (measured or filled).
-2. Uses the taper-corrected DBH and the filled censuses of the other two
-   scripts, and places trees without coordinates at the centre of their
-   quadrat. It describes every
+2. Uses the taper-corrected DBH (`use_taper_stocks`; `FALSE`: the DBH as
+   recorded) and the filled censuses of the other two scripts, and places
+   trees without coordinates at the centre of their quadrat. It describes every
    tree of the plot: the giant strangler figs and the measured palm diameters
    stay, so its stand basal area is not the stock of
    `basal_area_uncertainty.R`.
@@ -230,6 +244,8 @@ Scope:
 | Setting | Script | Default | What it does |
 | --- | --- | --- | --- |
 | `remove_strangler_figs`, `use_median_palm_dbh` | biomass, basal area | `TRUE`, `TRUE` | Giant strangler figs removed; palm DBH set to the species median |
+| `use_taper_stocks` | biomass, basal area, plot information | `TRUE` | Stocks from the taper-corrected DBH (`FALSE`: the DBH as recorded, at its height of measurement) |
+| `use_taper_fluxes` | biomass, basal area | `TRUE` | Fluxes (growth, recruitment, mortality) from the taper-corrected DBH (`FALSE`: the DBH as recorded) |
 | `use_taper_species_terms`, `taper_palms` | biomass, basal area, plot information | `TRUE`, `FALSE` | Taper model with the species terms of Cushman et al. (2014); palms keep the recorded DBH (`FALSE`, `TRUE`: the base class for every species and palms corrected too, as Piponiot et al. 2024) |
 | `biomass_allometry`, `use_local_height_allometry` | biomass | `"chave14"`, `TRUE` | AGB allometry; Martínez Cano et al. (2019) height model |
 | `use_kohyama19_correction` | biomass | `TRUE` | Kohyama et al. (2019) correction of productivity and mortality |
@@ -258,8 +274,11 @@ newer than the stage-2 table and come from the same engine run (the
 `engine_run` attribute of the posterior file against
 `DATA/PROCESSED/engine_run.txt`).
 
-`basal_area_uncertainty.R` checks, among others, that in every
-realization growth + loss + gain equals the change of the plot stock, reports
+`biomass_stocks_fluxes.R` and `basal_area_uncertainty.R` check that the
+stocks and the fluxes hold the same stem-censuses, and that both use the same
+DBH when their taper settings are equal. `basal_area_uncertainty.R` checks,
+among others, that in every realization growth + loss + gain equals the
+change of the plot stock in the DBH of the fluxes, reports
 the largest difference between a realization's plot stock and the exported
 stock (only stems alive without a measurement can differ), and writes its
 diagnostics to `ba_mc_diagnostics.txt`.

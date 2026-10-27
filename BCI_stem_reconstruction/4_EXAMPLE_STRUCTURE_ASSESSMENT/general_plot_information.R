@@ -26,7 +26,9 @@ workspace_root <- getwd()
 #                  measurement. Trees without (gx, gy) are placed at the centre
 #                  of their 20 m quadrat (Sec. 3).
 #   DBH          : Cushman et al. 2014 taper-corrected diameter at 1.3 m, as
-#                  in the other two scripts (palms keep the measured DBH). An
+#                  in the other two scripts (palms keep the measured DBH);
+#                  with use_taper_stocks = FALSE, the DBH as recorded at its
+#                  height of measurement. An
 #                  alive census whose DBH was missed in the field after a
 #                  measurement of the stem (no stump in between) gets a DBH
 #                  from the stem's own measurements: interpolated in time
@@ -107,7 +109,9 @@ set.seed(42) # for reproducibility
 # settings of basal_area_uncertainty.R and biomass_stocks_fluxes.R. Unlike
 # those scripts, this one keeps the giant strangler figs and the measured palm
 # diameters (a description of every tree of the plot), so its stand basal area
-# is not their stock.
+# is not their stock. Everything here describes stocks (no fluxes), so only
+# the taper setting of the stocks applies.
+use_taper_stocks <- TRUE # basal area and size classes from the taper-corrected DBH (FALSE: from the DBH as recorded, at its height of measurement)
 use_taper_species_terms <- TRUE # taper model with the species terms of Cushman et al. 2014, Table 3 (FALSE: the base class for every species)
 taper_palms <- FALSE # FALSE: palms keep their measured DBH (no buttress taper; Socratea is measured above its stilt roots)
 
@@ -316,8 +320,9 @@ rec <- merge(rec, bci.spptable, by = "sp", all.x = TRUE)
 # ---- Taper correction -------------------------------------
 # Model 1 of Cushman et al. (2014) with the species terms of their Table 3
 # (taper_2014() and stem_dbh_taper(), stem_dbh.R); palms keep the recorded DBH
-# (taper_palms = FALSE). `dbh` becomes the corrected value (mm); the recorded
-# one is kept in dbh_raw.
+# (taper_palms = FALSE). `dbh` becomes the corrected value (mm) with
+# use_taper_stocks, else stays as recorded; the recorded one is kept in
+# dbh_raw.
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
 rec[, dbh_raw := dbh] # as measured at the POM (mm)
 if (use_taper_species_terms) {
@@ -325,7 +330,8 @@ if (use_taper_species_terms) {
         examples = setdiff(names(TAPER_SPECIES_2014), rec$sp))
 }
 rec[, dbh_t := stem_dbh_taper(rec, species_terms = use_taper_species_terms, taper_palms = taper_palms)]
-rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
+rec[, dbh := if (use_taper_stocks) fifelse(!is.na(dbh_t), dbh_t, dbh_raw) else dbh_raw]
+message(sprintf("[TAPER] basal area and size classes from the %s", if (use_taper_stocks) "taper-corrected DBH" else "DBH as recorded"))
 
 # ---- Alive stems without a measured DBH -------------------------------
 # An alive census whose measurement was missed in the field, after a
@@ -968,7 +974,7 @@ print(census_div_dt)
 #   10–20, 20–30, 30–50, 50–70, 70–100,
 #   100–150, 150–200, 200–300, 300–500, ≥500
 # The distribution uses measured diameters only (interpolated DBHs are
-# excluded) and is taper corrected.
+# excluded), taper corrected with use_taper_stocks.
 
 breaks_mm <- c(10, 20, 30, 50, 70, 100, 150, 200, 300, 500, Inf)
 labels_mm <- c(

@@ -109,6 +109,11 @@
 #     without a measurement are gap-filled like any other stem, which gives the
 #     same median (a stem never measured is not in the stock, as for every
 #     species in this script).
+# Taper correction: the fluxes (Growth / Loss / Gain) use the DBH set by
+# use_taper_fluxes (`dbh`, BA) and the stocks the DBH set by use_taper_stocks
+# (`dbh_stock`, BA_stock). The accounting check (Growth + Loss + Gain = stock
+# change) uses the stock in the DBH of the fluxes; with use_taper_stocks !=
+# use_taper_fluxes the reported stock (feathers, Figure 1) is in another DBH.
 # No correction is applied for the buttress bias of the first census, and the
 # Kohyama et al. (2019) correction is not applied.
 # ==============================================================================
@@ -158,6 +163,8 @@ report_splice_methods <- TRUE
 remove_strangler_figs <- TRUE # exclude all giant Ficus strangler spp. (Rutishauser 2020)
 use_median_palm_dbh <- TRUE # replace palm DBH with the species median (except Socratea)
 # Taper correction, as in biomass_stocks_fluxes.R
+use_taper_stocks <- TRUE # BA stocks from the taper-corrected DBH (FALSE: from the DBH as recorded, at its height of measurement)
+use_taper_fluxes <- TRUE # BA fluxes (growth, loss, gain) from the taper-corrected DBH (FALSE: from the DBH as recorded)
 use_taper_species_terms <- TRUE # taper model with the species terms of Cushman et al. 2014, Table 3 (FALSE: the base class for every species)
 taper_palms <- FALSE # FALSE: palms keep their measured DBH (no buttress taper; Socratea is measured above its stilt roots)
 
@@ -284,8 +291,10 @@ if (remove_strangler_figs) {
 
 # Model 1 of Cushman et al. (2014) with the species terms of their Table 3
 # (taper_2014() and stem_dbh_taper(), stem_dbh.R); palms keep the recorded DBH
-# (taper_palms = FALSE). `dbh` becomes the corrected value (mm); the recorded
-# one is kept in dbh_raw.
+# (taper_palms = FALSE). Two diameters (mm) follow; the recorded one is kept
+# in dbh_raw:
+#   dbh       — of the fluxes: taper-corrected with use_taper_fluxes, else as recorded
+#   dbh_stock — of the stocks: taper-corrected with use_taper_stocks, else as recorded
 rec[, hom := ifelse(is.na(hom), 1.3, hom)]
 if (use_taper_species_terms) {
     bio_check(all(names(TAPER_SPECIES_2014) %in% rec$sp), "The ten focal species of the taper model (Cushman et al. 2014) are in the data",
@@ -294,11 +303,18 @@ if (use_taper_species_terms) {
 }
 rec[, dbh_t := stem_dbh_taper(rec, species_terms = use_taper_species_terms, taper_palms = taper_palms)]
 rec[, dbh_raw := dbh]
-rec[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
+rec[, dbh := if (use_taper_fluxes) fifelse(!is.na(dbh_t), dbh_t, dbh_raw) else dbh_raw]
+rec[, dbh_stock := if (use_taper_stocks) fifelse(!is.na(dbh_t), dbh_t, dbh_raw) else dbh_raw]
+cat(sprintf(
+    "[TAPER] stocks: %s | fluxes: %s\n",
+    if (use_taper_stocks) "taper-corrected DBH" else "DBH as recorded",
+    if (use_taper_fluxes) "taper-corrected DBH" else "DBH as recorded"
+))
 
 # Palm DBH correction (Rutishauser et al. 2020; Piponiot et al. 2024): palms other
 # than Socratea do not grow in diameter, so each measured alive stem takes the
-# median DBH of its species over all censuses, as in biomass_stocks_fluxes.R.
+# median DBH of its species over all censuses, as in biomass_stocks_fluxes.R
+# (in the DBH of the fluxes and in that of the stocks).
 # Only measured rows change: an unmeasured alive census stays unmeasured, so the
 # observations of the posterior paths are unchanged, and it is gap-filled
 # from the stem's own (equal) measurements.
@@ -309,7 +325,7 @@ if (use_median_palm_dbh) {
     dbh_before_palm <- rec$dbh[palm_rows]
     rec[
         Family %in% "Arecaceae" & !Genus %in% "Socratea" & Rstatus == "A" & !is.na(dbh),
-        dbh := median(dbh, na.rm = TRUE),
+        `:=`(dbh = median(dbh, na.rm = TRUE), dbh_stock = median(dbh_stock, na.rm = TRUE)),
         by = Latin
     ]
     n_palm_changed <- sum(abs(rec$dbh[palm_rows] - dbh_before_palm) > 1e-9)
@@ -350,18 +366,21 @@ ba_m2 <- function(dbh_mm) pi / 4 * (dbh_mm / 1000)^2
 # of stem_dbh.R, shared with general_plot_information.R and
 # biomass_stocks_fluxes.R: an alive census before the stem's first
 # measurement is not filled.
-#   dt        : one row per stem × census with a measured `dbh` and its date `t`
-#   stem_cols : columns identifying a stem (e.g. treeID, stemID)
-#   gap_dates : date `t` of a missing census, joined on its other columns
-#               (the stem's own row date, or the tree's date in that census)
-#   alive     : stem_cols + CensusID of censuses in which the stem is alive
-#               without a DBH (NULL: none)
-#   skip      : stem_cols + CensusID of alive censuses without a DBH that are
-#               not filled (stumps, and censuses after a stump before the
-#               stem's next measurement; NULL: none)
+#   dt         : one row per stem × census with the measured diameters
+#                (value_cols) and its date `t`
+#   stem_cols  : columns identifying a stem (e.g. treeID, stemID)
+#   gap_dates  : date `t` of a missing census, joined on its other columns
+#                (the stem's own row date, or the tree's date in that census)
+#   alive      : stem_cols + CensusID of censuses in which the stem is alive
+#                without a DBH (NULL: none)
+#   skip       : stem_cols + CensusID of alive censuses without a DBH that are
+#                not filled (stumps, and censuses after a stump before the
+#                stem's next measurement; NULL: none)
+#   value_cols : the diameter columns to fill, each by the same rule (the DBH
+#                of the fluxes and that of the stocks)
 # Added rows are flagged `interpolated` (not a measurement); those beyond the
 # measured span are also flagged `carried`.
-fill_stem_gaps <- function(dt, stem_cols, gap_dates, alive = NULL, skip = NULL) {
+fill_stem_gaps <- function(dt, stem_cols, gap_dates, alive = NULL, skip = NULL, value_cols = "dbh") {
     dt <- copy(dt)
     dt[, `:=`(interpolated = FALSE, carried = FALSE)]
     setkeyv(dt, c(stem_cols, "CensusID"))
@@ -375,19 +394,23 @@ fill_stem_gaps <- function(dt, stem_cols, gap_dates, alive = NULL, skip = NULL) 
         full <- gaps[, .(CensusID = seq.int(c_min, c_max)), by = stem_cols]
         miss <- full[!dt, on = c(stem_cols, "CensusID")]
         if (!is.null(skip) && nrow(skip) > 0L) miss <- miss[!skip, on = c(stem_cols, "CensusID")]
-        prev <- dt[miss, on = c(stem_cols, "CensusID"), roll = Inf, .(d_prev = x.dbh, t_prev = x.t)]
-        nxt <- dt[miss, on = c(stem_cols, "CensusID"), roll = -Inf, .(d_next = x.dbh, t_next = x.t)]
-        miss[, c("d_prev", "t_prev") := prev]
-        miss[, c("d_next", "t_next") := nxt]
+        # rows of dt holding the previous and the next measurement
+        i_prev <- dt[miss, on = c(stem_cols, "CensusID"), roll = Inf, which = TRUE]
+        i_next <- dt[miss, on = c(stem_cols, "CensusID"), roll = -Inf, which = TRUE]
+        miss[, `:=`(t_prev = dt$t[i_prev], t_next = dt$t[i_next])]
         miss[gap_dates, on = date_keys, t := i.t]
-        miss[, dbh := d_prev + (d_next - d_prev) * (t - t_prev) / (t_next - t_prev)]
-        bad <- miss[is.na(dbh) | !(t_prev < t & t < t_next)]
+        for (v in value_cols) {
+            d_prev <- dt[[v]][i_prev]
+            d_next <- dt[[v]][i_next]
+            miss[, (v) := d_prev + (d_next - d_prev) * (t - t_prev) / (t_next - t_prev)]
+        }
+        bad <- miss[!complete.cases(miss[, value_cols, with = FALSE]) | !(t_prev < t & t < t_next)]
         bio_check(
             nrow(bad) == 0L,
             "Every alive-but-unmeasured census lies in time between two measurements of its stem and gets an interpolated DBH",
             examples = bad$treeID, n_bad = nrow(bad)
         )
-        added$gap <- miss[, c(stem_cols, "CensusID", "dbh", "t"), with = FALSE][, `:=`(interpolated = TRUE, carried = FALSE)]
+        added$gap <- miss[, c(stem_cols, "CensusID", value_cols, "t"), with = FALSE][, `:=`(interpolated = TRUE, carried = FALSE)]
     }
 
     # 2. Alive censuses after the measured span.
@@ -396,21 +419,25 @@ fill_stem_gaps <- function(dt, stem_cols, gap_dates, alive = NULL, skip = NULL) 
         carry <- rng[carry, on = stem_cols, nomatch = 0L][CensusID > c_max]
         if (nrow(carry) > 0L) {
             carry[gap_dates, on = date_keys, t := i.t]
-            # last measurement (after the span) and the one before it
-            lastm <- dt[carry, on = c(stem_cols, "CensusID"), roll = Inf, .(c_l = x.CensusID, d_l = x.dbh, t_l = x.t)]
-            carry[, c("c_l", "d_l", "t_l") := lastm]
+            # rows of dt holding the last measurement (after the span) and the one before it
+            i_l <- dt[carry, on = c(stem_cols, "CensusID"), roll = Inf, which = TRUE]
+            carry[, `:=`(c_l = dt$CensusID[i_l], t_l = dt$t[i_l])]
             prevq <- carry[, c(stem_cols, "CensusID"), with = FALSE][, CensusID := carry$c_l - 1L]
-            prevm <- dt[prevq, on = c(stem_cols, "CensusID"), roll = Inf, .(d_p = x.dbh, t_p = x.t)]
-            carry[, c("d_p", "t_p") := prevm]
-            carry[, growth := fifelse(is.na(d_p), 0, pmax((d_l - d_p) / (t_l - t_p), 0))]
-            carry[, dbh := d_l + growth * (t - t_l)]
-            bad <- carry[is.na(dbh) | !(t > t_l)]
+            i_p <- dt[prevq, on = c(stem_cols, "CensusID"), roll = Inf, which = TRUE]
+            t_p <- dt$t[i_p]
+            for (v in value_cols) {
+                d_l <- dt[[v]][i_l]
+                d_p <- dt[[v]][i_p]
+                growth <- fifelse(is.na(d_p), 0, pmax((d_l - d_p) / (carry$t_l - t_p), 0))
+                carry[, (v) := d_l + growth * (t - t_l)]
+            }
+            bad <- carry[!complete.cases(carry[, value_cols, with = FALSE]) | !(t > t_l)]
             bio_check(
                 nrow(bad) == 0L,
                 "Every alive census after a stem's last measurement gets a DBH from the stem's own measurements",
                 examples = bad$treeID, n_bad = nrow(bad)
             )
-            added$carry <- carry[, c(stem_cols, "CensusID", "dbh", "t"), with = FALSE][, `:=`(interpolated = TRUE, carried = TRUE)]
+            added$carry <- carry[, c(stem_cols, "CensusID", value_cols, "t"), with = FALSE][, `:=`(interpolated = TRUE, carried = TRUE)]
         }
     }
 
@@ -505,8 +532,16 @@ census_pairs[, Interval_yr := as.numeric(difftime(Date_to, Date_from, units = "d
 
 stem_obs <- rec[
     !is.na(dbh) & !is.na(treeID) & !is.na(stemID),
-    .(quadrat, treeID, stemID, CensusID, StemPaths, dbh, t = as.numeric(ExactDate))
+    .(quadrat, treeID, stemID, CensusID, StemPaths, dbh, dbh_stock, t = as.numeric(ExactDate))
 ]
+bio_check(
+    stem_obs[, !anyNA(dbh_stock)] && rec[, identical(is.na(dbh), is.na(dbh_stock))],
+    "The stocks and the fluxes hold the same measured stem-censuses"
+)
+bio_check(
+    use_taper_stocks != use_taper_fluxes || stem_obs[, isTRUE(all.equal(dbh, dbh_stock))],
+    "With the same taper setting for stocks and fluxes, both use the same DBH"
+)
 bio_check(
     stem_obs[, !anyDuplicated(stem_obs[, .(treeID, stemID, CensusID)])],
     "One measurement per stem and census in the exported reconstruction"
@@ -532,8 +567,9 @@ bio_check(
 )
 alive_nodbh <- rec[fill == TRUE, .(treeID, stemID, CensusID)]
 stump_cens <- rec[Rstatus == "A" & is.na(dbh) & !fill, .(treeID, stemID, CensusID)]
-exp_stems <- fill_stem_gaps(stem_obs, c("treeID", "stemID"), stem_dates, alive = alive_nodbh, skip = stump_cens)
-exp_stems[, BA := ba_m2(dbh)]
+exp_stems <- fill_stem_gaps(stem_obs, c("treeID", "stemID"), stem_dates, alive = alive_nodbh, skip = stump_cens, value_cols = c("dbh", "dbh_stock"))
+# BA of the fluxes (BA) and of the stocks (BA_stock)
+exp_stems[, `:=`(BA = ba_m2(dbh), BA_stock = ba_m2(dbh_stock))]
 cat(sprintf(
     "[BA] exported: %d measured stem-censuses | alive without DBH: %d (interpolated %d, trend continued after the last measurement %d, never measured %d)\n",
     nrow(stem_obs), nrow(alive_nodbh), exp_stems[interpolated & !carried, .N], exp_stems[carried == TRUE, .N],
@@ -568,8 +604,10 @@ bio_check(
 )
 rm(alive_rows, not_in_stock, not_alive)
 
+# TotalBA_m2: the stock (DBH of the stocks); FluxBA_m2: the stock in the DBH
+# of the fluxes, for the accounting check (4.7).
 tree_census <- exp_stems[,
-    .(TotalBA_m2 = fsum(BA), MeasuredBA_m2 = fsum(BA * !interpolated), NumStems = .N),
+    .(TotalBA_m2 = fsum(BA_stock), MeasuredBA_m2 = fsum(BA_stock * !interpolated), NumStems = .N, FluxBA_m2 = fsum(BA)),
     by = .(quadrat, treeID, CensusID)
 ]
 setorder(tree_census, treeID, CensusID)
@@ -662,7 +700,7 @@ parts[, `:=`(StemPaths = as.integer(StemPaths), lab = paste0("p", lab), pair = N
 # `oid` identifies an observation independently of StemPaths.
 U <- stem_obs[
     treeID %in% multi_trees,
-    .(treeID, xstem = stemID, CensusID, StemPaths, dbh, t, quadrat)
+    .(treeID, xstem = stemID, CensusID, StemPaths, dbh, dbh_stock, t, quadrat)
 ]
 # Trees without a quadrat (no coordinates) are not in `rec`, so they have no
 # observations here and nothing to sample; they are reported, not used.
@@ -704,17 +742,17 @@ outside <- edge_obs[outside, on = .(treeID, xstem)]
 outside[, anchor_oid := fifelse(position == "after window", last_in, first_in)]
 
 # Story labels per path, keyed by observation id (only measured observations).
-story_lab <- parts[U[story == TRUE & !treeID %in% fallback_trees, .(treeID, StemPaths, oid, CensusID, dbh, t, quadrat)],
+story_lab <- parts[U[story == TRUE & !treeID %in% fallback_trees, .(treeID, StemPaths, oid, CensusID, dbh, dbh_stock, t, quadrat)],
     on = .(treeID, StemPaths), nomatch = 0L
-][, .(treeID, path_idx, oid, lab, CensusID, dbh, t, quadrat)]
+][, .(treeID, path_idx, oid, lab, CensusID, dbh, dbh_stock, t, quadrat)]
 
 anchored <- story_lab[, .(treeID, path_idx, anchor_oid = oid, lab)][
-    outside[!is.na(anchor_oid), .(treeID, oid, anchor_oid, CensusID, dbh, t, quadrat)],
+    outside[!is.na(anchor_oid), .(treeID, oid, anchor_oid, CensusID, dbh, dbh_stock, t, quadrat)],
     on = .(treeID, anchor_oid), allow.cartesian = TRUE, nomatch = 0L
-][, .(treeID, path_idx, oid, lab, CensusID, dbh, t, quadrat)]
+][, .(treeID, path_idx, oid, lab, CensusID, dbh, dbh_stock, t, quadrat)]
 
 own_stem <- unique(multi[!treeID %in% fallback_trees, .(treeID, path_idx)])[
-    outside[is.na(anchor_oid), .(treeID, oid, lab = paste0("x", xstem), CensusID, dbh, t, quadrat)],
+    outside[is.na(anchor_oid), .(treeID, oid, lab = paste0("x", xstem), CensusID, dbh, dbh_stock, t, quadrat)],
     on = "treeID", allow.cartesian = TRUE, nomatch = 0L
 ]
 
@@ -781,13 +819,14 @@ path_skip <- unique(comp[, .(treeID, path_idx, anchor_oid = oid, lab)][
 ][, .(treeID, path_idx, lab, CensusID)])
 rm(xprev)
 
-comp_f <- fill_stem_gaps(comp, c("treeID", "path_idx", "lab"), tree_dates, alive = path_alive, skip = path_skip)
-comp_f[, BA := ba_m2(dbh)]
+comp_f <- fill_stem_gaps(comp, c("treeID", "path_idx", "lab"), tree_dates, alive = path_alive, skip = path_skip, value_cols = c("dbh", "dbh_stock"))
+comp_f[, `:=`(BA = ba_m2(dbh), BA_stock = ba_m2(dbh_stock))]
 
-# Measured stock per tree and census must be identical in every path.
-meas_path <- comp_f[interpolated == FALSE, .(ba = fsum(BA)), by = .(treeID, path_idx, CensusID)]
-meas_exp <- U[treeID %in% sampled_trees, .(ba_exp = fsum(ba_m2(dbh))), by = .(treeID, CensusID)]
-inv <- meas_exp[meas_path, on = .(treeID, CensusID)][abs(ba - ba_exp) > 1e-9]
+# Measured stock per tree and census must be identical in every path (in the
+# DBH of the fluxes and in that of the stocks).
+meas_path <- comp_f[interpolated == FALSE, .(ba = fsum(BA), ba_stock = fsum(BA_stock)), by = .(treeID, path_idx, CensusID)]
+meas_exp <- U[treeID %in% sampled_trees, .(ba_exp = fsum(ba_m2(dbh)), ba_stock_exp = fsum(ba_m2(dbh_stock))), by = .(treeID, CensusID)]
+inv <- meas_exp[meas_path, on = .(treeID, CensusID)][abs(ba - ba_exp) > 1e-9 | abs(ba_stock - ba_stock_exp) > 1e-9]
 bio_check(
     nrow(inv) == 0L,
     "Measured BA stock per tree and census is identical in every path (identity cannot change measurements)",
@@ -805,7 +844,7 @@ post_decomp <- decompose_intervals(
     tree_cols = c("quadrat", "treeID", "path_idx")
 )
 setkey(post_decomp, treeID, path_idx)
-tree_stock <- comp_f[, .(TotalBA_m2 = fsum(BA)), by = .(quadrat, treeID, path_idx, CensusID)]
+tree_stock <- comp_f[, .(TotalBA_m2 = fsum(BA_stock), FluxBA_m2 = fsum(BA)), by = .(quadrat, treeID, path_idx, CensusID)]
 setkey(tree_stock, treeID, path_idx)
 cat("[BA] per-path decompositions:", nrow(post_decomp), "rows | per-path stocks:", nrow(tree_stock), "rows\n")
 
@@ -819,7 +858,7 @@ fixed_flux_q <- map_tree_change[
 ]
 fixed_stock_q <- tree_census[
     !treeID %in% sampled_trees,
-    .(TotalBA_m2 = fsum(TotalBA_m2)),
+    .(TotalBA_m2 = fsum(TotalBA_m2), FluxBA_m2 = fsum(FluxBA_m2)),
     by = .(quadrat, CensusID)
 ]
 
@@ -854,8 +893,8 @@ for (k in seq_len(K_realizations)) {
     k_flux <- post_decomp[sel, on = .(treeID, path_idx), nomatch = 0L]
     k_flux_q <- k_flux[, lapply(.SD, fsum), .SDcols = flux_cols, by = .(quadrat, CensusID_from, CensusID_to)]
     all_quadrat_realizations[[k]] <- add_fixed(k_flux_q, fixed_flux_q, c("quadrat", "CensusID_from", "CensusID_to"), flux_cols)[, realization := k]
-    k_stock_q <- tree_stock[sel, on = .(treeID, path_idx), nomatch = 0L][, .(TotalBA_m2 = fsum(TotalBA_m2)), by = .(quadrat, CensusID)]
-    all_stock_realizations[[k]] <- add_fixed(k_stock_q, fixed_stock_q, c("quadrat", "CensusID"), "TotalBA_m2")[, realization := k]
+    k_stock_q <- tree_stock[sel, on = .(treeID, path_idx), nomatch = 0L][, .(TotalBA_m2 = fsum(TotalBA_m2), FluxBA_m2 = fsum(FluxBA_m2)), by = .(quadrat, CensusID)]
+    all_stock_realizations[[k]] <- add_fixed(k_stock_q, fixed_stock_q, c("quadrat", "CensusID"), c("TotalBA_m2", "FluxBA_m2"))[, realization := k]
     if (write_tree_realizations) {
         k_tree <- rbindlist(list(
             map_tree_change[!treeID %in% sampled_trees, c("quadrat", "treeID", "CensusID_from", "CensusID_to", flux_cols), with = FALSE],
@@ -870,10 +909,12 @@ all_quadrat_realizations[, DeltaBA_total := Growth_BA + Loss_BA + Gain_BA]
 cat("[BA] realizations:", K_realizations, "| quadrat-flux rows:", nrow(all_quadrat_realizations), "| stock rows:", nrow(all_stock_realizations), "\n")
 
 # ---- 4.7 Accounting and invariance checks ----------------------------------
+# The fluxes add up to the change of the stock in their own DBH (FluxBA_m2);
+# the reported stock is TotalBA_m2 (the DBH of the stocks).
 plot_flux_real <- all_quadrat_realizations[, lapply(.SD, fsum), .SDcols = c(flux_cols, "DeltaBA_total"), by = .(CensusID_from, CensusID_to, realization)]
-plot_stock_real <- all_stock_realizations[, .(TotalBA_m2 = fsum(TotalBA_m2)), by = .(CensusID, realization)]
-acc <- plot_stock_real[, .(CensusID_to = CensusID, realization, s_to = TotalBA_m2)][
-    plot_stock_real[, .(CensusID_from = CensusID, realization, s_from = TotalBA_m2)][
+plot_stock_real <- all_stock_realizations[, .(TotalBA_m2 = fsum(TotalBA_m2), FluxBA_m2 = fsum(FluxBA_m2)), by = .(CensusID, realization)]
+acc <- plot_stock_real[, .(CensusID_to = CensusID, realization, s_to = FluxBA_m2)][
+    plot_stock_real[, .(CensusID_from = CensusID, realization, s_from = FluxBA_m2)][
         plot_flux_real,
         on = .(CensusID_from, realization)
     ],
@@ -882,7 +923,7 @@ acc <- plot_stock_real[, .(CensusID_to = CensusID, realization, s_to = TotalBA_m
 acc_err <- acc[, max(abs(DeltaBA_total - (s_to - s_from)))]
 bio_check(
     acc_err < 1e-6,
-    sprintf("In every realization, Growth + Loss + Gain equals the stock change (max error %.2e m2)", acc_err)
+    sprintf("In every realization, Growth + Loss + Gain equals the stock change, both in the DBH of the fluxes (max error %.2e m2)", acc_err)
 )
 map_plot_stock <- map_quadrat_stock[, .(map = fsum(TotalBA_m2)), by = CensusID]
 stock_dev <- plot_stock_real[map_plot_stock, on = "CensusID"][, max(abs(TotalBA_m2 - map))]
@@ -903,7 +944,7 @@ write_feather(map_quadrat_change, file.path(out_dir, "ba_map_change_quadrat.feat
 write_feather(map_quadrat_stock, file.path(out_dir, "ba_map_stock_quadrat.feather"))
 if (write_quadrat_realizations) {
     write_feather(all_quadrat_realizations, file.path(out_dir, "ba_mc_realizations_quadrat.feather"))
-    write_feather(all_stock_realizations, file.path(out_dir, "ba_mc_realizations_stock_quadrat.feather"))
+    write_feather(all_stock_realizations[, .(quadrat, CensusID, TotalBA_m2, realization)], file.path(out_dir, "ba_mc_realizations_stock_quadrat.feather"))
 }
 write_feather(all_quadrat_summary, file.path(out_dir, "ba_mc_summary_quadrat.feather"))
 write_feather(all_stock_summary, file.path(out_dir, "ba_mc_summary_stock_quadrat.feather"))
@@ -956,6 +997,13 @@ diag_line(sprintf(
 diag_line(sprintf(
     "use_median_palm_dbh = %s: %d palm species (excluding Socratea), %d measured alive stem-censuses, %d given the species median",
     use_median_palm_dbh, n_palm_species, length(palm_rows), n_palm_changed
+))
+diag_line("")
+diag_line("## Taper correction")
+diag_line(sprintf(
+    "use_taper_stocks = %s (stocks: %s) | use_taper_fluxes = %s (fluxes: %s)",
+    use_taper_stocks, if (use_taper_stocks) "taper-corrected DBH" else "DBH as recorded",
+    use_taper_fluxes, if (use_taper_fluxes) "taper-corrected DBH" else "DBH as recorded"
 ))
 diag_line("")
 diag_line("## Trees")
@@ -1115,7 +1163,8 @@ fig1 <- ggplot() +
             } * ")")
     ) +
     theme_forest() +
-    coord_cartesian(ylim = c(30, 35))
+    # 30-35 m2/ha, widened when a stock falls outside (e.g. use_taper_stocks = FALSE)
+    coord_cartesian(ylim = range(c(30, 35, stock_exp$value, stock_mc$lwr, stock_mc$upr)))
 print(fig1)
 
 # ── Figure 2: annual BA flux components per hectare ────────────────────────────

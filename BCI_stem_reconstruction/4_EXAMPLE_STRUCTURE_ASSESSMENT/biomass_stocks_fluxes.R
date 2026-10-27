@@ -31,7 +31,10 @@
 #                 mortality all share the same starting census index.
 #   df_stem_mort  stores mortality at c (last alive census) — no re-indexing needed.
 #
-# All AGB calculations use taper-corrected DBH (dbh_t, _t suffix).
+# Fluxes use the DBH set by use_taper_fluxes (dbh_cm, AGB agb_t; the _t
+# suffix marks the DBH of the fluxes, taper-corrected by default) and stocks
+# the DBH set by use_taper_stocks (dbh_cm_stock, AGB agb_stock). With both
+# switches equal, the two are the same DBH.
 # [EDGE CASE] notes flag non-trivial boundary conditions throughout.
 #
 # INPUTS (run from the project root)
@@ -76,6 +79,8 @@ workspace_root <- getwd()
 # lower/upper_ddbh_threshold  — plausible annualised DBH growth bounds (cm yr⁻¹)
 # hom_change_threshold        — POM shift (m) above which a row is flagged as outlier
 # dbh_interp_method           — "linear", "locf", or "mean" (DBH NA-fill method)
+# use_taper_stocks            — TRUE: stocks from the taper-corrected DBH
+# use_taper_fluxes            — TRUE: fluxes from the taper-corrected DBH
 # use_taper_species_terms     — TRUE: taper with the species terms of Cushman 2014
 # taper_palms                 — FALSE: palms keep their measured DBH
 
@@ -84,6 +89,8 @@ use_median_palm_dbh <- TRUE # replace palm DBH with species median (except Socra
 biomass_allometry <- "chave14" # "chave14" or "chave05"
 use_local_height_allometry <- TRUE # use Martinez-Cano 2019 height model
 use_kohyama19_correction <- TRUE # Kohyama et al. 2019 productivity correction
+use_taper_stocks <- TRUE # standing AGB from the taper-corrected DBH (FALSE: from the DBH as recorded, at its height of measurement)
+use_taper_fluxes <- TRUE # productivity and mortality from the taper-corrected DBH (FALSE: from the DBH as recorded)
 use_taper_species_terms <- TRUE # taper model with the species terms of Cushman et al. 2014, Table 3 (FALSE: the base class for every species)
 taper_palms <- FALSE # FALSE: palms keep their measured DBH (no buttress taper; Socratea is measured above its stilt roots)
 
@@ -271,9 +278,11 @@ rm(large_strangler_trees)
 # Section 5 — Taper correction
 # ============================================================
 # Model 1 of Cushman et al. (2014) with the species terms of their Table 3
-# (taper_2014() and stem_dbh_taper(), stem_dbh.R). `dbh` becomes the
-# taper-corrected value (mm); the recorded one is kept in dbh_raw. Palms keep
-# the recorded DBH (taper_palms = FALSE).
+# (taper_2014() and stem_dbh_taper(), stem_dbh.R). Palms keep the recorded
+# DBH (taper_palms = FALSE). Two diameters (mm) follow; the recorded one is
+# kept in dbh_raw:
+#   dbh       — of the fluxes: taper-corrected with use_taper_fluxes, else as recorded
+#   dbh_stock — of the stocks: taper-corrected with use_taper_stocks, else as recorded
 df_stem[, hom := ifelse(is.na(hom), 1.3, hom)]
 if (use_taper_species_terms) {
   bio_check(all(names(TAPER_SPECIES_2014) %in% df_stem$sp), "The ten focal species of the taper model (Cushman et al. 2014) are in the data",
@@ -281,13 +290,20 @@ if (use_taper_species_terms) {
 }
 df_stem[, dbh_t := stem_dbh_taper(df_stem, species_terms = use_taper_species_terms, taper_palms = taper_palms)]
 df_stem[, dbh_raw := dbh]
-df_stem[, dbh := fifelse(!is.na(dbh_t), dbh_t, dbh_raw)]
+df_stem[, dbh := if (use_taper_fluxes) fifelse(!is.na(dbh_t), dbh_t, dbh_raw) else dbh_raw]
+df_stem[, dbh_stock := if (use_taper_stocks) fifelse(!is.na(dbh_t), dbh_t, dbh_raw) else dbh_raw]
+message(sprintf(
+  "[TAPER] stocks: %s | fluxes: %s",
+  if (use_taper_stocks) "taper-corrected DBH" else "DBH as recorded",
+  if (use_taper_fluxes) "taper-corrected DBH" else "DBH as recorded"
+))
 
 # ============================================================
 # Section 6 — DBH unit conversion: mm to cm
 # ============================================================
 # Raw BCI RTABLE DBH is in mm. All allometric equations expect cm.
 df_stem[, dbh_cm := dbh / 10]
+df_stem[, dbh_cm_stock := dbh_stock / 10]
 
 # ============================================================
 # Section 7 — Palm DBH correction
@@ -295,10 +311,11 @@ df_stem[, dbh_cm := dbh / 10]
 # Non-Socratea palms do not grow in diameter; observed DBH changes are measurement
 # error. Replace each species' DBH with the species median across all censuses
 # (Rutishauser et al. 2020; Piponiot et al. 2024).
-# The median is applied to dbh_cm — the column every downstream AGB calculation
-# uses (dbh_cm is created in Section 6, so correcting `dbh` here would have no
-# effect) — and only to the rows in the stock: measured, or to fill (`fill`,
-# Section 2). An alive palm census to fill takes the species median too.
+# The median is applied to dbh_cm and dbh_cm_stock — the columns every
+# downstream AGB calculation uses (they are created in Section 6, so
+# correcting `dbh` here would have no effect) — and only to the rows in the
+# stock: measured, or to fill (`fill`, Section 2). An alive palm census to fill
+# takes the species median too.
 n_palm_median_fill <- 0L
 if (use_median_palm_dbh) {
   n_palm_median_fill <- df_stem[
@@ -306,7 +323,7 @@ if (use_median_palm_dbh) {
   ]
   df_stem[
     Family == "Arecaceae" & Genus != "Socratea" & (!is.na(dbh_cm) | fill),
-    dbh_cm := median(dbh_cm, na.rm = TRUE), .(Latin)
+    `:=`(dbh_cm = median(dbh_cm, na.rm = TRUE), dbh_cm_stock = median(dbh_cm_stock, na.rm = TRUE)), .(Latin)
   ]
 }
 
@@ -378,6 +395,7 @@ message(sprintf(
   n_to_fill, dbh_interp_method
 ))
 interpolate_dbh(df_stem, method = dbh_interp_method, var_to_interpolate = "dbh_cm")
+interpolate_dbh(df_stem, method = dbh_interp_method, var_to_interpolate = "dbh_cm_stock")
 # was_interpolated marks every row in the stock whose DBH is not a measurement:
 # rows filled here and palm rows to fill given the species median (Section 7).
 df_stem[, was_interpolated := is.na(dbh_raw) & !is.na(dbh_cm)]
@@ -389,18 +407,28 @@ message(sprintf(
 rm(n_to_fill, n_palm_median_fill)
 
 # The stock: every census to fill has a DBH, and nothing else without a
-# measurement has one.
+# measurement has one (in the DBH of the fluxes and in that of the stocks).
 bio_check(
-  df_stem[fill == TRUE & is.na(dbh_cm), .N] == 0L,
+  df_stem[fill == TRUE & (is.na(dbh_cm) | is.na(dbh_cm_stock)), .N] == 0L,
   "Every alive census to fill (after a measurement of its segment) has a DBH",
-  examples = df_stem[fill == TRUE & is.na(dbh_cm), paste(treeID, stemID, sep = "_")],
-  n_bad = df_stem[fill == TRUE & is.na(dbh_cm), .N]
+  examples = df_stem[fill == TRUE & (is.na(dbh_cm) | is.na(dbh_cm_stock)), paste(treeID, stemID, sep = "_")],
+  n_bad = df_stem[fill == TRUE & (is.na(dbh_cm) | is.na(dbh_cm_stock)), .N]
 )
 bio_check(
-  df_stem[is.na(dbh_raw) & !fill & !is.na(dbh_cm), .N] == 0L,
+  df_stem[is.na(dbh_raw) & !fill & (!is.na(dbh_cm) | !is.na(dbh_cm_stock)), .N] == 0L,
   "No stump, no alive census before a stem's first measurement or after a stump, and no dead census gets a DBH",
-  examples = df_stem[is.na(dbh_raw) & !fill & !is.na(dbh_cm), paste(treeID, stemID, sep = "_")],
-  n_bad = df_stem[is.na(dbh_raw) & !fill & !is.na(dbh_cm), .N]
+  examples = df_stem[is.na(dbh_raw) & !fill & (!is.na(dbh_cm) | !is.na(dbh_cm_stock)), paste(treeID, stemID, sep = "_")],
+  n_bad = df_stem[is.na(dbh_raw) & !fill & (!is.na(dbh_cm) | !is.na(dbh_cm_stock)), .N]
+)
+# The stocks and the fluxes hold the same stems in every census; with the
+# same taper setting they use the same DBH.
+bio_check(
+  df_stem[, identical(is.na(dbh_cm), is.na(dbh_cm_stock))],
+  "The stocks and the fluxes hold the same stem-censuses"
+)
+bio_check(
+  use_taper_stocks != use_taper_fluxes || df_stem[, isTRUE(all.equal(dbh_cm, dbh_cm_stock))],
+  "With the same taper setting for stocks and fluxes, both use the same DBH"
 )
 
 # ============================================================
@@ -453,15 +481,23 @@ agb_bci <- function(dbh, # dbh, in cm
 }
 
 # ============================================================
-# Section 10 — Estimate AGB (taper-corrected)
+# Section 10 — Estimate AGB
 # ============================================================
-# AGB (Mg dry mass) from taper-corrected DBH (`dbh_cm`) only.
+# AGB (Mg dry mass) of the fluxes (agb_t, from dbh_cm) and of the stocks
+# (agb_stock, from dbh_cm_stock).
 # Allometry and height model follow the Section 1 settings:
 #   biomass_allometry          — "chave14" (default) or "chave05"
 #   use_local_height_allometry — TRUE: Martinez-Cano et al. 2019 height model
 # Palms use the Goodman et al. 2013 palm-specific allometry.
 df_stem[, agb_t := agb_bci(
   dbh = dbh_cm,
+  wsg = wsg,
+  method = biomass_allometry,
+  use_height_allom = use_local_height_allometry,
+  palms = (Family == "Arecaceae")
+)]
+df_stem[, agb_stock := agb_bci(
+  dbh = dbh_cm_stock,
   wsg = wsg,
   method = biomass_allometry,
   use_height_allom = use_local_height_allometry,
@@ -526,10 +562,16 @@ correct_1985_small_stem_growth <- function(dt) {
 data.table::setorder(df_stem, treeID, stemID, CensusID)
 
 # One consistent size class definition used for outlier substitution AND aggregation.
-# Breaks (cm): [0,10), [10,20), [20,50), [50,500)
+# Breaks (cm): [0,10), [10,20), [20,50), [50,500). `size` is the class of the
+# DBH of the fluxes; `size_stock` that of the DBH of the stocks (the stocks by
+# size class, Section 20).
 # [EDGE CASE] Stems with NA DBH get size = NA and are excluded from
 #             size-stratified analyses.
 df_stem[, size := cut(dbh_cm,
+  breaks = c(0, 10, 20, 50, 500),
+  include.lowest = TRUE, right = FALSE
+)]
+df_stem[, size_stock := cut(dbh_cm_stock,
   breaks = c(0, 10, 20, 50, 500),
   include.lowest = TRUE, right = FALSE
 )]
@@ -774,14 +816,17 @@ df_stem[
 # One row per ALIVE stem per census.
 # Represents standing AGB at each measured census (the "stock").
 # Use this to compute AGB at any given census snapshot.
-# Filter on dbh_cm (taper-corrected) rather than raw dbh so that only rows with
-# a valid corrected measurement are included as "standing stock".
+# Filter on dbh_cm (corrected and filled) rather than raw dbh so that only
+# rows with a valid DBH are included as "standing stock".
+# agb_stock (DBH of the stocks) is the reported stock (Sections 19-20);
+# agb_t (DBH of the fluxes) is the stock that goes with the fluxes (the
+# Kohyama correction, Section 17, and the conservation diagnostic T6).
 df_stem_status <- df_stem[
   !is.na(dbh_cm) & Rstatus == "A",
   .(
     stemID, treeID, sp, Latin, Family, Genus, Species,
     quadrat, CensusID, dT, ExactDate,
-    dbh_cm, hom, agb_t, size, wsg
+    dbh_cm, dbh_cm_stock, hom, agb_t, agb_stock, size, size_stock, wsg
   )
 ]
 
@@ -1054,7 +1099,9 @@ run_tests <- function() {
 
   # T6. AGB stock should be non-decreasing then decreasing only when (mort > prod);
   #     at minimum, every interval should satisfy:  agb(c+1) ~ agb(c) + (Dagb - DagbM)*dT
-  #     within rounding. Here we check the plot-wide identity.
+  #     within rounding. Here we check the plot-wide identity, with the stock
+  #     in the DBH of the fluxes (agb_t): with use_taper_stocks !=
+  #     use_taper_fluxes the reported stock is in another DBH.
   plot_check <- df_stem_demo_quadrat[
     , .(
       agb_t = sum(agb_t), Dagb = sum(Dagb), DagbM = sum(DagbM), dT = mean(dT)
@@ -1110,11 +1157,16 @@ run_tests()
 # ============================================================
 #
 # Design:
-#   Stock  — aggregated from df_stem_status per quadrat and census; censuses
-#            2-9 are summarised (census 1 is left out, as for the fluxes).
-#   Fluxes — aggregated from df_stem_demo_quadrat, which covers intervals
-#            c → c+1 indexed at c. Census 1 (interval 1→2) is excluded;
-#            the final interval (8→9) is included.
+#   Stock  — aggregated from df_stem_status (agb_stock, the DBH of
+#            use_taper_stocks) per quadrat and census; censuses 2-9 are
+#            summarised (census 1 is left out, as for the fluxes).
+#   Fluxes — aggregated from df_stem_demo_quadrat (the DBH of
+#            use_taper_fluxes), which covers intervals c → c+1 indexed at c.
+#            Census 1 (interval 1→2) is excluded; the final interval (8→9) is
+#            included.
+# With use_taper_stocks != use_taper_fluxes, the change of the reported stock
+# between two censuses is not productivity − mortality (Figure C): the two are
+# in different DBH.
 #
 # Spatial replication: 1250 quadrats of 20×20 m (400 m²).
 # ha⁻¹ conversion: multiply by 10000/400 = 25.
@@ -1186,7 +1238,7 @@ bootstrap_ci <- function(data,
 
 stock_q <- df_stem_status[
   !is.na(quadrat) & quadrat != "",
-  .(agb_ha = sum(agb_t, na.rm = TRUE) * ha_factor),
+  .(agb_ha = sum(agb_stock, na.rm = TRUE) * ha_factor),
   .(quadrat, CensusID)
 ]
 # Every quadrat in every census (0 where it holds no alive stem).
@@ -1264,7 +1316,11 @@ summary_tbl <- merge(
 )
 cat("\n========== PLOT SUMMARY (Mg ha\u207b\u00b9 | Mg ha\u207b\u00b9 yr\u207b\u00b9) ==========\n")
 print(summary_tbl)
-cat("Reference: Piponiot et al. 2024 (same allometry and height model, older wood density values) report 236 Mg ha\u207b\u00b9 for 2015\n")
+cat(sprintf(
+  "Reference: Piponiot et al. 2024, Table S1 (same allometry and height model, older wood density values) report %s Mg ha\u207b\u00b9 for 2015 %s the taper correction\n",
+  if (use_taper_stocks) "263.9" else "236.4",
+  if (use_taper_stocks) "with" else "without"
+))
 
 # --- Figure A: Standing AGB stock (Mg ha⁻¹) ---
 
@@ -1382,13 +1438,14 @@ ggsave(
 # Section 20 — Figure D: AGB stock and fluxes by size class
 # ============================================================
 # Uses df_stem_demo (per quadrat × size × CensusID) — already built.
-# Size classes: [0,10), [10,20), [20,50), [50,500) cm DBH.
+# Size classes: [0,10), [10,20), [20,50), [50,500) cm DBH; the stocks by the
+# DBH of the stocks (size_stock), the fluxes by the DBH of the fluxes (size).
 # ha⁻¹ conversion and bootstrap CIs identical to the plot-level summaries.
 
 size_stock_q <- df_stem_status[
-  !is.na(quadrat) & quadrat != "" & !is.na(size),
-  .(agb_ha = sum(agb_t, na.rm = TRUE) * ha_factor),
-  .(quadrat, CensusID, size)
+  !is.na(quadrat) & quadrat != "" & !is.na(size_stock),
+  .(agb_ha = sum(agb_stock, na.rm = TRUE) * ha_factor),
+  .(quadrat, CensusID, size = size_stock)
 ]
 # Every quadrat × size class in every census (0 where the class is absent);
 # averaging only over quadrats that hold the class would inflate the estimate.
