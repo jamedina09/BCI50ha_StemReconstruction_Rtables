@@ -1,14 +1,16 @@
 # =============================================================================
-# 3_census-9-summary.R — the census-9 (2022–2023) summary of the Abstract of
-# the Data Paper, from the files of this package: living trees,
+# 3_census-9-summary.R — the census-9 (2022–2023) summary of the Abstract and
+# the Data Description of the Data Paper, from the files of this package: living trees,
 # species, genera and families, density and basal area per hectare with 95%
 # intervals, rarity, and the leading species and families.
 #
 #   - Living trees: trees with a living stem (Rstatus A); a tree's basal area
 #     is the sum over its living stems.
-#   - Diameters are corrected to 1.3 m with Model 1 of Cushman et al. (2014)
-#     and the species terms of their Table 3; palms (Arecaceae) keep the
-#     recorded diameter. Basal area = pi/4 * (DBH in m)^2.
+#   - With use_taper_stocks = TRUE (below), diameters are corrected to 1.3 m
+#     with Model 1 of Cushman et al. (2014) and the species terms of their
+#     Table 3, palms (Arecaceae) keeping the recorded diameter; with FALSE,
+#     every diameter is used as recorded, at its height of measurement.
+#     Basal area = pi/4 * (DBH in m)^2.
 #   - Per-hectare values: mean over the 1,250 quadrats of 20 x 20 m (trees
 #     placed by the mean coordinates of their living stems, or at their
 #     quadrat centre without coordinates), with the 95% highest-density
@@ -27,6 +29,10 @@ source(file.path("code", "load-bci-tables.R"))
 DATA <- "data"
 OUT <- if (dir.exists("../manuscript_outputs")) "../manuscript_outputs" else "outputs"
 dir.create(OUT, showWarnings = FALSE)
+
+# Basal area from the taper-corrected DBH (TRUE) or from the DBH as recorded,
+# at its height of measurement (FALSE)
+use_taper_stocks <- FALSE
 
 bci <- load_bci_tables(DATA, censuses = 9)
 spp <- as.data.table(bci$bci.spptable)
@@ -55,9 +61,13 @@ taper_dbh <- function(dbh_mm, hom, sp) {
 # ---- Living stems and trees ----------------------------------------------------------------
 c9 <- c9[Rstatus == "A" & !is.na(dbh) & !is.na(quadrat)]
 c9 <- merge(c9, spp[, .(sp, Family, Genus, Latin)], by = "sp", all.x = TRUE)
-c9[, dbh_t := taper_dbh(dbh, hom, sp)]
-c9[Family %in% "Arecaceae" | is.na(dbh_t), dbh_t := dbh]
-c9[, ba_m2 := pi / 4 * (dbh_t / 1000)^2]
+if (use_taper_stocks) {
+    c9[, dbh_ba := taper_dbh(dbh, hom, sp)]
+    c9[Family %in% "Arecaceae" | is.na(dbh_ba), dbh_ba := dbh]
+} else {
+    c9[, dbh_ba := dbh]
+}
+c9[, ba_m2 := pi / 4 * (dbh_ba / 1000)^2]
 c9[is.na(gx) | is.na(gy), `:=`(
     gx = as.integer(substr(quadrat, 1, 2)) * 20 + 10,
     gy = as.integer(substr(quadrat, 3, 4)) * 20 + 10
@@ -111,6 +121,7 @@ fwrite(summary9, file.path(OUT, "census-9_summary.csv"))
 fwrite(sp9, file.path(OUT, "census-9_species.csv"))
 fwrite(fam9, file.path(OUT, "census-9_families.csv"))
 
+cat("Basal area from the", if (use_taper_stocks) "taper-corrected DBH" else "DBH as recorded", "\n")
 print(summary9, nrows = 50)
 cat("\nLeading species by individuals:\n")
 print(sp9[1:3, .(Latin, individuals, pct_individuals)])
