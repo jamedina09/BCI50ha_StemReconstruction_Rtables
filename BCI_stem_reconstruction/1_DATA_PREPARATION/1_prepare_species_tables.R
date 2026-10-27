@@ -890,12 +890,19 @@ check(
 )
 cat("WFO backbone", WFO_BACKBONE_VERSION, ":", format(nrow(wfo_backbone), big.mark = ","), "records\n")
 
-# Accepted name of every record, to show the accepted name of a synonym (9h)
+# Accepted name of every record, with its parts, to show the accepted name of
+# a synonym and to adopt it if wanted (9h)
 wfo_accepted_names <- wfo_backbone[, .(
     acceptedNameUsageID = taxonID,
     wfo_accepted_name = scientificName,
-    wfo_accepted_author = scientificNameAuthorship
+    wfo_accepted_author = scientificNameAuthorship,
+    wfo_accepted_family = family,
+    wfo_accepted_genus = genus,
+    wfo_accepted_species = specificEpithet,
+    wfo_accepted_rank = taxonRank,
+    wfo_accepted_variety = infraspecificEpithet
 )]
+wfo_accepted_names <- wfo_accepted_names[, lapply(.SD, blank_to_na)]
 
 # --- 8f. Names checked against WFO -------------------------------------------
 # Only the names marked in 8b (wfo_check) are checked. The morphospecies are
@@ -1117,8 +1124,9 @@ check(
 # print_accept_lines()) into the place indicated and running it.
 # WFO is used mainly to correct spelling: the spelling of the name parts (9c)
 # and the format of the authority (9d). Differences in content (9b, 9e, 9f)
-# are checked by hand. Family and status in WFO are shown for information only
-# (9g, 9h) and are not applied.
+# are checked by hand. The family in WFO is shown for information only (9g).
+# A name that WFO treats as a synonym is kept unless its accepted name is
+# adopted by hand in 9h, with the old name added to the synonyms.
 # If a record is chosen by hand in 8h, run 8i again before this section.
 
 # Copy of the names before the review, to record what is changed (9j)
@@ -1322,14 +1330,82 @@ wfo_review[
     .(mnemonic, scientific_name, family, wfo_family)
 ]
 
-# --- 9h. Names that are not accepted in WFO (information only) ---------------
-# Flora de Panamá has priority, so these names are kept. The status and the
-# accepted name in WFO are shown for information (e.g. WFO treats the two
-# varieties of Swartzia simplex as synonyms of the species).
-wfo_review[
+# --- 9h. Names that are not accepted in WFO ---------------------------------
+# WFO treats these names as synonyms (or gives them another status) and points
+# to an accepted name (e.g. Laetia thamnia -> Casearia thamnia; the two
+# varieties of Swartzia simplex -> the species). Flora de Panamá has priority,
+# so each name is kept unless you adopt its accepted name. To adopt one, copy
+# its line (printed by print_accepted_name_lines()) below and run it: it sets
+# the genus, epithet, rank, infraspecific epithet and authority of the accepted
+# name, keeps the code, and adds the old name to the synonyms. The family is
+# not changed (9g); a family line is printed, commented, when the accepted
+# name has another family in WFO. Check the accepted name in Tropicos or IPNI
+# first.
+not_accepted <- wfo_review[
     differs(wfo_status, "Accepted"),
-    .(mnemonic, scientific_name, wfo_status, wfo_accepted_name, wfo_accepted_author)
+    .(
+        mnemonic, scientific_name, authority, family, wfo_status,
+        accepted_name = wfo_accepted_name, accepted_author = wfo_accepted_author,
+        accepted_family = wfo_accepted_family, accepted_genus = wfo_accepted_genus,
+        accepted_species = wfo_accepted_species,
+        accepted_rank = fifelse(
+            is.na(wfo_accepted_variety), NA_character_,
+            fcoalesce(unname(rank_abbreviations[wfo_accepted_rank]), wfo_accepted_rank)
+        ),
+        accepted_variety = wfo_accepted_variety
+    )
 ]
+not_accepted <- merge(not_accepted, spp_new[, .(mnemonic, synonyms)], by = "mnemonic", all.x = TRUE)
+not_accepted[, .(mnemonic, scientific_name, authority, wfo_status, accepted_name, accepted_author, family, accepted_family)]
+
+# print_accepted_name_lines(): for each name, the line that replaces it by its
+# accepted WFO name and keeps the old name as a synonym (the accepted name is
+# removed from the synonyms if it was listed there). A warning is printed when
+# the accepted name is already the name of another code, or the accepted name
+# of another code of this list: adopting it would give two codes one name
+# (e.g. both varieties of Swartzia simplex). Nothing is run.
+print_accepted_name_lines <- function(x) {
+    x <- x[!is.na(accepted_genus) & !is.na(accepted_species)]
+    if (nrow(x) == 0) {
+        cat("No accepted names to adopt\n")
+        return(invisible(NULL))
+    }
+    q <- function(v) fifelse(is.na(v), "NA_character_", encodeString(v, quote = '"'))
+    names_now <- spp_new[, .(mnemonic, scientific_name)]
+    for (i in seq_len(nrow(x))) {
+        r <- x[i]
+        accepted_full <- r$accepted_name
+        same_name <- names_now[mnemonic != r$mnemonic & scientific_name %in% accepted_full, mnemonic]
+        same_accepted <- x[mnemonic != r$mnemonic & accepted_name %in% accepted_full, mnemonic]
+        old_syn <- if (is.na(r$synonyms)) character(0) else str_squish(strsplit(r$synonyms, ",")[[1]])
+        new_syn <- unique(c(setdiff(old_syn[old_syn != ""], accepted_full), r$scientific_name))
+        cat(sprintf(
+            "# %s: %s %s -> %s %s (%s in WFO)\n",
+            r$mnemonic, r$scientific_name, fcoalesce(r$authority, ""),
+            accepted_full, fcoalesce(r$accepted_author, ""), r$wfo_status
+        ))
+        if (length(same_name)) {
+            cat(sprintf("# WARNING: %s is already the name of %s\n", accepted_full, paste(same_name, collapse = ", ")))
+        }
+        if (length(same_accepted)) {
+            cat(sprintf("# WARNING: %s is also the accepted name of %s\n", accepted_full, paste(same_accepted, collapse = ", ")))
+        }
+        cat(sprintf(
+            "spp_new[mnemonic == %s, `:=`(genus = %s, species = %s, rank = %s, variety = %s, name_type = %s, authority = %s, synonyms = %s)]\n",
+            q(r$mnemonic), q(r$accepted_genus), q(r$accepted_species), q(r$accepted_rank), q(r$accepted_variety),
+            q(if (is.na(r$accepted_variety)) "species" else "infraspecific"), q(r$accepted_author),
+            q(paste(new_syn, collapse = ", "))
+        ))
+        if (differs(r$family, r$accepted_family)) {
+            cat(sprintf("# spp_new[mnemonic == %s, family := %s] # WFO family of the accepted name\n", q(r$mnemonic), q(r$accepted_family)))
+        }
+    }
+    invisible(NULL)
+}
+print_accepted_name_lines(not_accepted)
+
+# Adopted accepted names (paste the lines here):
+spp_new[mnemonic == "laetth", `:=`(genus = "Casearia", species = "thamnia", rank = NA_character_, variety = NA_character_, name_type = "species", authority = "(L.) T.Samar. & M.H.Alford", synonyms = "Laetia thamnia")]
 
 # --- 9i. Morphospecies (not checked against WFO) -----------------------------
 # Kept as they are; their missing fields are completed in section 10.
@@ -1362,6 +1438,21 @@ accepted_changes
 # letters, accents), or whose WFO record is not an accepted name (status and
 # accepted name shown). The morphospecies are not checked against WFO and are
 # not listed. Written to DATA/CHECKS/species_table_vs_wfo.csv.
+# A code whose name was replaced by its accepted WFO name in 9h is compared
+# with the accepted record, not with the record of its old name.
+wfo_review_now <- copy(wfo_review)
+adopted_accepted <- wfo_review_now[
+    spp_new[, .(mnemonic, table_name = scientific_name)],
+    on = "mnemonic", nomatch = 0L
+][differs(wfo_status, "Accepted") & table_name == wfo_accepted_name, mnemonic]
+wfo_review_now[mnemonic %in% adopted_accepted, `:=`(
+    wfo_name = wfo_accepted_name, wfo_author = wfo_accepted_author, wfo_family = wfo_accepted_family,
+    wfo_genus = wfo_accepted_genus, wfo_species = wfo_accepted_species,
+    wfo_rank = wfo_accepted_rank, wfo_variety = wfo_accepted_variety,
+    wfo_status = "Accepted"
+)]
+cat(length(adopted_accepted), "codes carry the accepted WFO name adopted in 9h:", adopted_accepted, "\n")
+
 table_vs_wfo <- merge(
     spp_new[wfo_check == TRUE, .(
         mnemonic,
@@ -1372,7 +1463,7 @@ table_vs_wfo <- merge(
         table_infraspecific = fifelse(is.na(rank), NA_character_, paste(rank, variety)),
         table_authority = authority
     )],
-    wfo_review[, .(
+    wfo_review_now[, .(
         mnemonic,
         wfo_name = fifelse(is.na(wfo_author), wfo_name, paste(wfo_name, wfo_author)),
         wfo_family,
@@ -1414,8 +1505,8 @@ table_vs_wfo[wfo_status %in% "Accepted", wfo_accepted_name := NA_character_]
 setcolorder(table_vs_wfo, c("mnemonic", "differing_parts", "wfo_status"))
 table_vs_wfo <- table_vs_wfo[!is.na(differing_parts) | differs(wfo_status, "Accepted")]
 
-# Names of the species table that differ from WFO (with the current inputs:
-# none by any part; 4 names are synonyms in WFO: guargr, laetth, swars1, swars2)
+# Names of the species table that differ from WFO by any part, or that WFO
+# treats as synonyms (the names kept in 9h)
 table_vs_wfo[, .N, by = .(differing_parts, wfo_status)]
 table_vs_wfo[, .(mnemonic, differing_parts, wfo_status, table_name, wfo_name, wfo_accepted_name)]
 

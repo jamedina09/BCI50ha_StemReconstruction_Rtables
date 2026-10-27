@@ -80,8 +80,10 @@ All in `BCI_stem_reconstruction/DATA/RAW/`.
    *P. rohrii*.
 5. Checks every name against the WFO backbone with the `WorldFlora` package.
    WFO only suggests corrections; each correction is adopted by hand in
-   section 9. The authority is compared by its authors only (spaces, periods,
-   capitals and accents aside).
+   section 9. A name that WFO treats as a synonym is kept unless its accepted
+   name is adopted in 9h, which keeps the code and adds the old name to the
+   synonyms (e.g. Laetia thamnia → Casearia thamnia). The authority is
+   compared by its authors only (spaces, periods, capitals and accents aside).
 6. Writes the species table and the check lists.
 
 ### `2_prepare_viewfulltable.R`
