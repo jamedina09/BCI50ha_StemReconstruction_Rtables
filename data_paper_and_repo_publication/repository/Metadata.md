@@ -3,8 +3,8 @@
 data identifier DOI: [to be issued by the repository]
 data paper DOI: [to be issued by Ecology]
 license: [CC0 1.0 or CC BY 4.0, to decide]
-keywords: Barro Colorado Island; demography; forest dynamics plot; ForestGEO; long-term monitoring; mortality; multi-stemmed trees; Panama; recruitment; stem identity reconstruction; tree growth; tropical moist forest
-data paper citation: Mitre, D., R. Pérez, S. Aguilar, S. Lao, R. Condit, S. P. Hubbell, R. B. Foster, S. J. Davies, and J. A. Medina-Vega. [Year]. "Tree Censuses of the Barro Colorado Island 50-ha Plot, Panama, 1982–2023, with Reconstructed Stem Histories." Ecology [volume]: [article number]. [DOI]
+keywords: Barro Colorado Island; demography; forest dynamics plot; ForestGEO; long-term monitoring; Panama; tropical moist forest
+data paper citation: Mitre, D., R. Pérez, S. Aguilar, S. Lao, S. J. Davies, and J. A. Medina-Vega. [Year]. "Tree Censuses of the Barro Colorado Island 50-ha Plot, Panama, 1982–2023, with Reconstructed Stem Histories." Ecology [volume]: [article number]. [DOI]
 
 ## Authors (for each author)
 author name (req): David Mitre
@@ -27,21 +27,6 @@ author ORCID (req): [to add]
 author email (req-corresponding; optional-others):
 author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
-author name (req): Richard Condit
-author ORCID (req): 0000-0003-4191-1495
-author email (req-corresponding; optional-others):
-author affiliation (optional): [to confirm]
-
-author name (req): Stephen P. Hubbell
-author ORCID (req): 0000-0003-2797-3411
-author email (req-corresponding; optional-others):
-author affiliation (optional): [to confirm]
-
-author name (req): Robin B. Foster
-author ORCID (req): [to add]
-author email (req-corresponding; optional-others):
-author affiliation (optional): [to confirm]
-
 author name (req): Stuart J. Davies
 author ORCID (req): [to add]
 author email (req-corresponding; optional-others):
@@ -55,9 +40,9 @@ author affiliation (optional): Smithsonian Tropical Research Institute, Apartado
 ## Status
 
 version: 2026-10. Census tables from the stem reconstruction of engine run 20261024_213308 (ForestGEO database export of 2026-10-13).
-latest update: 2026-10-25
+latest update: 2026-10-27
 latest archive date: [date of deposit]
-metadata status: Draft of 2026-10-25, to be completed where marked [ ].
+metadata status: Draft of 2026-10-27, to be completed where marked [ ].
 data verification: Field records (diameter, height of measurement, date, codes, field status) are copied unchanged from the ForestGEO database. Every processing step checks its inputs and outputs and stops when a check fails (see quality assurance/quality control procedures). The data files of this package are identical (MD5) to the outputs of the processing, and their objects, columns, types and the keys between files were checked (59 checks, all passed).
 
 # Research Origin Descriptors
@@ -65,7 +50,7 @@ data verification: Field records (diameter, height of measurement, date, codes, 
 ## Study Design
 project title: Barro Colorado Island 50-ha Forest Dynamics Plot, part of the Forest Global Earth Observatory (ForestGEO) of the Smithsonian Tropical Research Institute.
 objectives: To record the growth, mortality and recruitment of every free-standing woody stem of at least 1 cm diameter at breast height (DBH) in 50 ha of old-growth tropical moist forest, about every five years, as a basis for studies of tropical forest diversity, demography and change. This data set holds the nine censuses of 1982–2023 and follows every stem across all censuses.
-funding: U.S. National Science Foundation (grants to S. P. Hubbell: DEB-0640386, DEB-0425651, DEB-0346488, DEB-0129874, DEB-00753102, DEB-9909347, DEB-9615226, DEB-9405933, DEB-9221033, DEB-9100058, DEB-8906869, DEB-8605042, DEB-8206992, DEB-7922197); Forest Global Earth Observatory (ForestGEO); Smithsonian Tropical Research Institute; John D. and Catherine T. MacArthur Foundation; Mellon Foundation; Small World Institute Fund; numerous private individuals. [Add the funders of the 2010, 2015 and 2022–2023 censuses, with grant numbers.]
+funding: U.S. National Science Foundation (grants to S. P. Hubbell: DEB-0640386, DEB-0425651, DEB-0346488, DEB-0129874, DEB-00753102, DEB-9909347, DEB-9615226, DEB-9405933, DEB-9221033, DEB-9100058, DEB-8906869, DEB-8605042, DEB-8206992, DEB-7922197); Forest Global Earth Observatory (ForestGEO); Smithsonian Tropical Research Institute; John D. and Catherine T. MacArthur Foundation; Mellon Foundation; Small World Institute Fund; numerous private individuals; Frank H. Levinson Family Foundation.
 
 ## Subproject / Sampling Site Descriptors (1 for each subproject / sampling site)
 
@@ -154,7 +139,7 @@ sampling unit:
 | hom | Height of measurement as recorded | m | numeric | 0–17.7; NA when not measured |
 | ExactDate | Date of the field record | | Date | NA without a record |
 | date | Date of every row | days since 1960-01-01 | numeric | Whole days: the recorded date, else the most common recorded date of the tree, quadrat or census (as.Date(date, origin = "1960-01-01")) |
-| codes | Field codes as recorded | | character | Codes separated by ";" (e.g. D;N). [Code definitions to add.] NA: no code or no record |
+| codes | Field codes as recorded | | character | Codes separated by ";" (e.g. D;N). NA: no code or no record |
 | DFstatus | Field status as recorded | | character | alive, dead, broken below, stem dead, missing; NA without a record |
 | Rstatus | Analytical status | | character | P: before the stem's first record; A: alive, from the first record to the last evidence of life; G: dead, while another stem of its tree is A then or later; D: dead, and every stem of its tree dead. An A cell without dbh is a missed measurement or a stump (DFstatus broken below) |
 | StemPaths | Key of the record in the reconstruction | | integer | Unique within its tree; the posterior samples list the measured records up to the tree's anchor census. NA for the 327,991 trees not reconstructed |

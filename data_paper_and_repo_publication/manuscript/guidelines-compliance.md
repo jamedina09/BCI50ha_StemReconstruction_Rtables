@@ -1,6 +1,6 @@
 # Ecology Data Paper 2.0: what this submission meets and what is open
 
-Checked on 2026-10-25 against the files in `data_paper_and_repo_publication/guidelines/`: the Data Paper 2.0 Author Guidelines, the Submission Checklist, and the manuscript, metadata and README templates. Ecology requires this format for every Data Paper received from 1 September 2026.
+Checked on 2026-10-25, updated on 2026-10-27, against the files in `data_paper_and_repo_publication/guidelines/`: the Data Paper 2.0 Author Guidelines, the Submission Checklist, and the manuscript, metadata and README templates. Ecology requires this format for every Data Paper received from 1 September 2026.
 
 Status: ✓ met · ✗ not yet met · ◐ met in part, or a choice of the authors.
 
@@ -28,23 +28,23 @@ The data files are the stage-3 outputs, copied unchanged (same MD5):
 | Requirement | Draft | Status |
 | --- | --- | --- |
 | Title of at most 120 characters, sentence case | 107 characters | ✓ |
-| Authors with their affiliation during data collection; present addresses at the bottom of the title page | Affiliations of R. Condit, S. P. Hubbell and R. B. Foster to confirm | ✗ |
+| Authors with their affiliation during data collection; present addresses at the bottom of the title page | Six authors, all at STRI. R. Condit, S. P. Hubbell and R. B. Foster are left out until they confirm. ORCID lines left blank | ◐ |
 | One corresponding author with one email address | Placeholder | ✗ |
 | 6–12 keywords, alphabetical, the same in manuscript, metadata, README and ScholarOne | 12, alphabetical, identical in the three files | ✓ |
-| Acknowledgments: every funder | ForestGEO's required BCI wording; funders of the 2010, 2015 and 2022–2023 censuses to add | ✗ |
+| Acknowledgments: every funder | ForestGEO's BCI wording with the NSF grants, and the Frank H. Levinson Family Foundation (no grant number). Names of the 2022–2023 census team to fill in (Name1, Name2, Name3) | ◐ |
 | Field station named, with its location, in Methods and in Acknowledgments | Summary of Methods (Site) and Acknowledgments | ✓ |
 | Contributor roles (CRediT) | Draft for each author to confirm | ◐ |
 | Conflict-of-interest statement | Draft | ◐ |
-| Abstract of at most 500 words that synthesizes every section | 461 words | ◐ See note 1 |
+| Abstract of at most 500 words that synthesizes every section | 447 words; its census-9 summary is also in the Data Description (Census 9) | ✓ |
 | Sections in order: Overview, Data Availability, Data Description, Summary of Methods, Limitations and Challenges, Scientific Opportunities, Tables and Figures, References | All present, in order | ✓ |
-| Main text of at most 2,000 words, title page, abstract, tables, captions and references excluded | 1,991 words | ✓ |
+| Main text of at most 2,000 words, title page, abstract, tables, captions and references excluded | 1,999 words with the section headings (1,986 without) | ✓ |
 | At most four tables and figures, strictly descriptive | 4 descriptive tables | ✓ |
 | Data Description strictly descriptive, with no statistical analysis | Counts and extents only | ✓ |
 | Data Availability: DOI of the repository and license | Placeholders | ✗ |
 | References complete, author–year | Every DOI checked; two book chapters lack page numbers | ◐ |
 | Word file | `.docx`, in the template's format: Arial 11 pt, 1.15 spacing, 0.75 in margins | ✓ |
 
-Note 1: the abstract's summary of census 9 is not in the main text. That summary gives density and basal area with bootstrap intervals, dominant species and families, and rarity. The guidelines want the abstract to synthesize the sections and the Data Description to stay descriptive. Either add one descriptive sentence on census 9 to the Data Description and drop the intervals from the abstract, or keep the abstract as it is and expect the editor to comment.
+Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as recorded (`use_taper_stocks <- FALSE` in `3_census-9-summary.R`); with the taper correction it would be 34.31 m² ha⁻¹. The script still writes the bootstrap intervals to `census-9_summary.csv`; the manuscript does not give them.
 
 ## Metadata (`repository/Metadata.md`)
 
@@ -60,18 +60,15 @@ Note 1: the abstract's summary of census 9 is not in the main text. That summary
 ✗ To complete:
 
 - DOIs, license and citation;
-- ORCIDs of six authors, and the corresponding author's email;
-- affiliations of three authors;
-- funders of the 2010–2023 censuses;
+- ORCIDs (S. Aguilar's is filled), and the corresponding author's email;
 - instrumentation, permits, data forms, storage of the forms and data-entry verification (field team and data manager);
 - the herbaria;
 - redundant archival sites;
-- the date of the first release;
-- the definitions of the field codes (see Open items).
+- the date of the first release.
 
 ## README (`repository/README.md`)
 
-✓ Template sections filled: Identifiers, Authors, Study Design, Data Files (naming scheme, file sizes, file contents). ✗ To complete: DOIs, license, ORCIDs, corresponding author's email, the three affiliations.
+✓ Template sections filled: Identifiers, Authors, Study Design, Data Files (naming scheme, file sizes, file contents). ✗ To complete: DOIs, license, ORCIDs, corresponding author's email.
 
 ## Data formatting guidelines
 
@@ -109,28 +106,23 @@ Note 1: the abstract's summary of census 9 is not in the main text. That summary
 ## Open items for the authors
 
 1. **Authors:**
-   - acceptance by R. Condit, S. P. Hubbell and R. B. Foster (S. Davies to write to them);
-   - affiliations;
-   - ORCIDs;
+   - R. Condit, S. P. Hubbell and R. B. Foster: left out of the author list, the contributor roles and the citation until they confirm (S. Davies to write to them); if they join, add them back with their affiliations;
+   - ORCIDs (blank lines on the title page);
    - the corresponding author;
    - the role of D. Mitre.
 2. **Acknowledgments:**
-   - the 2022–2023 census team (list from D. Mitre) and the ForestGEO web page with their names and photographs;
-   - funders and grants of the 2010–2023 censuses;
-   - ForestGEO's grant DEB-00753102, which has one digit too many;
-   - the wording for Frank H. Levinson and for the Office of the Under Secretary for Science and Research;
+   - the names of the 2022–2023 census team (Name1, Name2, Name3; list from D. Mitre);
    - research permits.
-3. **Field codes:** the meaning of the 61 codes found in `codes` is not documented in the package. `manuscript/field-codes-to-define.csv` lists each code with its records by census and field status, and an empty `definition` column for the data manager. The definitions can go into `Metadata.md`. The reference in `data_simulation/.../forestgeo_codes_reference.qmd` was not used: some of its definitions are generic, and its `OR` ("other breakage") contradicts the project's finding (a stump still broken from an earlier census).
-4. **Species:**
-   - add to the `nects3` note that *Nectandra* sp.4 was merged into it (todo.txt);
+3. **Species:**
+   - earlier labels of the morphospecies as synonyms: *Nectandra* sp. nov. 1 (`nects1`) and *Nectandra* sp. nov. 3 (`nects3`), and the provisional labels of eight other codes, are in the 2019 taxonomy but not in the botanists' lists; to decide;
+   - the note that *Nectandra* sp.4 was merged into `nects3` is not supported by the database (one tree, one code and one label in both exports): leave it out unless the botanists confirm it;
    - check the list against S. Lao's latest list and against H. Muller-Landau's version;
    - choose how to cite the Flora de Panamá list.
-5. **Posterior samples:** confirm that the 221 reconstructed trees with `StemPaths` but no posterior samples are expected; most have every stem fixed by a tag.
-6. **Relationship to the 2019 release:** confirm two statements in the metadata:
+4. **Posterior samples:** the 221 reconstructed trees with `StemPaths` but no posterior samples have one possible reconstruction: 123 have every stem tagged and first appear in 2010 or later, and 98 were measured in only one census up to 2010 (82 palms, 7 strangler figs). Confirm.
+5. **Relationship to the 2019 release:** confirm two statements in the metadata:
    - the agreement of the records ("99.99% … same diameters and dates");
    - that the 2019 tree tables, elevation map and database copy are not part of this release.
-7. **License and repository** (see Open Research).
-8. **Abstract** (note 1).
+6. **License and repository:** both options stay open: Dryad (CC0 only; free for Ecology Data Papers up to 10 GB) or Zenodo (CC BY 4.0). See Open Research.
 
 ## How to reproduce the outputs of the manuscript
 
@@ -139,7 +131,7 @@ In R (or with `Rscript`), with the working directory set to `repository/`, run:
 ```r
 source("code/1_tables.R")             # Tables 1-3
 source("code/2_data-description.R")   # numbers of the Data Description and Limitations
-source("code/3_census-9-summary.R")   # census-9 summary of the Abstract
+source("code/3_census-9-summary.R")   # census-9 summary of the Abstract and the Data Description
 ```
 
 The scripts write CSV files to `manuscript_outputs/`:
