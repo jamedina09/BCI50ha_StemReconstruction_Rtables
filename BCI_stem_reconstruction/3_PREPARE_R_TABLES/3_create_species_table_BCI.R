@@ -196,11 +196,12 @@ rtable_files <- list.files(RTABLES_folder, pattern = sprintf("^%s\\.stem[0-9]+\\
 rtable_census <- as.integer(sub(sprintf("^%s\\.stem([0-9]+)\\.Rdata$", site), "\\1", basename(rtable_files)))
 rtable_files <- rtable_files[order(rtable_census)]
 bio_check(length(rtable_files) > 0L, "R tables found in DATA/RTABLES (run 2_create_R_tables_BCI.R first)")
-# The inputs were built in order: stage-1 species table, then stage-1 census
-# table (which reads it), then the stage-2 table, then the R tables. A file
-# rebuilt out of order means the stages after it must be rerun.
+# The inputs were built in order: stage-1 census table, then the stage-2
+# table, then the R tables. A file rebuilt out of order means the stages
+# after it must be rerun. The stage-1 species table is not in this order: its
+# names can be corrected and this script rerun without rebuilding the other
+# stages.
 stage_files <- c(
-  `stage-1 species table` = SPP_STAGE1_FILE,
   `stage-1 census table` = file.path(DATA_folder, "PROCESSED", "ViewFullTable_single_vs_multiple_stem_tags.rds"),
   `stage-2 table` = file.path(DATA_folder, "PROCESSED", "complete_dataset_final_with_reconstructed_stemids.rds"),
   `R tables` = rtable_files[which.min(file.mtime(rtable_files))]
@@ -208,7 +209,7 @@ stage_files <- c(
 stage_times <- file.mtime(stage_files)
 bio_check(
   !anyNA(stage_times) && !is.unsorted(as.numeric(stage_times), strictly = TRUE),
-  "The stage-1 species table, stage-1 census table, stage-2 table and R tables were written in this order (rerun the stages after the first one out of order)",
+  "The stage-1 census table, stage-2 table and R tables were written in this order (rerun the stages after the first one out of order)",
   examples = paste(names(stage_files), format(stage_times))
 )
 basename(rtable_files) # bci.stem1.Rdata ... bci.stem9.Rdata

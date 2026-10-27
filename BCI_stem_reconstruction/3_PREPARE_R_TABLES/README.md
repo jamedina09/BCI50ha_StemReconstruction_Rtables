@@ -230,8 +230,9 @@ Each script first checks that it reads the right inputs:
   a measured observation of its tag there;
 - script 2: the stage-2 table is newer than the stage-1 table (after rerunning
   stage 1, rerun the engine and the merge) and `engine_run.txt` exists;
-- script 3: the stage-1 species table, the stage-1 census table, the stage-2
-  table and the R tables were written in this order.
+- script 3: the stage-1 census table, the stage-2 table and the R tables were
+  written in this order. The stage-1 species table is not dated: its names can
+  be corrected and script 3 rerun without rebuilding the other stages.
 
 Script 2 checks the order and column types of every
 table before writing it, and writes every check to `check_bci.txt` (✓ passed,
