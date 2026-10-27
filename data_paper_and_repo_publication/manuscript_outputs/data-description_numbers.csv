@@ -1,10 +1,10 @@
 section,item,value
 Data Description,trees,460211
 Data Description,taxa (species codes without uniden),327
-Data Description,genera,192
+Data Description,genera,191
 Data Description,families,62
 Data Description,trees never identified (uniden),74
-Data Description,species codes renamed since 2019 (NameChange),49
+Data Description,species codes renamed since 2019 (NameChange),50
 Data Description,trees reconstructed (StemPaths not NA),132220
 Data Description,trees not reconstructed,327991
 Data Description,trees with posterior samples,131999
