@@ -114,7 +114,7 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
    - the names of the 2022–2023 census team (Name1, Name2, Name3; list from D. Mitre);
    - research permits.
 3. **Species:**
-   - earlier labels as synonyms: three of the four morphospecies have synonyms in the 2019 taxonomy (`nects1`: *Nectandra* sp.nov.1; `nects3`: *Nectandra* sp._4, *Nectandra* sp.nov.3; `sapisp`: *Sapium* sp 1, *Sapium* sp. nov.), and seven named species have provisional labels there; none is in the botanists' lists; to decide;
+   - the 2019 synonyms of the morphospecies `nects1`, `nects3` and `sapisp` are added in stage 1 (section 10c): rebuild stage 1 and the stage-3 species table, and copy `bci.spptable.rdata` to `repository/data/`;
    - the note that *Nectandra* sp.4 was merged into `nects3` is not supported by the database (one tree, one code and one label in both exports): leave it out unless the botanists confirm it;
    - check the list against S. Lao's latest list and against H. Muller-Landau's version;
    - choose how to cite the Flora de Panamá list.
