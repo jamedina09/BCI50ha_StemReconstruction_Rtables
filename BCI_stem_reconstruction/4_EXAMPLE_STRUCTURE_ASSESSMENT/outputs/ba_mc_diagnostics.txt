@@ -21,7 +21,7 @@ CHECK OK: Every alive census after a stem's last measurement gets a DBH from the
 CHECK OK: Measured BA stock per tree and census is identical in every path (identity cannot change measurements)
 CHECK OK: In every realization, Growth + Loss + Gain equals the stock change (max error 1.02e-12 m2)
 
-# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-10-25 19:11:07
+# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-10-26 23:15:25
 K_realizations = 100 | seed = 42 | anchor census = 7
 
 ## Palms and strangler figs (as in biomass_stocks_fluxes.R)
