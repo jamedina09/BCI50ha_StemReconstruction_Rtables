@@ -8,6 +8,9 @@
 
 # OS files
 .DS_Store
+# Google Drive folder icons: "Icon" followed by a carriage return
+Icon
+Icon?
 
 # Editor
 .vscode/

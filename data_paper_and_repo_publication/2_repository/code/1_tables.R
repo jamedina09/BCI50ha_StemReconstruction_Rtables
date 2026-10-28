@@ -1,11 +1,13 @@
 # =============================================================================
 # 1_tables.R — the figure and the tables of the Data Paper, from the files of
 # this package. Each output holds everything the paper shows:
-#   figure-1_tree-dynamics.png / .pdf   living trees through the censuses, the
-#                                       trees of census 1 that are still alive,
-#                                       the trees new since then, and the period
-#                                       of each census; figure-1_tree-dynamics.csv
-#                                       holds its numbers and census dates
+#   figure-1_tree-dynamics.png / .pdf   living trees through the censuses (above
+#                                       zero: trees of census 1 still alive and
+#                                       trees new since then; below zero: the same
+#                                       two groups recorded alive earlier and not
+#                                       alive now) and the period of each census;
+#                                       figure-1_tree-dynamics.csv holds its
+#                                       numbers and census dates
 #   table_columns-census-tables.csv     the columns of the census tables
 #   table_columns-species-table.csv     the columns of the species table
 #   table_status-codes.csv              the analytical status codes (Rstatus)
@@ -28,11 +30,13 @@ x <- rbindlist(lapply(bci[paste0("bci.stem", 1:9)], as.data.table))
 census_year <- c(1982, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2023)
 
 # ---- Figure 1: dynamics of the trees through the censuses ------------------------
-# Living trees (Rstatus A) in each census, split by when the tree was first
-# alive: the trees of census 1 that are still alive (the cohort of 1982) and the
-# trees that appeared after it (recruits that are alive). A tree is one
-# individual (treeID), whatever its number of stems. The percentage of the
-# census-1 trees that have disappeared is written on the cohort.
+# Above zero, the living trees (Rstatus A) of each census, split by when the tree
+# was first alive: the trees of census 1 that are still alive (the cohort of 1982)
+# and the trees that appeared after it. Below zero, the trees recorded alive in an
+# earlier census that are not alive in this one, split the same way (cumulative).
+# Every tree recorded alive up to a census is therefore above or below zero. A tree
+# is one individual (treeID), whatever its number of stems. The percentage of the
+# census-1 trees that are not alive is written on the cohort.
 #
 # Census period: the 2.5% and 97.5% quantiles of the record dates (95% of the
 # records of a census were taken between them) and the median date, rather than
@@ -56,7 +60,14 @@ dyn <- first_alive[alive, on = "treeID"][, .(
     new_since_census_1 = sum(first > 1L)
 ), by = CensusID][order(CensusID)]
 stopifnot(identical(dyn$living_trees, x[Rstatus == "A", uniqueN(treeID), by = CensusID][order(CensusID)]$V1))
-dyn[, pct_census_1_disappeared := round(100 * (1 - from_census_1 / from_census_1[1]), 1)]
+# Recorded alive up to census k, and not alive in census k
+dyn[, recorded_census_1 := sum(first_alive$first == 1L)]
+dyn[, recorded_new := vapply(CensusID, function(k) sum(first_alive$first > 1L & first_alive$first <= k), numeric(1))]
+dyn[, not_alive_census_1 := recorded_census_1 - from_census_1]
+dyn[, not_alive_new := recorded_new - new_since_census_1]
+dyn[, recorded_census_1 := NULL]
+dyn[, recorded_new := NULL]
+dyn[, pct_census_1_not_alive := round(100 * not_alive_census_1 / (from_census_1 + not_alive_census_1), 1)]
 dyn[, pct_new := round(100 * new_since_census_1 / living_trees, 1)]
 dyn <- merge(period, dyn, by = "CensusID")
 dyn[, year := census_year[CensusID]]
@@ -69,15 +80,22 @@ draw_figure_1 <- function() {
     ink <- "grey15"
     k <- 1e3
     ymax <- 285
+    ymin <- -285
     t_med <- dec_year(dyn$median_date)
+    n <- nrow(dyn)
     op <- par(mar = c(4.6, 4.6, 1, 1), family = "sans", las = 1, col.axis = ink, col.lab = ink)
     on.exit(par(op))
-    plot(NA, xlim = c(1980.9, 2025.3), ylim = c(0, ymax), xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "")
-    abline(h = seq(50, 250, 50), col = "grey88", lwd = 0.8)
-    polygon(c(t_med, rev(t_med)), c(dyn$from_census_1 / k, rep(0, nrow(dyn))), col = adjustcolor(col_cohort, 0.85), border = NA)
+    plot(NA, xlim = c(1980.9, 2025.3), ylim = c(ymin, ymax), xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "")
+    abline(h = seq(-250, 250, 50), col = "grey88", lwd = 0.8)
+    # living trees, above zero
+    polygon(c(t_med, rev(t_med)), c(dyn$from_census_1 / k, rep(0, n)), col = adjustcolor(col_cohort, 0.85), border = NA)
     polygon(c(t_med, rev(t_med)), c(dyn$living_trees / k, rev(dyn$from_census_1 / k)), col = adjustcolor(col_new, 0.85), border = NA)
+    # trees recorded alive before and not alive now, below zero (cumulative)
+    polygon(c(t_med, rev(t_med)), c(-dyn$not_alive_census_1 / k, rep(0, n)), col = adjustcolor(col_cohort, 0.35), border = NA)
+    polygon(c(t_med, rev(t_med)), c(-(dyn$not_alive_census_1 + dyn$not_alive_new) / k, rev(-dyn$not_alive_census_1 / k)), col = adjustcolor(col_new, 0.35), border = NA)
     # period of each census: 95% of its records
-    rect(dec_year(dyn$date_q025), 0, dec_year(dyn$date_q975), ymax, col = adjustcolor("black", 0.14), border = NA)
+    rect(dec_year(dyn$date_q025), ymin, dec_year(dyn$date_q975), ymax, col = adjustcolor("black", 0.14), border = NA)
+    abline(h = 0, col = ink, lwd = 1)
     lines(t_med, dyn$living_trees / k, lwd = 2.2, col = ink)
     points(t_med, dyn$living_trees / k, pch = 21, bg = "white", col = ink, cex = 1.1, lwd = 1.6)
     x_total <- t_med
@@ -85,26 +103,34 @@ draw_figure_1 <- function() {
     x_total[2] <- x_total[2] + 0.6 # and the second one over the first
     text(x_total, dyn$living_trees / k, formatC(dyn$living_trees, format = "d", big.mark = ","), pos = 3, offset = 0.8, col = ink, cex = 0.72)
     # one call per census: axis() drops labels that it finds overlapping
-    for (i in seq_len(nrow(dyn))) {
+    for (i in seq_len(n)) {
         axis(1, at = t_med[i], labels = paste0(dyn$CensusID[i], "\n", dyn$year[i]), tck = -0.02, padj = 0.6, col = "grey60", col.ticks = "grey60")
     }
-    axis(2, at = seq(0, 250, 50), labels = seq(0, 250, 50), tck = -0.02, col = "grey60", col.ticks = "grey60")
+    axis(2, at = seq(-250, 250, 50), labels = abs(seq(-250, 250, 50)), tck = -0.02, col = "grey60", col.ticks = "grey60")
     mtext("Census and year", 1, 3.6, col = ink)
-    mtext("Living trees (thousands)", 2, 3.2, las = 0, col = ink)
-    n <- nrow(dyn)
-    text(t_med[2:(n - 1)], dyn$from_census_1[2:(n - 1)] / k, sprintf("%.1f%%", dyn$pct_census_1_disappeared[2:(n - 1)]), pos = 1, offset = 0.55, col = "white", cex = 0.8, font = 2)
-    text(t_med[n] - 0.3, dyn$from_census_1[n] / k, sprintf("%.1f%%", dyn$pct_census_1_disappeared[n]), adj = c(1, 1.6), col = "white", cex = 0.8, font = 2)
-    text(1982.2, 272, "All living trees", adj = c(0, 0.5), col = ink, cex = 0.95, font = 2)
-    text(1982.2, 45, "Trees of census 1\nstill alive", adj = c(0, 0.5), col = "white", cex = 0.9, font = 2)
+    mtext("Trees (thousands)", 2, 3.2, las = 0, col = ink)
+    mtext("not alive", 2, 3.2, at = -140, las = 0, col = "grey40", cex = 0.8)
+    mtext("alive", 2, 3.2, at = 140, las = 0, col = "grey40", cex = 0.8)
+    # percentage of the census-1 trees that are not alive, on the cohort
+    text(t_med[2:(n - 1)], dyn$from_census_1[2:(n - 1)] / k, sprintf("%.1f%%", dyn$pct_census_1_not_alive[2:(n - 1)]), pos = 1, offset = 0.55, col = "white", cex = 0.8, font = 2)
+    text(t_med[n] - 0.3, dyn$from_census_1[n] / k, sprintf("%.1f%%", dyn$pct_census_1_not_alive[n]), adj = c(1, 1.6), col = "white", cex = 0.8, font = 2)
+    text(2013, 262, "All living trees", col = ink, cex = 0.95, font = 2)
+    text(1982.2, 66, "Trees of census 1\nstill alive", adj = c(0, 0.5), col = "white", cex = 0.9, font = 2)
     i <- n - 1L
     text(t_med[i], (dyn$living_trees[i] + dyn$from_census_1[i]) / 2 / k, "Trees new since 1982\n(still alive)", col = "white", cex = 0.9, font = 2)
-    text(1982.2, 19, "White percentages: share of the census-1 trees that have disappeared", adj = c(0, 0.5), col = "white", cex = 0.72)
-    text(1982.2, 8, "Shaded bands: period in which 95% of the records of each census were taken", adj = c(0, 0.5), col = "white", cex = 0.72)
+    text(1982.2, 25, "White percentages: share of the census-1 trees that are not alive", adj = c(0, 0.5), col = "white", cex = 0.72)
+    text(1982.2, 10, "Shaded bands: period in which 95% of the records of each census were taken", adj = c(0, 0.5), col = "white", cex = 0.72)
+    # below zero
+    text(t_med[n - 3], -dyn$not_alive_census_1[n - 3] / k / 2, "Trees of census 1\nnot alive", col = ink, cex = 0.9, font = 2)
+    j <- n - 1L
+    text(t_med[j], -(dyn$not_alive_census_1[j] + dyn$not_alive_new[j] / 2) / k, "Trees new since 1982\nnot alive", col = ink, cex = 0.9, font = 2)
+    text(t_med[n] - 0.4, -dyn$not_alive_census_1[n] / k / 2, formatC(dyn$not_alive_census_1[n], format = "d", big.mark = ","), adj = c(1, 0.5), col = ink, cex = 0.8, font = 2)
+    text(t_med[n] - 0.4, -(dyn$not_alive_census_1[n] + dyn$not_alive_new[n] / 2) / k, formatC(dyn$not_alive_new[n], format = "d", big.mark = ","), adj = c(1, 0.5), col = ink, cex = 0.8, font = 2)
 }
-png(file.path(OUT, "figure-1_tree-dynamics.png"), width = 7.5, height = 4.8, units = "in", res = 300)
+png(file.path(OUT, "figure-1_tree-dynamics.png"), width = 7.5, height = 6.6, units = "in", res = 300)
 draw_figure_1()
 dev.off()
-pdf(file.path(OUT, "figure-1_tree-dynamics.pdf"), width = 7.5, height = 4.8)
+pdf(file.path(OUT, "figure-1_tree-dynamics.pdf"), width = 7.5, height = 6.6)
 draw_figure_1()
 dev.off()
 
