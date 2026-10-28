@@ -90,7 +90,7 @@ boot_hdi <- function(v) {
 ci_t <- boot_hdi(q$trees_ha)
 ci_b <- boot_hdi(q$ba_ha)
 
-# ---- Species and families -------------------------------------------------------------------
+# ---- Species  and families -------------------------------------------------------------------
 sp9 <- trees[, .(individuals = .N, ba_m2 = sum(ba_m2)), by = .(sp, Latin, Family, Genus)]
 sp9[, `:=`(pct_individuals = round(100 * individuals / n_tot, 2), pct_ba = round(100 * ba_m2 / ba_tot, 2))]
 setorder(sp9, -individuals)
