@@ -6,6 +6,8 @@ CHECK OK: Species table found: /Users/medinaja/GDrive_Science/STRI/STEM_TABLES_F
 CHECK OK: One row per species code in the species table
 CHECK OK: The ten focal species of the taper model (Cushman et al. 2014) are in the data
 CHECK OK: At least two censuses are available
+CHECK OK: The stocks and the fluxes hold the same measured stem-censuses
+CHECK OK: With the same taper setting for stocks and fluxes, both use the same DBH
 CHECK OK: One measurement per stem and census in the exported reconstruction
 CHECK OK: No census to fill lies between two measurements across a stump (it would mix the stem that broke with the resprout)
 CHECK OK: Every alive-but-unmeasured census lies in time between two measurements of its stem and gets an interpolated DBH
@@ -19,14 +21,17 @@ CHECK OK: Every completed path contains exactly its tree's measured observations
 CHECK OK: Every alive-but-unmeasured census lies in time between two measurements of its stem and gets an interpolated DBH
 CHECK OK: Every alive census after a stem's last measurement gets a DBH from the stem's own measurements
 CHECK OK: Measured BA stock per tree and census is identical in every path (identity cannot change measurements)
-CHECK OK: In every realization, Growth + Loss + Gain equals the stock change (max error 1.02e-12 m2)
+CHECK OK: In every realization, Growth + Loss + Gain equals the stock change, both in the DBH of the fluxes (max error 1.02e-12 m2)
 
-# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-10-26 23:15:25
+# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-10-28 09:02:23
 K_realizations = 100 | seed = 42 | anchor census = 7
 
 ## Palms and strangler figs (as in biomass_stocks_fluxes.R)
 remove_strangler_figs = TRUE: 29 trees / 88 stems removed from every census (9 of them had a posterior)
 use_median_palm_dbh = TRUE: 10 palm species (excluding Socratea), 80047 measured alive stem-censuses, 78299 given the species median
+
+## Taper correction
+use_taper_stocks = TRUE (stocks: taper-corrected DBH) | use_taper_fluxes = TRUE (fluxes: taper-corrected DBH)
 
 ## Trees
 trees with a posterior: 131990
