@@ -41,7 +41,7 @@ add("Data Description", "rows of the posterior samples", nrow(post))
 # Census duration and the interval between consecutive censuses of a tree
 # (mean date of its living stems in each census)
 # Duration: span of the central 95% of the record dates (2.5% to 97.5%
-# quantiles), as the field dates of Table 1.
+# quantiles), as the census periods of Figure 1.
 for (k in 1:9) {
     d <- x[CensusID == k & !is.na(ExactDate), quantile(as.numeric(ExactDate), c(0.025, 0.975), type = 1, names = FALSE)]
     add("Data Description", sprintf("census %d duration, 95%% of records (months)", k), round(diff(d) / 30.44, 1))

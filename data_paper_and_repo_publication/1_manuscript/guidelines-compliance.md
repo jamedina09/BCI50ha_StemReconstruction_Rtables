@@ -124,14 +124,15 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
 In R (or with `Rscript`), with the working directory set to `repository/`, run:
 
 ```r
-source("code/1_tables.R")             # Tables 1-3
+source("code/1_tables.R")             # the figure and the tables
 source("code/2_data-description.R")   # numbers of the Data Description and Limitations
 source("code/3_census-9-summary.R")   # census-9 summary of the Abstract and the Data Description
 ```
 
 The scripts write CSV files to `manuscript_outputs/`:
 
-- `table-1_censuses.csv`, `table-2_files.csv`, `table-3_columns.csv`;
+- `figure-1_tree-dynamics.png`, `.pdf` and `.csv`;
+- `table_columns-census-tables.csv`, `table_columns-species-table.csv`, `table_status-codes.csv`;
 - `data-description_numbers.csv`;
 - `census-9_summary.csv`, `census-9_species.csv`, `census-9_families.csv`.
 

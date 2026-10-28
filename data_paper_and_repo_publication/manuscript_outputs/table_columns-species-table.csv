@@ -1,0 +1,18 @@
+Column,Type,Content
+sp,character,Species code; joins the census tables
+Order,character,Order
+Family,character,Family
+Genus,character,Genus
+SpeciesName,character,"Species epithet; for a morphospecies, its label"
+Latin,character,"Scientific name: genus and epithet, then the infraspecific name when there is one"
+InfraspecificRank,character,Rank below species (var. or subsp.); empty when none
+InfraspecificEpithet,character,Epithet below species; empty when none
+Authority,character,Authors of the name
+Synonyms,character,"Synonyms and earlier names, separated by commas"
+Lifeform_RFoster,character,Growth form after R. B. Foster
+Lifeform_RPerez_SAguilar,character,Growth form and height class after R. Pérez and S. Aguilar (in Spanish)
+CommonName,character,Common names
+Herbarium,character,Herbarium collections
+NameCondit2019,character,"Name of the code in Condit et al. (2019a, 2019b), only when it differs from Latin"
+NameChange,character,Kind of change from that name
+Notes,character,"What no other column says, e.g. that uniden is not a taxon"
