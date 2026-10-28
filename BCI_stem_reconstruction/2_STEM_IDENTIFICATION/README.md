@@ -278,9 +278,9 @@ DATA/PROCESSED/ViewFullTable_single_vs_multiple_stem_tags.rds
 ```
 
 The comparisons of the outputs with the published stem tables of Condit et al.
-(2019) are in `COMPARE_DATASETS/` at the project root, one folder per stage
-(not under version control); the stem trajectories, link by link, are in
-`COMPARE_DATASETS/2_STEM_IDENTIFICATION/`.
+(2019) are in `COMPARE_DATASETS/` at the project root (not under version
+control), which writes one report, `output/condit_vs_reconstruction.html`; the
+stem identity, link by link, is its section 3 (`3_stem_identity.R`).
 
 ## Requirements
 
