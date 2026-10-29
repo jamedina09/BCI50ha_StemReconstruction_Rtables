@@ -1165,7 +1165,8 @@ fig1 <- ggplot() +
     theme_forest() +
     # 30-35 m2/ha, widened when a stock falls outside (e.g. use_taper_stocks = FALSE)
     coord_cartesian(ylim = range(c(30, 35, stock_exp$value, stock_mc$lwr, stock_mc$upr)))
-print(fig1)
+# on screen only in an interactive session (with Rscript it would write Rplots.pdf)
+if (interactive()) print(fig1)
 
 # ── Figure 2: annual BA flux components per hectare ────────────────────────────
 flux_labels <- c(
@@ -1218,7 +1219,7 @@ fig2 <- ggplot() +
             } * ")")
     ) +
     theme_forest()
-print(fig2)
+if (interactive()) print(fig2)
 
 # ── Figure 3: BA trajectories of focal trees — one page per tree ────────────────
 # Each page shows the exported reconstruction (panel 0, charcoal) and the most
