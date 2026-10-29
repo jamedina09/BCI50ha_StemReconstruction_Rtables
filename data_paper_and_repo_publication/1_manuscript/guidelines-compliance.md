@@ -132,6 +132,7 @@ The scripts write CSV files to `manuscript_outputs/`:
 
 - `figure-1_tree-dynamics.png`, `.pdf` and `.csv`, and its caption `figure-1_caption.txt`;
 - `table_columns-census-tables.csv`, `table_columns-species-table.csv`, `table_status-codes.csv`;
+- `individuals_by_census.csv` (alive, dead, recruits and deaths of individuals per census, from `bci_individual_counts()` in `load-bci-tables.R`);
 - `data-description_numbers.csv`;
 - `census-9_summary.csv`, `census-9_species.csv`, `census-9_families.csv`.
 
