@@ -18,7 +18,7 @@ author email (req-corresponding; optional-others):
 author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
 author name (req): Salomón Aguilar
-author ORCID (req): 0000-0002-8694-6723
+author ORCID (req): [to add]
 author email (req-corresponding; optional-others):
 author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
