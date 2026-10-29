@@ -60,9 +60,9 @@ Rscript BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/general_plot_info
 | `outputs/ba_mc_realizations_quadrat.feather`, `ba_mc_realizations_stock_quadrat.feather` | BA fluxes and stocks per quadrat in each Monte Carlo realization (`write_quadrat_realizations`) |
 | `outputs/ba_mc_summary_quadrat.feather`, `ba_mc_summary_stock_quadrat.feather` | 95% interval of the quadrat fluxes and stocks |
 | `outputs/ba_mc_realizations_treeID/` | One file per realization with tree-level fluxes, written only with `write_tree_realizations <- TRUE` (not under version control) |
-| `outputs/fig1_BA_stock.pdf`, `fig2_BA_fluxes.pdf` | Plot BA stock and fluxes: exported reconstruction and Monte Carlo interval |
+| `outputs/fig1_BA_stock.pdf`, `fig2_BA_fluxes.pdf` | Plot BA stock and fluxes: exported reconstruction and Monte Carlo interval; the caption of `fig2` says why the exported line can lie outside the interval, with the shifts of the run |
 | `outputs/fig3_BA_trajectories.pdf` | BA trajectories of a sample of trees: exported reconstruction and posterior paths |
-| `outputs/ba_mc_diagnostics.txt` | Tree counts (one path, sampled, fallback; by engine), splice counts, the exported reconstruction against the posterior per engine, invariance checks and the Monte Carlo error of the interval bounds |
+| `outputs/ba_mc_diagnostics.txt` | Tree counts (one path, sampled, fallback; by engine), splice counts, the exported reconstruction against the posterior per engine, the exported reconstruction against the Monte Carlo (value, centre, interval and shift per interval and component; shift of the posterior mean and stems by engine), invariance checks and the Monte Carlo error of the interval bounds |
 
 `biomass_stocks_fluxes.R` and `general_plot_information.R` write their checks
 to `outputs/check_biomass_stocks_fluxes.txt` and
@@ -227,6 +227,38 @@ Scope:
 - Apart from the palm and fig treatment and the taper correction, the choices
   of `biomass_stocks_fluxes.R` (outlier substitution, Kohyama correction) are
   not applied.
+
+Why the exported line can lie outside the Monte Carlo interval (`fig2`,
+before the anchor census, mostly in Gain and Loss):
+
+- The bold line and the interval measure different things. The bold line is
+  one reconstruction per tree: the most probable path of a DP tree, the most
+  representative draw of a matcher tree. The interval is the spread of the
+  plot total over realizations in which every tree takes a random posterior
+  draw.
+- The draws can split a stem history into two stems where the exported
+  reconstruction keeps one stem, or keep one where it splits. A split turns
+  one continuing stem into one that dies (its basal area counts as Loss) and
+  a new one (its basal area counts as Gain); Growth loses only that stem's
+  growth, and the net change stays the same. When the draws split more often
+  than the exported reconstruction, the Monte Carlo Gain is higher and the
+  Monte Carlo Loss more negative than the exported values, by about the same
+  amount, while Growth and the net change barely move.
+- The shift has the same sign in most trees, so it adds up over trees, while
+  the random differences between draws cancel. The interval holds only that
+  random spread, so it is narrower than the shift. A matcher tree's exported
+  draw holds a small share of its posterior, so these trees can shift more
+  than DP trees, whose exported path is usually the most probable one.
+- After the anchor census every stem is tagged and the two agree.
+- The caption of `fig2` gives the shifts of the run in percent of the
+  exported value. `ba_mc_diagnostics.txt` gives, per interval and component,
+  the exported value, the Monte Carlo centre and interval and the shift; the
+  shift of the posterior mean by engine, computed exactly from the path
+  weights; and the stems of the exported reconstruction against the posterior
+  mean.
+- The Monte Carlo centre is the expected flux under the model; the R tables
+  carry one reconstruction per tree. Fluxes that should carry the identity
+  uncertainty are computed over the posterior draws.
 
 ### `general_plot_information.R`
 

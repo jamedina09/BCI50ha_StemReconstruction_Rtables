@@ -87,10 +87,13 @@
 #   ba_mc_realizations_stock_quadrat.feather  MC realizations: quadrat-level stocks
 #   ba_mc_summary_quadrat.feather       MC mean / sd / 95 % interval of quadrat fluxes
 #   ba_mc_summary_stock_quadrat.feather MC mean / sd / 95 % interval of quadrat stocks
-#   ba_mc_diagnostics.txt               tree counts, splice counts, checks, MC error
+#   ba_mc_diagnostics.txt               tree counts, splice counts, checks, exported vs
+#                                       MC (shift per interval, by engine), MC error
 #   ba_mc_realizations_treeID/          optional per-realization tree-level fluxes
 #   fig1_BA_stock.pdf                   BA stock: exported vs identity MC
-#   fig2_BA_fluxes.pdf                  BA fluxes: exported vs identity MC
+#   fig2_BA_fluxes.pdf                  BA fluxes: exported vs identity MC; the caption
+#                                       says why the exported line can lie outside the
+#                                       ribbon, with the shifts of the run
 #   fig3_BA_trajectories.pdf            tree BA trajectories: exported vs posterior paths
 #
 # NOTES
@@ -962,6 +965,65 @@ flux_long_real <- melt(plot_flux_real, id.vars = c("CensusID_from", "CensusID_to
 mc_err <- flux_long_real[, as.list(mc_quantile_se(value)), by = .(CensusID_from, Component)]
 mc_err[, rel_se := fifelse(width > 0, pmax(se_lwr, se_upr) / width, 0)]
 
+# Exported reconstruction against the Monte Carlo at plot level (m2 per plot
+# and interval): the exported value, the MC centre and 95 % interval, and the
+# shift of the centre (centre - exported). Before the anchor census the
+# exported value can lie outside the interval: it is one reconstruction per
+# tree (DP: the most probable path; probabilistic engine: the most
+# representative draw), while a realization takes a random draw per tree, and
+# the interval holds only the random spread of the draws.
+center_fun <- function(x) {
+    if (mc_center == "median") fmedian(x, na.rm = TRUE) else fmean(x, na.rm = TRUE)
+}
+plot_flux_exp <- map_quadrat_change[, lapply(.SD, fsum), .SDcols = c(flux_cols, "DeltaBA_total"), by = .(CensusID_from, CensusID_to)]
+exp_mc <- flux_long_real[,
+    .(centre = center_fun(value), lwr = fquantile(value, 0.025), upr = fquantile(value, 0.975)),
+    by = .(CensusID_from, CensusID_to, Component)
+][
+    melt(plot_flux_exp, id.vars = c("CensusID_from", "CensusID_to"), variable.name = "Component", value.name = "exported"),
+    on = .(CensusID_from, CensusID_to, Component)
+]
+# (a percentage only for values of at least 1 m2, e.g. not for a net change
+# near zero; inside/outside at the printed precision, 0.01 m2)
+exp_mc[, `:=`(
+    shift = centre - exported,
+    shift_pct = fifelse(abs(exported) >= 1, 100 * (centre - exported) / abs(exported), NA_real_),
+    inside = exported >= lwr - 0.005 & exported <= upr + 0.005
+)]
+setorder(exp_mc, Component, CensusID_from)
+
+# The shift of the posterior mean, exactly (path weights, no Monte Carlo
+# error), per engine, and the posterior mean number of stems against the
+# exported reconstruction. A draw that splits a stem history into two stems
+# turns one continuing stem into one that dies (its BA counts as Loss) and a
+# new one (its BA counts as Gain); Growth loses only that stem's growth.
+w_paths <- multi[treeID %in% sampled_trees, .(treeID, path_idx, w)]
+shift_tree <- merge(
+    post_decomp[w_paths, on = .(treeID, path_idx), nomatch = 0L][,
+        .(Growth_BA = fsum(Growth_BA * w), Loss_BA = fsum(Loss_BA * w), Gain_BA = fsum(Gain_BA * w)),
+        by = .(treeID, CensusID_from, CensusID_to)
+    ],
+    map_tree_change[treeID %in% sampled_trees,
+        .(Growth_exp = fsum(Growth_BA), Loss_exp = fsum(Loss_BA), Gain_exp = fsum(Gain_BA)),
+        by = .(treeID, CensusID_from, CensusID_to)
+    ],
+    by = c("treeID", "CensusID_from", "CensusID_to"), all = TRUE
+)
+for (v in c(flux_cols, "Growth_exp", "Loss_exp", "Gain_exp")) set(shift_tree, which(is.na(shift_tree[[v]])), v, 0)
+shift_tree[, engine := fifelse(treeID %in% prob_trees, "probabilistic", "DP")]
+shift_engine <- shift_tree[,
+    .(Growth_BA = fsum(Growth_BA - Growth_exp), Loss_BA = fsum(Loss_BA - Loss_exp), Gain_BA = fsum(Gain_BA - Gain_exp)),
+    by = .(CensusID_from, CensusID_to, engine)
+]
+stems_engine <- comp[, .(n = uniqueN(lab)), by = .(treeID, path_idx)][w_paths, on = .(treeID, path_idx), nomatch = 0L][
+    , .(n_post = fsum(n * w)),
+    by = treeID
+][U[treeID %in% sampled_trees, .(n_exp = uniqueN(xstem)), by = treeID], on = "treeID", nomatch = 0L]
+stems_engine[, engine := fifelse(treeID %in% prob_trees, "probabilistic", "DP")]
+stems_engine <- stems_engine[, .(trees = .N, exported = sum(n_exp), posterior = sum(n_post)), by = engine]
+stems_engine[, extra_pct := 100 * (posterior - exported) / exported]
+rm(w_paths, shift_tree)
+
 # Posterior probability of the exported partition (label-invariant): the
 # weight of the paths that group the tree's observations exactly as the R
 # tables do.
@@ -1054,6 +1116,49 @@ for (e in c("DP", "probabilistic")) {
 }
 rm(path_stats)
 diag_line("")
+diag_line("## Exported reconstruction vs Monte Carlo (plot level, m2 per plot and interval)")
+diag_line("Before the anchor census the exported value (bold line of fig2) can lie outside the MC")
+diag_line("interval. The exported reconstruction is one reconstruction per tree (DP: the most probable")
+diag_line("path; probabilistic engine: the most representative draw); a realization takes a random")
+diag_line("draw per tree. A draw that splits a stem history into two stems turns one continuing stem")
+diag_line("into one that dies (its BA counts as Loss) and a new one (its BA counts as Gain); Growth")
+diag_line("loses only that stem's growth, and the net change stays the same. Trees are drawn")
+diag_line("independently, so their random differences cancel and the interval is narrow, but a shift")
+diag_line("shared by many trees adds up and falls outside it.")
+for (r in seq_len(nrow(exp_mc))) {
+    e <- exp_mc[r]
+    diag_line(sprintf(
+        "  C%d->C%d %-14s exported %9.2f | MC %s %9.2f [%9.2f, %9.2f] | shift %+7.2f (%s) | %s",
+        e$CensusID_from, e$CensusID_to, e$Component, e$exported, mc_center, e$centre, e$lwr, e$upr,
+        e$shift, if (is.na(e$shift_pct)) "   n/a " else sprintf("%+5.1f %%", e$shift_pct),
+        if (e$inside) "inside" else "outside"
+    ))
+}
+diag_line("Stems of the sampled trees (all measured observations): exported vs posterior mean")
+for (r in seq_len(nrow(stems_engine))) {
+    e <- stems_engine[r]
+    diag_line(sprintf(
+        "  %-13s trees %6d | exported %7d | posterior mean %9.1f | %+.2f %%",
+        e$engine, e$trees, e$exported, e$posterior, e$extra_pct
+    ))
+}
+diag_line("Shift of the posterior mean by engine (exact, from the path weights; m2 per plot and interval).")
+diag_line("The mean can differ from the MC median where one tree has a large either-or choice (for")
+diag_line("example a measurement error that some draws read as a death).")
+for (r in seq_len(nrow(census_pairs))) {
+    cp <- census_pairs[r]
+    s <- shift_engine[CensusID_from == cp$CensusID_from]
+    pick <- function(comp, eng) s[engine == eng, fcoalesce(sum(get(comp)), 0)]
+    gain_all <- pick("Gain_BA", "DP") + pick("Gain_BA", "probabilistic")
+    diag_line(sprintf(
+        "  C%d->C%d Gain %+6.2f (DP %+6.2f, probabilistic %+6.2f; probabilistic share %s) | Loss %+6.2f (DP %+6.2f, probabilistic %+6.2f) | Growth %+6.2f",
+        cp$CensusID_from, cp$CensusID_to, gain_all, pick("Gain_BA", "DP"), pick("Gain_BA", "probabilistic"),
+        if (abs(gain_all) >= 0.005) sprintf("%3.0f %%", 100 * pick("Gain_BA", "probabilistic") / gain_all) else "n/a",
+        pick("Loss_BA", "DP") + pick("Loss_BA", "probabilistic"), pick("Loss_BA", "DP"), pick("Loss_BA", "probabilistic"),
+        pick("Growth_BA", "DP") + pick("Growth_BA", "probabilistic")
+    ))
+}
+diag_line("")
 diag_line("## Invariance")
 diag_line(sprintf("largest |MC plot stock - exported stock|: %.6f m2 (alive-but-unmeasured stems only)", stock_dev))
 diag_line(sprintf("largest accounting error (Growth + Loss + Gain vs stock change): %.2e m2", acc_err))
@@ -1125,10 +1230,6 @@ theme_forest <- function(base_size = 11) {
         )
 }
 
-center_fun <- function(x) {
-    if (mc_center == "median") fmedian(x, na.rm = TRUE) else fmean(x, na.rm = TRUE)
-}
-
 # ── Figure 1: BA stock per hectare ──────────────────────────────────────────────
 stock_exp <- map_plot_stock[, .(CensusID, value = map * per_ha)][dates[, .(CensusID, Year)], on = "CensusID"]
 stock_mc <- plot_stock_real[, .(value = TotalBA_m2 * per_ha), by = .(CensusID, realization)][,
@@ -1194,6 +1295,37 @@ flux_mc_ci <- melt(flux_mc[CensusID_from >= first_plot_census],
     by = .(CensusID_from, Year_mid, Component)
 ]
 
+# Caption: why the bold line can lie outside the ribbon, with the shifts of
+# this run before the anchor census (exp_mc and stems_engine, Section 4.9).
+pre_anchor <- exp_mc[CensusID_to <= ANCHOR_START_CENSUS]
+shift_range <- function(comp) {
+    v <- pre_anchor[Component == comp, shift_pct]
+    sprintf("%+.1f%% to %+.1f%%", min(v, na.rm = TRUE), max(v, na.rm = TRUE))
+}
+stems_pct <- function(eng) {
+    v <- stems_engine[engine == eng, extra_pct]
+    if (length(v) == 1L) sprintf("%+.1f%%", v) else "none"
+}
+fig2_caption <- paste(
+    "The bold line is one reconstruction per tree (DP trees: the most probable path; trees of the probabilistic matcher:",
+    "the most representative draw); each realization takes a random posterior draw per tree.",
+    sprintf(
+        "Before census %d (%d) the draws split %s stem histories into two stems than the exported reconstruction does (stems: %s in DP trees, %s in matcher trees).",
+        ANCHOR_START_CENSUS, dates[CensusID == ANCHOR_START_CENSUS, Year],
+        if (stems_engine[, sum(posterior) >= sum(exported)]) "more" else "fewer",
+        stems_pct("DP"), stems_pct("probabilistic")
+    ),
+    "A split turns one continuing stem into one that dies (its basal area counts as Loss) and a new one (its basal area counts as Gain);",
+    "Growth loses only that stem's growth, and the net change stays the same.",
+    sprintf(
+        "MC %s minus exported value, in %% of the exported value: Gain %s, Loss %s (negative: a larger loss), Growth %s.",
+        mc_center, shift_range("Gain_BA"), shift_range("Loss_BA"), shift_range("Growth_BA")
+    ),
+    "Trees are drawn independently, so their random differences cancel and the ribbon is narrow; a shift shared by many trees adds up and falls outside it.",
+    sprintf("From census %d on, every stem is tagged and the two agree.", ANCHOR_START_CENSUS)
+)
+fig2_caption <- paste(strwrap(fig2_caption, width = 135), collapse = "\n")
+
 fig2 <- ggplot() +
     geom_ribbon(data = flux_mc_ci, aes(Year_mid, ymin = lwr, ymax = upr, fill = Component), alpha = 0.6) +
     geom_line(data = flux_mc_ci, aes(Year_mid, center, colour = Component), linewidth = 0.7, linetype = "dashed") +
@@ -1216,9 +1348,15 @@ fig2 <- ggplot() +
         } ~ "yr"^
             {
                 -1
-            } * ")")
+            } * ")"),
+        caption = fig2_caption
     ) +
-    theme_forest()
+    theme_forest() +
+    # the caption explains the figure: left-aligned and readable
+    theme(
+        plot.caption = element_text(size = rel(0.72), colour = "#555550", hjust = 0, lineheight = 1.15, margin = margin(t = 8)),
+        plot.caption.position = "plot"
+    )
 if (interactive()) print(fig2)
 
 # ── Figure 3: BA trajectories of focal trees — one page per tree ────────────────
@@ -1277,5 +1415,5 @@ dev.off()
 cat("[Fig3] Written:", fig3_path, "\n")
 
 ggsave(file.path(out_dir, "fig1_BA_stock.pdf"), fig1, width = 8, height = 4.5)
-ggsave(file.path(out_dir, "fig2_BA_fluxes.pdf"), fig2, width = 8, height = 10)
+ggsave(file.path(out_dir, "fig2_BA_fluxes.pdf"), fig2, width = 8, height = 11)
 cat("[Figs] fig1_BA_stock.pdf and fig2_BA_fluxes.pdf saved to", out_dir, "\n")

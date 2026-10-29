@@ -23,7 +23,7 @@ CHECK OK: Every alive census after a stem's last measurement gets a DBH from the
 CHECK OK: Measured BA stock per tree and census is identical in every path (identity cannot change measurements)
 CHECK OK: In every realization, Growth + Loss + Gain equals the stock change, both in the DBH of the fluxes (max error 1.02e-12 m2)
 
-# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-10-28 23:28:35
+# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-10-29 00:30:11
 K_realizations = 100 | seed = 42 | anchor census = 7
 
 ## Palms and strangler figs (as in biomass_stocks_fluxes.R)
@@ -56,6 +56,62 @@ DP draws are exact posterior samples and repeat; probabilistic draws are
 approximate and nearly all unique, so a 'most probable path' exists only for DP trees.
   DP            trees  74079 | median unique paths per tree     4 | paths drawn once  50.5 % | mean posterior probability of the exported partition 0.726 | exported partition among the sampled paths 0.995 | most probable path 0.942
   probabilistic trees   2764 | median unique paths per tree   174 | paths drawn once  92.3 % | mean posterior probability of the exported partition 0.195 | exported partition among the sampled paths 0.987
+
+## Exported reconstruction vs Monte Carlo (plot level, m2 per plot and interval)
+Before the anchor census the exported value (bold line of fig2) can lie outside the MC
+interval. The exported reconstruction is one reconstruction per tree (DP: the most probable
+path; probabilistic engine: the most representative draw); a realization takes a random
+draw per tree. A draw that splits a stem history into two stems turns one continuing stem
+into one that dies (its BA counts as Loss) and a new one (its BA counts as Gain); Growth
+loses only that stem's growth, and the net change stays the same. Trees are drawn
+independently, so their random differences cancel and the interval is narrow, but a shift
+shared by many trees adds up and falls outside it.
+  C1->C2 Growth_BA      exported    -64.86 | MC median    -64.79 [   -64.94,    -64.61] | shift   +0.07 ( +0.1 %) | inside
+  C2->C3 Growth_BA      exported    202.72 | MC median    202.65 [   202.46,    207.33] | shift   -0.07 ( -0.0 %) | inside
+  C3->C4 Growth_BA      exported    137.94 | MC median    137.89 [   137.80,    137.96] | shift   -0.05 ( -0.0 %) | inside
+  C4->C5 Growth_BA      exported    172.64 | MC median    172.63 [   172.53,    172.89] | shift   -0.01 ( -0.0 %) | inside
+  C5->C6 Growth_BA      exported    155.11 | MC median    155.09 [   155.03,    155.27] | shift   -0.02 ( -0.0 %) | inside
+  C6->C7 Growth_BA      exported    162.81 | MC median    162.71 [   162.65,    162.77] | shift   -0.10 ( -0.1 %) | outside
+  C7->C8 Growth_BA      exported    181.05 | MC median    181.05 [   181.05,    181.05] | shift   -0.00 ( -0.0 %) | inside
+  C8->C9 Growth_BA      exported    229.36 | MC median    229.36 [   229.36,    229.36] | shift   +0.00 ( +0.0 %) | inside
+  C1->C2 Loss_BA        exported   -200.64 | MC median   -201.22 [  -201.61,   -200.79] | shift   -0.58 ( -0.3 %) | outside
+  C2->C3 Loss_BA        exported   -169.59 | MC median   -170.61 [  -175.75,   -170.21] | shift   -1.02 ( -0.6 %) | outside
+  C3->C4 Loss_BA        exported   -159.85 | MC median   -160.78 [  -161.06,   -160.62] | shift   -0.93 ( -0.6 %) | outside
+  C4->C5 Loss_BA        exported   -179.15 | MC median   -180.12 [  -180.43,   -179.90] | shift   -0.96 ( -0.5 %) | outside
+  C5->C6 Loss_BA        exported   -192.51 | MC median   -193.42 [  -193.73,   -193.27] | shift   -0.92 ( -0.5 %) | outside
+  C6->C7 Loss_BA        exported   -183.41 | MC median   -184.15 [  -184.35,   -184.01] | shift   -0.74 ( -0.4 %) | outside
+  C7->C8 Loss_BA        exported   -201.34 | MC median   -201.34 [  -201.34,   -201.34] | shift   -0.00 ( -0.0 %) | inside
+  C8->C9 Loss_BA        exported   -283.79 | MC median   -283.79 [  -283.79,   -283.79] | shift   +0.00 ( +0.0 %) | inside
+  C1->C2 Gain_BA        exported     21.67 | MC median     22.31 [    21.77,     22.69] | shift   +0.64 ( +3.0 %) | outside
+  C2->C3 Gain_BA        exported     33.93 | MC median     35.02 [    34.73,     35.64] | shift   +1.09 ( +3.2 %) | outside
+  C3->C4 Gain_BA        exported     21.71 | MC median     22.62 [    22.46,     22.86] | shift   +0.91 ( +4.2 %) | outside
+  C4->C5 Gain_BA        exported     16.08 | MC median     17.06 [    16.90,     17.19] | shift   +0.98 ( +6.1 %) | outside
+  C5->C6 Gain_BA        exported     21.57 | MC median     22.45 [    22.30,     22.60] | shift   +0.88 ( +4.1 %) | outside
+  C6->C7 Gain_BA        exported     24.70 | MC median     25.54 [    25.42,     25.74] | shift   +0.84 ( +3.4 %) | outside
+  C7->C8 Gain_BA        exported     23.18 | MC median     23.18 [    23.18,     23.18] | shift   +0.00 ( +0.0 %) | inside
+  C8->C9 Gain_BA        exported     33.10 | MC median     33.10 [    33.10,     33.10] | shift   +0.00 ( +0.0 %) | inside
+  C1->C2 DeltaBA_total  exported   -243.82 | MC median   -243.74 [  -243.76,   -243.72] | shift   +0.09 ( +0.0 %) | outside
+  C2->C3 DeltaBA_total  exported     67.06 | MC median     67.11 [    67.08,     67.13] | shift   +0.04 ( +0.1 %) | outside
+  C3->C4 DeltaBA_total  exported     -0.20 | MC median     -0.28 [    -0.31,     -0.27] | shift   -0.09 (   n/a ) | outside
+  C4->C5 DeltaBA_total  exported      9.57 | MC median      9.57 [     9.56,      9.59] | shift   +0.00 ( +0.0 %) | inside
+  C5->C6 DeltaBA_total  exported    -15.83 | MC median    -15.87 [   -15.89,    -15.86] | shift   -0.05 ( -0.3 %) | outside
+  C6->C7 DeltaBA_total  exported      4.11 | MC median      4.11 [     4.10,      4.11] | shift   +0.00 ( +0.0 %) | inside
+  C7->C8 DeltaBA_total  exported      2.88 | MC median      2.88 [     2.88,      2.88] | shift   -0.00 ( -0.0 %) | inside
+  C8->C9 DeltaBA_total  exported    -21.32 | MC median    -21.32 [   -21.32,    -21.32] | shift   -0.00 ( -0.0 %) | inside
+Stems of the sampled trees (all measured observations): exported vs posterior mean
+  DP            trees  74079 | exported  191659 | posterior mean  192634.6 | +0.51 %
+  probabilistic trees   2764 | exported   29600 | posterior mean   30249.5 | +2.19 %
+Shift of the posterior mean by engine (exact, from the path weights; m2 per plot and interval).
+The mean can differ from the MC median where one tree has a large either-or choice (for
+example a measurement error that some draws read as a death).
+  C1->C2 Gain  +0.57 (DP  +0.15, probabilistic  +0.42; probabilistic share  74 %) | Loss  -0.57 (DP  -0.17, probabilistic  -0.40) | Growth  +0.09
+  C2->C3 Gain  +1.14 (DP  +0.43, probabilistic  +0.71; probabilistic share  62 %) | Loss  -2.06 (DP  -1.41, probabilistic  -0.65) | Growth  +0.97
+  C3->C4 Gain  +0.92 (DP  +0.15, probabilistic  +0.77; probabilistic share  84 %) | Loss  -0.96 (DP  -0.11, probabilistic  -0.85) | Growth  -0.05
+  C4->C5 Gain  +0.97 (DP  +0.10, probabilistic  +0.87; probabilistic share  90 %) | Loss  -0.98 (DP  -0.08, probabilistic  -0.90) | Growth  +0.01
+  C5->C6 Gain  +0.89 (DP  +0.12, probabilistic  +0.77; probabilistic share  87 %) | Loss  -0.93 (DP  -0.13, probabilistic  -0.80) | Growth  -0.00
+  C6->C7 Gain  +0.85 (DP  +0.13, probabilistic  +0.73; probabilistic share  85 %) | Loss  -0.75 (DP  -0.06, probabilistic  -0.69) | Growth  -0.10
+  C7->C8 Gain  +0.00 (DP  +0.00, probabilistic  -0.00; probabilistic share n/a) | Loss  -0.00 (DP  -0.00, probabilistic  +0.00) | Growth  -0.00
+  C8->C9 Gain  -0.00 (DP  -0.00, probabilistic  -0.00; probabilistic share n/a) | Loss  +0.00 (DP  +0.00, probabilistic  +0.00) | Growth  +0.00
 
 ## Invariance
 largest |MC plot stock - exported stock|: 0.162520 m2 (alive-but-unmeasured stems only)
