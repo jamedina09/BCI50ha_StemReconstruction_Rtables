@@ -45,7 +45,7 @@ version: 2026-10. Census tables from the stem reconstruction of engine run 20261
 latest update: 2026-10-28
 latest archive date: [date of deposit]
 metadata status: Draft of 2026-10-28, to be completed where marked [ ].
-data verification: Field records (diameter, height of measurement, date, codes, field status) are copied unchanged from the ForestGEO database. Every processing step checks its inputs and outputs and stops when a check fails (see quality assurance/quality control procedures). The data files of this package are identical (MD5) to the outputs of the processing, and their objects, columns, types and the keys between files were checked (59 checks, all passed).
+data verification: Field records (diameter, height of measurement, date, codes, field status) are copied unchanged from the ForestGEO database. Every processing step checks its inputs and outputs and stops when a check fails (see quality assurance/quality control procedures). The data files of this package are identical (MD5) to the outputs of the processing, and their objects, columns, types, the keys between files and the numbers given here were checked (78 checks, all passed).
 
 # Research Origin Descriptors
 

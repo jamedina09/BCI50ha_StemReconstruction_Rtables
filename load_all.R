@@ -21,7 +21,7 @@ length(unique(df_stem$treeID))
 length(unique(df_stem$tag))
 length(unique(df_stem$sp))
 
-load("data_paper_and_repo_publication/repository/data/bci.spptable.rdata")
+load("data_paper_and_repo_publication/2_repository/data/bci.spptable.rdata")
 
 sp <- data.table(bci.spptable)
 

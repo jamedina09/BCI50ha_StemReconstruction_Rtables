@@ -44,12 +44,12 @@ funding: U.S. National Science Foundation (grants to S. P. Hubbell: DEB-0640386,
 
 ## Data Files
 
-naming scheme: data/bci.stem<k>.Rdata is census k (1–9) and holds the ForestGEO R table bci.stem<k>; data/bci.spptable.rdata holds the species table bci.spptable; data/posterior_sampled_paths.rds holds the posterior samples of the stem reconstruction; code/ holds R scripts; Metadata.md describes every file and column.
+naming scheme: data/bci.stem<k>.Rdata is census k (1–9) and holds the ForestGEO R table bci.stem<k>; data/bci.spptable.rdata holds the species table bci.spptable; data/posterior_sampled_paths.rds holds the posterior samples of the stem reconstruction; code/ holds R scripts; 2_Metadata.md describes every file and column.
 file size(s): 102.1 MB in total.
   - bci.stem1.Rdata … bci.stem9.Rdata: 6.6–7.7 MB each (646,813 rows × 17 columns each)
   - bci.spptable.rdata: 0.02 MB (328 rows × 17 columns)
   - posterior_sampled_paths.rds: 36.1 MB (1,554,448 rows × 6 columns)
-  - code/load-bci-tables.R, code/1_tables.R, code/2_data-description.R, code/3_census-9-summary.R: < 0.01 MB each
+  - code/load-bci-tables.R, code/1_tables.R, code/2_data-description.R, code/3_census-9-summary.R: 0.003–0.022 MB each
 file contents:
   - Census tables (bci.stem1 … bci.stem9): one row per stem ever recorded in the plot, the same stems in the same order in all nine tables; columns CensusID, treeID, stemID, tag, StemTag, sp, quadrat, gx, gy, dbh (mm), hom (m), ExactDate, date (days since 1960-01-01), codes, DFstatus (field status), Rstatus (P, A, G, D), StemPaths. A stem is identified by treeID + stemID.
   - Species table (bci.spptable): one row per species code (sp), with taxonomy, authority, synonyms, growth forms, common names, herbarium collections, the 2019 name and the kind of name change.

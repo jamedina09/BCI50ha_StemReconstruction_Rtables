@@ -1,6 +1,6 @@
 # Ecology Data Paper 2.0: what this submission meets and what is open
 
-Checked on 2026-10-25, updated on 2026-10-27, against the files in `data_paper_and_repo_publication/guidelines/`: the Data Paper 2.0 Author Guidelines, the Submission Checklist, and the manuscript, metadata and README templates. Ecology requires this format for every Data Paper received from 1 September 2026.
+Checked on 2026-10-25, updated on 2026-10-28, against the files in `data_paper_and_repo_publication/guidelines/`: the Data Paper 2.0 Author Guidelines, the Submission Checklist, and the manuscript, metadata and README templates. Ecology requires this format for every Data Paper received from 1 September 2026.
 
 Status: ✓ met · ✗ not yet met · ◐ met in part, or a choice of the authors.
 
@@ -8,11 +8,11 @@ Status: ✓ met · ✗ not yet met · ◐ met in part, or a choice of the author
 
 | Element | File | Goes to | Status |
 | --- | --- | --- | --- |
-| Manuscript | `manuscript/bci-50ha_data-paper_manuscript.docx`, edited by hand | ScholarOne, as the "Main Document" (the only part typeset in Ecology) | ◐ Draft; what the authors must supply is highlighted |
-| Metadata | `repository/Metadata.md` | Repository | ◐ Template filled; fields marked `[ ]` to complete |
-| README | `repository/README.md` | Repository | ◐ Template filled; ORCIDs, DOIs and license to complete |
-| Data | `repository/data/`: 11 files, 102.1 MB | Repository | ✓ The stage-3 files, unchanged; objects, columns, types and keys checked (59 checks, all passed) |
-| Code | `repository/code/`: `load-bci-tables.R`, `1_tables.R`, `2_data-description.R`, `3_census-9-summary.R` | Repository | ✓ Tested: reproduces every number and table of the manuscript (outputs in `manuscript_outputs/`) |
+| Manuscript | `1_manuscript/bci-50ha_data-paper_manuscript_v3.docx` (latest version), edited by hand | ScholarOne, as the "Main Document" (the only part typeset in Ecology) | ◐ Draft; what the authors must supply is highlighted |
+| Metadata | `2_repository/2_Metadata.md` | Repository | ◐ Template filled; fields marked `[ ]` to complete |
+| README | `2_repository/3_README.md` | Repository | ◐ Template filled; ORCIDs, DOIs and license to complete |
+| Data | `2_repository/data/`: 11 files, 102.0 MB | Repository | ✓ The stage-3 files, unchanged; objects, columns, types, keys and the numbers of the metadata checked (78 checks, all passed) |
+| Code | `2_repository/code/`: `load-bci-tables.R`, `1_tables.R`, `2_data-description.R`, `3_census-9-summary.R` | Repository | ✓ Tested: reproduces every number, table and the figure of the manuscript (outputs in `manuscript_outputs/`) |
 | Code of the processing | GitHub repository of the pipeline | Repository or Zenodo | ✗ To archive with a DOI (see Open Research) |
 
 The data files are the stage-3 outputs, copied unchanged (same MD5):
@@ -27,26 +27,26 @@ The data files are the stage-3 outputs, copied unchanged (same MD5):
 
 | Requirement | Draft | Status |
 | --- | --- | --- |
-| Title of at most 120 characters, sentence case | 107 characters | ✓ |
-| Authors with their affiliation during data collection; present addresses at the bottom of the title page | Six authors, all at STRI. R. Condit, S. P. Hubbell and R. B. Foster are left out until they confirm. ORCID lines left blank | ◐ |
-| One corresponding author with one email address | Placeholder | ✗ |
-| 6–12 keywords, alphabetical, the same in manuscript, metadata, README and ScholarOne | 12, alphabetical, identical in the three files | ✓ |
-| Acknowledgments: every funder | ForestGEO's BCI wording with the NSF grants, and the Frank H. Levinson Family Foundation (no grant number). Names of the 2022–2023 census team to fill in (Name1, Name2, Name3) | ◐ |
+| Title of at most 120 characters, sentence case | 72 characters | ✓ |
+| Authors with their affiliation during data collection; present addresses at the bottom of the title page | Six authors, all at STRI. R. Condit, S. P. Hubbell and R. B. Foster are left out until they confirm. ORCIDs of S. J. Davies and J. A. Medina-Vega given; the other four blank | ◐ |
+| One corresponding author with one email address | J. A. Medina-Vega, <medinaja@si.edu> | ✓ |
+| 6–12 keywords, alphabetical, the same in manuscript, metadata, README and ScholarOne | 7, alphabetical, identical in the three files | ✓ |
+| Acknowledgments: every funder | NSF grants to S. P. Hubbell, the Smithsonian Institution (STRI and ForestGEO) since the 2015 census, and the other funders of the project; the 2022–2023 census team named. Grant DEB-00753102 kept as written | ◐ |
 | Field station named, with its location, in Methods and in Acknowledgments | Summary of Methods (Site) and Acknowledgments | ✓ |
 | Contributor roles (CRediT) | Draft for each author to confirm | ◐ |
 | Conflict-of-interest statement | Draft | ◐ |
-| Abstract of at most 500 words that synthesizes every section | 447 words; its census-9 summary is also in the Data Description (Census 9) | ✓ |
+| Abstract of at most 500 words that synthesizes every section | 350 words; its census-9 summary is also in the Data Description (Census 9) | ✓ |
 | Sections in order: Overview, Data Availability, Data Description, Summary of Methods, Limitations and Challenges, Scientific Opportunities, Tables and Figures, References | All present, in order | ✓ |
-| Main text of at most 2,000 words, title page, abstract, tables, captions and references excluded | 1,999 words with the section headings (1,986 without) | ✓ |
-| At most four tables and figures, strictly descriptive | 4 descriptive tables | ✓ |
+| Main text of at most 2,000 words, title page, abstract, tables, captions and references excluded | 1,693 words with the section headings (1,680 without) | ✓ |
+| At most four tables and figures, strictly descriptive | 3 tables (columns of the census tables, columns of the species table, status codes) and 1 figure (trees through the censuses), from `1_tables.R` | ✓ |
 | Data Description strictly descriptive, with no statistical analysis | Counts and extents only | ✓ |
 | Data Availability: DOI of the repository and license | Placeholders | ✗ |
-| References complete, author–year | Every DOI checked; two book chapters lack page numbers | ◐ |
+| References complete, author–year | Every DOI checked; two book chapters lack page numbers; Muller-Landau and Wright (2024), the book of those chapters, is listed but not cited | ◐ |
 | Word file | `.docx`, in the template's format: Arial 11 pt, 1.15 spacing, 0.75 in margins | ✓ |
 
 Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as recorded (`use_taper_stocks <- FALSE` in `3_census-9-summary.R`); with the taper correction it would be 34.31 m² ha⁻¹. The script still writes the bootstrap intervals to `census-9_summary.csv`; the manuscript does not give them.
 
-## Metadata (`repository/Metadata.md`)
+## Metadata (`2_repository/2_Metadata.md`)
 
 ✓ Every section and field of the template is present, in order:
 
@@ -60,15 +60,15 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
 ✗ To complete:
 
 - DOIs, license and citation;
-- ORCIDs (S. Aguilar's is filled), and the corresponding author's email;
+- the ORCIDs of D. Mitre, R. Pérez, S. Aguilar and S. Lao;
 - instrumentation, permits, data forms, storage of the forms and data-entry verification (field team and data manager);
 - the herbaria;
 - redundant archival sites;
 - the date of the first release.
 
-## README (`repository/README.md`)
+## README (`2_repository/3_README.md`)
 
-✓ Template sections filled: Identifiers, Authors, Study Design, Data Files (naming scheme, file sizes, file contents). ✗ To complete: DOIs, license, ORCIDs, corresponding author's email.
+✓ Template sections filled: Identifiers, Authors, Study Design, Data Files (naming scheme, file sizes, file contents). ✗ To complete: DOIs, license, the ORCIDs of four authors.
 
 ## Data formatting guidelines
 
@@ -88,7 +88,7 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
 | --- | --- |
 | Data, metadata and README in a suitable repository at submission (published, or private for peer review) | ✗ Choose a repository. Dryad, Zenodo and Figshare are pre-approved; Dryad is free for Ecology Data Papers up to 10 GB but publishes under CC0 only |
 | Persistent identifier (DOI), open license, ORCID integration | ✗ With the repository |
-| Code that processes or summarizes the data and makes the tables of the paper | ✓ `repository/code/` |
+| Code that processes or summarizes the data and makes the tables of the paper | ✓ `2_repository/code/` |
 | Code of a new method, for peer review | ✗ The stem reconstruction is a new method. The manuscript links the public GitHub repository; archive a release with a DOI (Zenodo) and cite it, or decide otherwise |
 
 ## Submission checklist
@@ -107,21 +107,20 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
 
 1. **Authors:**
    - R. Condit, S. P. Hubbell and R. B. Foster: left out of the author list, the contributor roles and the citation until they confirm (S. Davies to write to them); if they join, add them back with their affiliations;
-   - ORCIDs (blank lines on the title page);
-   - the corresponding author;
+   - the ORCIDs of D. Mitre, R. Pérez, S. Aguilar and S. Lao (blank on the title page);
    - the role of D. Mitre.
-2. **Acknowledgments:**
-   - the names of the 2022–2023 census team (Name1, Name2, Name3; list from D. Mitre);
-   - research permits.
+2. **Acknowledgments:** research permits.
 3. **Species:**
    - the note that *Nectandra* sp.4 was merged into `nects3` is not supported by the database (one tree, one code and one label in both exports): leave it out unless the botanists confirm it;
    - check the list against S. Lao's latest list and against H. Muller-Landau's version;
    - choose how to cite the Flora de Panamá list.
 4. **License and repository:** both options stay open: Dryad (CC0 only; free for Ecology Data Papers up to 10 GB) or Zenodo (CC BY 4.0). See Open Research.
+5. **File names:** the Data Availability section names the metadata `Metadata.md`; the files are now `2_Metadata.md` and `3_README.md`. Rename them for the deposit or change the text.
+6. **References:** cite Muller-Landau and Wright (2024) or delete it (the two chapters already name the book).
 
 ## How to reproduce the outputs of the manuscript
 
-In R (or with `Rscript`), with the working directory set to `repository/`, run:
+In R (or with `Rscript`), with the working directory set to `2_repository/`, run:
 
 ```r
 source("code/1_tables.R")             # the figure and the tables
@@ -140,4 +139,4 @@ They need the R packages data.table, boot and HDInterval.
 
 ## Upload
 
-Upload the contents of `repository/`: `README.md`, `Metadata.md`, `data/` and `code/`. Google Drive puts hidden `Icon` files (`Icon\r`) in every synced folder; leave them, and any `.DS_Store`, out of the upload.
+Upload the contents of `2_repository/`: `3_README.md`, `2_Metadata.md`, `data/` and `code/`. Google Drive puts hidden `Icon` files (`Icon\r`) in every synced folder; leave them, and any `.DS_Store`, out of the upload.
