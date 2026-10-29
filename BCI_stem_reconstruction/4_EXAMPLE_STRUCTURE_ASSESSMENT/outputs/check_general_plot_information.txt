@@ -1,8 +1,8 @@
-general_plot_information.R checks, 2026-10-28 08:56:37
-2026-10-28 08:56:37 ✓ The R tables and the species table exist (run stage 3 first) 
-2026-10-28 08:56:37 ✓ The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge) 
-2026-10-28 08:56:46 ✓ Every stem-census row has a date (ExactDate, completed from the stage-3 date column) 
-2026-10-28 08:56:47 ✓ The ten focal species of the taper model (Cushman et al. 2014) are in the data 
-2026-10-28 08:56:48 ✓ No census to fill lies between two measurements across a stump (it would mix the stem that broke with the resprout) 
-2026-10-28 08:56:50 ✓ Every alive census to fill has a DBH, and no other record without a measurement has one 
-2026-10-28 08:56:51 ✓ Quadrat codes are 'XXYY' 20 m cells consistent with (gx, gy) 
+general_plot_information.R checks, 2026-10-28 23:23:42
+2026-10-28 23:23:42 ✓ The R tables and the species table exist (run stage 3 first) 
+2026-10-28 23:23:42 ✓ The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge) 
+2026-10-28 23:23:57 ✓ Every stem-census row has a date (ExactDate, completed from the stage-3 date column) 
+2026-10-28 23:23:58 ✓ The ten focal species of the taper model (Cushman et al. 2014) are in the data 
+2026-10-28 23:23:59 ✓ No census to fill lies between two measurements across a stump (it would mix the stem that broke with the resprout) 
+2026-10-28 23:24:01 ✓ Every alive census to fill has a DBH, and no other record without a measurement has one 
+2026-10-28 23:24:02 ✓ Quadrat codes are 'XXYY' 20 m cells consistent with (gx, gy) 

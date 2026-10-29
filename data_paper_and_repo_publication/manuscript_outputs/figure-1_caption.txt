@@ -14,8 +14,8 @@ percentages are rounded to 0.1%, so the three shares of a group add up to 100% w
 2022–2023, 203,489 trees had a living stem at 1.3 m (73,445 of census 1, 31.2%; 130,044 new,
 57.9%), 13,536 were broken below (3,880 of census 1, 9,656 new) and 242,921 were dead (158,011 of
 census 1, 67.1%; 84,910 new, 37.8%). From census 2 to 8, the grey band holds 5,968–14,646 trees,
-88–99% of them broken below. The census tables code a stump record by the stem at 1.3 m, which is
-gone: G when another stem of the tree is alive then or later, D when none is; in 2022–2023 the
-13,536 broken-below trees are coded D. Shaded vertical bands: period in which 95% of the records of
-each census were taken (2.5% to 97.5% quantiles of the record dates); each census is placed at its
-median record date. 265 trees with only dead or missing records are not shown.
+88–99% of them broken below. In the census tables, the stump records of 13,536 of the 13,536
+broken-below trees of 2022–2023 are coded A (alive, without a diameter). Shaded vertical bands:
+period in which 95% of the records of each census were taken (2.5% to 97.5% quantiles of the record
+dates); each census is placed at its median record date. 265 trees with only dead or missing
+records are not shown.

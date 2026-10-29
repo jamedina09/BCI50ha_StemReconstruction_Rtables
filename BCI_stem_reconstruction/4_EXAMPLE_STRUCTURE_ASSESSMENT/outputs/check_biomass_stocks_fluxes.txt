@@ -1,12 +1,12 @@
-biomass_stocks_fluxes.R checks, 2026-10-28 08:56:49
-2026-10-28 08:56:49 ✓ The R tables and the species table exist (run stage 3 first) 
-2026-10-28 08:56:49 ✓ The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge) 
-2026-10-28 08:57:00 ✓ The ten focal species of the taper model (Cushman et al. 2014) are in the data 
-2026-10-28 08:57:00 ✓ Every alive stem-census row has an ExactDate (needed to interpolate DBH in time) 
-2026-10-28 08:57:01 ✓ No census to fill lies between two measurements across a stump (it would mix the stem that broke with the resprout) 
-2026-10-28 08:57:05 ✓ Every alive census to fill (after a measurement of its segment) has a DBH 
-2026-10-28 08:57:05 ✓ No stump, no alive census before a stem's first measurement or after a stump, and no dead census gets a DBH 
-2026-10-28 08:57:05 ✓ The stocks and the fluxes hold the same stem-censuses 
-2026-10-28 08:57:05 ✓ With the same taper setting for stocks and fluxes, both use the same DBH 
-2026-10-28 08:57:12 ✓ No stem leaves the stock while it is alive (A) in the next census, stump censuses aside 
-2026-10-28 08:57:30 ✓ Size-class AGB stocks add up to the plot AGB stock in every census 
+biomass_stocks_fluxes.R checks, 2026-10-28 23:17:49
+2026-10-28 23:17:49 ✓ The R tables and the species table exist (run stage 3 first) 
+2026-10-28 23:17:49 ✓ The R tables and the species table are newer than the stage-2 table (rerun stage 3 after the merge) 
+2026-10-28 23:18:05 ✓ The ten focal species of the taper model (Cushman et al. 2014) are in the data 
+2026-10-28 23:18:06 ✓ Every alive stem-census row has an ExactDate (needed to interpolate DBH in time) 
+2026-10-28 23:18:07 ✓ No census to fill lies between two measurements across a stump (it would mix the stem that broke with the resprout) 
+2026-10-28 23:18:11 ✓ Every alive census to fill (after a measurement of its segment) has a DBH 
+2026-10-28 23:18:11 ✓ No stump, no alive census before a stem's first measurement or after a stump, and no dead census gets a DBH 
+2026-10-28 23:18:11 ✓ The stocks and the fluxes hold the same stem-censuses 
+2026-10-28 23:18:11 ✓ With the same taper setting for stocks and fluxes, both use the same DBH 
+2026-10-28 23:18:18 ✓ No stem leaves the stock while it is alive (A) in the next census, stump censuses aside 
+2026-10-28 23:18:35 ✓ Size-class AGB stocks add up to the plot AGB stock in every census 

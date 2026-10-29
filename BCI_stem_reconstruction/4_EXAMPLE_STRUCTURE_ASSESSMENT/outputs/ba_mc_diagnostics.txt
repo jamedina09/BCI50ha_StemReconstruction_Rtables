@@ -23,7 +23,7 @@ CHECK OK: Every alive census after a stem's last measurement gets a DBH from the
 CHECK OK: Measured BA stock per tree and census is identical in every path (identity cannot change measurements)
 CHECK OK: In every realization, Growth + Loss + Gain equals the stock change, both in the DBH of the fluxes (max error 1.02e-12 m2)
 
-# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-10-28 09:02:23
+# ba_mc_diagnostics.txt — identity-uncertainty Monte Carlo, generated 2026-10-28 23:28:35
 K_realizations = 100 | seed = 42 | anchor census = 7
 
 ## Palms and strangler figs (as in biomass_stocks_fluxes.R)
@@ -58,39 +58,39 @@ approximate and nearly all unique, so a 'most probable path' exists only for DP 
   probabilistic trees   2764 | median unique paths per tree   174 | paths drawn once  92.3 % | mean posterior probability of the exported partition 0.195 | exported partition among the sampled paths 0.987
 
 ## Invariance
-largest |MC plot stock - exported stock|: 0.231406 m2 (alive-but-unmeasured stems only)
+largest |MC plot stock - exported stock|: 0.162520 m2 (alive-but-unmeasured stems only)
 largest accounting error (Growth + Loss + Gain vs stock change): 1.02e-12 m2
 
 ## Monte Carlo error of the plot-level 95 % interval bounds (m2 per plot)
   C1->C2 Growth_BA      width    0.3232 | SE(lwr)   0.0196 | SE(upr)   0.0150 | max SE / width 0.061
-  C2->C3 Growth_BA      width    4.8633 | SE(lwr)   0.0190 | SE(upr)   0.0448 | max SE / width 0.009
-  C3->C4 Growth_BA      width    0.1616 | SE(lwr)   0.0084 | SE(upr)   0.0076 | max SE / width 0.052
-  C4->C5 Growth_BA      width    0.3656 | SE(lwr)   0.0068 | SE(upr)   0.0162 | max SE / width 0.044
-  C5->C6 Growth_BA      width    0.2369 | SE(lwr)   0.0100 | SE(upr)   0.0809 | max SE / width 0.342
+  C2->C3 Growth_BA      width    4.8632 | SE(lwr)   0.0190 | SE(upr)   0.0448 | max SE / width 0.009
+  C3->C4 Growth_BA      width    0.1615 | SE(lwr)   0.0085 | SE(upr)   0.0076 | max SE / width 0.053
+  C4->C5 Growth_BA      width    0.3653 | SE(lwr)   0.0067 | SE(upr)   0.0162 | max SE / width 0.044
+  C5->C6 Growth_BA      width    0.2369 | SE(lwr)   0.0100 | SE(upr)   0.0809 | max SE / width 0.341
   C6->C7 Growth_BA      width    0.1166 | SE(lwr)   0.0042 | SE(upr)   0.0092 | max SE / width 0.079
   C7->C8 Growth_BA      width    0.0003 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.040
   C8->C9 Growth_BA      width    0.0000 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.000
-  C1->C2 Loss_BA        width    0.8211 | SE(lwr)   0.0722 | SE(upr)   0.0261 | max SE / width 0.088
-  C2->C3 Loss_BA        width    5.5400 | SE(lwr)   0.1510 | SE(upr)   0.0354 | max SE / width 0.027
-  C3->C4 Loss_BA        width    0.4365 | SE(lwr)   0.0374 | SE(upr)   0.0167 | max SE / width 0.086
-  C4->C5 Loss_BA        width    0.5323 | SE(lwr)   0.0455 | SE(upr)   0.0283 | max SE / width 0.085
+  C1->C2 Loss_BA        width    0.8208 | SE(lwr)   0.0716 | SE(upr)   0.0257 | max SE / width 0.087
+  C2->C3 Loss_BA        width    5.5378 | SE(lwr)   0.1505 | SE(upr)   0.0363 | max SE / width 0.027
+  C3->C4 Loss_BA        width    0.4337 | SE(lwr)   0.0367 | SE(upr)   0.0167 | max SE / width 0.085
+  C4->C5 Loss_BA        width    0.5291 | SE(lwr)   0.0449 | SE(upr)   0.0278 | max SE / width 0.085
   C5->C6 Loss_BA        width    0.4573 | SE(lwr)   0.0580 | SE(upr)   0.0374 | max SE / width 0.127
   C6->C7 Loss_BA        width    0.3400 | SE(lwr)   0.0320 | SE(upr)   0.0217 | max SE / width 0.094
   C7->C8 Loss_BA        width    0.0000 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.000
   C8->C9 Loss_BA        width    0.0000 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.000
   C1->C2 Gain_BA        width    0.9254 | SE(lwr)   0.0407 | SE(upr)   0.0909 | max SE / width 0.098
-  C2->C3 Gain_BA        width    0.9118 | SE(lwr)   0.0319 | SE(upr)   0.0726 | max SE / width 0.080
-  C3->C4 Gain_BA        width    0.4015 | SE(lwr)   0.0067 | SE(upr)   0.0370 | max SE / width 0.092
-  C4->C5 Gain_BA        width    0.2899 | SE(lwr)   0.0231 | SE(upr)   0.0251 | max SE / width 0.087
-  C5->C6 Gain_BA        width    0.2993 | SE(lwr)   0.0165 | SE(upr)   0.0355 | max SE / width 0.119
+  C2->C3 Gain_BA        width    0.9073 | SE(lwr)   0.0317 | SE(upr)   0.0702 | max SE / width 0.077
+  C3->C4 Gain_BA        width    0.3984 | SE(lwr)   0.0093 | SE(upr)   0.0356 | max SE / width 0.089
+  C4->C5 Gain_BA        width    0.2912 | SE(lwr)   0.0232 | SE(upr)   0.0233 | max SE / width 0.080
+  C5->C6 Gain_BA        width    0.2992 | SE(lwr)   0.0201 | SE(upr)   0.0355 | max SE / width 0.119
   C6->C7 Gain_BA        width    0.3182 | SE(lwr)   0.0228 | SE(upr)   0.0249 | max SE / width 0.078
   C7->C8 Gain_BA        width    0.0006 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.070
   C8->C9 Gain_BA        width    0.0000 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.000
-  C1->C2 DeltaBA_total  width    0.0514 | SE(lwr)   0.0031 | SE(upr)   0.0030 | max SE / width 0.061
-  C2->C3 DeltaBA_total  width    0.0552 | SE(lwr)   0.0027 | SE(upr)   0.0020 | max SE / width 0.049
-  C3->C4 DeltaBA_total  width    0.0473 | SE(lwr)   0.0023 | SE(upr)   0.0044 | max SE / width 0.094
-  C4->C5 DeltaBA_total  width    0.0262 | SE(lwr)   0.0013 | SE(upr)   0.0032 | max SE / width 0.123
-  C5->C6 DeltaBA_total  width    0.0296 | SE(lwr)   0.0020 | SE(upr)   0.0023 | max SE / width 0.079
+  C1->C2 DeltaBA_total  width    0.0445 | SE(lwr)   0.0017 | SE(upr)   0.0031 | max SE / width 0.071
+  C2->C3 DeltaBA_total  width    0.0517 | SE(lwr)   0.0036 | SE(upr)   0.0029 | max SE / width 0.070
+  C3->C4 DeltaBA_total  width    0.0412 | SE(lwr)   0.0022 | SE(upr)   0.0032 | max SE / width 0.076
+  C4->C5 DeltaBA_total  width    0.0277 | SE(lwr)   0.0014 | SE(upr)   0.0023 | max SE / width 0.085
+  C5->C6 DeltaBA_total  width    0.0255 | SE(lwr)   0.0016 | SE(upr)   0.0012 | max SE / width 0.061
   C6->C7 DeltaBA_total  width    0.0123 | SE(lwr)   0.0001 | SE(upr)   0.0007 | max SE / width 0.057
   C7->C8 DeltaBA_total  width    0.0004 | SE(lwr)   0.0000 | SE(upr)   0.0001 | max SE / width 0.134
   C8->C9 DeltaBA_total  width    0.0000 | SE(lwr)   0.0000 | SE(upr)   0.0000 | max SE / width 0.000
