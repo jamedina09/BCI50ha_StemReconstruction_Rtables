@@ -102,7 +102,12 @@ The three scripts read the R tables in the same way, with the rules of
   field tag is that stem). It gets no DBH and is not in the stand. It splits
   the stem's life into segments: the stem leaves the stand at the stump (its
   basal area or biomass is a loss; its `Rstatus` stays `A`, so it is not a
-  death), and its next measurement is a recruit (a gain).
+  death), and its next measurement is a recruit (a gain). An `A` record
+  just before a stump with no sign of a stem at 1.3 m (no "alive" record, and
+  no DBH on a record that is not dead: a dead, stem dead, missing or absent
+  record, alive only because the stump comes later) is a stump too: the stem
+  broke at a time not known between its last measurement and the stump; a DBH
+  recorded on such a dead record is dropped, as for a dead stem.
 - **Filled censuses.** An `A` record without a DBH, not a stump, that comes
   after a measurement of the stem with no stump in between, is a missed
   measurement: the stem stays in the stand, with a DBH from its own

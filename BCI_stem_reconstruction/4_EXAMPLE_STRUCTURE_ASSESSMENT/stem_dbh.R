@@ -14,7 +14,12 @@
 #     "broken below". The stem is alive but has no stem at 1.3 m: it gets no
 #     DBH, and it splits the stem's life into segments (`seg`). The stem
 #     leaves the stand at a stump; a later measurement starts a new segment
-#     (a recruit).
+#     (a recruit). An alive census just before a stump with no sign of a stem
+#     at 1.3 m (no "alive" record, and no DBH on a record that is not dead:
+#     a dead, stem dead, missing or absent record, alive only because the
+#     stump comes later) is a stump too: the stem broke at a time not known
+#     between its last measurement and the stump. A DBH recorded on such a
+#     dead record is dropped, as on the record of a dead stem.
 #   - Fill: an alive (A) census without a DBH, not a stump, that comes after a
 #     measurement of the same segment (`fill`). Between two measurements its
 #     DBH is linear in time; after the segment's last measurement it continues
@@ -77,13 +82,25 @@ giant_strangler_trees <- function(dt) {
 
 # ---- Stumps, segments and the censuses to fill -------------------------------
 # Adds by reference, per stem (treeID + stemID) in census order:
-#   stump : alive (A), no DBH, raw status broken below
+#   stump : alive (A), no DBH, raw status broken below; or alive with no sign
+#           of a stem at 1.3 m, with a stump as the stem's next stump or sign
+#           of a stem at 1.3 m (its DBH, if recorded on a dead record, is set
+#           to NA in `dbh_col`)
 #   seg   : stump segment (number of stumps up to this census)
 #   fill  : alive (A), no DBH, not a stump, after a measurement of its segment
 # `dbh_col` is the recorded DBH (NA on records that are not alive).
 stump_segments <- function(dt, dbh_col = "dbh") {
     setorder(dt, treeID, stemID, CensusID)
     dt[, stump := Rstatus %in% "A" & is.na(get(dbh_col)) & DFstatus %in% "broken below"]
+    # sign of a stem at 1.3 m: an "alive" record, or a DBH on a record that is
+    # not dead; the stem's next event after each census: 1 a stump, 2 a sign
+    dt[, at_13_ := DFstatus %in% "alive" | (!is.na(get(dbh_col)) & !DFstatus %in% c("dead", "stem dead"))]
+    dt[, next_event_ := nafill(shift(fifelse(stump, 1L, fifelse(at_13_, 2L, NA_integer_)), type = "lead"), type = "nocb"),
+        by = .(treeID, stemID)]
+    before_stump <- dt[, Rstatus %in% "A" & !stump & !at_13_ & next_event_ %in% 1L]
+    dt[before_stump, (dbh_col) := NA]
+    dt[before_stump, stump := TRUE]
+    dt[, c("at_13_", "next_event_") := NULL]
     dt[, seg := cumsum(stump), by = .(treeID, stemID)]
     dt[, fill := Rstatus %in% "A" & is.na(get(dbh_col)) & !stump &
         cumsum(!is.na(get(dbh_col))) > 0L, by = .(treeID, stemID, seg)]
