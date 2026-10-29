@@ -33,7 +33,8 @@ census_year <- c(1982, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2023)
 # A tree is one individual (treeID), whatever its number of stems. In each census,
 # every tree recorded alive up to then is in exactly one of four groups:
 #   living stem      at least one stem alive at 1.3 m: Rstatus A on a record that is
-#                    not a stump. These are the trees counted in a census (above zero)
+#                    not a stump, nor just before one (see below). These are the
+#                    trees counted in a census (above zero)
 #   broken below     no living stem at 1.3 m, but a stump record: DFstatus "broken
 #                    below" without a diameter. The field crew recorded the tree alive,
 #                    broken below 1.3 m, so it has no stem at breast height
@@ -43,11 +44,15 @@ census_year <- c(1982, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2023)
 #                    one (cumulative)
 # "Recorded alive" means a living stem at 1.3 m or a stump record. Trees of census 1:
 # recorded alive in census 1; new trees: first recorded alive after census 1.
+# An alive census just before a stump of the same stem with no sign of a stem at
+# 1.3 m (no "alive" record, and no DBH on a record that is not dead: a dead,
+# stem dead, missing or absent record) has no stem at 1.3 m either: the stem
+# broke at a time not known between its last measurement and the stump (the
+# rule of stage 4).
 #
-# The census tables code a stump record by the stem at 1.3 m, which is gone: G when
-# another stem of the tree is alive then or later, D when none is (A where the same
-# stem is alive later). The figure counts these trees as alive, broken below; the
-# codes of their stump records are written to the figure data.
+# The census tables code a stump record A: alive, with no DBH (no stem at
+# breast height). The codes of the stump records of the broken-below trees are
+# written to the figure data (broken_below_coded_A, _G, _D) and checked.
 #
 # Census period: the 2.5% and 97.5% quantiles of the record dates (95% of the
 # records of a census were taken between them) and the median date, rather than
@@ -63,8 +68,13 @@ period <- x[, .(
     date_q975 = date_q(ExactDate, 0.975)
 ), by = CensusID][order(CensusID)]
 
-st <- x[, .(treeID, CensusID, Rstatus, stump = DFstatus %in% "broken below" & is.na(dbh), DFstatus)]
-st[, stem13 := Rstatus == "A" & !stump]
+st <- x[, .(treeID, stemID, CensusID, Rstatus, DFstatus, has_dbh = !is.na(dbh))]
+setorder(st, treeID, stemID, CensusID)
+st[, stump := DFstatus %in% "broken below" & !has_dbh]
+st[, at_13 := DFstatus %in% "alive" | (has_dbh & !DFstatus %in% c("dead", "stem dead"))]
+st[, next_event := nafill(shift(fifelse(stump, 1L, fifelse(at_13, 2L, NA_integer_)), type = "lead"), type = "nocb"), by = .(treeID, stemID)]
+st[, before_stump := Rstatus == "A" & !stump & !at_13 & next_event %in% 1L]
+st[, stem13 := Rstatus == "A" & !stump & !before_stump]
 tc <- st[, .(
     stem13 = any(stem13), stump = any(stump), anyA = any(Rstatus == "A"),
     stump_A = any(stump & Rstatus == "A"), stump_G = any(stump & Rstatus == "G"), stump_D = any(stump & Rstatus == "D")
@@ -82,6 +92,8 @@ dyn <- dcast(cnt, CensusID ~ cohort + group, value.var = "N")
 setnames(dyn, sub("^census_1_", "", sub("^(census_1|new)_(.*)$", "\\2_\\1", names(dyn))))
 dyn <- merge(dyn, tc[, .(
     with_A_stem = sum(anyA),
+    broken_below_with_A = sum(group == "broken_below" & anyA),
+    alive_later_with_A = sum(group == "alive_later" & anyA),
     broken_below_coded_A = sum(group == "broken_below" & stump_A),
     broken_below_coded_G = sum(group == "broken_below" & stump_G & !stump_A),
     broken_below_coded_D = sum(group == "broken_below" & stump_D & !stump_A & !stump_G)
@@ -106,7 +118,10 @@ stopifnot(
     nrow(dead_tc) == dyn[, sum(dead_census_1 + dead_new)],
     all(dead_st$Rstatus == "D"), !any(dead_st$stump), # a dead tree: all its stems D, no stump record
     all(dyn$broken_below == dyn$broken_below_coded_A + dyn$broken_below_coded_G + dyn$broken_below_coded_D),
-    all(dyn$with_A_stem - dyn$living_stem == dyn$broken_below_coded_A) # trees whose only A stems are stumps
+    # a tree with an A stem has a living stem at 1.3 m, or its A stems are stumps
+    # (broken below) or censuses just before a stump (alive later)
+    all(dyn$with_A_stem == dyn$living_stem + dyn$broken_below_with_A + dyn$alive_later_with_A),
+    tc[group == "dead", !any(anyA)]
 )
 n_census_1 <- dyn$recorded_census_1[1]
 dyn[, `:=`(
@@ -229,8 +244,8 @@ caption <- paste0(
     cap_n(l9$broken_below_new), " new) and ", cap_n(l9$dead_census_1 + l9$dead_new), " were dead (", cap_n(l9$dead_census_1), " of census 1, ", l9$pct_census_1_dead, "%; ",
     cap_n(l9$dead_new), " new, ", l9$pct_new_dead, "%). ",
     "From census 2 to 8, the grey band holds ", cap_n(min(band)), "–", cap_n(max(band)), " trees, ", round(min(bb_share)), "–", round(max(bb_share)), "% of them broken below. ",
-    "The census tables code a stump record by the stem at 1.3 m, which is gone: G when another stem of the tree is alive then or later, D when none is; ",
-    "in 2022–2023 the ", cap_n(l9$broken_below), " broken-below trees are coded D. ",
+    "In the census tables, the stump records of ", cap_n(l9$broken_below_coded_A), " of the ", cap_n(l9$broken_below),
+    " broken-below trees of 2022–2023 are coded A (alive, without a diameter). ",
     "Shaded vertical bands: period in which 95% of the records of each census were taken (2.5% to 97.5% quantiles of the record dates); each census is placed at its median record date. ",
     cap_n(n_no_sign), " trees with only dead or missing records are not shown."
 )
@@ -298,15 +313,16 @@ fwrite(tab_species, file.path(OUT, "table_columns-species-table.csv"))
 print(tab_species)
 
 # ---- Analytical status codes (Rstatus) ---------------------------------------------------
-# Evidence of life is an alive record, or a diameter on a broken-below, missing
-# or status-less record. A dead record is dead or stem dead, or broken below
-# without a diameter.
+# Evidence of life is an alive record, a broken-below record (with a diameter,
+# a measured resprout; without one, a stump, alive below 1.3 m with no stem at
+# breast height), or a diameter on a missing or status-less record. A dead
+# record is dead or stem dead.
 tab_status <- data.table(
     Code = c("P", "A", "G", "D"),
     Meaning = c("prior", "alive", "dead stem", "dead tree"),
     Rule = c(
         "Before the stem's first record. A stem with only missing records is P in every census",
-        "From the first record to the last evidence of life, also in censuses without a record or with a dead record in between. An alive cell without a diameter is a missed measurement or a stump",
+        "From the first record to the last evidence of life (an alive or broken-below record, or a diameter), also in censuses without a record or with a dead record in between. An alive cell without a diameter is a missed measurement; a stump, broken below 1.3 m and alive with no stem at breast height; or a dead, missing or absent record just before a stump",
         "Dead, while another stem of its tree is A in that census or later",
         "Dead, and every stem of its tree dead"
     )
