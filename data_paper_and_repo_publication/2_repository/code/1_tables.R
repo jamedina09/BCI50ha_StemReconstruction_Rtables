@@ -1,13 +1,18 @@
 # =============================================================================
 # 1_tables.R — the figure and the tables of the Data Paper, from the files of
 # this package. Each output holds everything the paper shows:
-#   figure-1_tree-dynamics.png / .pdf   trees through the censuses: above zero the
-#                                       trees with a living stem at 1.3 m (of
-#                                       census 1 and new since then), below zero
-#                                       the trees alive without one (broken below)
-#                                       and the dead; the period of each census
+#   figure-1_tree-dynamics.png / .pdf   standing individuals through the censuses:
+#                                       above zero those with a living stem at
+#                                       1.3 m (of census 1 and new since then),
+#                                       below zero those alive without one
+#                                       (broken below) and the dead; the period
+#                                       of each census
 #   figure-1_tree-dynamics.csv          the numbers and census dates of the figure
 #   figure-1_caption.txt                its caption, written from those numbers
+#   individuals_by_census.csv           alive (all; with a living stem at 1.3 m;
+#                                       broken below; not seen), dead, recruits
+#                                       and deaths per census
+#                                       (bci_individual_counts())
 #   table_columns-census-tables.csv     the columns of the census tables
 #   table_columns-species-table.csv     the columns of the species table
 #   table_status-codes.csv              the analytical status codes (Rstatus)
@@ -29,30 +34,24 @@ bci <- load_bci_tables(DATA)
 x <- rbindlist(lapply(bci[paste0("bci.stem", 1:9)], as.data.table))
 census_year <- c(1982, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2023)
 
-# ---- Figure 1: dynamics of the trees through the censuses ------------------------
-# A tree is one individual (treeID), whatever its number of stems. In each census,
-# every tree recorded alive up to then is in exactly one of four groups:
-#   living stem      at least one stem alive at 1.3 m: Rstatus A on a record that is
-#                    not a stump, nor just before one (see below). These are the
-#                    trees counted in a census (above zero)
-#   broken below     no living stem at 1.3 m, but a stump record: DFstatus "broken
-#                    below" without a diameter. The field crew recorded the tree alive,
-#                    broken below 1.3 m, so it has no stem at breast height
-#   alive later      neither in this census (missing, or recorded dead), but a living
-#                    stem or a stump record in a later census
-#   dead             no living stem and no stump record in this census or in any later
-#                    one (cumulative)
-# "Recorded alive" means a living stem at 1.3 m or a stump record. Trees of census 1:
-# recorded alive in census 1; new trees: first recorded alive after census 1.
-# An alive census just before a stump of the same stem with no sign of a stem at
-# 1.3 m (no "alive" record, and no DBH on a record that is not dead: a dead,
-# stem dead, missing or absent record) has no stem at 1.3 m either: the stem
-# broke at a time not known between its last measurement and the stump (the
-# rule of stage 4).
+# ---- Figure 1: dynamics of the individuals through the censuses ------------------
+# An individual is one free-standing woody plant (treeID: a tree, shrub, palm, tree
+# fern or strangler fig), whatever its number of stems. Its state in every census
+# comes from bci_individuals() (code/load-bci-tables.R), the function users call
+# for the same numbers. Among the individuals recorded alive up to each census:
+#   living stem      state "stem at 1.3 m": the individuals counted in a census
+#                    (above zero)
+#   broken below     state "broken below": a stump record, no living stem at 1.3 m
+#   alive later      state "alive, not seen": missing or recorded dead in this
+#                    census, alive in a later one
+#   dead             state "dead" (cumulative)
+# Individuals of census 1: alive in census 1; new individuals: first alive after
+# census 1. Individuals with only dead or missing records are not shown.
 #
 # The census tables code a stump record A: alive, with no DBH (no stem at
-# breast height). The codes of the stump records of the broken-below trees are
-# written to the figure data (broken_below_coded_A, _G, _D) and checked.
+# breast height). The codes of the stump records of the broken-below
+# individuals are written to the figure data (broken_below_coded_A, _G, _D) and
+# checked.
 #
 # Census period: the 2.5% and 97.5% quantiles of the record dates (95% of the
 # records of a census were taken between them) and the median date, rather than
@@ -68,23 +67,20 @@ period <- x[, .(
     date_q975 = date_q(ExactDate, 0.975)
 ), by = CensusID][order(CensusID)]
 
-st <- x[, .(treeID, stemID, CensusID, Rstatus, DFstatus, has_dbh = !is.na(dbh))]
-setorder(st, treeID, stemID, CensusID)
-st[, stump := DFstatus %in% "broken below" & !has_dbh]
-st[, at_13 := DFstatus %in% "alive" | (has_dbh & !DFstatus %in% c("dead", "stem dead"))]
-st[, next_event := nafill(shift(fifelse(stump, 1L, fifelse(at_13, 2L, NA_integer_)), type = "lead"), type = "nocb"), by = .(treeID, stemID)]
-st[, before_stump := Rstatus == "A" & !stump & !at_13 & next_event %in% 1L]
-st[, stem13 := Rstatus == "A" & !stump & !before_stump]
-tc <- st[, .(
-    stem13 = any(stem13), stump = any(stump), anyA = any(Rstatus == "A"),
+ind <- as.data.table(bci_individuals(bci))
+counts <- as.data.table(bci_individual_counts(ind)) # stops unless the numbers add up
+fwrite(counts, file.path(OUT, "individuals_by_census.csv"))
+n_no_sign <- counts[CensusID == max(CensusID), never_alive]
+group_of <- c("stem at 1.3 m" = "living_stem", "broken below" = "broken_below", "alive, not seen" = "alive_later", "dead" = "dead")
+tc <- ind[!is.na(first_census) & CensusID >= first_census]
+tc[, `:=`(group = unname(group_of[as.character(state)]), cohort = fifelse(first_census == 1L, "census_1", "new"))]
+# Rstatus of the stems: individuals with an A stem, and the codes of their stump
+# records (figure data and checks)
+sc <- x[, .(treeID, CensusID, Rstatus, stump = DFstatus %in% "broken below" & is.na(dbh))][, .(
+    anyA = any(Rstatus == "A"),
     stump_A = any(stump & Rstatus == "A"), stump_G = any(stump & Rstatus == "G"), stump_D = any(stump & Rstatus == "D")
 ), by = .(treeID, CensusID)]
-life <- tc[stem13 | stump, .(first = min(CensusID), last = max(CensusID)), by = treeID]
-n_trees_all <- uniqueN(x$treeID)
-n_no_sign <- n_trees_all - nrow(life)
-tc <- life[tc, on = "treeID", nomatch = NULL][first <= CensusID]
-tc[, cohort := fifelse(first == 1L, "census_1", "new")]
-tc[, group := fcase(stem13, "living_stem", stump, "broken_below", last > CensusID, "alive_later", default = "dead")]
+tc <- sc[tc, on = .(treeID, CensusID)]
 grid <- CJ(CensusID = 1:9, cohort = c("census_1", "new"), group = c("living_stem", "broken_below", "alive_later", "dead"))
 cnt <- tc[, .N, by = .(CensusID, cohort, group)][grid, on = c("CensusID", "cohort", "group")]
 cnt[is.na(N), N := 0L]
@@ -106,20 +102,18 @@ dyn[, `:=`(
     recorded_new = living_stem_new + broken_below_new + alive_later_new + dead_new
 )]
 setorder(dyn, CensusID)
-# Checks: every tree is in one group; the groups agree with the census tables
-dead_tc <- life[last < 9L, .(CensusID = (last + 1L):9L), by = treeID]
-dead_st <- st[dead_tc, on = c("treeID", "CensusID"), nomatch = NULL]
+# Checks: the groups are the counts of bci_individual_counts() (which checks
+# that they add up) and agree with the census tables
 stopifnot(
-    all(dyn$recorded_census_1 == dyn$living_stem_census_1[1]), # the trees of census 1, in every census
-    all(dyn$recorded_census_1 + dyn$recorded_new == vapply(1:9, function(k) life[first <= k, .N], integer(1))),
-    nrow(life) + n_no_sign == n_trees_all,
+    all(dyn$recorded_census_1 == dyn$living_stem_census_1[1]), # the individuals of census 1, in every census
+    all(dyn$recorded_census_1 + dyn$recorded_new == counts$alive + counts$dead),
+    all(dyn$living_stem == counts$alive_stem_1.3m), all(dyn$broken_below == counts$alive_broken_below),
+    all(dyn$alive_later == counts$alive_not_seen), all(dyn$dead_census_1 + dyn$dead_new == counts$dead),
     dyn$alive_later[9] == 0, # no later census
     !is.unsorted(dyn$dead_census_1), !is.unsorted(dyn$dead_new), # the dead only accumulate
-    nrow(dead_tc) == dyn[, sum(dead_census_1 + dead_new)],
-    all(dead_st$Rstatus == "D"), !any(dead_st$stump), # a dead tree: all its stems D, no stump record
     all(dyn$broken_below == dyn$broken_below_coded_A + dyn$broken_below_coded_G + dyn$broken_below_coded_D),
-    # a tree with an A stem has a living stem at 1.3 m, or its A stems are stumps
-    # (broken below) or censuses just before a stump (alive later)
+    # an individual with an A stem has a living stem at 1.3 m, or its A stems are
+    # stumps (broken below) or censuses just before a stump (alive later)
     all(dyn$with_A_stem == dyn$living_stem + dyn$broken_below_with_A + dyn$alive_later_with_A),
     tc[group == "dead", !any(anyA)]
 )
@@ -155,7 +149,7 @@ draw_figure_1 <- function() {
     plot(NA, xlim = c(1980.9, 2025.3), ylim = c(ymin, ymax), xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "")
     abline(h = seq(-250, 250, 50), col = "grey88", lwd = 0.8)
     area <- function(lower, upper, col) polygon(c(t_med, rev(t_med)), c(rep(upper, length.out = n) / k, rev(rep(lower, length.out = n) / k)), col = col, border = NA)
-    # above zero: trees with a living stem at 1.3 m
+    # above zero: individuals with a living stem at 1.3 m
     area(0, dyn$living_stem_census_1, adjustcolor(col_cohort, 0.85))
     area(dyn$living_stem_census_1, dyn$living_stem, adjustcolor(col_new, 0.85))
     # below zero, from zero down: alive without a living stem at 1.3 m (broken below,
@@ -181,20 +175,20 @@ draw_figure_1 <- function() {
     }
     axis(2, at = seq(-250, 250, 50), labels = abs(seq(-250, 250, 50)), tck = -0.02, col = "grey60", col.ticks = "grey60")
     mtext("Census and year", 1, 3.6, col = ink)
-    mtext("Trees (thousands)", 2, 3.2, las = 0, col = ink)
+    mtext("Standing individuals (thousands)", 2, 3.2, las = 0, col = ink)
     mtext("living stem at 1.3 m", 2, 3.2, at = 175, las = 0, col = "grey40", cex = 0.75)
     mtext("no living stem at 1.3 m", 2, 3.2, at = -185, las = 0, col = "grey40", cex = 0.75)
-    # Numbers: each coloured area carries the percentage of its own group (trees of
-    # census 1; new trees) with a living stem at 1.3 m (above zero) or dead (below);
-    # the grey band carries its number of trees. The last census also carries the
-    # number of trees of each area.
+    # Numbers: each coloured area carries the percentage of its own group
+    # (individuals of census 1; new individuals) with a living stem at 1.3 m (above
+    # zero) or dead (below); the grey band carries its number of individuals. The
+    # last census also carries the number of individuals of each area.
     mid_c1 <- dyn$living_stem_census_1 / 2 / k
     mid_new <- (dyn$living_stem_census_1 + dyn$living_stem) / 2 / k
     mid_band <- b1 / 2 / k
     mid_d1 <- (b1 + b2) / 2 / k
     mid_d2 <- (b2 + b3) / 2 / k
     inner <- 2:(n - 1)
-    inner_d2 <- 5:(n - 1) # the dead new trees are too few before census 5 to hold a label
+    inner_d2 <- 5:(n - 1) # the dead new individuals are too few before census 5 to hold a label
     inner_band <- 3:(n - 1) # the band is too thin in census 2 to hold a label
     text(t_med[inner], mid_c1[inner], pct(dyn$pct_census_1_living_stem[inner]), col = "white", cex = 0.8, font = 2)
     text(t_med[inner], mid_new[inner], pct(dyn$pct_new_living_stem[inner]), col = "white", cex = 0.8, font = 2)
@@ -212,11 +206,11 @@ draw_figure_1 <- function() {
         rect(1982, y - 5.5, 1983.6, y + 5.5, col = col, border = NA)
         text(1984.2, y, label, adj = c(0, 0.5), col = ink, cex = 0.78)
     }
-    key(-150, adjustcolor(col_cohort, 0.85), "Trees of census 1: living stem at 1.3 m")
-    key(-167, adjustcolor(col_new, 0.85), "Trees new since 1982: living stem at 1.3 m")
+    key(-150, adjustcolor(col_cohort, 0.85), "Individuals of census 1: living stem at 1.3 m")
+    key(-167, adjustcolor(col_new, 0.85), "Individuals new since 1982: living stem at 1.3 m")
     key(-184, adjustcolor(col_band, 0.9), "Alive, no living stem at 1.3 m (broken below)")
-    key(-201, adjustcolor(col_cohort, 0.35), "Trees of census 1: dead")
-    key(-218, adjustcolor(col_new, 0.35), "Trees new since 1982: dead")
+    key(-201, adjustcolor(col_cohort, 0.35), "Individuals of census 1: dead")
+    key(-218, adjustcolor(col_new, 0.35), "Individuals new since 1982: dead")
 }
 png(file.path(OUT, "figure-1_tree-dynamics.png"), width = 7.5, height = 7.4, units = "in", res = 300)
 draw_figure_1()
@@ -231,23 +225,24 @@ l9 <- dyn[CensusID == 9]
 band <- dyn[CensusID %in% 2:8, broken_below + alive_later]
 bb_share <- dyn[CensusID %in% 2:8, 100 * broken_below / (broken_below + alive_later)]
 caption <- paste0(
-    "Figure 1. Trees of the Barro Colorado Island 50-ha plot through nine censuses, 1982–2023. ",
-    "A tree is one individual, whatever its number of stems. In each census, every tree recorded alive up to then is in one of three groups, from the census tables: ",
-    "with a living stem at 1.3 m, that is, a stem with Rstatus A on a record that is not a stump (above zero; total written above the line; these are the trees counted in a census); ",
+    "Figure 1. Standing individuals of the Barro Colorado Island 50-ha plot through nine censuses, 1982–2023. ",
+    "An individual is one free-standing woody plant (a tree, shrub, palm, tree fern or strangler fig), whatever its number of stems. In each census, every individual recorded alive up to then is in one of three groups, from the census tables: ",
+    "with a living stem at 1.3 m, that is, a stem with Rstatus A on a record that is not a stump (above zero; total written above the line; these are the individuals counted in a census); ",
     "alive without a living stem at 1.3 m (grey, next to zero): broken below 1.3 m, with a record whose DFstatus is broken below and that has no diameter (a stump, which the field crew recorded alive), ",
-    "or, for a few trees, missing or recorded dead in that census and alive in a later one; ",
+    "or, for a few individuals, missing or recorded dead in that census and alive in a later one; ",
     "and dead (pale colours, cumulative): no living stem at 1.3 m and no broken-below record in that census or in any later one. ",
-    "Blue: the ", cap_n(n_census_1), " trees of census 1; orange: trees first recorded alive after census 1. ",
-    "Percentages: share of the trees of the same group, recorded alive up to that census, that have a living stem at 1.3 m (above zero) or are dead (below zero); the rest of each group is in the grey band, whose number of trees is written in it; percentages are rounded to 0.1%, so the three shares of a group add up to 100% within 0.1%. ",
-    "In 2022–2023, ", cap_n(l9$living_stem), " trees had a living stem at 1.3 m (", cap_n(l9$living_stem_census_1), " of census 1, ", l9$pct_census_1_living_stem, "%; ",
+    "Blue: the ", cap_n(n_census_1), " individuals of census 1; orange: individuals first recorded alive after census 1. ",
+    "Percentages: share of the individuals of the same group, recorded alive up to that census, that have a living stem at 1.3 m (above zero) or are dead (below zero); the rest of each group is in the grey band, whose number of individuals is written in it; percentages are rounded to 0.1%, so the three shares of a group add up to 100% within 0.1%. ",
+    "In 2022–2023, ", cap_n(l9$living_stem), " individuals had a living stem at 1.3 m (", cap_n(l9$living_stem_census_1), " of census 1, ", l9$pct_census_1_living_stem, "%; ",
     cap_n(l9$living_stem_new), " new, ", l9$pct_new_living_stem, "%), ", cap_n(l9$broken_below), " were broken below (", cap_n(l9$broken_below_census_1), " of census 1, ",
     cap_n(l9$broken_below_new), " new) and ", cap_n(l9$dead_census_1 + l9$dead_new), " were dead (", cap_n(l9$dead_census_1), " of census 1, ", l9$pct_census_1_dead, "%; ",
     cap_n(l9$dead_new), " new, ", l9$pct_new_dead, "%). ",
-    "From census 2 to 8, the grey band holds ", cap_n(min(band)), "–", cap_n(max(band)), " trees, ", round(min(bb_share)), "–", round(max(bb_share)), "% of them broken below. ",
+    "From census 2 to 8, the grey band holds ", cap_n(min(band)), "–", cap_n(max(band)), " individuals, ", round(min(bb_share)), "–", round(max(bb_share)), "% of them broken below. ",
     "In the census tables, the stump records of ", cap_n(l9$broken_below_coded_A), " of the ", cap_n(l9$broken_below),
-    " broken-below trees of 2022–2023 are coded A (alive, without a diameter). ",
+    " broken-below individuals of 2022–2023 are coded A (alive, without a diameter). ",
     "Shaded vertical bands: period in which 95% of the records of each census were taken (2.5% to 97.5% quantiles of the record dates); each census is placed at its median record date. ",
-    cap_n(n_no_sign), " trees with only dead or missing records are not shown."
+    cap_n(n_no_sign), " individuals with only dead or missing records (first recorded dead in 2022–2023) are not shown. ",
+    "The groups are those of bci_individuals() in code/load-bci-tables.R."
 )
 writeLines(strwrap(caption, width = 100), file.path(OUT, "figure-1_caption.txt"))
 cat("\n", caption, "\n", sep = "")
