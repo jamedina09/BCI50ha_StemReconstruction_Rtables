@@ -15,12 +15,14 @@
 #                        (Section 10.3, check I4)
 #
 # Rules:
-#   Evidence of life : an "alive" record (with or without DBH), or a DBH on a
-#                      "broken below", "missing" or status-less record.
-#   Dead record      : "dead", "stem dead" (with or without DBH) and
-#                      "broken below" without DBH. A DBH on a dead record is
-#                      not evidence of life (the stem is A there only if it
-#                      is alive later); the DBH itself is kept.
+#   Evidence of life : an "alive" record (with or without DBH), a "broken
+#                      below" record (with a DBH: a measured resprout; without
+#                      one: a stump, the tree alive below 1.3 m with no stem at
+#                      breast height), or a DBH on a "missing" or status-less
+#                      record.
+#   Dead record      : "dead", "stem dead" (with or without DBH). A DBH on a
+#                      dead record is not evidence of life (the stem is A there
+#                      only if it is alive later); the DBH itself is kept.
 #   No record        : "missing" or no status without DBH, or no row.
 #   P                : only before a stem's first record.
 #   A                : from the first record to the last evidence of life
@@ -43,12 +45,12 @@ rstatus_raw_code <- function(status, dbh) {
     stop("rstatus_raw_code: unknown raw status: ", paste(unknown, collapse = ", "))
   }
   has_dbh <- !is.na(dbh)
-  bb <- status %in% "broken below"
   code <- rep("N", length(status))
   code[status %in% "alive"] <- "A"
   code[status %in% c("dead", "stem dead")] <- "D"
-  code[bb & has_dbh] <- "A" # resprout measured
-  code[bb & !has_dbh] <- "D" # broken stem, nothing measured
+  # broken below: a measured resprout with a DBH, a stump without one; both
+  # alive (a stump is alive below 1.3 m, with no stem at breast height)
+  code[status %in% "broken below"] <- "A"
   code[(is.na(status) | status %in% "missing") & has_dbh] <- "A"
   code
 }

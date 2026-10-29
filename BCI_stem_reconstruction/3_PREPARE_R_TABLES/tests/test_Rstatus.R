@@ -93,7 +93,6 @@ test_that("false death: a dead record followed by alive is A, and its DBH is kep
   expect_tree(tree(list(c("alive", "dead", "alive"))), "AAA")
   expect_tree(tree(list(c("alive", "stem dead", "alive")), list(c(10, 12, 14))), "AAA", list(c(10, 12, 14)))
   expect_tree(tree(list(c("alive", "dead", NA, "dead", "alive"))), "AAAAA")
-  expect_tree(tree(list(c("alive", "broken below", "alive"))), "AAA")
 })
 
 test_that("dead record with a DBH, never alive again: G/D from that census, DBH kept as recorded", {
@@ -124,15 +123,15 @@ test_that("P only before the first record (late recruits)", {
 })
 
 test_that("a dead record before the stem's first alive record is A (false death)", {
-  expect_tree(tree(list(c(NA, "broken below", "alive")), list(c(NA, NA, 11))), "PAA", list(c(NA, NA, 11)))
+  expect_tree(tree(list(c(NA, "stem dead", "alive")), list(c(NA, NA, 11))), "PAA", list(c(NA, NA, 11)))
   expect_tree(tree(list(c("dead", "alive", "alive"))), "AAA")
   expect_tree(tree(list(c("dead", NA, "alive"))), "AAA")
   expect_tree(tree(list(c(NA, "dead", "alive")), list(c(NA, 9, 11))), "PAA", list(c(NA, 9, 11)))
 })
 
 test_that("a stem never alive is P until its first record, then G or D", {
-  expect_tree(tree(list(c(NA, "broken below", "dead"))), "PDD")
-  expect_tree(tree(list(c(NA, "broken below", "dead"), c("alive", "alive", "alive"))), c("PGG", "AAA"))
+  expect_tree(tree(list(c(NA, "stem dead", "dead"))), "PDD")
+  expect_tree(tree(list(c(NA, "stem dead", "dead"), c("alive", "alive", "alive"))), c("PGG", "AAA"))
   expect_tree(tree(list(c("dead", NA, NA))), "DDD")
   expect_tree(tree(list(c(NA, "dead", NA), c("alive", "alive", "dead"))), c("PGD", "AAD"))
 })
@@ -168,9 +167,22 @@ test_that("a tree with no record in a census but alive later is alive there (no 
   expect_tree(tree(list(c("alive", NA, NA, "alive"))), "AAAA")
 })
 
-test_that("broken below with a DBH is a measured resprout (A); without a DBH it is a dead record", {
+test_that("broken below is alive: with a DBH a measured resprout, without one a stump (A, no DBH)", {
   expect_tree(tree(list(c("alive", "broken below")), list(c(10, 5))), "AA", list(c(10, 5)))
-  expect_tree(tree(list(c("alive", "broken below")), list(c(10, NA))), "AD", list(c(10, NA)))
+  expect_tree(tree(list(c("alive", "broken below")), list(c(10, NA))), "AA", list(c(10, NA)))
+  # a stump, then dead or no record: alive at the stump, dead from the next census
+  expect_tree(tree(list(c("alive", "broken below", "dead"))), "AAD")
+  expect_tree(tree(list(c("alive", "broken below", NA))), "AAD")
+  expect_tree(tree(list(c("alive", "broken below", "broken below", "dead"))), "AAAD")
+  # a stem first recorded as a stump is alive from that record
+  expect_tree(tree(list(c(NA, "broken below", "dead"))), "PAD")
+  # a dead record before a stump is a false death; a stump between alive records is A
+  expect_tree(tree(list(c("alive", "dead", "broken below"))), "AAA")
+  expect_tree(tree(list(c("alive", "broken below", "alive"))), "AAA")
+  # a stump keeps its tree alive: the dead stem beside it is G, then D once nothing lives
+  expect_tree(tree(list(c("alive", "dead", "dead"), c("alive", "broken below", "dead"))), c("AGD", "AAD"))
+  # a tree whose only record in the last census is a stump is alive there
+  expect_tree(tree(list(c("alive", "alive", "broken below"))), "AAA")
 })
 
 test_that("a missing or status-less record with a DBH is alive, and the DBH is kept", {
@@ -198,7 +210,7 @@ raw_states <- data.table(
   name = c("alive+dbh", "alive", "bb+dbh", "bb", "dead+dbh", "dead", "stemdead+dbh", "stemdead", "missing+dbh", "missing", "nostatus+dbh", "norow"),
   Status = c("alive", "alive", "broken below", "broken below", "dead", "dead", "stem dead", "stem dead", "missing", "missing", NA, NA),
   dbh = c(TRUE, FALSE, TRUE, FALSE, TRUE, FALSE, TRUE, FALSE, TRUE, FALSE, TRUE, FALSE),
-  class = c("alive+dbh", "alive", "alive+dbh", "dead", "dead+dbh", "dead", "dead+dbh", "dead", "missing+dbh", "norow", "alive+dbh", "norow")
+  class = c("alive+dbh", "alive", "alive+dbh", "alive", "dead+dbh", "dead", "dead+dbh", "dead", "missing+dbh", "norow", "alive+dbh", "norow")
 )
 states <- function(nm) raw_states[match(nm, name)]
 S6 <- states(c("alive+dbh", "alive", "dead", "dead+dbh", "missing+dbh", "norow"))
@@ -294,7 +306,7 @@ test_that("class representatives, larger trees: rules == reference, invariants h
 test_that("the 12 raw states map to the codes of the contract", {
   expect_identical(
     rstatus_raw_code(raw_states$Status, ifelse(raw_states$dbh, 50, NA_real_)),
-    c("A", "A", "A", "D", "D", "D", "D", "D", "A", "N", "A", "N")
+    c("A", "A", "A", "A", "D", "D", "D", "D", "A", "N", "A", "N")
   )
 })
 
@@ -682,10 +694,10 @@ test_that("real data: rows sorted by treeID and stemID as numbers; every column 
 
 test_that("real data: every raw state x Rstatus combination is one the rules can produce", {
   skip_if_not(real_ok, "no R tables / stage-2 file found")
-  # raw code of every exported cell (rstatus_raw_code): evidence of life is
-  # always A; a dead record (dead, stem dead, stump) is A (alive later), G or
-  # D; no record is P (before the first record), A, G or D. P never sits on a
-  # record.
+  # raw code of every exported cell (rstatus_raw_code): evidence of life
+  # (including a stump, broken below without DBH) is always A; a dead record
+  # (dead, stem dead) is A (alive later), G or D; no record is P (before the
+  # first record), A, G or D. P never sits on a record.
   rt[, code := rstatus_raw_code(DFstatus, dbh)]
   expect_true(all(rt[code == "A", Rstatus] == "A"))
   expect_true(all(rt[code == "D", Rstatus] %in% c("A", "G", "D")))

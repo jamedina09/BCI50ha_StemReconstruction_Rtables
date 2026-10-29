@@ -124,9 +124,10 @@ text columns as text.
    | `G` | dead, while its tree is alive (another stem of the tree is `A` then or later) |
    | `D` | dead, and its whole tree dead |
 
-   - Evidence of life: an `alive` record, or a DBH on a `broken below`,
-     `missing` or status-less record. Dead record: `dead` or `stem dead` (with
-     or without DBH), and `broken below` without DBH.
+   - Evidence of life: an `alive` record; a `broken below` record (with a DBH,
+     a measured resprout; without one, a stump: the stem broke below 1.3 m and
+     the field crew recorded it alive); or a DBH on a `missing` or status-less
+     record. Dead record: `dead` or `stem dead` (with or without DBH).
    - Between a stem's first record and its last evidence of life the stem is
      `A`, also in a census without a record or with a dead record (alive later
      means never dead); a dead first record of a stem alive later is `A` too.
@@ -139,8 +140,10 @@ text columns as text.
    `DFstatus` equal to the raw status. A `G` or `D` cell carries a DBH only when
    one was recorded on a dead record of a stem never alive later. An `A` cell
    without a DBH is a missed measurement, or a stump: a `broken below` record
-   without a DBH of a stem alive later (alive, with no measurable DBH at 1.3 m;
-   stage 4 keeps it out of the stock).
+   without a DBH (alive, with no stem at 1.3 m; stage 4 keeps it out of the
+   stock), or a dead, missing or absent record just before a stump of the
+   same stem (alive because the stump comes later; no stem at 1.3 m is known).
+   A tree whose only `A` stems are stumps is alive, broken below 1.3 m.
 3. Numbers the stems of each tree (`stemID`) as the engine does (1, 2, … in
    order of first appearance), so `treeID` + `stemID` identify a stem. A stem
    joined by the measurement rejoin keeps one of its two numbers, so such a tree
@@ -255,7 +258,7 @@ The two review lists have one row per case with `reason`, `treeID`, `tag`,
 | File | Reasons |
 | --- | --- |
 | `field_records_to_review_bci.csv` (raw records, for the data manager) | `dead_record_of_stem_alive_later` (a dead / stem dead record of a stem recorded alive later, exported `A`), `dbh_on_dead_record`, `stem_dead_but_tree_dead` (raw "stem dead" while no stem of the tree is alive then or later), `duplicate_measurement` (two stems of one tree measured on the same date at heights at least 0.5 m apart, taper-corrected DBHs within 20%: the trunk measured at the old and the new height when its point of measurement was raised), `two_dates_in_census`, `location_spread_over_1m`, `no_coordinates`, `quadrat_differs_from_coordinates` |
-| `reconstruction_to_review_bci.csv` (stems) | `identity_break_candidate` (one stem ends and a new stem of similar size starts in the same tree and census), `new_stem_50mm_or_more` (ingrowth or a new tree first measured at 50 mm or more), `stem_never_alive`, `stem_never_recorded`, `stump_of_stem_alive_later` (exported `A` without a DBH; out of the stock in stage 4) |
+| `reconstruction_to_review_bci.csv` (stems) | `identity_break_candidate` (one stem ends and a new stem of similar size starts in the same tree and census), `new_stem_50mm_or_more` (ingrowth or a new tree first measured at 50 mm or more), `stem_never_alive`, `stem_never_recorded`, `stump_of_stem_measured_later` (a stump, exported `A` without a DBH, on a stem recorded at 1.3 m in a later census) |
 
 Script 3 writes its failed checks and notes to `check_species_table_bci.txt`.
 The stage-1 species script writes the WFO comparison lists

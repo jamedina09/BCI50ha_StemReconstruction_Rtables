@@ -56,20 +56,21 @@
 #   Stem identity  : taken from the DP reconstruction (stage 2) and never
 #                    changed here. Suspected identity breaks are only reported
 #                    (CHECKS/reconstruction_to_review_[site].csv).
-#   Evidence of life: a raw "alive" record, or a DBH on a "broken below",
-#                    "missing" or status-less record.
-#   Dead record    : "dead" / "stem dead" (with or without DBH) and "broken
-#                    below" without DBH. A DBH on a dead record is not
-#                    evidence of life (the stem is A there only if it is
-#                    alive later); the DBH itself is kept.
+#   Evidence of life: a raw "alive" record, a "broken below" record (with a
+#                    DBH: a measured resprout; without one: a stump), or a
+#                    DBH on a "missing" or status-less record.
+#   Dead record    : "dead" / "stem dead" (with or without DBH). A DBH on a
+#                    dead record is not evidence of life (the stem is A there
+#                    only if it is alive later); the DBH itself is kept.
 #   P (prior)      : only before a stem's first record.
 #   A (alive)      : from a stem's first record to its last evidence of life.
 #                    Missed censuses and false deaths in between are A:
 #                    alive later => never dead.
-#   Stump          : an A without DBH whose DFstatus is "broken below": the
-#                    stem lives later (e.g. a field-tagged stump measured in a
-#                    later census), so it is alive, with no measurable DBH at
-#                    1.3 m. Stage 4 keeps stump censuses out of the stock.
+#   Stump          : a "broken below" record without DBH: the stem broke
+#                    below 1.3 m and the field crew recorded it alive, so it
+#                    is A, with no stem at breast height (no DBH). Stage 4
+#                    keeps stump censuses out of the stock. A tree whose only
+#                    A stems are stumps is alive, broken below 1.3 m.
 #   Dead (G or D)  : after the last evidence of life, from the first census
 #                    without one; a stem never alive is dead from its first
 #                    record.
@@ -675,16 +676,16 @@ lapply(ViewFullTable_split, inspectdf::inspect_na)
 # SECTION 4: STATUS CODE TRANSFORMATION
 # ========================================================================
 # Convert raw Status terms to the raw codes A (alive), D (dead) and N (no
-# data), resolve "broken below" using DBH, and assemble per-stem encounter
-# history strings for later propagation and correction. P is assigned in
-# Section 6 and G in Section 10; neither comes from raw data.
+# data), and assemble per-stem encounter history strings for later
+# propagation and correction. P is assigned in Section 6 and G in Section 10;
+# neither comes from raw data.
 
 # --------------------------------------------------------------------
 # Raw records -> codes A / D / N (rstatus_raw_code(), rstatus_functions.R)
 # --------------------------------------------------------------------
 # Gather Status AND DBH from all censuses into one long data.table. The DBH
-# matters because a DBH on a "broken below", "missing" or status-less record
-# is evidence of life: the stem (or its resprout) was measured.
+# matters because a DBH on a "missing" or status-less record is evidence of
+# life: the stem was measured.
 DT_Status <- rbindlist(lapply(seq_along(ViewFullTable_split), function(i) {
   ViewFullTable_split[[i]][, .(StemID, Status, DBH, census = i)]
 }), use.names = TRUE, fill = TRUE)
@@ -696,14 +697,14 @@ bio_check(
 
 # ------------------------------------------------------------------------
 # Rules, applied to each stem x census record by rstatus_raw_code():
-#   A  "alive" (with or without DBH), and "broken below" / "missing" / no
+#   A  "alive" (with or without DBH); "broken below" (with a DBH, a measured
+#      resprout; without one, a stump: the stem broke below 1.3 m and is
+#      alive, with no DBH; counted in the log, Section 13); "missing" / no
 #      status WITH a DBH (measured, so alive).
-#   D  "dead" and "stem dead" (with or without DBH), and "broken below"
-#      without DBH. A D followed later by an A is a false death: the
-#      lifespan rule (Section 8) turns it into A (a broken-below record then
-#      becomes a stump: alive, no measurable DBH; counted in the log, Section
-#      13); when the tree lives on through other stems, Section 10 turns a
-#      real death into G.
+#   D  "dead" and "stem dead" (with or without DBH). A D followed later by an
+#      A is a false death: the lifespan rule (Section 8) turns it into A;
+#      when the tree lives on through other stems, Section 10 turns a real
+#      death into G.
 #   N  "missing" or no status without DBH, and no row (no record).
 # A DBH on a "dead" / "stem dead" record stays on a D here. If the stem is
 # alive later (false death), Section 8 makes the cell A; otherwise the stem is
@@ -736,23 +737,26 @@ bio_check(
 )
 rm(bad_dbh)
 
-# Log the records the DBH decides: non-"alive" records that are alive because
-# of their DBH, and dead records that carry a DBH.
+# Log the records the DBH decides: "broken below", "missing" and status-less
+# records with a DBH, and dead records that carry a DBH.
 dbh_alive_tab <- DT_Status[
   !is.na(DBH) & (is.na(Status) | Status %in% c("broken below", "missing")),
   .N,
   by = .(raw_status = Status)
 ][order(-N)]
 dead_dbh_tab <- DT_Status[!is.na(DBH) & Status %in% c("dead", "stem dead"), .N, by = .(raw_status = Status)][order(-N)]
-cat("\n🔧 Records alive because of their DBH (by raw status):\n")
+cat("\n🔧 Records with a DBH that are not 'alive' records (alive; by raw status):\n")
 print(dbh_alive_tab)
 cat("🔧 Dead records with a DBH (dead records; the DBH is kept; the stem is A there only if alive later):\n")
 print(dead_dbh_tab)
-print_to_log("Records alive because of their DBH (by raw status):", log_file, new_message = TRUE)
+print_to_log("Records with a DBH that are not 'alive' records (alive; by raw status):", log_file, new_message = TRUE)
 print_to_log(log_table(dbh_alive_tab), log_file, new_message = FALSE)
 print_to_log("Dead records with a DBH (dead records; the DBH is kept; the stem is A there only if alive later):", log_file, new_message = TRUE)
 print_to_log(log_table(dead_dbh_tab), log_file, new_message = FALSE)
-cat(sprintf("🔧 'broken below' without DBH coded as dead: %d records\n", DT_Status[Status %in% "broken below" & is.na(DBH), .N]))
+n_stump_records <- DT_Status[Status %in% "broken below" & is.na(DBH), .N]
+cat(sprintf("🔧 'broken below' without DBH (stumps) coded as alive: %d records\n", n_stump_records))
+print_to_log(sprintf("'broken below' without DBH (stumps) coded as alive: %d records", n_stump_records), log_file, new_message = TRUE)
+rm(n_stump_records)
 
 DT_Status[, code := rstatus_raw_code(Status, DBH)]
 
@@ -1807,32 +1811,43 @@ review_rows <- function(reason, stem_key = NULL, census = NA_integer_, details =
 field_review <- list() # raw records (data manager)
 recon_review <- list() # stem reconstruction
 
-# ---- Dead records and stumps of stems alive later ------------------------------
+# ---- Dead records of stems alive later; stumps of stems measured later ----------
 # A "dead" / "stem dead" record of a stem recorded alive later is a false
-# death: the lifespan rule (Section 8) exports it as A. A "broken below"
-# record without DBH of a stem alive later is a stump: A, with no measurable
-# DBH at 1.3 m (stage 4 keeps it out of the stock); it is A because stage 2
-# put it on a stem that lives later (e.g. a field-tagged stump).
+# death: the lifespan rule (Section 8) exports it as A. A stump (a "broken
+# below" record without DBH) is always A: alive, with no stem at 1.3 m
+# (stage 4 keeps it out of the stock). It is listed when the same stem is
+# recorded at 1.3 m later (an "alive" record, or a DBH on a record that is
+# not dead): stage 2 put the stump on a stem that lives on at breast height
+# (e.g. a field-tagged stump measured again).
 false_dead <- which((is_status("dead") | is_status("stem dead")) & corrected_new_status_matrix == "A", arr.ind = TRUE)
 field_review[["dead_record_of_stem_alive_later"]] <- review_rows(
   "dead_record_of_stem_alive_later", unique_StemID$StemID[false_dead[, 1]], false_dead[, 2],
   paste("raw codes", original_status[false_dead[, 1]])
 )
-stumps <- which(is_status("broken below") & is.na(DBHs) & corrected_new_status_matrix == "A", arr.ind = TRUE)
-recon_review[["stump_of_stem_alive_later"]] <- review_rows(
-  "stump_of_stem_alive_later", unique_StemID$StemID[stumps[, 1]], stumps[, 2],
+stump_cell <- is_status("broken below") & is.na(DBHs)
+at_13 <- is_status("alive") | (!is.na(DBHs) & !is_status("dead") & !is_status("stem dead"))
+last_at_13 <- ifelse(rowSums(at_13) > 0L, max.col(at_13 * 1L, ties.method = "last"), 0L)
+stumps <- which(stump_cell & col(stump_cell) < last_at_13, arr.ind = TRUE)
+recon_review[["stump_of_stem_measured_later"]] <- review_rows(
+  "stump_of_stem_measured_later", unique_StemID$StemID[stumps[, 1]], stumps[, 2],
   paste("raw codes", original_status[stumps[, 1]])
 )
+bio_check(
+  all(corrected_new_status_matrix[stump_cell] == "A"),
+  "Every stump (broken below without DBH) is A: alive, with no stem at 1.3 m",
+  n_bad = sum(corrected_new_status_matrix[stump_cell] != "A")
+)
 cat(sprintf(
-  "  Dead records of stems alive later: %d | stumps of stems alive later: %d\n",
-  nrow(false_dead), nrow(stumps)
+  "  Dead records of stems alive later: %d | stumps: %d, of stems measured later: %d\n",
+  nrow(false_dead), sum(stump_cell), nrow(stumps)
 ))
+rm(stump_cell, at_13, last_at_13)
 
 # ---- Stems never alive and stems never recorded --------------------------------
-# Never alive: recorded only as dead (e.g. a broken-below record without DBH,
-# then dead); P until the first record, then G or D; they never keep a tree
-# alive. Never recorded: P in every census (only "missing" records without
-# DBH). One row per stem, at its first record.
+# Never alive: recorded only as dead ("dead" / "stem dead" records); P until
+# the first record, then G or D; they never keep a tree alive. Never
+# recorded: P in every census (only "missing" records without DBH). One row
+# per stem, at its first record.
 never_alive <- which(!grepl("A", corrected_new_status, fixed = TRUE) & grepl("[GD]", corrected_new_status))
 recon_review[["stem_never_alive"]] <- review_rows(
   "stem_never_alive", unique_StemID$StemID[never_alive], as.integer(regexpr("[GD]", corrected_new_status[never_alive])),
@@ -2104,8 +2119,10 @@ bio_check(
 rm(dd_idx, dead_dbh_cells, dead_dbh_R)
 
 # ---- (c) status × DBH × census summary (to the log) ---------------------
-# An A without DBH is a missed measurement (stage 4 interpolates its DBH) or
-# a stump (DFstatus "broken below": stage 4 keeps it out of the stock).
+# An A without DBH is a stump (DFstatus "broken below": stage 4 keeps it out
+# of the stock) or another census without a measurement: a missed measurement
+# (stage 4 fills it after a measurement of the stem) or a census just before a
+# stump with no sign of a stem at 1.3 m (stage 4 keeps it out of the stock).
 n_cens <- ncol(corrected_new_status_matrix)
 cells_dt <- data.table(
   status  = as.vector(corrected_new_status_matrix),
@@ -2121,7 +2138,7 @@ n_A_no_DBH <- summary_overall[status == "A" & has_DBH == FALSE, sum(n_cells)]
 n_other <- summary_overall[!(status %in% c("A", "D", "G", "P")), sum(n_cells)]
 n_stump <- sum(is_status("broken below") & is.na(DBHs) & corrected_new_status_matrix == "A")
 stump_txt <- sprintf(
-  "A without DBH: %d = %d stumps (DFstatus 'broken below'; stage 4 keeps them out of the stock) + %d missed measurements (stage 4 interpolates their DBH)",
+  "A without DBH: %d = %d stumps (DFstatus 'broken below'; stage 4 keeps them out of the stock) + %d other censuses without a measurement (missed measurements, which stage 4 fills after a measurement of the stem; censuses just before a stump with no sign of a stem at 1.3 m, which it keeps out of the stock)",
   n_A_no_DBH, n_stump, n_A_no_DBH - n_stump
 )
 print_to_log(c(

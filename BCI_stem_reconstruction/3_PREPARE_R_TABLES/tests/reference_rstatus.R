@@ -9,7 +9,9 @@
 # Raw record -> evidence:
 #   alive (with or without DBH)                  -> alive
 #   broken below WITH DBH                        -> alive (resprout measured)
-#   broken below without DBH, dead, stem dead    -> dead (with or without DBH)
+#   broken below without DBH                     -> alive (a stump: alive below
+#                                                   1.3 m, no stem at breast height)
+#   dead, stem dead                              -> dead (with or without DBH)
 #   missing or no status WITH DBH                -> alive
 #   missing or no status without DBH, no row     -> none (not recorded)
 # Step 1 (each stem):
@@ -36,7 +38,7 @@ ref_evidence <- function(status, dbh) {
   }
   switch(status,
     "alive" = "alive",
-    "broken below" = if (has_dbh) "alive" else "dead",
+    "broken below" = "alive",
     "dead" = "dead",
     "stem dead" = "dead",
     "missing" = if (has_dbh) "alive" else "none",
