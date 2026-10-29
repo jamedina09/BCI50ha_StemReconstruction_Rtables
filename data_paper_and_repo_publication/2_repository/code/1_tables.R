@@ -251,22 +251,22 @@ cat("\n", caption, "\n", sep = "")
 # Type: from the data. Content: what the column holds.
 census_columns <- c(
     CensusID = "Census, 1–9",
-    treeID = "Tree; the same in every census",
-    stemID = "Stem number within its tree (1, 2, …); treeID and stemID together identify a stem",
-    tag = "Field tag of the tree, with leading zeros and sign kept (e.g. 000006, -05599)",
+    treeID = "Individual (a tree, shrub, palm, tree fern or strangler fig); the same in every census",
+    stemID = "Stem number within its individual (1, 2, …); treeID and stemID together identify a stem",
+    tag = "Field tag of the individual, with leading zeros and sign kept (e.g. 000006, -05599)",
     StemTag = "Field tag of the stem, used since 2010; earlier records may show the tag the stem received later",
     sp = "Species code; joins the species table",
     quadrat = "20 × 20 m quadrat, XXYY: column (gx/20) and row (gy/20)",
-    gx = "Location of the tree, in m east of the western edge (0–1000); one value per tree",
-    gy = "Location of the tree, in m north of the southern edge (0–500); one value per tree",
+    gx = "Location of the individual, in m east of the western edge (0–1000); one value per individual",
+    gy = "Location of the individual, in m north of the southern edge (0–500); one value per individual",
     dbh = "Diameter as recorded, in mm, at height hom; empty when not measured",
     hom = "Height of measurement as recorded, in m",
     ExactDate = "Date of the field record; empty without a record",
-    date = "Date of every row, in days since 1 January 1960: the recorded date, else the most common date of the tree, the quadrat or the census",
+    date = "Date of every row, in days since 1 January 1960: the recorded date, else the most common date of the individual, the quadrat or the census",
     codes = "Field codes as recorded, separated by ;",
     DFstatus = "Field status as recorded: alive, broken below, dead, stem dead, missing; empty without a record",
     Rstatus = "Analytical status: P, A, G or D (status codes)",
-    StemPaths = "Key of the record in the reconstruction, unique within its tree; the posterior samples list the measured records up to the tree's anchor census (2010 for most trees); empty for trees not reconstructed"
+    StemPaths = "Key of the record in the reconstruction, unique within its individual; the posterior samples list the measured records up to the individual's anchor census (2010 for most individuals); empty for individuals not reconstructed"
 )
 stopifnot(identical(names(x), names(census_columns)))
 tab_census <- data.table(
@@ -314,12 +314,12 @@ print(tab_species)
 # record is dead or stem dead.
 tab_status <- data.table(
     Code = c("P", "A", "G", "D"),
-    Meaning = c("prior", "alive", "dead stem", "dead tree"),
+    Meaning = c("prior", "alive", "dead stem", "dead individual"),
     Rule = c(
         "Before the stem's first record. A stem with only missing records is P in every census",
         "From the first record to the last evidence of life (an alive or broken-below record, or a diameter), also in censuses without a record or with a dead record in between. An alive cell without a diameter is a missed measurement; a stump, broken below 1.3 m and alive with no stem at breast height; or a dead, missing or absent record just before a stump",
-        "Dead, while another stem of its tree is A in that census or later",
-        "Dead, and every stem of its tree dead"
+        "Dead, while another stem of its individual is A in that census or later",
+        "Dead, and every stem of its individual dead"
     )
 )
 stopifnot(setequal(tab_status$Code, unique(x$Rstatus)))

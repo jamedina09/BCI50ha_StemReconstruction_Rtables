@@ -1,5 +1,5 @@
 Code,Meaning,Rule
 P,prior,Before the stem's first record. A stem with only missing records is P in every census
 A,alive,"From the first record to the last evidence of life (an alive or broken-below record, or a diameter), also in censuses without a record or with a dead record in between. An alive cell without a diameter is a missed measurement; a stump, broken below 1.3 m and alive with no stem at breast height; or a dead, missing or absent record just before a stump"
-G,dead stem,"Dead, while another stem of its tree is A in that census or later"
-D,dead tree,"Dead, and every stem of its tree dead"
+G,dead stem,"Dead, while another stem of its individual is A in that census or later"
+D,dead individual,"Dead, and every stem of its individual dead"
