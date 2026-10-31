@@ -50,6 +50,8 @@
 # OUTPUTS (written to BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/outputs/)
 # --------
 #   plot_agb_dynamics.png   Standing AGB, productivity/mortality, and net change
+#   plot_agb_fluxes_net.png Productivity and mortality (left axis) with the net
+#                           change (right axis) in one panel
 #   plot_agb_by_size.png    Same plots stratified by DBH size class
 #
 # NOTES
@@ -1432,6 +1434,66 @@ ggsave(
   plot = plots,
   filename = file.path(out_dir, "plot_agb_dynamics.png"),
   width = 9, height = 12, units = "in", dpi = 300
+)
+
+# --- Figure B + C: fluxes and net change in one panel ---
+# Productivity and mortality on the left axis; the net change (productivity -
+# mortality) on a second, right axis. The net change is drawn on the left scale
+# after a linear map a + b * net that puts its 95% interval (and zero) inside
+# the range of the fluxes, and the right axis shows it back-transformed, so
+# the right-axis values are the net change itself.
+f_rng <- range(df_flux_long$lwr, df_flux_long$upr)
+n_rng <- range(flux_summary$net_lwr, flux_summary$net_upr, 0)
+map_b <- diff(f_rng) / diff(n_rng)
+map_a <- f_rng[1] - map_b * n_rng[1]
+net_long <- flux_summary[, .(
+  x = CensusYear + dT_mean / 2, flux = "Net change (right axis)",
+  mean = map_a + map_b * net_mean, lwr = map_a + map_b * net_lwr, upr = map_a + map_b * net_upr
+)]
+df_comb <- rbind(df_flux_long[, .(x, flux, mean, lwr, upr)], net_long)
+comb_cols <- c(Productivity = "#2a9d8f", Mortality = "#e76f51", "Net change (right axis)" = "#386cb0")
+df_comb[, flux := factor(flux, levels = names(comb_cols))] # legend order
+
+p_flux_net <- ggplot(df_comb, aes(x = x, y = mean, colour = flux, fill = flux, linetype = flux)) +
+  geom_hline(yintercept = map_a, linetype = "dotted", colour = "grey55") +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.18, colour = NA) +
+  geom_line(linewidth = 1.1) +
+  geom_point(shape = 21, size = 3, stroke = 0.9, fill = "white") +
+  scale_colour_manual(values = comb_cols) +
+  scale_fill_manual(values = comb_cols) +
+  scale_linetype_manual(values = c(Productivity = "solid", Mortality = "solid", "Net change (right axis)" = "dashed")) +
+  scale_y_continuous(
+    sec.axis = sec_axis(~ (. - map_a) / map_b,
+      name = expression("Net AGB change (Mg ha"^{ -1 } ~ "yr"^{ -1 } * ")"),
+      breaks = pretty_breaks(6)
+    )
+  ) +
+  labs(
+    x = "Census year",
+    y = expression("Productivity and mortality (Mg ha"^{ -1 } ~ "yr"^{ -1 } * ")"),
+    colour = NULL, fill = NULL, linetype = NULL,
+    title = "AGB fluxes and net change  (mean ± 95% CI across quadrats)",
+    caption = "Dotted line: zero net change (right axis)."
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major = element_line(colour = "grey92"),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "grey40"),
+    axis.ticks = element_line(colour = "grey40"),
+    plot.title = element_text(face = "bold", size = 14),
+    plot.caption = element_text(colour = "grey40", hjust = 0),
+    legend.position = "top",
+    legend.text = element_text(size = 11),
+    axis.text = element_text(colour = "grey30"),
+    axis.title.y.right = element_text(colour = "#386cb0"),
+    axis.text.y.right = element_text(colour = "#386cb0")
+  )
+
+ggsave(
+  plot = p_flux_net,
+  filename = file.path(out_dir, "plot_agb_fluxes_net.png"),
+  width = 9, height = 5.5, units = "in", dpi = 300
 )
 
 # ============================================================

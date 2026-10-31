@@ -54,6 +54,7 @@ Rscript BCI_stem_reconstruction/4_EXAMPLE_STRUCTURE_ASSESSMENT/general_plot_info
 | File | Content |
 | --- | --- |
 | `outputs/plot_agb_dynamics.png` | Standing AGB, productivity, mortality and net AGB change of the plot |
+| `outputs/plot_agb_fluxes_net.png` | Productivity and mortality (left axis) and the net AGB change (right axis) in one panel, with their 95% intervals across quadrats |
 | `outputs/plot_agb_by_size.png` | The same by DBH size class |
 | `outputs/ba_map_change_treeID.feather`, `ba_map_change_quadrat.feather` | BA fluxes per tree and per quadrat and census pair, exported reconstruction |
 | `outputs/ba_map_stock_quadrat.feather` | BA stock per quadrat and census, exported reconstruction |
