@@ -132,10 +132,6 @@ print(dyn[, .(
     CensusID, living_stem, broken_below, alive_later, dead_census_1, dead_new, with_A_stem,
     broken_below_coded_A, broken_below_coded_G, broken_below_coded_D
 )])
-library(MetBrewer)
-met.brewer("Hokusai1", 5)
-
-MetBrewer::display_all(colorblind_only = TRUE)
 
 draw_figure_1 <- function() {
     col_cohort <- "#0072B2"
@@ -336,3 +332,26 @@ tab_status <- data.table(
 stopifnot(setequal(tab_status$Code, unique(x$Rstatus)))
 fwrite(tab_status, file.path(OUT, "table_status-codes.csv"))
 print(tab_status)
+
+# ---- Posterior samples ---------------------------------------------------
+
+### Posterior samples (posterior_sampled_paths.rds)
+
+xprob <- data.table(readRDS("/Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/data_paper_and_repo_publication/2_repository/data/posterior_sampled_paths.rds"))
+
+# Type: from the data. Content: what the column holds.
+posterior_columns <- c(
+    tag = "Field tag of the tree",
+    treeID = "Tree",
+    path_sig = "Stem label of each sampled record of the tree in this sample, in census order",
+    path_count = "Number of the tree's 200 samples with this reconstruction",
+    path_prob = "Reference value of the engine",
+    recon = "The stem of each record in this sample"
+)
+stopifnot(identical(names(xprob), names(posterior_columns)))
+tab_posteriors <- data.table(
+    Column = names(xprob),
+    Content = unname(posterior_columns)
+)
+fwrite(tab_posteriors, file.path(OUT, "table_columns-posteriors-table.csv"))
+print(tab_posteriors)

@@ -1,0 +1,7 @@
+Column,Content
+tag,Field tag of the tree
+treeID,Tree
+path_sig,"Stem label of each sampled record of the tree in this sample, in census order"
+path_count,Number of the tree's 200 samples with this reconstruction
+path_prob,Reference value of the engine
+recon,The stem of each record in this sample
