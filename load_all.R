@@ -17,22 +17,5 @@ names(census_list) <- paste0("bci.stem", bci_stem_nums)
 df_stem <- data.table::rbindlist(census_list, fill = TRUE, idcol = "censusID")
 rm(census_list, bci_stem_nums)
 
-length(unique(df_stem$treeID))
-length(unique(df_stem$tag))
-length(unique(df_stem$sp))
-
-load("data_paper_and_repo_publication/2_repository/data/bci.spptable.rdata")
-
-sp <- data.table(bci.spptable)
-
-head(sp)
-
-str(sp)
-
-length(unique(sp$Family))
-
-sp[is.na(Family)]
-
-length(unique(df_stem[CensusID == "9" & !is.na(dbh) & Rstatus != "D"]$treeID))
-
-sort(unique(df_stem[CensusID == "9" & !is.na(dbh) & Rstatus != "D"]$sp))
+# lapply nrow
+lapply(census_list, nrow)

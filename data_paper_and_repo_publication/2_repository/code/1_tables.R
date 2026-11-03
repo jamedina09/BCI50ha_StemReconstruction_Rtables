@@ -236,7 +236,7 @@ l9 <- dyn[CensusID == 9]
 band <- dyn[CensusID %in% 2:8, broken_below + alive_later]
 bb_share <- dyn[CensusID %in% 2:8, 100 * broken_below / (broken_below + alive_later)]
 caption <- paste0(
-    "Figure 1. Standing individuals of the Barro Colorado Island (BCI) 50-ha plot through nine censuses, 1982–2023. ",
+    "Figure 1. Number of standing individuals of the Barro Colorado Island (BCI) 50-ha plot through nine censuses, 1982–2023. ",
     "An individual is one free-standing woody plant (a tree, shrub, palm, tree fern or strangler fig), whatever its number of stems. ",
     "In each census, every individual recorded alive up to then is in one of three groups, from the census tables: ",
     "with a living stem at 1.3 m, that is, a stem with Rstatus A on a record that is not a stump (above zero; total written above the line; these are the individuals counted in a census); ",
@@ -261,7 +261,7 @@ cat("\n", caption, "\n", sep = "")
 # ---- Columns of the census tables -----------------------------------------------------
 # Type: from the data. Content: what the column holds.
 census_columns <- c(
-    CensusID = "Census, 1–9",
+    CensusID = "Census 1–9",
     treeID = "Individual (a tree, shrub, palm, tree fern or strangler fig); the same in every census",
     stemID = "Stem number within its individual (1, 2, …); treeID and stemID together identify a stem",
     tag = "Field tag of the individual, with leading zeros and sign kept (e.g. 000006, -05599)",
@@ -282,7 +282,7 @@ census_columns <- c(
 stopifnot(identical(names(x), names(census_columns)))
 tab_census <- data.table(
     Column = names(x),
-    Type = vapply(x, function(v) class(v)[1], character(1)),
+    # Type = vapply(x, function(v) class(v)[1], character(1)),
     Content = unname(census_columns)
 )
 fwrite(tab_census, file.path(OUT, "table_columns-census-tables.csv"))
@@ -312,7 +312,7 @@ species_columns <- c(
 stopifnot(identical(names(spp), names(species_columns)))
 tab_species <- data.table(
     Column = names(spp),
-    Type = vapply(spp, function(v) class(v)[1], character(1)),
+    # Type = vapply(spp, function(v) class(v)[1], character(1)),
     Content = unname(species_columns)
 )
 fwrite(tab_species, file.path(OUT, "table_columns-species-table.csv"))
@@ -327,8 +327,8 @@ tab_status <- data.table(
     Code = c("P", "A", "G", "D"),
     Meaning = c("prior", "alive", "dead stem", "dead individual"),
     Rule = c(
-        "Before the stem's first record. A stem with only missing records is P in every census",
-        "From the first record to the last evidence of life (an alive or broken-below record, or a diameter), also in censuses without a record or with a dead record in between. An alive cell without a diameter is a missed measurement; a stump, broken below 1.3 m and alive with no stem at breast height; or a dead, missing or absent record just before a stump",
+        "Before the stem's first record; placeholder for new individuals and stems in appearing in later censuses.",
+        "From the first record to the last evidence of life (an alive or broken-below record, or a diameter). An alive cell without a diameter is a missed measurement; a stump, broken below 1.3 m and alive with no stem at breast height.",
         "Dead, while another stem of its individual is A in that census or later",
         "Dead, and every stem of its individual dead"
     )
