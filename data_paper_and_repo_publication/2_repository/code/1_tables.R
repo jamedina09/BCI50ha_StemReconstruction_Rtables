@@ -132,10 +132,14 @@ print(dyn[, .(
     CensusID, living_stem, broken_below, alive_later, dead_census_1, dead_new, with_A_stem,
     broken_below_coded_A, broken_below_coded_G, broken_below_coded_D
 )])
+library(MetBrewer)
+met.brewer("Hokusai1", 5)
+
+MetBrewer::display_all(colorblind_only = TRUE)
 
 draw_figure_1 <- function() {
     col_cohort <- "#0072B2"
-    col_new <- "#D55E00"
+    col_new <- "#E69F00"
     col_band <- "grey45"
     ink <- "grey15"
     k <- 1e3
@@ -202,16 +206,22 @@ draw_figure_1 <- function() {
     text(t_med[n] - 0.4, mid_band[n], big(-b1[n]), adj = c(1, 0.5), col = "white", cex = 0.62, font = 2)
     last(mid_d1[n], dyn$dead_census_1[n], dyn$pct_census_1_dead[n], ink)
     last(mid_d2[n], dyn$dead_new[n], dyn$pct_new_dead[n], ink)
-    # key, in the free lower-left corner
-    key <- function(y, col, label) {
-        rect(1982, y - 5.5, 1983.6, y + 5.5, col = col, border = NA)
-        text(1984.2, y, label, adj = c(0, 0.5), col = ink, cex = 0.78)
+    # key, in the free lower-left corner, on an opaque box so that the census
+    # bands do not run through it
+    key_text <- c(
+        "Individuals of census 1: living stem at 1.3 m",
+        "Individuals new since census 1: living stem at 1.3 m",
+        "Alive, no living stem at 1.3 m (broken below)",
+        "Individuals of census 1: dead",
+        "Individuals new since 1: dead"
+    )
+    key_col <- c(adjustcolor(col_cohort, 0.85), adjustcolor(col_new, 0.85), adjustcolor(col_band, 0.9), adjustcolor(col_cohort, 0.35), adjustcolor(col_new, 0.35))
+    key_y <- c(-150, -167, -184, -201, -218) - 40
+    rect(1981.5, min(key_y) - 9, 1984.2 + max(strwidth(key_text, cex = 0.78)) + 0.5, max(key_y) + 9, col = "white", border = "grey70", lwd = 0.8)
+    for (i in seq_along(key_y)) {
+        rect(1982, key_y[i] - 5.5, 1983.6, key_y[i] + 5.5, col = key_col[i], border = NA)
+        text(1984.2, key_y[i], key_text[i], adj = c(0, 0.5), col = ink, cex = 0.78)
     }
-    key(-150, adjustcolor(col_cohort, 0.85), "Individuals of census 1: living stem at 1.3 m")
-    key(-167, adjustcolor(col_new, 0.85), "Individuals new since 1982: living stem at 1.3 m")
-    key(-184, adjustcolor(col_band, 0.9), "Alive, no living stem at 1.3 m (broken below)")
-    key(-201, adjustcolor(col_cohort, 0.35), "Individuals of census 1: dead")
-    key(-218, adjustcolor(col_new, 0.35), "Individuals new since 1982: dead")
 }
 png(file.path(OUT, "figure-1_tree-dynamics.png"), width = 7.5, height = 7.4, units = "in", res = 300)
 draw_figure_1()
