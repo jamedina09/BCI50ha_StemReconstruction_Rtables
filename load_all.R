@@ -19,3 +19,8 @@ rm(census_list, bci_stem_nums)
 
 # lapply nrow
 lapply(census_list, nrow)
+
+
+s <- data.table(readRDS("./data_paper_and_repo_publication/2_repository/data/posterior_sampled_paths.rds"))
+
+str(s)
