@@ -56,7 +56,6 @@ census_year <- c(1982, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2023)
 # Census period: the 2.5% and 97.5% quantiles of the record dates (95% of the
 # records of a census were taken between them) and the median date, rather than
 # the first and last dates, which a few early or late records can stretch
-# (census 8 starts in September 2013 although most of it was measured in 2015).
 # type = 1 returns dates on which records were taken. Census k is placed at its
 # median date.
 date_q <- function(d, p) as.Date(quantile(as.numeric(d), p, na.rm = TRUE, type = 1, names = FALSE), origin = "1970-01-01")
@@ -129,8 +128,10 @@ dyn[, `:=`(
 dyn <- merge(period, dyn, by = "CensusID")
 dyn[, year := census_year[CensusID]]
 fwrite(dyn, file.path(OUT, "figure-1_tree-dynamics.csv"))
-print(dyn[, .(CensusID, living_stem, broken_below, alive_later, dead_census_1, dead_new, with_A_stem,
-              broken_below_coded_A, broken_below_coded_G, broken_below_coded_D)])
+print(dyn[, .(
+    CensusID, living_stem, broken_below, alive_later, dead_census_1, dead_new, with_A_stem,
+    broken_below_coded_A, broken_below_coded_G, broken_below_coded_D
+)])
 
 draw_figure_1 <- function() {
     col_cohort <- "#0072B2"
@@ -226,23 +227,23 @@ band <- dyn[CensusID %in% 2:8, broken_below + alive_later]
 bb_share <- dyn[CensusID %in% 2:8, 100 * broken_below / (broken_below + alive_later)]
 caption <- paste0(
     "Figure 1. Standing individuals of the Barro Colorado Island 50-ha plot through nine censuses, 1982–2023. ",
-    "An individual is one free-standing woody plant (a tree, shrub, palm, tree fern or strangler fig), whatever its number of stems. In each census, every individual recorded alive up to then is in one of three groups, from the census tables: ",
+    "An individual is one free-standing woody plant (a tree, shrub, palm, tree fern or strangler fig), whatever its number of stems.",
+    "In each census, every individual recorded alive up to then is in one of three groups, from the census tables: ",
     "with a living stem at 1.3 m, that is, a stem with Rstatus A on a record that is not a stump (above zero; total written above the line; these are the individuals counted in a census); ",
-    "alive without a living stem at 1.3 m (grey, next to zero): broken below 1.3 m, with a record whose DFstatus is broken below and that has no diameter (a stump, which the field crew recorded alive), ",
+    "alive without a living stem at 1.3 m (grey, next to zero): broken below 1.3 m, with a record whose field record is broken below and that has no diameter (a stump), ",
     "or, for a few individuals, missing or recorded dead in that census and alive in a later one; ",
-    "and dead (pale colours, cumulative): no living stem at 1.3 m and no broken-below record in that census or in any later one. ",
+    "and dead (pale colours, cumulative): recorded dead in the field, with no living stem at 1.3 m, and no broken-below record in that census or in any later one. ",
     "Blue: the ", cap_n(n_census_1), " individuals of census 1; orange: individuals first recorded alive after census 1. ",
-    "Percentages: share of the individuals of the same group, recorded alive up to that census, that have a living stem at 1.3 m (above zero) or are dead (below zero); the rest of each group is in the grey band, whose number of individuals is written in it; percentages are rounded to 0.1%, so the three shares of a group add up to 100% within 0.1%. ",
-    "In 2022–2023, ", cap_n(l9$living_stem), " individuals had a living stem at 1.3 m (", cap_n(l9$living_stem_census_1), " of census 1, ", l9$pct_census_1_living_stem, "%; ",
-    cap_n(l9$living_stem_new), " new, ", l9$pct_new_living_stem, "%), ", cap_n(l9$broken_below), " were broken below (", cap_n(l9$broken_below_census_1), " of census 1, ",
-    cap_n(l9$broken_below_new), " new) and ", cap_n(l9$dead_census_1 + l9$dead_new), " were dead (", cap_n(l9$dead_census_1), " of census 1, ", l9$pct_census_1_dead, "%; ",
-    cap_n(l9$dead_new), " new, ", l9$pct_new_dead, "%). ",
-    "From census 2 to 8, the grey band holds ", cap_n(min(band)), "–", cap_n(max(band)), " individuals, ", round(min(bb_share)), "–", round(max(bb_share)), "% of them broken below. ",
-    "In the census tables, the stump records of ", cap_n(l9$broken_below_coded_A), " of the ", cap_n(l9$broken_below),
-    " broken-below individuals of 2022–2023 are coded A (alive, without a diameter). ",
-    "Shaded vertical bands: period in which 95% of the records of each census were taken (2.5% to 97.5% quantiles of the record dates); each census is placed at its median record date. ",
-    cap_n(n_no_sign), " individuals with only dead or missing records (first recorded dead in 2022–2023) are not shown. ",
-    "The groups are those of bci_individuals() in code/load-bci-tables.R."
+    "Percentages: share of the individuals of the same group, recorded alive up to that census, that have a living stem at 1.3 m (above zero) or are dead (below zero);",
+    "the rest of each group is in the grey band, whose number of individuals is written in it; percentages are rounded to 0.1%, so the three shares of a group add up to 100% within 0.1%. ",
+    # "In 2022–2023, ", cap_n(l9$living_stem), " individuals had a living stem at 1.3 m (", cap_n(l9$living_stem_census_1), " of census 1, ", l9$pct_census_1_living_stem, "%; ",
+    # cap_n(l9$living_stem_new), " new, ", l9$pct_new_living_stem, "%), ", cap_n(l9$broken_below), " were broken below (", cap_n(l9$broken_below_census_1), " of census 1, ",
+    # cap_n(l9$broken_below_new), " new) and ", cap_n(l9$dead_census_1 + l9$dead_new), " were dead (", cap_n(l9$dead_census_1), " of census 1, ", l9$pct_census_1_dead, "%; ",
+    # cap_n(l9$dead_new), " new, ", l9$pct_new_dead, "%). ",
+    # "From census 2 to 8, the grey band holds ", cap_n(min(band)), "–", cap_n(max(band)), " individuals, ", round(min(bb_share)), "–", round(max(bb_share)), "% of them broken below. ",
+    # "In the census tables, the stump records of ", cap_n(l9$broken_below_coded_A), " of the ", cap_n(l9$broken_below),
+    # " broken-below individuals of 2022–2023 are coded A (alive, without a diameter). ",
+    "Shaded vertical bands: period in which 95% of the records of each census were taken (2.5% to 97.5% quantiles of the record dates); each census is placed at its median record date. "
 )
 writeLines(strwrap(caption, width = 100), file.path(OUT, "figure-1_caption.txt"))
 cat("\n", caption, "\n", sep = "")
@@ -325,5 +326,3 @@ tab_status <- data.table(
 stopifnot(setequal(tab_status$Code, unique(x$Rstatus)))
 fwrite(tab_status, file.path(OUT, "table_status-codes.csv"))
 print(tab_status)
-
-cat("Written to", normalizePath(OUT), "\n")
