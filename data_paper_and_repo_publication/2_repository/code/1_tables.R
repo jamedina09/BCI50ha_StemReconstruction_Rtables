@@ -236,16 +236,16 @@ l9 <- dyn[CensusID == 9]
 band <- dyn[CensusID %in% 2:8, broken_below + alive_later]
 bb_share <- dyn[CensusID %in% 2:8, 100 * broken_below / (broken_below + alive_later)]
 caption <- paste0(
-    "Figure 1. Standing individuals of the Barro Colorado Island 50-ha plot through nine censuses, 1982–2023. ",
-    "An individual is one free-standing woody plant (a tree, shrub, palm, tree fern or strangler fig), whatever its number of stems.",
+    "Figure 1. Standing individuals of the Barro Colorado Island (BCI) 50-ha plot through nine censuses, 1982–2023. ",
+    "An individual is one free-standing woody plant (a tree, shrub, palm, tree fern or strangler fig), whatever its number of stems. ",
     "In each census, every individual recorded alive up to then is in one of three groups, from the census tables: ",
     "with a living stem at 1.3 m, that is, a stem with Rstatus A on a record that is not a stump (above zero; total written above the line; these are the individuals counted in a census); ",
     "alive without a living stem at 1.3 m (grey, next to zero): broken below 1.3 m, with a record whose field record is broken below and that has no diameter (a stump), ",
-    "or, for a few individuals, missing or recorded dead in that census and alive in a later one; ",
+    "or, for a few individuals, missing; ",
     "and dead (pale colours, cumulative): recorded dead in the field, with no living stem at 1.3 m, and no broken-below record in that census or in any later one. ",
     "Blue: the ", cap_n(n_census_1), " individuals of census 1; orange: individuals first recorded alive after census 1. ",
-    "Percentages: share of the individuals of the same group, recorded alive up to that census, that have a living stem at 1.3 m (above zero) or are dead (below zero);",
-    "the rest of each group is in the grey band, whose number of individuals is written in it; percentages are rounded to 0.1%, so the three shares of a group add up to 100% within 0.1%. ",
+    "Percentages: share of the individuals of the same group, recorded alive up to that census, that have a living stem at 1.3 m (above zero) or are dead (below zero); ",
+    "the rest of each group is in the grey band, whose number of individuals is written in it. ",
     # "In 2022–2023, ", cap_n(l9$living_stem), " individuals had a living stem at 1.3 m (", cap_n(l9$living_stem_census_1), " of census 1, ", l9$pct_census_1_living_stem, "%; ",
     # cap_n(l9$living_stem_new), " new, ", l9$pct_new_living_stem, "%), ", cap_n(l9$broken_below), " were broken below (", cap_n(l9$broken_below_census_1), " of census 1, ",
     # cap_n(l9$broken_below_new), " new) and ", cap_n(l9$dead_census_1 + l9$dead_new), " were dead (", cap_n(l9$dead_census_1), " of census 1, ", l9$pct_census_1_dead, "%; ",
