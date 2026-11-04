@@ -199,5 +199,3 @@ The samples cover the measured records up to 2010 (when stems were tagged). To c
 - data set update history: First release of this data set: [date]. It supersedes Condit et al. (2019a, 2019b).
 - review history: 2026-11-03.
 - questions and comments from secondary users: None yet.
-
-# Code to export the metadata in excel
