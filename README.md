@@ -65,7 +65,8 @@ This repository has three components:
 │   ├── data/                  # Generated test dataset (CSV + diagnostic PDFs)
 │   ├── sample_data_BCI/       # BCI multi-stem tags table (input of dp_global/scripts/main_cpp_bci.R)
 │   └── simulate_data.R        # Simulation driver script
-└── Makefile                   # Convenience target (smoke test)
+├── Makefile                   # Convenience targets: make smoke, make test
+└── run_tests.R                # Test runner used by make test (fails when a test fails)
 ```
 
 ---
@@ -84,6 +85,10 @@ Run every command from the project root.
 ```bash
 # Verify all R modules load
 make smoke
+
+# Run the tests: the engine (dp_global/tests/) and stage 3 (Rstatus rules, species table)
+# make test-dp and make test-stage3 run each part; make test runs both (about 10 minutes)
+make test
 
 # Single-tag run on simulated data
 Rscript dp_global/scripts/main_cpp.R --WHICH_TAG=20
