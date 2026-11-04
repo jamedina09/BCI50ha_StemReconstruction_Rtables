@@ -93,8 +93,7 @@ The site, its history and its research are described in detail in Muller-Landau 
 - computer programs and data-processing algorithms: A scripted pipeline in R and C++ builds the tables from the ForestGEO database export (ViewFullTable, 2026-10-13); its READMEs describe every step in full. Recorded diameters, heights of measurement, dates, codes and field statuses are copied unchanged.
   1. Census records: when a stem has two measurements in one census (after its point of measurement was raised), the higher one is kept. Individuals with one database stem and no stem tag (327,991) need no reconstruction; the other 132,220 are reconstructed.
   2. Species names, as under taxonomy and systematics.
-  3. Stem reconstruction: an exact dynamic program (a probabilistic matcher for palm clumps, strangler figs and the largest individuals) assigns each individual's measurements to stems, keeping every identity fixed in the field (stem tags; records from 2010 on), under a model of stem growth, mortality and ingrowth estimated from the tagged stems of 2010–2023 (one parameter set per well-sampled species, pooled sets per growth form for the others). Field codes constrain the solution: a stump ends the stem that broke, and a broken or resprouting stem measured at 1.3 m starts a new stem. 200 posterior samples are drawn per individual; the tables carry the most probable reconstruction (or the most representative sample).
-  4. Census tables: Rstatus (see the census tables, below), stem numbers (stemID), one date for every row, one location per individual.
+  3. Stem reconstruction: an exact dynamic program (a probabilistic matcher for palm clumps, strangler figs and the largest individuals in number of stems) assigns each individual's measurements to stems, keeping every identity fixed in the field (stem tags; records from 2010 on), under a model of stem growth, mortality and ingrowth estimated from the tagged stems of 2010–2023 (one parameter set per well-sampled species, pooled sets per growth form for the others). Field codes constrain the solution: a stump ends the stem that broke, and a broken or resprouting stem measured at 1.3 m starts a new stem. 200 posterior samples are drawn per individual; the tables carry the most probable reconstruction (or the most representative sample).
 
 # Data Structure Descriptors
 
@@ -200,3 +199,5 @@ The samples cover the measured records up to 2010 (when stems were tagged). To c
 - data set update history: First release of this data set: [date]. It supersedes Condit et al. (2019a, 2019b).
 - review history: 2026-11-03.
 - questions and comments from secondary users: None yet.
+
+# Code to export the metadata in excel
