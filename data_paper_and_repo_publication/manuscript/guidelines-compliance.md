@@ -8,11 +8,11 @@ Status: ✓ met · ✗ not yet met · ◐ met in part, or a choice of the author
 
 | Element | File | Goes to | Status |
 | --- | --- | --- | --- |
-| Manuscript | `1_manuscript/bci-50ha_data-paper_manuscript_v3.docx` (latest version), edited by hand | ScholarOne, as the "Main Document" (the only part typeset in Ecology) | ◐ Draft; what the authors must supply is highlighted |
-| Metadata | `2_repository/2_Metadata.md` | Repository | ◐ Template filled; fields marked `[ ]` to complete |
-| README | `2_repository/3_README.md` | Repository | ◐ Template filled; ORCIDs, DOIs and license to complete |
-| Data | `2_repository/data/`: 11 files, 102.0 MB | Repository | ✓ The stage-3 files, unchanged; objects, columns, types, keys and the numbers of the metadata checked (78 checks, all passed) |
-| Code | `2_repository/code/`: `load-bci-tables.R`, `1_tables.R`, `2_data-description.R`, `3_census-9-summary.R` | Repository | ✓ Tested: reproduces every number, table and the figure of the manuscript (outputs in `manuscript_outputs/`) |
+| Manuscript | `manuscript/bci-50ha_data-paper_manuscript_v9.docx` (latest version), edited by hand | ScholarOne, as the "Main Document" (the only part typeset in Ecology) | ◐ Draft; what the authors must supply is highlighted |
+| Metadata | `repository/2_Metadata.md` | Repository | ◐ Template filled; fields marked `[ ]` to complete |
+| README | `repository/3_README.md` | Repository | ◐ Template filled; ORCIDs, DOIs and license to complete |
+| Data | `repository/data/`: 11 files, 102.0 MB | Repository | ✓ The stage-3 files, unchanged; objects, columns, types, keys and the numbers of the metadata checked (78 checks, all passed) |
+| Code | `repository/code/`: `load-bci-tables.R`, `1_tables.R`, `2_data-description.R`, `3_census-9-summary.R` | Repository | ✓ Tested: reproduces every number, table and the figure of the manuscript (outputs in `manuscript_outputs/`) |
 | Code of the processing | GitHub repository of the pipeline | Repository or Zenodo | ✗ To archive with a DOI (see Open Research) |
 
 The data files are the stage-3 outputs, copied unchanged (same MD5):
@@ -46,7 +46,7 @@ The data files are the stage-3 outputs, copied unchanged (same MD5):
 
 Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as recorded (`use_taper_stocks <- FALSE` in `3_census-9-summary.R`); with the taper correction it would be 34.31 m² ha⁻¹. The script still writes the bootstrap intervals to `census-9_summary.csv`; the manuscript does not give them.
 
-## Metadata (`2_repository/2_Metadata.md`)
+## Metadata (`repository/2_Metadata.md`)
 
 ✓ Every section and field of the template is present, in order:
 
@@ -66,7 +66,7 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
 - redundant archival sites;
 - the date of the first release.
 
-## README (`2_repository/3_README.md`)
+## README (`repository/3_README.md`)
 
 ✓ Template sections filled: Identifiers, Authors, Study Design, Data Files (naming scheme, file sizes, file contents). ✗ To complete: DOIs, license, the ORCIDs of four authors.
 
@@ -88,7 +88,7 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
 | --- | --- |
 | Data, metadata and README in a suitable repository at submission (published, or private for peer review) | ✗ Choose a repository. Dryad, Zenodo and Figshare are pre-approved; Dryad is free for Ecology Data Papers up to 10 GB but publishes under CC0 only |
 | Persistent identifier (DOI), open license, ORCID integration | ✗ With the repository |
-| Code that processes or summarizes the data and makes the tables of the paper | ✓ `2_repository/code/` |
+| Code that processes or summarizes the data and makes the tables of the paper | ✓ `repository/code/` |
 | Code of a new method, for peer review | ✗ The stem reconstruction is a new method. The manuscript links the public GitHub repository; archive a release with a DOI (Zenodo) and cite it, or decide otherwise |
 
 ## Submission checklist
@@ -120,7 +120,7 @@ Note 1: the census-9 basal area (31.35 m² ha⁻¹) uses the diameters as record
 
 ## How to reproduce the outputs of the manuscript
 
-In R (or with `Rscript`), with the working directory set to `2_repository/`, run:
+In R (or with `Rscript`), with the working directory set to `repository/`, run:
 
 ```r
 source("code/1_tables.R")             # the figure and the tables
@@ -140,4 +140,4 @@ They need the R packages data.table, boot and HDInterval.
 
 ## Upload
 
-Upload the contents of `2_repository/`: `3_README.md`, `2_Metadata.md`, `data/` and `code/`. Google Drive puts hidden `Icon` files (`Icon\r`) in every synced folder; leave them, and any `.DS_Store`, out of the upload.
+Upload the contents of `repository/`: `3_README.md`, `2_Metadata.md`, `data/` and `code/`. Google Drive puts hidden `Icon` files (`Icon\r`) in every synced folder; leave them, and any `.DS_Store`, out of the upload.
