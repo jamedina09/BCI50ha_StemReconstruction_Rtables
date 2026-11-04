@@ -44,179 +44,168 @@ author affiliation (optional): Smithsonian Tropical Research Institute, Apartado
 - version: 2026-10. Census tables from the stem reconstruction of engine run 20261024_213308 (ForestGEO database export of 2026-10-13).
 - latest update: 2026-10-28
 - latest archive date: [date of deposit]
-- metadata status: Draft of 2026-10-28.
+- metadata status: Draft of 2026-11-03.
 - data verification: [to be completed]
 
 # Research Origin Descriptors
 
 ## Study Design
 
-- project title: Barro Colorado Island (BCI) 50-ha Forest Dynamics Plot, part of the Forest Global Earth Observatory (ForestGEO) and the Smithsonian Tropical Research Institute.
-- objectives: To record the location, size, and species identity of every free-standing woody stem of at least 1 cm diameter at breast height (DBH) in 50 ha of old-growth tropical moist forest, about every five years, as a basis for studies of tropical forest diversity, demography and change. This data set holds the nine censuses of 1982–2023 and follows every stem across all censuses.
-- funding: [To be filled in based correction of manuscript acknowledgements]
+- project title: Barro Colorado Island (BCI) 50-ha Forest Dynamics Plot, part of the Forest Global Earth Observatory (ForestGEO), Smithsonian Tropical Research Institute.
+- objectives: To record the location, size and species of every free-standing woody stem of at least 1 cm diameter at breast height (DBH) in 50 ha of old-growth tropical moist forest, about every five years, as a basis for studies of tropical forest diversity, demography and change. This data set holds the nine censuses of 1982–2023 and follows every stem across them.
+- funding: [To be filled in from the corrected acknowledgments of the manuscript]
 
-## Subproject / Sampling Site Descriptors (1 for each subproject / sampling site)
+## Subproject / Sampling Site Descriptors
+
+The site, its history and its research are described in detail in Muller-Landau and Wright (2024).
 
 ### Site Description
 
-- site type: Lowland tropical moist forest, old-growth, with a small area of younger forest (Harms et al. 2001).
-- geography: Barro Colorado Island (15.6 km²), Gatun Lake, Republic of Panama. The plot is centred near 9.15° N, 79.85° W; it is a rectangle of 1000 m east–west by 500 m north–south (50 ha), divided into 1,250 quadrats of 20 × 20 m.
-- habitat: Plateau, slopes, a small swamp and streams, mapped as habitat classes by Harms et al. (2001).
-- geology and hydrology: The plot is located in the central plateau of the island, 120–160 m above sea level. For a detail description of the geology and hydrology of the site refer to: Yavitt, J. B. (2024).
-- site history: The island was isolated by the filling of Gatun Lake during the construction of the Panama Canal (1910–1914) and has been protected since 1923. It is part of the Barro Colorado Nature Monument, where the Smithsonian Tropical Research Institute runs a field station. For a detail history of the plot, refer to Hubbell et al. (2024) and Dent, D. H., & Elsy, A. (2024).
-- climate: Over 1982–2023, annual rainfall averaged 2,621 mm (SD 510 mm; range 1,699–4,135 mm), 9% of it in the dry season from January to April; monthly mean air temperature ranged from 25.1 °C (November) to 26.8 °C (April), around an annual mean of 25.9 °C (data provided by the Physical Monitoring Program of the Smithsonian Tropical Research Institute).
-- For additional description of the plot, refer to Muller-Landau, H., & Wright, J. (2024).
+- site type: Old-growth lowland tropical moist forest, with a small area of younger forest (Harms et al. 2001).
+- geography: Barro Colorado Island (15.6 km²), Gatun Lake, Panama. The plot is centred near 9.15° N, 79.85° W: a 1000 × 500 m rectangle (50 ha) of 1,250 quadrats of 20 × 20 m.
+- habitat: Plateau, slopes, a small swamp and streams (habitat classes in Harms et al. 2001).
+- geology and hydrology: Central plateau of the island, 120–160 m above sea level; see Yavitt (2024).
+- site history: The island was isolated when Gatun Lake was filled (1910–1914) and has been protected since 1923, now within the Barro Colorado Nature Monument, where the Smithsonian Tropical Research Institute runs a field station. History of the plot: Hubbell et al. (2024) and Dent and Elsy (2024).
+- climate: Over 1982–2023, annual rainfall averaged 2,621 mm (range 1,699–4,135 mm), 9% of it in the January–April dry season; mean air temperature 25.9 °C (Physical Monitoring Program of the Smithsonian Tropical Research Institute).
 
 ### Experimental / Sampling Design
 
-- design characteristics: Complete census of a fixed 50-ha plot. In every census, every free-standing woody stem with a DBH of at least 10 mm is mapped, identified and measured, and every stem recorded in earlier censuses is revisited. Trees, shrubs, palms, tree ferns and strangler figs are included; lianas are not.
+- design characteristics: Complete census of a fixed 50-ha plot. In every census each free-standing woody stem with DBH ≥ 10 mm is mapped, identified and measured, and every stem recorded before is revisited. Trees, shrubs, palms, tree ferns and strangler figs are included; lianas are not.
 - spatial extent: 50 ha (1000 × 500 m).
-- temporal extent: Nine censuses, March 1981 to December 2023. Field dates, as the 2.5% and 97.5% quantiles of the record dates (95% of the records were taken between them), with the median date: census 1 (1982) 1981-04-04 to 1982-10-22, median 1982-01-08; census 2 (1985) 1985-01-15 to 1985-09-04, median 1985-05-03; census 3 (1990) 1990-02-15 to 1990-12-19, median 1990-08-21; census 4 (1995) 1995-01-06 to 1995-10-03, median 1995-05-18; census 5 (2000) 2000-01-13 to 2000-09-21, median 2000-05-10; census 6 (2005) 2005-01-19 to 2005-10-05, median 2005-05-30; census 7 (2010) 2010-01-21 to 2010-09-14, median 2010-05-14; census 8 (2015) 2015-02-19 to 2015-11-27, median 2015-07-01; census 9 (2023) 2022-03-04 to 2023-06-15, median 2023-02-10.
-- spatial grain/resolution: Individual stem, mapped within 20 × 20 m quadrats. The data give one location per tree (gx, gy, in m).
-- temporal grain/resolution: About five years between censuses: the median interval between consecutive censuses of a tree was 3.4 years between censuses 1 and 2, 4.8–5.3 years between censuses 2 and 8, and 7.5 years between censuses 8 and 9. Every record is dated to the day.
+- temporal extent: Nine censuses, 1981–2023: 1982 (field work 1981–1982), 1985, 1990, 1995, 2000, 2005, 2010, 2015 and 2022–2023. 95% of the records of a census were taken within 8–10 months, except in 1981–1982 (19 months) and 2022–2023 (15 months). The date of each record is in the census tables (ExactDate, date).
+- spatial grain/resolution: Individual stem, mapped within its 20 × 20 m quadrat; one location (gx, gy, in m) per individual.
+- temporal grain/resolution: About five years between censuses (3.4 years between censuses 1 and 2; 7.5 years between censuses 8 and 9). Every record is dated to the day.
 
 ### Research Methods
 
-- data collection protocol: The censuses follow Condit (1998) and the ForestGEO standards (Condit et al. 2014). Each tree carries a numbered tag. The diameter is measured at 1.3 m above the ground or, where the trunk is buttressed or deformed at that height, above the irregularity; the height of measurement is recorded. Before 2010 only the tree was tagged and its other stems were measured without tags; since 2010 every stem has carried its own stem tag. Each census revisits every tree recorded before, measures its living stems, records dead and broken stems with field codes, and adds the trees and stems that have reached 10 mm. In 1982 and 1985 diameters below 55 mm were recorded in 5-mm classes.
-- instrumentation: Stem level measurements are collected with diameter tapes, and calipers for small individuals.
-- taxonomy and systematics: Plants are identified in the field by the botanists of the plot. Voucher collections are listed in the Herbarium column of the species table. The flora of the island is described by Croat (1978). Species codes come from the ForestGEO database. Every species name was checked against World Flora Online (WFO 2026) with the WorldFlora package (Kindt 2020); WFO only suggested corrections, and each correction adopted was entered by hand. Authorities were compared by their authors only (spacing, periods, capitals and accents aside). Codes and names were compared tree by tree with Condit et al. (2019a, 2019b): species whose name changed carry the 2019 name and the kind of change (NameCondit2019, NameChange; 50 species), and codes no longer used are named in the Notes of the code that now holds their trees.
+- data collection protocol: Condit (1998) and the ForestGEO standards (Condit et al. 2014). The diameter is measured at 1.3 m or, where the trunk is buttressed or deformed there, above the irregularity, and the height of measurement is recorded. Each individual carries a numbered tag; since 2010 every stem also carries its own tag, while before 2010 the other stems of an individual were measured untagged. Each census revisits every individual recorded before, measures its living stems, records dead and broken stems with field codes, and adds the stems that have reached 10 mm. In 1982 and 1985 diameters below 55 mm were recorded in 5-mm classes.
+- instrumentation: Diameter tapes; calipers for small stems.
+- taxonomy and systematics: Plants are identified in the field by the botanists of the plot; voucher collections are listed in the Herbarium column of the species table, and the flora of the island is described by Croat (1978). Species codes come from the ForestGEO database; names were checked against World Flora Online (WFO 2026; Kindt 2020). Codes whose name changed since Condit et al. (2019b) carry the 2019 name and the kind of change (NameCondit2019, NameChange; 50 codes).
 - permit history: [To complete.]
-- legal/organizational requirements: Data of the ForestGEO network, Smithsonian Tropical Research Institute. The PI's of the plot would like to be informed about the use of this dataset. If the project is of interest for the PIs, co-autorship might be requested.
-- data forms or acquisition methods: Census data is collected using tablets containing information of the previous census. Unrealistic measures are highlighted and corrections are made on site.
-- storage / location of completed data forms: Census data is stored digitally in ForestGEO servers.
-- data entry verification procedures: The census dataset is digitally collected and corrected in the field.
-- quality assurance/quality control procedures: Our QA/QC has several checks that alert and stop the data processing (computer programs, below) when any check fails. Among the checks: the database exports hold the same records; the reconstruction holds every record once and changes no recorded diameter or date; no stem has two records in one census; every field tag (from 2010) is one stem and no stem holds two field tags; the analytical status of every possible stem history over nine censuses matches rules written independently; the exported tables match the reconstruction cell by cell; and the files of this package equal their sources and their keys hold.
-
+- legal/organizational requirements: Data of the ForestGEO network, Smithsonian Tropical Research Institute. The principal investigators of the plot would like to be informed of the use of this data set; for projects of interest to them, co-authorship may be requested.
+- data forms or acquisition methods: Census data are collected on tablets that show the previous census; unrealistic values are flagged and corrected in the field.
+- storage / location of completed data forms: ForestGEO servers.
+- data entry verification procedures: Data are entered digitally and corrected in the field.
+- quality assurance/quality control procedures: The processing (computer programs, below) stops when any check fails. Among the checks: every record is kept once, with its recorded diameter and date unchanged; no stem has two records in one census; every field-tagged stem is one stem; the analytical status of every possible stem history matches independently written rules; and the files of this package equal their sources.
 - data anomalies:
-
-  - Stem identities before 2010 are reconstructed, not observed; the posterior samples give their uncertainty (posterior_sampled_paths.rds). Tree identity (treeID, tag) is observed.
+  - Stem identities before 2010 are reconstructed, not observed; the posterior samples give their uncertainty. Individual identity (treeID, tag) is observed.
   - Diameters below 55 mm were recorded in 5-mm classes in 1982 and 1985.
-  - On buttressed or damaged trunks the point of measurement was raised over time; 1.1% of measurements were taken away from 1.3 m. These measurements are marked in the column DFstatus with the letter B, indicating butress.
-  - Some alive stems have no diameter in a census: a missed measurement, a stump (alive, field status broken below, no stem at 1.3 m), or a dead, missing or absent record just before a stump (alive because the stump comes later; no stem at 1.3 m is known).
-  - A dead record of a stem recorded alive later is kept as recorded in DFstatus; Rstatus is A.
-  - 86 trees have no coordinates (gx, gy NA); 51 of them have no quadrat either.
-  - 74 trees were never identified (sp = uniden).
-  - A few records fall far outside the main field period of their census resulting from posteriori corrections; census 9 followed census 8 by 7.5 years.
+  - 1.1% of the measurements were taken away from 1.3 m (hom), mostly on buttressed trunks (field code B in codes).
+  - Some alive stems have no diameter in a census: a missed measurement, or a stump (field status broken below: alive, with no stem at 1.3 m) and the census just before it.
+  - A dead record of a stem recorded alive later is kept as recorded (DFstatus); its Rstatus is A.
+  - 86 individuals have no coordinates (gx, gy NA), 51 of them no quadrat either; 74 individuals were never identified (sp = uniden).
+  - A few records fall outside the main field period of their census (later corrections).
 
 ### Other
 
-related materials: This data set supersedes Condit et al. (2019a). The code that builds these tables: <https://github.com/jamedina09/BCI50ha_StemReconstruction_Rtables> [archived version: DOI].
-computer programs and data-processing algorithms: The tables are built by a scripted pipeline in R and C++ (code repository above) from the ForestGEO database export (ViewFullTable, 2026-10-13). Recorded diameters, heights of measurement, dates, codes and field statuses are copied unchanged at every step.
-
-  1. Census records. When a stem has two measurements in one census (a trunk measured at the old and at the new height after its point of measurement was raised), the measurement at the higher point is kept, ties going to the larger diameter. Each tree is labelled single-stem (one database stem identifier and no stem tag; 327,991 trees) or multiple-stem (132,220 trees); only multiple-stem trees are reconstructed.
+- related materials: This data set supersedes Condit et al. (2019a, 2019b). Code: <https://github.com/jamedina09/BCI50ha_StemReconstruction_Rtables> [archived version: DOI].
+- computer programs and data-processing algorithms: A scripted pipeline in R and C++ builds the tables from the ForestGEO database export (ViewFullTable, 2026-10-13); its READMEs describe every step in full. Recorded diameters, heights of measurement, dates, codes and field statuses are copied unchanged.
+  1. Census records: when a stem has two measurements in one census (after its point of measurement was raised), the higher one is kept. Individuals with one database stem and no stem tag (327,991) need no reconstruction; the other 132,220 are reconstructed.
   2. Species names, as under taxonomy and systematics.
-  3. Stem reconstruction (engine dp_global). Growth, mortality and ingrowth parameters are estimated from the tagged stems of censuses 7–9 (2010–2023). A species gets its own set when it has at least 20 individuals and 20 growth pairs and its diameters fill four logarithmic size bins (at least three values each, over the full range or the middle 95%); other species use the pooled set of their growth form (trees, shrubs, palms with tree ferns, strangler figs). Records the database fixes are pinned to their stem: all records with a stem tag and all records from 2010 on, except dead, stem dead or broken-below records without a diameter. A pre-2010 database link is released when it grows faster than 99.9% of the tagged links of its species while another record of the tree grows plausibly into the later one. An exact dynamic program finds the most probable assignment of a tree's measurements to stems under the model, reading 1982 and 1985 diameters below 55 mm as 5-mm classes; a probabilistic matcher with the same model solves palm clumps, strangler figs and trees too large for it. Both draw 200 posterior samples per tree, and the tables carry the most probable reconstruction or the most representative sample. Field codes constrain the solution: a stump ends the stem that broke, a broken or resprouting stem measured at 1.3 m starts a new stem, and every field-tagged stem stays one stem.
-  4. Census tables. Status (Rstatus): a stem is P before its first record; A from its first record to its last evidence of life (an alive record, a broken-below record, or a diameter on a missing or status-less record; a broken-below record without a diameter is a stump: the stem broke below 1.3 m and is alive, with no stem at breast height), so a stem recorded alive later was not dead in between; after its last evidence of life it is dead from the first census without one, G while another stem of its tree is A in that census or later, otherwise D. A stem never alive is P until its first record, then G or D. The stems of each tree are numbered 1, 2, … in order of first appearance (a tree whose stems were joined skips one number per join). Every row gets a date (days since 1960-01-01): the recorded date, else the most common recorded date of the tree in that census, then of its quadrat, then of the census (only recorded dates vote; ties go to the earliest). Each tree gets one location. Rows are sorted by treeID and then stemID as numbers.
+  3. Stem reconstruction: an exact dynamic program (a probabilistic matcher for palm clumps, strangler figs and the largest individuals) assigns each individual's measurements to stems, keeping every identity fixed in the field (stem tags; records from 2010 on), under a model of stem growth, mortality and ingrowth estimated from the tagged stems of 2010–2023 (one parameter set per well-sampled species, pooled sets per growth form for the others). Field codes constrain the solution: a stump ends the stem that broke, and a broken or resprouting stem measured at 1.3 m starts a new stem. 200 posterior samples are drawn per individual; the tables carry the most probable reconstruction (or the most representative sample).
+  4. Census tables: Rstatus (see the census tables, below), stem numbers (stemID), one date for every row, one location per individual.
 
 # Data Structure Descriptors
 
 ## Data File Descriptors
 
-- naming scheme: data/bci.stem<k>.Rdata is census k (1–9) and holds the ForestGEO R table bci.stem<k>; data/bci.spptable.rdata holds the species table bci.spptable; data/posterior_sampled_paths.rds holds the posterior samples of the stem reconstruction; code/ holds the R scripts (load-bci-tables.R; 1_tables.R, 2_data-description.R and 3_census-9-summary.R for the figure, tables and numbers of the Data Paper).
-- file size(s): 102.1 MB in total: bci.stem1.Rdata … bci.stem9.Rdata 6.6–7.7 MB each; bci.spptable.rdata 0.02 MB; posterior_sampled_paths.rds 36.1 MB.
-- file contents: Census tables: the record of every stem of the plot in one census. Species table: names and attributes of every species code. Posterior samples: the sampled reconstructions of each reconstructed tree. Keys between files: a stem is treeID + stemID (the same in every census table); census tables join the species table on sp and the posterior samples on treeID + StemPaths.
-- format and storage mode: R data files (R is free and open source; the formats are read by R and by other software, e.g. the Python package rdata).
+- naming scheme: data/bci.stem\<k\>.Rdata is census k (1–9), holding the ForestGEO R table bci.stem\<k\>; data/bci.spptable.rdata holds the species table; data/posterior_sampled_paths.rds holds the posterior samples of the stem reconstruction; code/ holds the R scripts.
+- file size(s): 102.1 MB in total: bci.stem1–9.Rdata 6.6–7.7 MB each; bci.spptable.rdata 0.02 MB; posterior_sampled_paths.rds 36.1 MB.
+- file contents: census tables (every stem in one census); species table (names and attributes of every species code); posterior samples (sampled reconstructions of each reconstructed individual). Census tables join the species table on sp and the posterior samples on treeID + StemPaths. code/load-bci-tables.R loads the files, draws reconstructions from the posterior samples, and classifies every individual in every census (bci_individuals(), bci_individual_counts()); code/1_tables.R, 2_data-description.R and 3_census-9-summary.R reproduce the figure, tables and numbers of the Data Paper.
+- format and storage mode: R data files (save() and saveRDS(), gzip-compressed), read by R and by other software (e.g. the Python package rdata). Missing values are NA.
+- header information: column names are the names of the data frames (below).
 
 ## Observation Information (row descriptors)
 
 - unique identifier/primary key:
-
-  - Census tables: treeID + stemID (every table holds the same stems in the same order).
-  - bci.spptable: sp.
-  - posterior_sampled_paths.rds: treeID + path_sig (one row per distinct sampled reconstruction of a tree).
+  - census tables: treeID + stemID (every table holds the same stems in the same order);
+  - species table: sp;
+  - posterior samples: treeID + path_sig.
 - sampling unit:
-  - Census tables: a stem in one census. A stem has a row also in the censuses before it appeared (Rstatus P) and after it died (G or D).
-  - Species table: a species code.
-  - Posterior samples: a distinct reconstruction of one tree among its 200 samples.
+  - census tables: a stem in one census, with a row also before the stem appeared (Rstatus P) and after it died (G or D);
+  - species table: a species code;
+  - posterior samples: a distinct reconstruction of one individual among its 200 samples.
 
 ## Variable Information (column descriptors)
 
-### Census tables (bci.stem1 … bci.stem9 in bci.stem1.Rdata … bci.stem9.Rdata)
+### Census tables (bci.stem1 … bci.stem9)
 
 | variable identity | variable definition | units of measurement | data type | variable codes and description |
 | --- | --- | --- | --- | --- |
-| CensusID | Census | | integer | 1–9 (temporal extent above) |
-| treeID | Tree identifier of the ForestGEO database; unique in the plot, the same in every census | | character | 460,211 trees |
-| stemID | Stem number within its tree; treeID + stemID identify a stem | | character | 1, 2, …; a tree whose stems were joined skips one number per join |
-| tag | Field tag of the tree | | character | Leading zeros and sign kept (e.g. 000006, -05599; 17 tags are negative) |
-| StemTag | Field tag of the stem | | character | Stem tags were used from 2010; on earlier records the database may show the tag the stem received later, which is not an observation of that census. NA: no stem tag |
-| sp | Species code | | character | Joins bci.spptable; uniden: not identified |
-| quadrat | 20 × 20 m quadrat of the tree | | character | XXYY: column (gx/20) then row (gy/20), each two digits, e.g. 4007 for gx 800–820 m and gy 140–160 m. NA for 51 trees |
-| gx | Location of the tree east of the western edge of the plot | m | numeric | 0–1000; one value per tree; NA for 86 trees |
-| gy | Location of the tree north of the southern edge of the plot | m | numeric | 0–500; one value per tree; NA for 86 trees |
-| dbh | Diameter as recorded, at the height hom | mm | numeric | 1–3,500, whole millimetres; NA when not measured |
-| hom | Height of measurement as recorded | m | numeric | 0–17.7; NA when not measured |
+| CensusID | Census | | numeric | 1–9 |
+| treeID | Individual (ForestGEO database identifier) | | character | Unique in the plot, the same in every census; 460,211 individuals |
+| stemID | Stem number within its individual | | integer | 1, 2, …; treeID + stemID identify a stem |
+| tag | Field tag of the individual | | character | Leading zeros and sign kept (e.g. 000006, -05599) |
+| StemTag | Field tag of the stem | | character | Used from 2010; earlier records may show the tag the stem received later. NA: no stem tag |
+| sp | Species code | | character | Joins the species table; uniden: not identified |
+| quadrat | 20 × 20 m quadrat | | character | XXYY: column (gx/20), row (gy/20) |
+| gx, gy | Location of the individual from the south-west corner of the plot | m | numeric | gx 0–1000 (east), gy 0–500 (north); one value per individual |
+| dbh | Diameter as recorded, at height hom | mm | numeric | NA when not measured |
+| hom | Height of measurement as recorded | m | numeric | NA when not measured |
 | ExactDate | Date of the field record | | Date | NA without a record |
-| date | Date of every row | days since 1960-01-01 | numeric | Whole days: the recorded date, else the most common recorded date of the tree, quadrat or census (as.Date(date, origin = "1960-01-01")) |
-| codes | Field codes as recorded | | character | Codes separated by ";" (e.g. D;N). NA: no code or no record |
+| date | Date of every row | days since 1960-01-01 | numeric | The recorded date, else the most common date of the individual, quadrat or census |
+| codes | Field codes as recorded | | character | Separated by ";" (e.g. B: buttress) |
 | DFstatus | Field status as recorded | | character | alive, dead, broken below, stem dead, missing; NA without a record |
-| Rstatus | Analytical status | | character | P: before the stem's first record; A: alive, from the first record to the last evidence of life; G: dead, while another stem of its tree is A then or later; D: dead, and every stem of its tree dead. An A cell without dbh is a missed measurement, a stump (DFstatus broken below: alive, no stem at 1.3 m), or a dead, missing or absent record just before a stump |
-| StemPaths | Key of the record in the reconstruction | | integer | Unique within its tree; the posterior samples list the measured records up to the tree's anchor census. NA for the 327,991 trees not reconstructed |
+| Rstatus | Analytical status | | character | P: before the stem's first record; A: alive, from its first record to its last evidence of life (an alive or broken-below record, or a diameter); G: dead, while another stem of the individual is A then or later; D: dead, and every stem of the individual dead. A without dbh: a missed measurement, or a stump (broken below 1.3 m) and the census just before it |
+| StemPaths | Key of the record in the reconstruction | | integer | Joins the posterior samples; NA for individuals not reconstructed |
 
-Individuals in a census (bci_individuals() and bci_individual_counts() in code/load-bci-tables.R; Figure 1 of the Data Paper). An individual is one free-standing woody plant (treeID: a tree, shrub, palm, tree fern or strangler fig), whatever its number of stems. It has a living stem at 1.3 m when one of its stems is A on a record that is not a stump nor just before one (203,489 individuals in census 9); without one but with a stump record it is alive, broken below 1.3 m (13,536 in census 9); with neither but with one in a later census it is alive, not seen (missing or recorded dead in that census); any other individual recorded alive before is dead, with every stem D (242,921 in census 9). Alive individuals are the sum of the three alive states (217,025 in census 9). The 265 individuals with only dead records were first recorded dead in census 9. bci_individual_counts() also gives the recruits (individuals alive for the first time) and the deaths of each census, and stops unless the numbers add up.
+Individuals in a census: bci_individuals() in code/load-bci-tables.R puts every individual (a tree, shrub, palm, tree fern or strangler fig) in one state per census: alive with a living stem at 1.3 m, alive but broken below 1.3 m, alive but not seen in that census, or dead; bci_individual_counts() gives the counts, recruits and deaths per census (Figure 1 of the Data Paper).
 
-### Species table (bci.spptable in bci.spptable.rdata)
+### Species table (bci.spptable)
 
 | variable identity | variable definition | units of measurement | data type | variable codes and description |
 | --- | --- | --- | --- | --- |
-| sp | Species code | | character | 328 codes; uniden (not identified, not a taxon) has no names |
-| Order | Order | | character | |
-| Family | Family | | character | 62 families |
-| Genus | Genus | | character | 191 genera |
-| SpeciesName | Species epithet | | character | For a morphospecies, its label (hybrid, fuzzy, sp.4_(tiny_leaf), sp.) |
-| Latin | Scientific name | | character | Genus and epithet, then the infraspecific name when there is one (e.g. Swartzia simplex var. grandiflora) |
-| InfraspecificRank | Rank below species | | character | var. or subsp.; NA when none |
-| InfraspecificEpithet | Epithet below species | | character | NA when none |
+| sp | Species code | | character | 328 codes; uniden is not a taxon |
+| Order, Family, Genus | Higher taxonomy | | character | 62 families, 191 genera |
+| SpeciesName | Species epithet | | character | For a morphospecies, its label |
+| Latin | Scientific name | | character | Genus, epithet and infraspecific name |
+| InfraspecificRank, InfraspecificEpithet | Rank and epithet below species | | character | NA when none |
 | Authority | Authors of the name | | character | |
 | Synonyms | Synonyms and earlier names | | character | Separated by commas |
 | Lifeform_RFoster | Growth form after R. B. Foster | | character | |
-| Lifeform_RPerez_SAguilar | Growth form and height class after R. Pérez and S. Aguilar | | character | In Spanish, e.g. árbol grande mayor a 20m, arbusto 1 a 5m, Palma colonial pequeña 5 a 10m, Helecho arbóreo 1 a 5m |
+| Lifeform_RPerez_SAguilar | Growth form and height class after R. Pérez and S. Aguilar | | character | In Spanish |
 | CommonName | Common names | | character | |
 | Herbarium | Herbarium collections | | character | |
-| NameCondit2019 | Name of the code in Condit et al. (2019a, 2019b) | | character | Only when it differs from Latin |
-| NameChange | Kind of change from the 2019 name | | character | genus; genus and epithet; genus and epithet gender; epithet; epithet gender; epithet spelling (at most two letters); infraspecific name; morphospecies label (50 codes). It describes the change, not which spelling is correct |
-| Notes | What no other column says | | character | That uniden is not a taxon, that a code was not used in 2019, and which codes no longer used have their trees under this code, with their former name and number of trees |
+| NameCondit2019 | Name in Condit et al. (2019b) | | character | Only when it differs from Latin |
+| NameChange | Kind of change from that name | | character | e.g. genus; epithet; epithet spelling; morphospecies label |
+| Notes | Other information | | character | e.g. codes no longer used whose individuals are now under this code |
 
 ### Posterior samples (posterior_sampled_paths.rds)
 
 | variable identity | variable definition | units of measurement | data type | variable codes and description |
 | --- | --- | --- | --- | --- |
-| tag | Field tag of the tree | | character | |
-| treeID | Tree | | character | 131,999 trees |
-| path_sig | Stem label of each sampled record of the tree in this sample, in census order | | character | Labels joined by "-" |
-| path_count | Number of the tree's 200 samples with this reconstruction | samples | integer | 1–200; sums to 200 per tree. Weight of the row: path_count / 200 |
-| path_prob | Reference value of the engine | | numeric | Not a weight: for the dynamic program it re-weights each sample by its own sampling probability. Use path_count |
-| recon | The stem of each record in this sample | | character | Pairs StemPaths:label separated by ";" |
+| tag | Field tag of the individual | | character | |
+| treeID | Individual | | character | 131,999 individuals |
+| path_sig | Stem label of each sampled record, in census order | | character | Labels joined by "-" |
+| path_count | Number of the 200 samples with this reconstruction | samples | integer | Weight of the row: path_count / 200 |
+| path_prob | Internal value of the engine | | numeric | Not a weight; use path_count |
+| recon | Stem of each record in this sample | | character | Pairs StemPaths:label separated by ";" |
 
-The samples cover each tree's measured records up to its anchor census, the census from which its stems are fixed by their tags (2010 for most trees): nearly all measured records of censuses 1–7 of the reconstructed trees, and 7–9% of those of censuses 8 and 9. A later record belongs, in every sample, to the sampled stem of the last sampled record with the same stemID. The labels belong to each sample, not to stemID, so two rows can describe the same grouping of records under different labels. To propagate the uncertainty of the reconstruction, draw one row per tree with probability path_count / 200, group the tree's records by label, and repeat over many draws (draw_bci_reconstruction() in code/load-bci-tables.R). The samples of the dynamic program come from the exact posterior under the model; those of the matcher (palm clumps, strangler figs, the largest trees) are approximate. 221 reconstructed trees, most with every stem fixed by a tag, have StemPaths but no posterior samples.
-
-The packed columns path_sig and recon hold one value per record of the sample: one row per record and sample would make the file many times larger. load_bci_posterior(long = TRUE) in code/load-bci-tables.R unpacks them.
+The samples cover the measured records up to 2010 (when stems were tagged). To carry the uncertainty of the reconstruction into an analysis, draw one row per individual with probability path_count / 200 and repeat (draw_bci_reconstruction() in code/load-bci-tables.R).
 
 # Supplemental Descriptors
 
 ## Archiving
 
-- archival procedures: The field data are kept in the ForestGEO database of the plot at the Smithsonian Tropical Research Institute. This data set is archived at [repository, DOI]. The code is archived at [Zenodo, DOI].
+- archival procedures: The field data are kept in the ForestGEO database of the plot at the Smithsonian Tropical Research Institute.
 - redundant archival sites: [To complete.]
-- related publications and results: Selected publications based on the BCI 50-ha plot censuses are listed in the References of the Data Paper. Key references:
-
+- related publications and results: publications based on the plot are listed in the References of the Data Paper; additional key references:
   - Condit, R. 1998. Tropical Forest Census Plots. Springer-Verlag, Berlin. <https://doi.org/10.1007/978-3-662-03664-8>
   - Condit, R., S. Lao, A. Singh, S. Esufali, and S. Dolins. 2014. Data and database standards for permanent forest plots in a global network. Forest Ecology and Management 316: 21–31. <https://doi.org/10.1016/j.foreco.2013.09.011>
   - Condit, R., R. Pérez, S. Aguilar, S. Lao, R. Foster, and S. P. Hubbell. 2019a. Complete data from the Barro Colorado 50-ha plot: 423617 trees, 35 years. Dryad. <https://doi.org/10.15146/5xcp-0d46>
   - Condit, R., R. Pérez, S. Aguilar, S. Lao, R. Foster, and S. P. Hubbell. 2019b. BCI 50-ha plot taxonomy. Dryad. <https://doi.org/10.15146/R3FH61>
   - Croat, T. B. 1978. Flora of Barro Colorado Island. Stanford University Press, Stanford, California.
+  - Dent, D. H., and A. Elsy. 2024. Structure, Diversity, and Composition of Secondary Forests of the Barro Colorado Nature Monument. In Muller-Landau and Wright (2024).
   - Harms, K. E., R. Condit, S. P. Hubbell, and R. B. Foster. 2001. Habitat associations of trees and shrubs in a 50-ha neotropical forest plot. Journal of Ecology 89: 947–959. <https://doi.org/10.1046/j.0022-0477.2001.00615.x>
-  - Hubbell, S. P., and R. B. Foster. 1983. Diversity of canopy trees in a neotropical forest and implications for conservation. Pages 25–41 in S. L. Sutton, T. C. Whitmore, and A. C. Chadwick, editors. Tropical Rain Forest: Ecology and Management. Blackwell Scientific Publications, Oxford.
-  - Hubbell, S. P., R. B. Foster, S. T. O'Brien, K. E. Harms, R. Condit, B. Wechsler, S. J. Wright, and S. Loo de Lao. 1999. Light-gap disturbances, recruitment limitation, and tree diversity in a neotropical forest. Science 283: 554–557. <https://doi.org/10.1126/science.283.5401.554>
-  - Hubbell, S. P., R. B. Foster, and I. Rubinoff. 2024. Early history of the Barro Colorado Island forest dynamics project. In H. C. Muller-Landau and S. J. Wright, editors. The First 100 Years of Research on Barro Colorado: Plant and Ecosystem Science. Smithsonian Institution Scholarly Press, Washington, DC. <https://doi.org/10.5479/si.26809612>
+  - Hubbell, S. P., R. B. Foster, and I. Rubinoff. 2024. Early history of the Barro Colorado Island forest dynamics project. In Muller-Landau and Wright (2024). <https://doi.org/10.5479/si.26809612>
   - Kindt, R. 2020. WorldFlora: an R package for exact and fuzzy matching of plant names against the World Flora Online taxonomic backbone data. Applications in Plant Sciences 8: e11388. <https://doi.org/10.1002/aps3.11388>
-  - Paton, S. 2026. Monthly Summary_BCI, horizontal. Smithsonian Tropical Research Institute, Physical Monitoring Program. Smithsonian Research Data Repository. <https://doi.org/10.60635/C3992K>
-  - Leigh, E. G., Jr. 1999. Tropical Forest Ecology: A View from Barro Colorado Island. Oxford University Press, New York.
+  - Muller-Landau, H. C., and S. J. Wright, editors. 2024. The First 100 Years of Research on Barro Colorado: Plant and Ecosystem Science. 2 vols. Smithsonian Institution Scholarly Press, Washington, DC. <https://doi.org/10.5479/si.26048527>
   - WFO (World Flora Online Consortium). 2026. World Flora Online Plant List, June 2026 (version 2026-06). Zenodo. <https://doi.org/10.5281/zenodo.20782718>
+  - Yavitt, J. B. 2024. Soils of Barro Colorado Island. In Muller-Landau and Wright (2024).
 
 ## History of Usage
 
 - data request history: The BCI census data have been distributed by the Center for Tropical Forest Science and ForestGEO on request since the 1980s, and openly since Condit et al. (2019a).
-- data set update history: First release of this data set: [date]. It supersedes Condit et al. (2019a).
-- review history: [Date of the last review by the authors.]
+- data set update history: First release of this data set: [date]. It supersedes Condit et al. (2019a, 2019b).
+- review history: 2026-11-03.
 - questions and comments from secondary users: None yet.
