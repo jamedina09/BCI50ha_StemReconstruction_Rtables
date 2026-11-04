@@ -1,7 +1,0 @@
-Column,Content
-tag,Field tag of the individual
-treeID,Individual; joins the census tables with StemPaths
-path_sig,"Stem label of each sampled record of the individual in this sample, in census order; labels joined by “-”"
-path_count,"Number of the individual's 200 samples with this reconstruction: 1–200, summing to 200 per individual; weight of the row: path_count / 200"
-path_prob,Value of the reconstruction engine; not a weight (use path_count)
-recon,Stem of each record in this sample: pairs StemPaths:label separated by “;”
