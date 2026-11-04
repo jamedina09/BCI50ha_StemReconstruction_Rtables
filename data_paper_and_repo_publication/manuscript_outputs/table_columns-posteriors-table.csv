@@ -1,7 +1,7 @@
 Column,Content
-tag,Field tag of the tree
-treeID,Tree
-path_sig,"Stem label of each sampled record of the tree in this sample, in census order"
-path_count,Number of the tree's 200 samples with this reconstruction
-path_prob,Reference value of the engine
-recon,The stem of each record in this sample
+tag,Field tag of the individual
+treeID,Individual; joins the census tables with StemPaths
+path_sig,"Stem label of each sampled record of the individual in this sample, in census order"
+path_count,Number of the individual's 200 samples with this reconstruction; its weight is path_count / 200
+path_prob,Value of the reconstruction engine; not a weight (use path_count)
+recon,Stem of each record in this sample: pairs StemPaths:label separated by ;

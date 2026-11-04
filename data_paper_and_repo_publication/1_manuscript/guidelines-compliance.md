@@ -38,7 +38,7 @@ The data files are the stage-3 outputs, copied unchanged (same MD5):
 | Abstract of at most 500 words that synthesizes every section | 350 words; its census-9 summary is also in the Data Description (Census 9) | ✓ |
 | Sections in order: Overview, Data Availability, Data Description, Summary of Methods, Limitations and Challenges, Scientific Opportunities, Tables and Figures, References | All present, in order | ✓ |
 | Main text of at most 2,000 words, title page, abstract, tables, captions and references excluded | 1,693 words with the section headings (1,680 without) | ✓ |
-| At most four tables and figures, strictly descriptive | 3 tables (columns of the census tables, columns of the species table, status codes) and 1 figure (trees through the censuses), from `1_tables.R` | ✓ |
+| At most four tables and figures, strictly descriptive | 4 tables (columns of the census tables, of the species table and of the posterior samples; status codes) and 1 figure (individuals through the censuses), from `1_tables.R`: one item over the limit | ✗ |
 | Data Description strictly descriptive, with no statistical analysis | Counts and extents only | ✓ |
 | Data Availability: DOI of the repository and license | Placeholders | ✗ |
 | References complete, author–year | Every DOI checked; two book chapters lack page numbers; Muller-Landau and Wright (2024), the book of those chapters, is listed but not cited | ◐ |
@@ -131,7 +131,7 @@ source("code/3_census-9-summary.R")   # census-9 summary of the Abstract and the
 The scripts write CSV files to `manuscript_outputs/`:
 
 - `figure-1_tree-dynamics.png`, `.pdf` and `.csv`, and its caption `figure-1_caption.txt`;
-- `table_columns-census-tables.csv`, `table_columns-species-table.csv`, `table_status-codes.csv`;
+- `table_columns-census-tables.csv`, `table_columns-species-table.csv`, `table_status-codes.csv`, `table_columns-posteriors-table.csv`;
 - `individuals_by_census.csv` (alive, dead, recruits and deaths of individuals per census, from `bci_individual_counts()` in `load-bci-tables.R`);
 - `data-description_numbers.csv`;
 - `census-9_summary.csv`, `census-9_species.csv`, `census-9_families.csv`.

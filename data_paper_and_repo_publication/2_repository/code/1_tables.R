@@ -16,6 +16,7 @@
 #   table_columns-census-tables.csv     the columns of the census tables
 #   table_columns-species-table.csv     the columns of the species table
 #   table_status-codes.csv              the analytical status codes (Rstatus)
+#   table_columns-posteriors-table.csv  the columns of the posterior samples
 #
 # Run from the folder that holds data/ and code/ (the repository folder), in
 # R or with:  Rscript code/1_tables.R
@@ -209,7 +210,7 @@ draw_figure_1 <- function() {
         "Individuals new since census 1: living stem at 1.3 m",
         "Alive, no living stem at 1.3 m (broken below)",
         "Individuals of census 1: dead",
-        "Individuals new since 1: dead"
+        "Individuals new since census 1: dead"
     )
     key_col <- c(adjustcolor(col_cohort, 0.85), adjustcolor(col_new, 0.85), adjustcolor(col_band, 0.9), adjustcolor(col_cohort, 0.35), adjustcolor(col_new, 0.35))
     key_y <- c(-150, -167, -184, -201, -218) - 40
@@ -236,9 +237,9 @@ caption <- paste0(
     "An individual is one free-standing woody plant (a tree, shrub, palm, tree fern or strangler fig), whatever its number of stems. ",
     "In each census, every individual recorded alive up to then is in one of three groups, from the census tables: ",
     "with a living stem at 1.3 m, that is, a stem with Rstatus A on a record that is not a stump (above zero; total written above the line; these are the individuals counted in a census); ",
-    "alive without a living stem at 1.3 m (grey, next to zero): broken below 1.3 m, with a record whose field record is broken below and that has no diameter (a stump), ",
-    "or, for a few individuals, missing; ",
-    "and dead (pale colours, cumulative): recorded dead in the field, with no living stem at 1.3 m, and no broken-below record in that census or in any later one. ",
+    "alive without a living stem at 1.3 m (grey, next to zero): broken below 1.3 m, with a field record of broken below and no diameter (a stump), ",
+    "or, for a few individuals, missing or recorded dead in that census and alive in a later one; ",
+    "and dead (pale colours, cumulative): no living stem at 1.3 m and no broken-below record in that census or in any later one (nearly all recorded dead in the field; a few missing and never found again). ",
     "Blue: the ", cap_n(n_census_1), " individuals of census 1; orange: individuals first recorded alive after census 1. ",
     "Percentages: share of the individuals of the same group, recorded alive up to that census, that have a living stem at 1.3 m (above zero) or are dead (below zero); ",
     "the rest of each group is in the grey band, whose number of individuals is written in it. ",
@@ -255,7 +256,7 @@ writeLines(strwrap(caption, width = 100), file.path(OUT, "figure-1_caption.txt")
 cat("\n", caption, "\n", sep = "")
 
 # ---- Columns of the census tables -----------------------------------------------------
-# Type: from the data. Content: what the column holds.
+# Content: what the column holds.
 census_columns <- c(
     CensusID = "Census 1–9",
     treeID = "Individual (a tree, shrub, palm, tree fern or strangler fig); the same in every census",
@@ -323,8 +324,8 @@ tab_status <- data.table(
     Code = c("P", "A", "G", "D"),
     Meaning = c("prior", "alive", "dead stem", "dead individual"),
     Rule = c(
-        "Before the stem's first record; placeholder for new individuals and stems in appearing in later censuses.",
-        "From the first record to the last evidence of life (an alive or broken-below record, or a diameter). An alive cell without a diameter is a missed measurement; a stump, broken below 1.3 m and alive with no stem at breast height.",
+        "Before the stem's first record: a placeholder for individuals and stems that appear in later censuses",
+        "From the first record to the last evidence of life (an alive or broken-below record, or a diameter). An alive cell without a diameter is a missed measurement; a stump, broken below 1.3 m and alive with no stem at breast height; or a census just before a stump",
         "Dead, while another stem of its individual is A in that census or later",
         "Dead, and every stem of its individual dead"
     )
@@ -333,20 +334,17 @@ stopifnot(setequal(tab_status$Code, unique(x$Rstatus)))
 fwrite(tab_status, file.path(OUT, "table_status-codes.csv"))
 print(tab_status)
 
-# ---- Posterior samples ---------------------------------------------------
+# ---- Columns of the posterior samples (posterior_sampled_paths.rds) -----------------
+xprob <- as.data.table(readRDS(file.path(DATA, "posterior_sampled_paths.rds")))
 
-### Posterior samples (posterior_sampled_paths.rds)
-
-xprob <- data.table(readRDS("/Users/medinaja/GDrive_Science/STRI/STEM_TABLES_FORESTGEO/3_BCI/BCI50ha_StemReconstruction_Rtables/data_paper_and_repo_publication/2_repository/data/posterior_sampled_paths.rds"))
-
-# Type: from the data. Content: what the column holds.
+# Content: what the column holds.
 posterior_columns <- c(
-    tag = "Field tag of the tree",
-    treeID = "Tree",
-    path_sig = "Stem label of each sampled record of the tree in this sample, in census order",
-    path_count = "Number of the tree's 200 samples with this reconstruction",
-    path_prob = "Reference value of the engine",
-    recon = "The stem of each record in this sample"
+    tag = "Field tag of the individual",
+    treeID = "Individual; joins the census tables with StemPaths",
+    path_sig = "Stem label of each sampled record of the individual in this sample, in census order",
+    path_count = "Number of the individual's 200 samples with this reconstruction; its weight is path_count / 200",
+    path_prob = "Value of the reconstruction engine; not a weight (use path_count)",
+    recon = "Stem of each record in this sample: pairs StemPaths:label separated by ;"
 )
 stopifnot(identical(names(xprob), names(posterior_columns)))
 tab_posteriors <- data.table(
