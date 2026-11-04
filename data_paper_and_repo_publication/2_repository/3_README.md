@@ -4,7 +4,7 @@
 data identifier DOI: [to be issued by the repository]
 data paper DOI: [to be issued by Ecology]
 license: [CC0 1.0 or CC BY 4.0, to decide]
-keywords: Barro Colorado Island; demography; forest dynamics plot; ForestGEO; long-term monitoring; Panama; tropical moist forest
+keywords: Barro Colorado Island; census; demography; forest dynamics plot; ForestGEO; long-term monitoring; Panama; tropical moist forest
 data paper citation: Mitre, D., R. Pérez, S. Aguilar, S. Lao, S. J. Davies, and J. A. Medina-Vega. [Year]. "Tree censuses of the Barro Colorado Island 50-ha plot, Panama, 1982–2023." Ecology [volume]: [article number]. [DOI]
 
 ## Authors (for each author)

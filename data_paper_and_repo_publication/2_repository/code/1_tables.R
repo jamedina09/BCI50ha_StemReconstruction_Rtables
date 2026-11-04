@@ -341,10 +341,10 @@ xprob <- as.data.table(readRDS(file.path(DATA, "posterior_sampled_paths.rds")))
 posterior_columns <- c(
     tag = "Field tag of the individual",
     treeID = "Individual; joins the census tables with StemPaths",
-    path_sig = "Stem label of each sampled record of the individual in this sample, in census order",
-    path_count = "Number of the individual's 200 samples with this reconstruction; its weight is path_count / 200",
+    path_sig = "Stem label of each sampled record of the individual in this sample, in census order; labels joined by \u201c-\u201d",
+    path_count = "Number of the individual's 200 samples with this reconstruction: 1\u2013200, summing to 200 per individual; weight of the row: path_count / 200",
     path_prob = "Value of the reconstruction engine; not a weight (use path_count)",
-    recon = "Stem of each record in this sample: pairs StemPaths:label separated by ;"
+    recon = "Stem of each record in this sample: pairs StemPaths:label separated by \u201c;\u201d"
 )
 stopifnot(identical(names(xprob), names(posterior_columns)))
 tab_posteriors <- data.table(
