@@ -1,43 +1,34 @@
 # Identifiers
 
-- (data set) title: Tree censuses of the Barro Colorado Island 50-ha plot, Panama, 1982–2023
+- title: Tree censuses of the Barro Colorado Island 50-ha plot, Panama, 1982–2023
 - data identifier DOI: [to be issued by the repository]
 - data paper DOI: [to be issued by Ecology]
 - license: [CC0 1.0 or CC BY 4.0, to decide]
 - keywords: Barro Colorado Island; census; demography; forest dynamics plot; ForestGEO; long-term monitoring; Panama; tropical moist forest
 - data paper citation: Mitre, D., R. Pérez, S. Aguilar, S. Lao, S. J. Davies, and J. A. Medina-Vega. [Year]. "Tree censuses of the Barro Colorado Island 50-ha plot, Panama, 1982–2023." Ecology [volume]: [article number]. [DOI]
 
-## Authors (for each author)
+## Authors
 
-author name (req): David Mitre
-author ORCID (req): [to add]
-author email (req-corresponding; optional-others):
-author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
+author name: David Mitre \
+author affiliation: Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
-author name (req): Rolando Pérez
-author ORCID (req): [to add]
-author email (req-corresponding; optional-others):
-author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
+author name: Rolando Pérez \
+author affiliation: Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
-author name (req): Salomón Aguilar
-author ORCID (req): [to add]
-author email (req-corresponding; optional-others):
-author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
+author name: Salomón Aguilar \
+author affiliation: Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
-author name (req): Suzanne Lao
-author ORCID (req): [to add]
-author email (req-corresponding; optional-others):
-author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
+author name: Suzanne Lao \
+author affiliation: Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
-author name (req): Stuart J. Davies
-author ORCID (req): 0000-0002-8596-7522
-author email (req-corresponding; optional-others):
-author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
+author name: Stuart J. Davies \
+author ORCID: 0000-0002-8596-7522 \
+author affiliation: Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
-author name (req): José A. Medina-Vega
-author ORCID (req): 0000-0001-5468-5605
-author email (req-corresponding; optional-others): <medinaja@si.edu>
-author affiliation (optional): Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
+author name: José A. Medina-Vega \
+author ORCID: 0000-0001-5468-5605 \
+author email (req-corresponding): <medinaja@si.edu> \
+author affiliation: Smithsonian Tropical Research Institute, Apartado 0843-03092, Balboa, Ancón, Republic of Panama
 
 ## Status
 
@@ -66,7 +57,7 @@ The site, its history and its research are described in detail in Muller-Landau 
 - habitat: Plateau, slopes, a small swamp and streams (habitat classes in Harms et al. 2001).
 - geology and hydrology: Central plateau of the island, 120–160 m above sea level; see Yavitt (2024).
 - site history: The island was isolated when Gatun Lake was filled (1910–1914) and has been protected since 1923, now within the Barro Colorado Nature Monument, where the Smithsonian Tropical Research Institute runs a field station. History of the plot: Hubbell et al. (2024) and Dent and Elsy (2024).
-- climate: Over 1982–2023, annual rainfall averaged 2,621 mm (range 1,699–4,135 mm), 9% of it in the January–April dry season; mean air temperature 25.9 °C (Physical Monitoring Program of the Smithsonian Tropical Research Institute).
+- climate: Over 1982–2023, annual rainfall averaged 2,621 mm (range 1,699–4,135 mm), 9% of it in the January–April dry season; mean air temperature 25.9 °C (data from the Physical Monitoring Program of the Smithsonian Tropical Research Institute).
 
 ### Experimental / Sampling Design
 
@@ -80,7 +71,7 @@ The site, its history and its research are described in detail in Muller-Landau 
 
 - data collection protocol: Condit (1998) and the ForestGEO standards (Condit et al. 2014). The diameter is measured at 1.3 m or, where the trunk is buttressed or deformed there, above the irregularity, and the height of measurement is recorded. Each individual carries a numbered tag; since 2010 every stem also carries its own tag, while before 2010 the other stems of an individual were measured untagged. Each census revisits every individual recorded before, measures its living stems, records dead and broken stems with field codes, and adds the stems that have reached 10 mm. In 1982 and 1985 diameters below 55 mm were recorded in 5-mm classes.
 - instrumentation: Diameter tapes; calipers for small stems.
-- taxonomy and systematics: Plants are identified in the field by the botanists of the plot; voucher collections are listed in the Herbarium column of the species table, and the flora of the island is described by Croat (1978). Species codes come from the ForestGEO database; names were checked against World Flora Online (WFO 2026; Kindt 2020). Codes whose name changed since Condit et al. (2019b) carry the 2019 name and the kind of change (NameCondit2019, NameChange; 50 codes).
+- taxonomy and systematics: Plants are identified in the field by the botanists of the plot; voucher collections are listed in the Herbarium column of the species table, and the flora of the island is described by Croat (1978). Species codes come from the ForestGEO database; names were checked against World Flora Online (WFO 2026; Kindt 2020). Codes whose name changed since Condit et al. (2019b) carry the 2019 name and the kind of change (NameCondit2019, NameChange; 50 species).
 - permit history: [To complete.]
 - legal/organizational requirements: Data of the ForestGEO network, Smithsonian Tropical Research Institute. The principal investigators of the plot would like to be informed of the use of this data set; for projects of interest to them, co-authorship may be requested.
 - data forms or acquisition methods: Census data are collected on tablets that show the previous census; unrealistic values are flagged and corrected in the field.
